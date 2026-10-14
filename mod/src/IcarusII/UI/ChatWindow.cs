@@ -51,6 +51,8 @@ namespace IcarusII.UI
         private RectTransform _panel;
         private RectTransform _content;
         private Image _panelImage;
+        private Image _frameImage;
+        private Image _glassImage;
         private Image _headerImage;
         private Image _inputImage;
         private Text _statusText;
@@ -215,6 +217,19 @@ namespace IcarusII.UI
             _panel = UiFactory.Node("Panel", rootRt);
             ApplyPanelPlacement(_panel, config);
             _panelImage = UiFactory.AddPanel(_panel, DefaultPanelBg);
+
+            // 装饰边框与玻璃高光：必须紧跟在底衬之后创建，
+            // 这样它们是靠前的同级子物体（先绘制），不会盖住正文与输入框。
+            // 机体信息窗就是「底衬 + border + glass」三层叠加出来的观感。
+            var frameRt = UiFactory.Node("Frame", _panel);
+            UiFactory.Stretch(frameRt);
+            _frameImage = frameRt.gameObject.AddComponent<Image>();
+            _frameImage.raycastTarget = false;   // 不抢点击
+
+            var glassRt = UiFactory.Node("Glass", _panel);
+            UiFactory.Stretch(glassRt);
+            _glassImage = glassRt.gameObject.AddComponent<Image>();
+            _glassImage.raycastTarget = false;
             // 点击窗口任意处即可开始输入（比"必须先点输入框"更顺手）
             _panel.gameObject.AddComponent<ClickToFocus>().Target = this;
 
@@ -353,7 +368,9 @@ namespace IcarusII.UI
             }
 
             if (_panelImage != null) style.ApplyPanel(_panelImage);
-            if (_headerImage != null) style.ApplyHeader(_headerImage);
+            if (_frameImage != null) style.ApplyFrame(_frameImage);
+            if (_glassImage != null) style.ApplyGlass(_glassImage);
+            if (_headerImage != null) UiStyle.ApplyHeader(_headerImage);
             if (_inputImage != null) style.ApplyInput(_inputImage);
 
             // 文本控件也要跟着换颜色（它们是创建时就定色的）

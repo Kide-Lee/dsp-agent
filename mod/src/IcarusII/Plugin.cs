@@ -57,6 +57,7 @@ namespace IcarusII
         private bool _uiCreateFailureLogged;
         private bool _styleApplied;
         private bool _initFailed;
+        private ConfigState _lastConfig;
         private bool _styleCaptured;
         private int _styleWaitFrames;
 
@@ -402,6 +403,9 @@ namespace IcarusII
             _chat.Create(root, font, _config);
             if (_styleCaptured) _chat.ApplyStyle(UiStyle.Current);
             _uiInitialized = true;
+
+            // UI 刚建好：立刻补上此前收到、但当时还没有控件可用的配置状态
+            ApplyConfigState();
             _uiCreateFailureLogged = false;
             Log.LogInfo($"聊天窗口已创建（自建 Canvas，缩放来源 {ChatWindow.ScalerSource}，字体来源 {FontProvider.Source}）");
 
@@ -447,31 +451,43 @@ namespace IcarusII
             if (config == null) return;
             Log.LogInfo($"[配置] 状态：{config}");
 
-            // 本回调在接收线程上触发，UI 操作必须回主线程
-            Post(() =>
+            // 记下最新状态再回主线程应用。
+            //
+            // 关键：config 状态几乎总是**早于 UI 创建**到达（握手在插件加载后
+            // 0.3 秒内完成，而 UI 要等 UIRoot 与样式捕获就绪）。如果只在这里
+            // 应用一次，EnterKeyEntry 会因为 _input 还是 null 而静默返回，
+            // 首次引导就永远不会出现（实测踩到）。因此必须缓存，
+            // 并在 UI 建好后由 ApplyConfigState 再应用一次。
+            _lastConfig = config;
+            Post(ApplyConfigState);
+        }
+
+        /// <summary>把最近一次配置状态应用到 UI。UI 未就绪时留待建好后重试。</summary>
+        private void ApplyConfigState()
+        {
+            var config = _lastConfig;
+            if (config == null || _chat == null || !_uiInitialized) return;
+
+            switch (config.State)
             {
-                if (_chat == null) return;
-                switch (config.State)
-                {
-                    case P.ConfigMissingKey:
-                        _chat.EnterKeyEntry(null);
-                        break;
+                case P.ConfigMissingKey:
+                    _chat.EnterKeyEntry(null);
+                    break;
 
-                    case P.ConfigInvalidKey:
-                        _chat.EnterKeyEntry(Strings.Get("key.invalid"));
-                        break;
+                case P.ConfigInvalidKey:
+                    _chat.EnterKeyEntry(Strings.Get("key.invalid"));
+                    break;
 
-                    case P.ConfigUnreachable:
-                        _chat.AppendSystem(Strings.Get("key.unreachable"));
-                        _chat.EnterKeyEntry(null);
-                        break;
+                case P.ConfigUnreachable:
+                    _chat.AppendSystem(Strings.Get("key.unreachable"));
+                    _chat.EnterKeyEntry(null);
+                    break;
 
-                    case P.ConfigReady:
-                        _chat.ExitKeyEntry();
-                        _chat.SetStatus(Strings.Get("status.ready"), null);
-                        break;
-                }
-            });
+                case P.ConfigReady:
+                    _chat.ExitKeyEntry();
+                    _chat.SetStatus(Strings.Get("status.ready"), null);
+                    break;
+            }
         }
 
         /// <summary>

@@ -26,11 +26,16 @@ namespace IcarusII.UI
         public Image.Type PanelType = Image.Type.Simple;
         public bool PanelFillCenter = true;
 
-        // ---- 标题栏
-        public bool HasHeader;
-        public Sprite HeaderSprite;
-        public Color HeaderColor;
-        public Image.Type HeaderType = Image.Type.Simple;
+        // ---- 装饰边框（叠在底衬之上的那层，机体窗为 window-border-1）
+        public bool HasFrame;
+        public Sprite FrameSprite;
+        public Color FrameColor;
+        public Image.Type FrameType = Image.Type.Sliced;
+
+        // ---- 玻璃高光层（可选，很淡）
+        public bool HasGlass;
+        public Sprite GlassSprite;
+        public Color GlassColor;
 
         // ---- 输入区背景
         public bool HasInput;
@@ -95,74 +100,73 @@ namespace IcarusII.UI
                     return false;
                 }
 
-                // ---- 面板外框
+                // ---- 图层挑选
                 //
-                // 只按"面积最大"挑会选中半透明底衬（实测选中 window-trsl-1-sd，
-                // trsl = translucent），外观上就是一块平板，没有切角与边框。
-                // 因此改成"名称关键词打分 + 面积"：优先带 frame/border 的，
-                // 其次是不含 trsl/trans 的 window/panel 族贴图，同时惩罚半透明底衬。
-                Image panel = null;
-                float panelArea = 0f;
-                Rect panelRect = default;
-                int panelScore = int.MinValue;
+                // 实测（机体信息窗）结构是**同尺寸多图层叠加**：
+                //   shadow          window-trsl-1-sd 760x502 a=0.31  ← 投影
+                //   panel-bg        window-trsl-1    760x502 a=1.00  ← 底衬（不透明）
+                //   panel-bg/border window-border-1  760x502 a=0.29  ← 装饰边框
+                //   panel-bg/glass  window-glass-1   760x502 a=0.15  ← 玻璃高光
+                //
+                // 正确做法是「先取窗口级尺寸的图层，再按名字分类」。
+                // 上一版按名字打分抢面积，结果"名字含 frame"的小图 GUIFrame_thin
+                // 拿到 150 分，把真正的 760x502 外框挤掉了。
+                float maxArea = 0f;
                 foreach (var img in images)
                 {
-                    if (img == null || img.sprite == null) continue;
-                    var rt = img.rectTransform;
-                    if (rt == null) continue;
-                    var r = rt.rect;
-                    float area = Mathf.Abs(r.width * r.height);
-                    int score = ScoreFrameSprite(img);
-
-                    // 先比关键词分，同分再比面积
-                    if (score > panelScore || (score == panelScore && area > panelArea))
-                    {
-                        panelScore = score;
-                        panelArea = area;
-                        panel = img;
-                        panelRect = r;
-                    }
+                    if (img == null || img.sprite == null || img.rectTransform == null) continue;
+                    var rr = img.rectTransform.rect;
+                    maxArea = Mathf.Max(maxArea, Mathf.Abs(rr.width * rr.height));
                 }
 
-                if (panel != null)
+                var layers = new List<Image>();
+                foreach (var img in images)
+                {
+                    if (img == null || img.sprite == null || img.rectTransform == null) continue;
+                    var rr = img.rectTransform.rect;
+                    if (Mathf.Abs(rr.width * rr.height) < maxArea * 0.9f) continue;
+                    if (img.type != Image.Type.Sliced) continue;
+                    layers.Add(img);
+                }
+
+                Image bg = null, frame = null, glass = null;
+                foreach (var img in layers)
+                {
+                    var hay = (img.sprite.name + " " + img.gameObject.name).ToLowerInvariant();
+                    bool isShadow = hay.Contains("shadow") || img.sprite.name.EndsWith("-sd");
+                    bool isBorder = img.gameObject.name == "border" || hay.Contains("border");
+                    bool isGlass = hay.Contains("glass");
+
+                    if (isShadow) continue;
+                    if (isBorder) { if (frame == null) frame = img; }
+                    else if (isGlass) { if (glass == null) glass = img; }
+                    else if (bg == null || img.color.a > bg.color.a) bg = img;  // 底衬取最不透明的
+                }
+
+                if (bg == null && layers.Count > 0) bg = layers[0];
+
+                if (bg != null)
                 {
                     HasPanel = true;
-                    PanelSprite = panel.sprite;
-                    PanelColor = panel.color;
-                    PanelType = panel.type;
-                    PanelFillCenter = panel.fillCenter;
+                    PanelSprite = bg.sprite;
+                    PanelColor = bg.color;
+                    PanelType = bg.type;
+                    PanelFillCenter = bg.fillCenter;
                 }
 
-                // ---- 标题栏：位于面板顶部 25% 内、高度不足面板 1/3 的最大 Image
-                if (panel != null && panelRect.height > 0f)
+                if (frame != null)
                 {
-                    float panelTop = panelRect.yMax;
-                    Image header = null;
-                    float headerArea = 0f;
-                    foreach (var img in images)
-                    {
-                        if (img == null || img == panel || img.sprite == null) continue;
-                        var rt = img.rectTransform;
-                        if (rt == null) continue;
-                        var r = rt.rect;
-                        if (Mathf.Abs(r.height) > panelRect.height * 0.34f) continue;
-                        if (r.center.y < panelTop - panelRect.height * 0.25f) continue;
+                    HasFrame = true;
+                    FrameSprite = frame.sprite;
+                    FrameColor = frame.color;
+                    FrameType = frame.type;
+                }
 
-                        float area = Mathf.Abs(r.width * r.height);
-                        if (area > headerArea)
-                        {
-                            headerArea = area;
-                            header = img;
-                        }
-                    }
-
-                    if (header != null)
-                    {
-                        HasHeader = true;
-                        HeaderSprite = header.sprite;
-                        HeaderColor = header.color;
-                        HeaderType = header.type;
-                    }
+                if (glass != null)
+                {
+                    HasGlass = true;
+                    GlassSprite = glass.sprite;
+                    GlassColor = glass.color;
                 }
 
                 // ---- 输入框背景：窗口里若有 InputField，直接用它的 targetGraphic
@@ -225,17 +229,20 @@ namespace IcarusII.UI
                         : new Color(TextMain.r * 0.75f, TextMain.g * 0.75f, TextMain.b * 0.75f, 1f);
                 }
 
-                // 强调色（发言者标签、活动状态）：优先用标题栏颜色的提亮版，
-                // 否则用主文本色提亮——总之不引入与游戏无关的自定义色。
-                if (HasHeader && HeaderColor.a > 0.01f)
-                    Accent = Brighten(HeaderColor, 1.9f);
+                // 强调色（发言者标签、活动状态）：优先从装饰边框的 RGB 派生
+                //（那正是游戏用来画亮边的颜色），否则用主文本色提亮——
+                // 总之不引入与游戏无关的自定义色。
+                if (HasFrame)
+                    Accent = Brighten(new Color(FrameColor.r, FrameColor.g, FrameColor.b, 1f), 1.9f);
                 else
                     Accent = Brighten(TextMain, 1.35f);
 
                 Source = $"{reference.name}(images={images.Length}, texts={(texts?.Length ?? 0)})";
                 log?.LogInfo(
                     $"[样式] 已从 {Source} 捕获：panel={(HasPanel ? PanelSprite?.name ?? "no-sprite" : "无")}" +
-                    $" header={(HasHeader ? HeaderSprite?.name ?? "no-sprite" : "无")}" +
+
+                    $" frame={(HasFrame ? FrameSprite?.name ?? "no-sprite" : "无")}" +
+                    $" glass={(HasGlass ? "有" : "无")}" +
                     $" input={(HasInput ? "有" : "无")} fontSize={BaseFontSize}" +
                     $" panelType={(HasPanel ? PanelType.ToString() : "-")}");
                 return true;
@@ -298,21 +305,45 @@ namespace IcarusII.UI
             image.color = PanelColor;
         }
 
-        public void ApplyHeader(Image image)
+        /// <summary>
+        /// 标题栏。机体信息窗**没有**独立标题栏——「机体信息」四个字直接画在面板上，
+        /// 顶部右侧只有窗口按钮。所以这里固定做成全透明，让底衬与边框透出来，
+        /// 而不是自己加一条实心色带（那是初版的做法，观感不像游戏原生面板）。
+        /// </summary>
+        public static void ApplyHeader(Image image)
         {
             if (image == null) return;
-            if (HasHeader && HeaderSprite != null)
+            image.sprite = null;
+            image.color = new Color(0f, 0f, 0f, 0f);
+        }
+
+        /// <summary>装饰边框层：叠在底衬之上的那张 border 贴图（带切角与亮边）。</summary>
+        public void ApplyFrame(Image image)
+        {
+            if (image == null) return;
+            if (!HasFrame || FrameSprite == null)
             {
-                image.sprite = HeaderSprite;
-                image.type = HeaderType;
+                image.sprite = null;
+                image.color = new Color(0f, 0f, 0f, 0f);
+                return;
             }
-            else if (HasPanel && PanelSprite != null)
+            image.sprite = FrameSprite;
+            image.type = FrameType;
+            image.color = FrameColor;
+        }
+
+        public void ApplyGlass(Image image)
+        {
+            if (image == null) return;
+            if (!HasGlass || GlassSprite == null)
             {
-                // 没有独立标题栏贴图时，用外框贴图 + 稍亮的颜色，观感也接近
-                image.sprite = PanelSprite;
-                image.type = PanelType;
+                image.sprite = null;
+                image.color = new Color(0f, 0f, 0f, 0f);
+                return;
             }
-            image.color = HasHeader ? HeaderColor : Lighten(PanelColor, 1.35f);
+            image.sprite = GlassSprite;
+            image.type = Image.Type.Sliced;
+            image.color = GlassColor;
         }
 
         public void ApplyInput(Image image)
