@@ -19,7 +19,7 @@ namespace DSPAgent.I18n
             ["status.tools"] = "调用工具…",
             ["status.backoff"] = "重连中…",
             ["status.disconnected"] = "未连接",
-            ["input.placeholder"] = "输入问题…（Enter 发送，Esc 关闭）",
+            ["input.placeholder"] = "按 Enter 或点击此处开始输入…（Enter 发送 · R 关闭）",
             ["hint.disconnected"] = "未连接到 sidecar。请检查 BepInEx 日志，或改用 LaunchMode=connectOnly 自行启动。",
             ["hint.conflict"] = "提示：{0}",
             ["system"] = "系统",

@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 using UnityEngine;
 
 namespace DSPAgent.Game
@@ -17,12 +18,23 @@ namespace DSPAgent.Game
         /// <summary>游戏版本。TODO(M1)：改为运行时从游戏读取，避免与游戏更新脱节。</summary>
         public const string GameVersion = "0.10.30.3100";
 
-        /// <summary>游戏是否处于可交互的运行状态。</summary>
+        /// <summary>
+        /// 游戏是否处于可交互的运行状态。
+        ///
+        /// **不要用 `GameMain.notNull`**：实机日志证明它的语义与直觉相反——
+        /// 主菜单为 True、进入游戏后为 False。用它做与运算会把整个 mod 锁死。
+        /// 实测（0.10.30.3100）：
+        ///   主菜单      notNull=True  isRunning=False player=null
+        ///   载入存档中  notNull=False isRunning=False isLoading=True
+        ///   游戏中      notNull=False isRunning=True  player=ok
+        /// 结论：isRunning / isLoading 才是可靠信号。
+        /// </summary>
         public static bool IsRunning
         {
             get
             {
-                return GameMain.notNull && GameMain.isRunning;
+                try { return GameMain.isRunning; }
+                catch { return false; }
             }
         }
 
@@ -30,7 +42,8 @@ namespace DSPAgent.Game
         {
             get
             {
-                return GameMain.notNull && GameMain.isLoading;
+                try { return GameMain.isLoading; }
+                catch { return false; }
             }
         }
 
@@ -53,19 +66,72 @@ namespace DSPAgent.Game
         /// </summary>
         public static bool BuildToolActive()
         {
+            try
+            {
+                var player = GameMain.mainPlayer;
+                if (player == null) return false;
+
+                var controller = player.controller;
+                if (controller == null) return false;
+
+                var actionBuild = controller.actionBuild;
+                if (actionBuild == null) return false;
+
+                // 只用 active。
+                //
+                // 实机日志（0.10.30.3100）显示 activeTool **恒为 null**，
+                // 因此原先 "tool != null && !(tool is BuildTool_None)" 的写法
+                // 在建造模式下也会返回 false —— 避让逻辑等于没生效。
+                // 而 active 的取值恰好正确：
+                //   漫游中   ab.active=False activeTool=null
+                //   建造模式 ab.active=True  activeTool=null
+                return actionBuild.active;
+            }
+            catch
+            {
+                // 异常时保守返回 true：宁可让 R 留给游戏，也不要误吞建造按键
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 把热键判定的**所有输入**拼成一行，用于诊断"按 R 没反应"。
+        /// 只有真的打印出来才知道是哪个条件挡住了——这些字段的语义
+        /// （尤其 actionBuild.active / activeTool）无法从元数据推断。
+        /// </summary>
+        public static string DescribeHotkeyGate()
+        {
+            var sb = new StringBuilder(160);
+            sb.Append("notNull=").Append(GameMain.notNull);
+            sb.Append(" isRunning=").Append(SafeBool(() => GameMain.isRunning));
+            sb.Append(" isLoading=").Append(SafeBool(() => GameMain.isLoading));
+            sb.Append(" vf.inputing=").Append(SafeBool(() => VFInput.inputing));
+            sb.Append(" vf.fullscreenGUI=").Append(SafeBool(() => VFInput.inFullscreenGUI));
+            sb.Append(" vf.onGUI=").Append(SafeBool(() => VFInput.onGUI));
+
             var player = GameMain.mainPlayer;
-            if (player == null) return false;
+            if (player == null) { sb.Append(" player=null"); return sb.ToString(); }
+            sb.Append(" player=ok");
 
             var controller = player.controller;
-            if (controller == null) return false;
+            if (controller == null) { sb.Append(" controller=null"); return sb.ToString(); }
+            sb.Append(" controller=ok");
 
             var actionBuild = controller.actionBuild;
-            if (actionBuild == null || !actionBuild.active) return false;
+            if (actionBuild == null) { sb.Append(" actionBuild=null"); return sb.ToString(); }
 
+            sb.Append(" ab.active=").Append(actionBuild.active);
             var tool = actionBuild.activeTool;
-            if (tool == null) return false;
+            if (tool == null) sb.Append(" activeTool=null");
+            else sb.Append(" activeTool=").Append(tool.GetType().Name).Append('"').Append(tool.name ?? "-").Append('"');
+            sb.Append(" isNoneTool=").Append(tool is BuildTool_None);
+            sb.Append(" => BuildToolActive=").Append(BuildToolActive());
+            return sb.ToString();
+        }
 
-            return !(tool is BuildTool_None);
+        private static bool SafeBool(Func<bool> get)
+        {
+            try { return get(); } catch { return false; }
         }
 
         /// <summary>UI 根节点；未进入游戏时为 null。</summary>

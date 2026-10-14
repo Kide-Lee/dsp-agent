@@ -26,33 +26,59 @@ namespace DSPAgent.Input
 
         public KeyCode Key { get; }
 
-        /// <summary>返回 true 表示本帧应当打开窗口。</summary>
-        public bool ShouldToggle(bool windowOpen)
-        {
-            // 1) 必须在游戏内且未在加载
-            if (!GameRefs.IsRunning || GameRefs.IsLoading) return false;
+        /// <summary>本帧热键是否被按下（无论最终是否放行）。</summary>
+        public bool KeyPressedThisFrame { get; private set; }
 
-            // 2) 必须真的有按键（用 Unity 的，带窗口焦点语义；
+        /// <summary>本帧是否按下了 Esc。</summary>
+        public bool EscapePressedThisFrame => UnityEngine.Input.GetKeyDown(KeyCode.Escape);
+
+        /// <summary>返回 true 表示本帧应当切换窗口开关状态。</summary>
+        public bool ShouldToggle(bool windowOpen, bool inputFocused) => ShouldToggle(windowOpen, inputFocused, out _);
+
+        /// <summary>
+        /// 带原因的版本。reason 只在**键确实按下、但被拒绝**时才有值。
+        ///
+        /// 语义：R 是**开关**键（开也用它，关也用它）。
+        ///
+        /// 与打字冲突的处理：当聊天输入框获得焦点时，R 必须当作字母「r」输入，
+        /// 否则中文拼音里 人/日/让/热 这类以 r 开头的词根本打不出来
+        /// （按 R 关窗 → 再打开 → 再按又关，死循环）。
+        /// 因此：**输入框聚焦时不响应开关**；此时用 Esc 关闭。
+        /// </summary>
+        public bool ShouldToggle(bool windowOpen, bool inputFocused, out string reason)
+        {
+            reason = null;
+            KeyPressedThisFrame = false;
+
+            // 1) 必须真的有按键（用 Unity 的，带窗口焦点语义；
             //    不用 WinInput.GetAsyncKeyState —— 那在游戏失焦时也会返回 true）
             if (!UnityEngine.Input.GetKeyDown(Key)) return false;
+            KeyPressedThisFrame = true;
 
-            // 3) 窗口已打开时不响应开关键（避免误触；此时只有 Esc 能关）
-            if (windowOpen) return false;
+            // 2) 必须在游戏内
+            if (!GameRefs.IsRunning) { reason = "游戏未处于运行状态"; return false; }
 
-            // 4) 玩家正在输入文本 / 处于全屏界面时不抢键
-            if (GameRefs.TextInputActive || GameRefs.FullscreenGui) return false;
+            // 3) 焦点在聊天输入框上 → 让位给文字输入
+            if (inputFocused) { reason = "聊天输入框已聚焦（R 作为文字输入）"; return false; }
 
-            // 5) 建造类工具激活时把键让给游戏 —— R 的真身是"旋转建筑"
-            if (_config.HotkeyRequireNoBuildTool && GameRefs.BuildToolActive()) return false;
+            // 4) 窗口已打开 → 关闭。
+            //    必须在"输入/全屏/建造"这些门控之前返回：窗口开着时
+            //    VFInput.inputing 正是我们自己置为 true 的，否则永远关不掉。
+            if (windowOpen) return true;
+
+            // 以下只作用于"打开"路径
+            if (GameRefs.IsLoading) { reason = "游戏正在加载"; return false; }
+            if (GameRefs.TextInputActive) { reason = "游戏文本输入中"; return false; }
+            if (GameRefs.FullscreenGui) { reason = "处于全屏界面"; return false; }
+
+            // 建造类工具激活时把键让给游戏 —— R 的真身是"旋转建筑"
+            if (_config.HotkeyRequireNoBuildTool && GameRefs.BuildToolActive())
+            {
+                reason = "建造工具激活（让位给旋转建筑）";
+                return false;
+            }
 
             return true;
-        }
-
-        /// <summary>返回 true 表示本帧应当关闭窗口。</summary>
-        public bool ShouldClose(bool windowOpen)
-        {
-            if (!windowOpen) return false;
-            return UnityEngine.Input.GetKeyDown(KeyCode.Escape);
         }
 
         /// <summary>

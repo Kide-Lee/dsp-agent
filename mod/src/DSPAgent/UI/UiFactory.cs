@@ -9,11 +9,12 @@ namespace DSPAgent.UI
     /// </summary>
     internal static class UiFactory
     {
+        /// <summary>创建带 RectTransform 的节点；parent 为 null 时作为顶层对象（根 Canvas 必须这样建）。</summary>
         public static RectTransform Node(string name, Transform parent)
         {
             var go = new GameObject(name, typeof(RectTransform));
             var rt = (RectTransform)go.transform;
-            rt.SetParent(parent, false);
+            if (parent != null) rt.SetParent(parent, false);
             rt.localScale = Vector3.one;
             return rt;
         }

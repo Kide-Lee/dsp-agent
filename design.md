@@ -428,15 +428,19 @@ DSP 中 **`R` 是"旋转待放置建筑"**，因此这不是"也许冲突"，而
 
 #### 6.2.2 避让设计：以"建造工具是否激活"为主门控
 
-已核实的判定路径：
+判定路径（**已由实机日志修正**，见附录 A.3）：
 
 ```csharp
-// Player → PlayerController.actionBuild : PlayerAction_Build → active / activeTool : BuildTool
+// Player → PlayerController.actionBuild : PlayerAction_Build → active : bool
 var build = GameMain.mainPlayer?.controller?.actionBuild;
-bool buildToolActive =
-    build != null && build.active &&
-    build.activeTool != null && !(build.activeTool is BuildTool_None);
+bool buildToolActive = build != null && build.active;
 ```
+
+> ⚠️ **不要用 `activeTool` 判定。** 设计初稿写成
+> `activeTool != null && !(activeTool is BuildTool_None)`，
+> 但实机日志显示 `activeTool` **在漫游与建造模式下恒为 `null`**，
+> 该写法在建造模式中同样返回 false —— 避让逻辑等于完全没生效。
+> `active` 才是正确信号（漫游 False / 建造 True）。
 
 `R` **只有在 `buildToolActive == false` 时才响应为聊天热键**。这样：
 
@@ -1225,6 +1229,24 @@ dsp-agent/
 - CLI PE 头 `flags = il-only`，`runtime_version = 2.5`，程序集引用 `netstandard 2.1` 与 `UnityEngine.UI`、`InputLegacyModule`、`IMGUIModule`、`UnityWebRequestModule`。
 - 游戏目录仅有 Windows 构建（`DSPGAME.exe` + `UnityPlayer.dll`，无 `.so` / `.x86_64`），且 `compatdata/1366540/pfx` 存在 ⇒ **必须经 Proton 运行，无原生 Linux 版**。游戏目录当前**不含**任何 mod loader 痕迹（无 `winhttp.dll` / `doorstop_config.ini` / `BepInEx/`）。
 - **Proton DLL 覆盖机制证据**：`compatdata/1366540/pfx/user.reg` 中存在 **27 条** `[Software\\Wine\\AppDefaults\\<exe>\\DllOverrides]` 段，由 Steam/Proton 自己写入（例：`Avengers.exe` → `"atiadlxx"="builtin"`）。**尚无 `DSPGAME.exe` 条目**。⇒ 可按 exe 追加 `"winhttp"="native,builtin"` 来替代 `WINEDLLOVERRIDES` 启动项（§2.3.2）。
+
+**A.3 运行时实测修正（来自真实游戏的 BepInEx 日志）**
+
+以下事实**无法从元数据推断**，是与游戏实机对照后修正的设计假设。全部来自
+DSP `0.10.30.3100` + Proton 的 `LogOutput.log`。
+
+| 观测 | 值 | 对设计的影响 |
+| --- | --- | --- |
+| `GameMain.notNull` | 主菜单 `True` / **游戏中 `False`** | **语义与直觉相反**。初稿写 `notNull && isRunning` 导致游戏中恒为 false，热键被永久拒绝。改用 `GameMain.isRunning` |
+| `GameMain.isRunning` | 主菜单 `False` / 载入中 `False` / 游戏中 `True` | 可靠的"是否在游戏中"信号 |
+| `GameMain.isLoading` | 载入存档时 `True` | 可靠 |
+| `PlayerAction_Build.active` | 漫游 `False` / 建造模式 `True` | **正确的建造模式判定** |
+| `PlayerAction_Build.activeTool` | **恒为 `null`** | 不能用它判定；初稿的避让逻辑因此失效 |
+| `VFInput.inputing` | 全程 `False`（未开输入框时） | 可安全用于"是否在输入文本"判定 |
+| `VFInput.inFullscreenGUI` | 仅全屏界面为 `True` | 可安全用于全屏界面判定 |
+| `UIRoot.overlayCanvasTop` 及其父级 `Always on Top` | 游戏中 **`activeInHierarchy = False`** | **不能把窗口挂在这里**——挂进去 SetActive(true) 也不渲染。改为自建根 Canvas（ScreenSpaceOverlay，sortingOrder 30000） |
+| `UIRoot.instance` | 主菜单与游戏中均可用 | 可直接作为自建 Canvas 的父级 |
+| `UIRoot.overlayCanvas` | 存在 `CanvasScaler` | 复制其缩放设置，保证界面尺寸与游戏一致 |
 
 **harness（本机已装，已读文档核实）**
 

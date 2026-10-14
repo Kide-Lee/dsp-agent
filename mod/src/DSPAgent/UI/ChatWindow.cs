@@ -19,21 +19,40 @@ namespace DSPAgent.UI
     ///    ContentSizeFitter 能自动撑高。消息卡片化留到 M1 的工具卡片需求出现时再做。
     ///  - 渲染节流到每帧最多一次：流式回复可能一帧收到多个 delta。
     /// </summary>
+    /// <summary>点击窗口任意位置即聚焦输入框。</summary>
+    internal sealed class ClickToFocus : MonoBehaviour, UnityEngine.EventSystems.IPointerClickHandler
+    {
+        public ChatWindow Target;
+
+        public void OnPointerClick(UnityEngine.EventSystems.PointerEventData eventData)
+        {
+            Target?.FocusInput();
+        }
+    }
+
     internal sealed class ChatWindow
     {
         private const int MaxTranscriptChars = 120000;
 
-        // 与游戏界面风格接近的配色
-        private static readonly Color PanelBg = new Color(0.055f, 0.082f, 0.125f, 0.97f);
-        private static readonly Color HeaderBg = new Color(0.098f, 0.157f, 0.235f, 1f);
-        private static readonly Color InputBg = new Color(0.098f, 0.129f, 0.180f, 1f);
-        private static readonly Color TextMain = new Color(0.878f, 0.918f, 0.961f, 1f);
-        private static readonly Color TextDim = new Color(0.596f, 0.678f, 0.757f, 1f);
-        private static readonly Color Accent = new Color(0.353f, 0.749f, 1f, 1f);
+        // 兜底配色（捕获不到游戏样式时使用）
+        private static readonly Color DefaultPanelBg = new Color(0.055f, 0.082f, 0.125f, 0.97f);
+        private static readonly Color DefaultHeaderBg = new Color(0.098f, 0.157f, 0.235f, 1f);
+        private static readonly Color DefaultInputBg = new Color(0.098f, 0.129f, 0.180f, 1f);
+        private static readonly Color DefaultTextMain = new Color(0.878f, 0.918f, 0.961f, 1f);
+        private static readonly Color DefaultTextDim = new Color(0.596f, 0.678f, 0.757f, 1f);
+        private static readonly Color DefaultAccent = new Color(0.353f, 0.749f, 1f, 1f);
+
+        // 运行时实际使用的文本颜色（ApplyStyle 时按游戏窗口调整）
+        private Color _textMain = DefaultTextMain;
+        private Color _textDim = DefaultTextDim;
+        private Color _accent = DefaultAccent;
 
         private GameObject _root;
         private RectTransform _panel;
         private RectTransform _content;
+        private Image _panelImage;
+        private Image _headerImage;
+        private Image _inputImage;
         private Text _statusText;
         private Text _transcript;
         private ScrollRect _scroll;
@@ -50,9 +69,67 @@ namespace DSPAgent.UI
 
         /// <summary>打开窗口前 VFInput.inputing 的原值，关闭时还原。</summary>
         private bool _savedInputing;
+        private bool _autoFocusInput;
+        private bool _wantInputFocus;
 
         /// <summary>窗口打开期间需要持续压制游戏输入（见 Plugin.LateUpdate）。</summary>
         public bool WantsInputSuppressed => IsOpen;
+
+        /// <summary>聊天输入框是否获得焦点。R 开关与 Esc 的行为都依赖它。</summary>
+        public bool InputFocused => _input != null && _input.isFocused;
+
+        /// <summary>
+        /// 聚焦输入框（按 Enter 或点击窗口时调用）。
+        ///
+        /// 记录"期望聚焦"而不是只调一次 API：游戏本身的 UI 逻辑可能会
+        /// 清空 EventSystem 的选中对象，导致焦点被抢走。Tick 会据此重申。
+        /// </summary>
+        public void FocusInput()
+        {
+            if (_input == null) return;
+            _wantInputFocus = true;
+            ApplyFocus();
+        }
+
+        /// <summary>取消输入框焦点，把键盘交还窗口（之后 R 即可关窗）。</summary>
+        public void BlurInput()
+        {
+            if (_input == null) return;
+            _wantInputFocus = false;
+            _input.DeactivateInputField();
+            var es = UnityEngine.EventSystems.EventSystem.current;
+            if (es != null && es.currentSelectedGameObject == _input.gameObject)
+                es.SetSelectedGameObject(null);
+        }
+
+        private void ApplyFocus()
+        {
+            if (_input == null) return;
+            try
+            {
+                var es = UnityEngine.EventSystems.EventSystem.current;
+                if (es != null && es.currentSelectedGameObject != _input.gameObject)
+                    es.SetSelectedGameObject(_input.gameObject);
+                _input.ActivateInputField();
+                _input.Select();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"聚焦输入框失败：{ex.Message}");
+            }
+        }
+
+        /// <summary>诊断用：EventSystem 与选中对象状态。</summary>
+        public string DescribeFocus()
+        {
+            var es = UnityEngine.EventSystems.EventSystem.current;
+            var selected = es != null && es.currentSelectedGameObject != null
+                ? es.currentSelectedGameObject.name
+                : "null";
+            return $"want={_wantInputFocus} isFocused={(_input != null && _input.isFocused)} " +
+                   $"interactable={(_input != null && _input.interactable)} " +
+                   $"eventSystem={(es != null ? es.name : "NULL")} selected={selected}";
+        }
 
         /// <summary>玩家提交了一条消息。参数为去除首尾空白后的文本。</summary>
         public event Action<string> Submitted;
@@ -82,54 +159,102 @@ namespace DSPAgent.UI
             _current.Length = 0;
             _dirty = false;
             IsOpen = false;
+            _wantInputFocus = false;
         }
 
         // ---------------------------------------------------------------- 构建
 
-        public void Create(Transform parent, Font font, PluginConfig config)
+        public void Create(UIRoot uiRoot, Font font, PluginConfig config)
         {
             if (_root != null) return;
 
             _fontSize = Mathf.RoundToInt(14f * Mathf.Max(0.5f, config.FontScale));
             _maxLines = Mathf.Max(50, config.MaxTranscriptLines);
+            _autoFocusInput = config.AutoFocusInput;
 
             UiFactory.EnsureEventSystem();
 
-            var rootRt = UiFactory.Node("DSPAgentChat", parent);
-            UiFactory.Stretch(rootRt);
+            // 自建 Canvas，而不是挂到游戏的 overlayCanvasTop 下。
+            //
+            // 原因（实机日志证实）：Overlay Canvas - Top 与它的父级 Always on Top
+            // 在游戏中都处于 **inactive** 状态（activeInHierarchy=False），
+            // 挂进去的窗口即使 SetActive(true) 也不会被渲染。
+            // 自己建一个根 Canvas 可以完全不受游戏画布开关状态的影响。
+            // **必须是顶层对象（无父级）**。
+            // 把根 Canvas 挂到 UI Root 下面看着无害，但它的 RectTransform 会被
+            // 父级变换影响，结果面板的锚点解算到错误的位置（实测表现：
+            // panelRect/anchoredPosition 都对，却渲染在屏幕左上角）。
+            // 顶层 + DontDestroyOnLoad 才是标准做法。
+            var rootRt = UiFactory.Node("DSPAgentCanvas", null);
+            UnityEngine.Object.DontDestroyOnLoad(rootRt.gameObject);
+
+            var canvas = rootRt.gameObject.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 30000;      // 盖在游戏所有 UI 之上
+            var scaler = rootRt.gameObject.AddComponent<CanvasScaler>();
+            CopyScalerSettings(scaler, uiRoot);
+            // 必须的：没有 GraphicRaycaster，画布内的 UI 收不到任何指针事件，
+            // 输入框点不进去、聊天记录也无法拖动滚动。
+            rootRt.gameObject.AddComponent<GraphicRaycaster>();
+
             _root = rootRt.gameObject;
 
-            // 面板：右下角固定尺寸
+            // 面板：默认屏幕正中
             _panel = UiFactory.Node("Panel", rootRt);
-            UiFactory.AnchoredTo(_panel,
-                anchor: new Vector2(1f, 0f),
-                pivot: new Vector2(1f, 0f),
-                offset: new Vector2(-24f, 24f),
-                size: new Vector2(config.PanelWidth, config.PanelHeight));
-            UiFactory.AddPanel(_panel, PanelBg);
+            ApplyPanelPlacement(_panel, config);
+            _panelImage = UiFactory.AddPanel(_panel, DefaultPanelBg);
+            // 点击窗口任意处即可开始输入（比"必须先点输入框"更顺手）
+            _panel.gameObject.AddComponent<ClickToFocus>().Target = this;
 
             BuildHeader(font);
             BuildTranscript(font);
             BuildInputBar(font);
 
-            SetStatus(Strings.Get("status.disconnected"), TextDim);
+            SetStatus(Strings.Get("status.disconnected"), _textDim);
             _root.SetActive(false);
+        }
+
+        /// <summary>
+        /// 面板摆放。居中用 (0.5,0.5) 锚点：它只依赖 Canvas 矩形的**中心**，
+        /// 对矩形尺寸/分辨率变化最不敏感。
+        /// </summary>
+        private static void ApplyPanelPlacement(RectTransform panel, PluginConfig config)
+        {
+            var size = new Vector2(config.PanelWidth, config.PanelHeight);
+            var mode = (config.PositionMode ?? "center").Trim();
+
+            if (string.Equals(mode, "bottomRight", StringComparison.OrdinalIgnoreCase))
+            {
+                UiFactory.AnchoredTo(panel,
+                    anchor: new Vector2(1f, 0f),
+                    pivot: new Vector2(1f, 0f),
+                    offset: new Vector2(-24f, 24f),
+                    size: size);
+            }
+            else
+            {
+                UiFactory.AnchoredTo(panel,
+                    anchor: new Vector2(0.5f, 0.5f),
+                    pivot: new Vector2(0.5f, 0.5f),
+                    offset: Vector2.zero,
+                    size: size);
+            }
         }
 
         private void BuildHeader(Font font)
         {
             var header = UiFactory.Node("Header", _panel);
             UiFactory.TopBar(header, 34f);
-            UiFactory.AddPanel(header, HeaderBg);
+            _headerImage = UiFactory.AddPanel(header, DefaultHeaderBg);
 
             var titleRt = UiFactory.Node("Title", header);
             UiFactory.Stretch(titleRt, left: 12f, top: 0f, right: 260f, bottom: 0f);
-            var title = UiFactory.AddLabel(titleRt, font, _fontSize + 2, Accent, TextAnchor.MiddleLeft);
+            var title = UiFactory.AddLabel(titleRt, font, _fontSize + 2, _accent, TextAnchor.MiddleLeft);
             title.text = Strings.Get("title");
 
             var statusRt = UiFactory.Node("Status", header);
             UiFactory.Stretch(statusRt, left: 200f, top: 0f, right: 12f, bottom: 0f);
-            _statusText = UiFactory.AddLabel(statusRt, font, _fontSize - 1, TextDim, TextAnchor.MiddleRight);
+            _statusText = UiFactory.AddLabel(statusRt, font, _fontSize - 1, _textDim, TextAnchor.MiddleRight);
             _statusText.text = string.Empty;
         }
 
@@ -156,7 +281,7 @@ namespace DSPAgent.UI
             _content.anchoredPosition = new Vector2(0f, -4f);
             _content.sizeDelta = new Vector2(-20f, 100f);
 
-            _transcript = UiFactory.AddLabel(_content, font, _fontSize, TextMain, TextAnchor.UpperLeft);
+            _transcript = UiFactory.AddLabel(_content, font, _fontSize, _textMain, TextAnchor.UpperLeft);
             _transcript.horizontalOverflow = HorizontalWrapMode.Wrap;
             _transcript.verticalOverflow = VerticalWrapMode.Overflow;
 
@@ -175,17 +300,18 @@ namespace DSPAgent.UI
 
             var inputRt = UiFactory.Node("Input", bar);
             UiFactory.Stretch(inputRt, left: 8f, top: 3f, right: 8f, bottom: 5f);
-            var bg = UiFactory.AddPanel(inputRt, InputBg);
+            _inputImage = UiFactory.AddPanel(inputRt, DefaultInputBg);
+            var bg = _inputImage;
 
             var textRt = UiFactory.Node("Text", inputRt);
             UiFactory.Stretch(textRt, left: 8f, top: 0f, right: 8f, bottom: 0f);
-            var text = UiFactory.AddLabel(textRt, font, _fontSize, TextMain, TextAnchor.MiddleLeft);
+            var text = UiFactory.AddLabel(textRt, font, _fontSize, _textMain, TextAnchor.MiddleLeft);
             text.supportRichText = false;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
 
             var placeholderRt = UiFactory.Node("Placeholder", inputRt);
             UiFactory.Stretch(placeholderRt, left: 8f, top: 0f, right: 8f, bottom: 0f);
-            var placeholder = UiFactory.AddLabel(placeholderRt, font, _fontSize, TextDim, TextAnchor.MiddleLeft);
+            var placeholder = UiFactory.AddLabel(placeholderRt, font, _fontSize, _textDim, TextAnchor.MiddleLeft);
             placeholder.supportRichText = false;
             placeholder.horizontalOverflow = HorizontalWrapMode.Overflow;
             placeholder.text = Strings.Get("input.placeholder");
@@ -199,6 +325,42 @@ namespace DSPAgent.UI
             _input.onEndEdit.AddListener(OnInputEndEdit);
         }
 
+        /// <summary>
+        /// 套用从游戏窗口捕获到的样式（贴图/颜色/字号）。
+        /// 可在捕获成功后随时调用（游戏窗口在主菜单可能还没实例化）。
+        /// </summary>
+        public void ApplyStyle(UiStyle style)
+        {
+            if (style == null || _root == null) return;
+
+            if (style.HasText)
+            {
+                _textMain = style.TextMain;
+                _textDim = style.TextDim;
+                _accent = style.Accent;
+            }
+
+            if (_panelImage != null) style.ApplyPanel(_panelImage);
+            if (_headerImage != null) style.ApplyHeader(_headerImage);
+            if (_inputImage != null) style.ApplyInput(_inputImage);
+
+            // 文本控件也要跟着换颜色（它们是创建时就定色的）
+            if (_transcript != null) _transcript.color = _textMain;
+            if (_statusText != null) _statusText.color = _textDim;
+            foreach (var t in _root.GetComponentsInChildren<Text>(true))
+            {
+                if (t == null || t == _transcript || t == _statusText) continue;
+                // 输入框的占位文字用暗色，其余用主色
+                t.color = t.gameObject.name == "Placeholder" ? _textDim : _textMain;
+            }
+
+            if (style.Font != null)
+            {
+                foreach (var t in _root.GetComponentsInChildren<Text>(true))
+                    if (t != null) t.font = style.Font;
+            }
+        }
+
         // ---------------------------------------------------------------- 开关
 
         public void SetOpen(bool open)
@@ -207,17 +369,16 @@ namespace DSPAgent.UI
 
             IsOpen = open;
             _root.SetActive(open);
+            if (!open) _wantInputFocus = false;
 
             if (open)
             {
                 // 让游戏停止响应移动/建造输入。记录原值以便还原。
                 _savedInputing = Game.GameRefs.SetTextInputActive(true);
                 UiFactory.EnsureEventSystem();
-                if (_input != null)
-                {
-                    _input.ActivateInputField();
-                    _input.Select();
-                }
+                // 默认不自动聚焦：这样打开后 R 仍可立即关窗。
+                // 需要"开窗即打字"的玩家可在配置里打开 AutoFocusInput。
+                if (_autoFocusInput) FocusInput();
                 ScrollToBottom();
             }
             else
@@ -232,13 +393,109 @@ namespace DSPAgent.UI
             }
         }
 
+        /// <summary>
+        /// 复制游戏主画布的缩放设置，保证我们的界面尺寸与游戏 UI 一致
+        /// （不同分辨率/UI 缩放下不会出现过大或过小的面板）。
+        /// </summary>
+        private static void CopyScalerSettings(CanvasScaler target, UIRoot uiRoot)
+        {
+            try
+            {
+                CanvasScaler source = null;
+                if (uiRoot.overlayCanvas != null) source = uiRoot.overlayCanvas.GetComponent<CanvasScaler>();
+                if (source == null && uiRoot.overlayCanvasTop != null) source = uiRoot.overlayCanvasTop.GetComponent<CanvasScaler>();
+                if (source == null)
+                {
+                    Plugin.Log.LogWarning("未找到游戏的 CanvasScaler，界面缩放将使用 Unity 默认值。");
+                    return;
+                }
+
+                target.uiScaleMode = source.uiScaleMode;
+                target.referenceResolution = source.referenceResolution;
+                target.screenMatchMode = source.screenMatchMode;
+                target.matchWidthOrHeight = source.matchWidthOrHeight;
+                target.referencePixelsPerUnit = source.referencePixelsPerUnit;
+                _scalerSource = source.gameObject.name;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"复制 CanvasScaler 失败：{ex.Message}");
+            }
+        }
+
+        private static string _scalerSource = "default";
+
+        /// <summary>缩放设置来源，供日志确认。</summary>
+        public static string ScalerSource => _scalerSource;
+
+        /// <summary>
+        /// 把窗口的可见性相关状态拼成一行：任何一个祖先 inactive、
+        /// 画布未启用、或面板尺寸为 0，都会导致"创建了但看不见"。
+        /// </summary>
+        public string DescribeVisibility()
+        {
+            if (_root == null) return "root=null";
+
+            var sb = new StringBuilder(200);
+            sb.Append("activeSelf=").Append(_root.activeSelf);
+            sb.Append(" activeInHierarchy=").Append(_root.activeInHierarchy);
+
+            var t = _root.transform.parent;
+            int depth = 0;
+            while (t != null && depth < 6)
+            {
+                sb.Append(" < ").Append(t.name).Append("[active=").Append(t.gameObject.activeInHierarchy);
+                var canvas = t.GetComponent<Canvas>();
+                if (canvas != null)
+                {
+                    sb.Append(" canvas.enabled=").Append(canvas.enabled)
+                      .Append(" order=").Append(canvas.sortingOrder)
+                      .Append(" scale=").Append(canvas.scaleFactor.ToString("0.##"));
+                }
+                var group = t.GetComponent<CanvasGroup>();
+                if (group != null)
+                    sb.Append(" group.alpha=").Append(group.alpha.ToString("0.##"))
+                      .Append(" interactable=").Append(group.interactable);
+                sb.Append(']');
+                t = t.parent;
+                depth++;
+            }
+
+            var rootCanvas = _root.GetComponent<Canvas>();
+            if (rootCanvas != null)
+            {
+                sb.Append(" canvasPixelRect=").Append(rootCanvas.pixelRect.width.ToString("0")).Append('x').Append(rootCanvas.pixelRect.height.ToString("0"));
+                sb.Append(" canvasScaleFactor=").Append(rootCanvas.scaleFactor.ToString("0.##"));
+                sb.Append(" canvasSorting=").Append(rootCanvas.sortingOrder);
+            }
+            var canvasRt = _root.GetComponent<RectTransform>();
+            if (canvasRt != null)
+            {
+                sb.Append(" canvasRect=").Append(canvasRt.rect.width.ToString("0")).Append('x').Append(canvasRt.rect.height.ToString("0"));
+                sb.Append(" canvasPivot=").Append(canvasRt.pivot);
+            }
+            sb.Append(" screen=").Append(Screen.width).Append('x').Append(Screen.height);
+
+            if (_panel != null)
+            {
+                sb.Append(" panelRect=").Append(_panel.rect.width.ToString("0")).Append('x').Append(_panel.rect.height.ToString("0"));
+                sb.Append(" panelAnchored=").Append(_panel.anchoredPosition);
+                // 世界坐标四角：直接反映"到底画在哪里"，是判断位置对错的最终依据
+                var corners = new Vector3[4];
+                _panel.GetWorldCorners(corners);
+                sb.Append(" panelWorldBL=").Append(corners[0].x.ToString("0")).Append(',').Append(corners[0].y.ToString("0"));
+                sb.Append(" TR=").Append(corners[2].x.ToString("0")).Append(',').Append(corners[2].y.ToString("0"));
+            }
+            return sb.ToString();
+        }
+
         // ---------------------------------------------------------------- 内容
 
         public void SetStatus(string text, Color? color = null)
         {
             if (_statusText == null) return;
             _statusText.text = text ?? string.Empty;
-            _statusText.color = color ?? TextDim;
+            _statusText.color = color ?? _textDim;
         }
 
         /// <summary>追加一条完整消息行。</summary>
@@ -248,7 +505,7 @@ namespace DSPAgent.UI
 
             var prefix = string.IsNullOrEmpty(speaker)
                 ? string.Empty
-                : $"<color=#{ColorUtility.ToHtmlStringRGB(Accent)}>{Escape(speaker)}</color>  ";
+                : $"<color=#{ColorUtility.ToHtmlStringRGB(_accent)}>{Escape(speaker)}</color>  ";
 
             PushLine(prefix + Escape(text));
         }
@@ -257,7 +514,7 @@ namespace DSPAgent.UI
         public void AppendSystem(string text)
         {
             if (text == null) return;
-            PushLine($"<color=#{ColorUtility.ToHtmlStringRGB(TextDim)}>{Escape(text)}</color>");
+            PushLine($"<color=#{ColorUtility.ToHtmlStringRGB(_textDim)}>{Escape(text)}</color>");
         }
 
         /// <summary>开始一段流式回复；后续 delta 会拼到同一行。</summary>
@@ -265,7 +522,7 @@ namespace DSPAgent.UI
         {
             var prefix = string.IsNullOrEmpty(speaker)
                 ? string.Empty
-                : $"<color=#{ColorUtility.ToHtmlStringRGB(Accent)}>{Escape(speaker)}</color>  ";
+                : $"<color=#{ColorUtility.ToHtmlStringRGB(_accent)}>{Escape(speaker)}</color>  ";
             _current.Length = 0;
             _current.Append(prefix);
             _dirty = true;
@@ -325,6 +582,16 @@ namespace DSPAgent.UI
             }
         }
 
+        /// <summary>插件卸载时清理（Canvas 是顶层对象，不会被场景切换自动带走）。</summary>
+        public void Destroy()
+        {
+            if (_root != null)
+            {
+                try { UnityEngine.Object.Destroy(_root); } catch { /* ignore */ }
+            }
+            Reset();
+        }
+
         // ---------------------------------------------------------------- 每帧
 
         public void Tick()
@@ -334,6 +601,14 @@ namespace DSPAgent.UI
             // VFInput 的状态每帧由游戏输入系统重算，单次赋值可能被覆盖，
             // 因此窗口打开期间每帧重申一次；关闭时由 SetOpen 还原原值。
             if (IsOpen) Game.GameRefs.SetTextInputActive(true);
+
+            // Enter 进入输入状态（此时 R 才让位给打字）
+            if (IsOpen && !InputFocused && UnityEngine.Input.GetKeyDown(KeyCode.Return))
+                FocusInput();
+
+            // 期望聚焦但实际没聚焦 → 重申（游戏可能清空了 EventSystem 的选中对象）
+            if (IsOpen && _wantInputFocus && _input != null && !_input.isFocused)
+                ApplyFocus();
 
             if (_dirty)
             {
@@ -376,7 +651,9 @@ namespace DSPAgent.UI
             if (_input != null)
             {
                 _input.text = string.Empty;
-                _input.ActivateInputField();
+                // 发送后主动失焦：玩家读完回复可直接按 R 关窗，
+                // 想继续追问再按 Enter 即可。
+                _input.DeactivateInputField();
             }
 
             try

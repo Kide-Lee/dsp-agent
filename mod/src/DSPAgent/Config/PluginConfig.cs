@@ -15,6 +15,7 @@ namespace DSPAgent.Config
         public bool HotkeyRequireNoBuildTool { get; private set; }
         public string Language { get; private set; }
         public bool Streaming { get; private set; }
+        public bool DebugLogGate { get; private set; }
 
         // [Sidecar]
         public string LaunchMode { get; private set; }
@@ -31,6 +32,8 @@ namespace DSPAgent.Config
         public float PanelWidth { get; private set; }
         public float PanelHeight { get; private set; }
         public int MaxTranscriptLines { get; private set; }
+        public string PositionMode { get; private set; }
+        public bool AutoFocusInput { get; private set; }
 
         internal PluginConfig(ConfigFile cfg)
         {
@@ -47,6 +50,10 @@ namespace DSPAgent.Config
 
             Streaming = cfg.Bind("General", "Streaming", true,
                 "是否逐字显示流式回复。").Value;
+
+            DebugLogGate = cfg.Bind("General", "DebugLogGate", true,
+                "每秒输出一次热键判定依据与窗口可见性，用于排查「按 R 没反应」。\n" +
+                "排查完成后可关闭。").Value;
 
             LaunchMode = cfg.Bind("Sidecar", "LaunchMode", "spawnExe",
                 "spawnExe = 由本插件拉起随包分发的 dsp-agent-sidecar.exe（默认）\n" +
@@ -69,6 +76,11 @@ namespace DSPAgent.Config
             PanelHeight = cfg.Bind("UI", "Height", 520f, "窗口高度（像素）。").Value;
             MaxTranscriptLines = cfg.Bind("UI", "MaxTranscriptLines", 500,
                 "聊天记录保留的最大行数（超出丢弃最早的行）。").Value;
+            PositionMode = cfg.Bind("UI", "PositionMode", "center",
+                "center = 屏幕正中（默认）；bottomRight = 右下角。").Value;
+            AutoFocusInput = cfg.Bind("UI", "AutoFocusInput", false,
+                "true = 打开窗口时自动聚焦输入框（可直接打字，但此时 R 是文字输入、不能关窗）。\n" +
+                "false = 需按 Enter 或点击窗口后开始输入；R 可随时开关窗口（默认）。").Value;
         }
 
         /// <summary>把配置里的字符串解析成 KeyCode；失败时回退并交由调用方记录。</summary>

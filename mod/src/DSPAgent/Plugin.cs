@@ -54,6 +54,7 @@ namespace DSPAgent
         private string _pendingHint;
         private volatile bool _sidecarStartAttempted;
         private bool _uiCreateFailureLogged;
+        private bool _styleApplied;
 
         // ---------------------------------------------------------------- 生命周期
 
@@ -99,17 +100,42 @@ namespace DSPAgent
             if (!_uiInitialized) return;
 
             _chat.Tick();
+            TryApplyGameStyle();
 
-            if (_hotkey.ShouldClose(_chat.IsOpen))
+            if (_config.DebugLogGate && Time.frameCount % 60 == 0)
             {
-                _chat.SetOpen(false);
+                Log.LogInfo($"[诊断] 热键判定：{GameRefs.DescribeHotkeyGate()}");
+                Log.LogInfo($"[诊断] 窗口：{_chat.DescribeVisibility()}");
+                Log.LogInfo($"[诊断] 焦点：{_chat.DescribeFocus()}");
+            }
+
+            // Esc：输入框聚焦时先取消焦点（把键盘交还窗口），否则关闭窗口
+            if (_chat.IsOpen && _hotkey.EscapePressedThisFrame)
+            {
+                if (_chat.InputFocused) _chat.BlurInput();
+                else _chat.SetOpen(false);
                 return;
             }
 
-            if (_hotkey.ShouldToggle(_chat.IsOpen))
+            // R：开关窗口（输入框聚焦时让位给文字输入）
+            if (_hotkey.ShouldToggle(_chat.IsOpen, _chat.InputFocused, out var blockedBy))
             {
-                _chat.SetOpen(true);
-                OnWindowOpened();
+                var opening = !_chat.IsOpen;
+                _chat.SetOpen(opening);
+                if (opening)
+                {
+                    OnWindowOpened();
+                    Log.LogInfo($"[热键] 已打开窗口。{_chat.DescribeVisibility()}");
+                }
+                else
+                {
+                    Log.LogInfo("[热键] 已关闭窗口。");
+                }
+            }
+            else if (_hotkey.KeyPressedThisFrame)
+            {
+                Log.LogInfo($"[热键] {_hotkey.Key} 已按下但被拒绝：{blockedBy}");
+                Log.LogInfo($"[热键]   判定依据：{GameRefs.DescribeHotkeyGate()}");
             }
         }
 
@@ -125,6 +151,7 @@ namespace DSPAgent
 
         private void OnDestroy()
         {
+            try { _chat?.Destroy(); } catch (Exception ex) { Log?.LogWarning($"清理 UI 失败：{ex.Message}"); }
             try { _client?.Stop(); } catch (Exception ex) { Log?.LogWarning($"停止客户端失败：{ex.Message}"); }
             try { _launcher?.Shutdown(); } catch (Exception ex) { Log?.LogWarning($"回收 sidecar 失败：{ex.Message}"); }
             Instance = null;
@@ -291,8 +318,6 @@ namespace DSPAgent
             var root = GameRefs.UiRoot;
             if (root == null) return;
 
-            var parent = root.overlayCanvasTop != null ? root.overlayCanvasTop.transform : root.transform;
-
             Font font;
             try
             {
@@ -319,10 +344,10 @@ namespace DSPAgent
                 return;
             }
 
-            _chat.Create(parent, font, _config);
+            _chat.Create(root, font, _config);
             _uiInitialized = true;
             _uiCreateFailureLogged = false;
-            Log.LogInfo($"聊天窗口已创建（父级 {parent.name}，字体来源 {FontProvider.Source}）");
+            Log.LogInfo($"聊天窗口已创建（自建 Canvas，缩放来源 {ChatWindow.ScalerSource}，字体来源 {FontProvider.Source}）");
 
             var conflict = _hotkey.RunConflictScan();
             if (!string.IsNullOrEmpty(conflict)) Log.LogInfo($"[热键] {conflict}");
@@ -332,6 +357,26 @@ namespace DSPAgent
                 _chat.AppendSystem(_pendingHint);
                 _pendingHint = null;
             }
+
+            TryApplyGameStyle();
+        }
+
+        /// <summary>
+        /// 套用游戏原生面板样式。机体信息窗等预制体在主菜单可能尚未实例化，
+        /// 因此这里会持续重试直到成功（或确认拿不到）。
+        /// </summary>
+        private void TryApplyGameStyle()
+        {
+            if (_styleApplied || !_uiInitialized) return;
+
+            var root = GameRefs.UiRoot;
+            if (root == null) return;
+
+            if (!UiStyle.TryCapture(root, Log)) return;
+
+            _chat.ApplyStyle(UiStyle.Current);
+            _styleApplied = true;
+            Log.LogInfo("[样式] 已套用游戏原生面板样式。");
         }
 
         private void OnWindowOpened()
