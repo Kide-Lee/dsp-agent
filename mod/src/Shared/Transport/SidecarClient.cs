@@ -406,8 +406,12 @@ namespace IcarusII.Common.Transport
                     // 因此依赖 sessionId 的调用方必须读 SessionId 属性，
                     // 不要在 Received 处理器里缓存字段后再用——会有竞态。
                     _sessionId = payload["sessionId"].AsString();
-                    // ready 会带上配置状态（附录 A.2），据此可省掉一次往返
-                    UpdateConfig(Protocol.ConfigState.Parse(payload["config"]));
+                    // ready 会带上配置状态（附录 A.2），据此可省掉一次往返。
+                    // 该字段是可选的：老服务端不带它，此时必须当作"无意见"，
+                    // 不能默认成 missing_key，否则会误弹密钥引导。
+                    UpdateConfig(payload.Has("config")
+                        ? Protocol.ConfigState.Parse(payload["config"])
+                        : Protocol.ConfigState.AssumeReady());
                     SetState(ConnectionState.Ready, _sessionId);
                     _readySignal?.TrySetResult(true);
                     break;

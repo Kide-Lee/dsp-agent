@@ -144,6 +144,20 @@ namespace IcarusII.Common.Protocol
         public bool NeedsKey =>
             State == Protocol.ConfigMissingKey || State == Protocol.ConfigInvalidKey;
 
+        /// <summary>
+        /// 服务端**没有**上报 config 时的假定（例如 M0 老服务端）。
+        ///
+        /// 附录 A.2 把 ready.payload.config 定义为**可选**字段，
+        /// 因此"字段缺失"必须解释为"服务端没意见"，而不是"需要配置"——
+        /// 否则新 mod 连老服务端会立刻弹出密钥引导，且永远退不出去。
+        /// </summary>
+        public static ConfigState AssumeReady()
+        {
+            var result = new ConfigState();
+            result.State = Protocol.ConfigReady;
+            return result;
+        }
+
         public static ConfigState Parse(JsonValue payload)
         {
             var result = new ConfigState();

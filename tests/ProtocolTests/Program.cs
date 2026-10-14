@@ -285,6 +285,11 @@ namespace IcarusII.Tests
             Eq("空对象的默认 state", "missing_key", empty.State);
             Check("ConfigState.ToString 可读", dflt.ToString().Contains("missing_key"));
 
+            // 向后兼容：老服务端的 ready 不带 config 字段时不能误判为"待配置"
+            var legacy = ConfigState.AssumeReady();
+            Check("缺 config 字段时假定为就绪", legacy.IsReady);
+            Check("缺 config 字段时不要求录入", !legacy.NeedsKey);
+
             // 前向兼容：config.state 未来新增字段不应影响解析
             var futureCfg = ConfigState.Parse(JsonValue.Parse("{\"state\":\"ready\",\"futureField\":42}"));
             Check("config.state 未知字段被容忍", futureCfg.IsReady);
