@@ -5,6 +5,7 @@ using BepInEx;
 using BepInEx.Logging;
 using IcarusII.Common.Json;
 using IcarusII.Common.Protocol;
+using P = IcarusII.Common.Protocol.Protocol;
 using IcarusII.Common.Transport;
 using IcarusII.Config;
 using IcarusII.Core;
@@ -68,6 +69,8 @@ namespace IcarusII
             _hotkey = new HotkeyService(_config);
             _chat = new ChatWindow();
             _chat.Submitted += OnUserSubmitted;
+            _chat.KeySubmitted += OnKeySubmitted;
+            _client.ConfigChanged += OnConfigChanged;
 
             _pluginDir = ResolvePluginDir();
             _launcher = new SidecarLauncher(_config, Log, _pluginDir);
@@ -359,6 +362,52 @@ namespace IcarusII
             }
 
             TryApplyGameStyle();
+        }
+
+        /// <summary>用户提交了 API Key：上报给 sidecar，然后等 config.state 回来。</summary>
+        private void OnKeySubmitted(string apiKey)
+        {
+            if (string.IsNullOrEmpty(apiKey)) return;
+
+            // 只记录长度，绝不记录内容
+            Log.LogInfo($"[配置] 收到 API Key（长度 {apiKey.Length}），上报给 sidecar…");
+
+            var id = _client.SendConfigSet(apiKey: apiKey);
+            if (id == null)
+            {
+                _chat.AppendSystem("连接未就绪，请稍后重试。");
+                return;
+            }
+
+            _chat.SetStatus("校验中…", null);
+        }
+
+        /// <summary>sidecar 上报的配置状态变化：据此切换「首次引导」与正常聊天。</summary>
+        private void OnConfigChanged(ConfigState config)
+        {
+            if (config == null) return;
+            Log.LogInfo($"[配置] 状态：{config}");
+
+            switch (config.State)
+            {
+                case P.ConfigMissingKey:
+                    _chat.EnterKeyEntry(null);
+                    break;
+
+                case P.ConfigInvalidKey:
+                    _chat.EnterKeyEntry(Strings.Get("key.invalid"));
+                    break;
+
+                case P.ConfigUnreachable:
+                    _chat.AppendSystem(Strings.Get("key.unreachable"));
+                    _chat.EnterKeyEntry(null);
+                    break;
+
+                case P.ConfigReady:
+                    _chat.ExitKeyEntry();
+                    _chat.SetStatus(Strings.Get("status.ready"), null);
+                    break;
+            }
         }
 
         /// <summary>

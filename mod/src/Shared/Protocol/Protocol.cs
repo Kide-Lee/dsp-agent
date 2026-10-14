@@ -25,6 +25,26 @@ namespace IcarusII.Common.Protocol
         public const string Message = "message";
         public const string Error = "error";
 
+        // ---- M1 增量（契约见 docs/protocol-v1.md 附录 A）----
+
+        /// <summary>mod → sidecar：设置 provider/model/apiKey。</summary>
+        public const string ConfigSet = "config.set";
+
+        /// <summary>sidecar → mod：当前配置状态（绝不含 apiKey）。</summary>
+        public const string ConfigState = "config.state";
+
+        /// <summary>config.state 的取值。</summary>
+        public const string ConfigReady = "ready";
+        public const string ConfigMissingKey = "missing_key";
+        public const string ConfigInvalidKey = "invalid_key";
+        public const string ConfigUnreachable = "unreachable";
+
+        /// <summary>error.payload.code 的 M1 新增取值。</summary>
+        public const string CodeInvalidKey = "invalid_key";
+        public const string CodeUpstreamError = "upstream_error";
+        public const string CodeRateLimited = "rate_limited";
+        public const string CodeConfigRequired = "config_required";
+
         // status.state 取值
         public const string StateIdle = "idle";
         public const string StateThinking = "thinking";
@@ -74,6 +94,20 @@ namespace IcarusII.Common.Protocol
             return p;
         }
 
+        /// <summary>
+        /// 构造 config.set。只把非空字段写进去（sidecar 按"未给出的保持不变"处理）。
+        /// apiKey 是敏感数据：发送后不要留在任何日志或 UI 历史里。
+        /// </summary>
+        public static JsonValue BuildConfigSet(string provider, string model, string apiKey, string baseUrl)
+        {
+            var p = JsonValue.NewObject();
+            if (!string.IsNullOrEmpty(provider)) p.Set("provider", provider);
+            if (!string.IsNullOrEmpty(model)) p.Set("model", model);
+            if (!string.IsNullOrEmpty(apiKey)) p.Set("apiKey", apiKey);
+            if (!string.IsNullOrEmpty(baseUrl)) p.Set("baseUrl", baseUrl);
+            return p;
+        }
+
         public static JsonValue BuildPing(long timestampMs)
         {
             var p = JsonValue.NewObject();
@@ -84,6 +118,49 @@ namespace IcarusII.Common.Protocol
         public static long NowMs()
         {
             return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        }
+    }
+
+    /// <summary>
+    /// sidecar 上报的配置状态。同时用于 ready.payload.config（附录 A.2）
+    /// 与 config.state（附录 A.1）——两者载荷结构一致。
+    /// </summary>
+    public sealed class ConfigState
+    {
+        public string State { get; private set; }
+        public string Provider { get; private set; }
+        public string Model { get; private set; }
+        public string Message { get; private set; }
+
+        public ConfigState()
+        {
+            State = Protocol.ConfigMissingKey;
+        }
+
+        /// <summary>已配置且可用。</summary>
+        public bool IsReady => State == Protocol.ConfigReady;
+
+        /// <summary>需要玩家提供（或重新提供）API Key。</summary>
+        public bool NeedsKey =>
+            State == Protocol.ConfigMissingKey || State == Protocol.ConfigInvalidKey;
+
+        public static ConfigState Parse(JsonValue payload)
+        {
+            var result = new ConfigState();
+            if (payload == null || payload.IsNull) return result;
+
+            var state = payload["state"].AsString(null);
+            if (!string.IsNullOrEmpty(state)) result.State = state;
+
+            result.Provider = payload["provider"].AsString(null);
+            result.Model = payload["model"].AsString(null);
+            result.Message = payload["message"].AsString(null);
+            return result;
+        }
+
+        public override string ToString()
+        {
+            return $"{State} (provider={Provider ?? "-"}, model={Model ?? "-"})";
         }
     }
 }

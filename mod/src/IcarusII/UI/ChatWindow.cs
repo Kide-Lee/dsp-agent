@@ -71,6 +71,7 @@ namespace IcarusII.UI
         private bool _savedInputing;
         private bool _autoFocusInput;
         private bool _wantInputFocus;
+        private bool _keyEntryMode;
 
         /// <summary>窗口打开期间需要持续压制游戏输入（见 Plugin.LateUpdate）。</summary>
         public bool WantsInputSuppressed => IsOpen;
@@ -133,6 +134,15 @@ namespace IcarusII.UI
 
         /// <summary>玩家提交了一条消息。参数为去除首尾空白后的文本。</summary>
         public event Action<string> Submitted;
+
+        /// <summary>
+        /// 处于"录入 API Key"状态时，用户回车提交的是密钥（而不是聊天消息）。
+        /// 密钥**不会**进入聊天记录，也**不会**被写进日志。
+        /// </summary>
+        public event Action<string> KeySubmitted;
+
+        /// <summary>是否正在等待用户录入 API Key。</summary>
+        public bool KeyEntryMode => _keyEntryMode;
 
         public bool IsOpen { get; private set; }
 
@@ -378,7 +388,8 @@ namespace IcarusII.UI
                 UiFactory.EnsureEventSystem();
                 // 默认不自动聚焦：这样打开后 R 仍可立即关窗。
                 // 需要"开窗即打字"的玩家可在配置里打开 AutoFocusInput。
-                if (_autoFocusInput) FocusInput();
+                // 密钥录入态总是自动聚焦：此时玩家唯一要做的事就是填 Key
+                if (_autoFocusInput || _keyEntryMode) FocusInput();
                 ScrollToBottom();
             }
             else
@@ -636,6 +647,51 @@ namespace IcarusII.UI
             _scroll.verticalNormalizedPosition = 0f;
         }
 
+        // ---------------------------------------------------------------- 首次配置
+
+        /// <summary>
+        /// 进入密钥录入态：输入框切为密码模式（不回显明文），并自动聚焦
+        /// ——这是唯一"开窗即聚焦"的场景，因为此时玩家唯一能做的事就是填 Key。
+        /// </summary>
+        public void EnterKeyEntry(string reason)
+        {
+            if (_input == null) return;
+
+            var first = !_keyEntryMode;
+            _keyEntryMode = true;
+
+            _input.contentType = InputField.ContentType.Password;
+            _input.characterLimit = 0;
+            _input.text = string.Empty;
+            if (_input.placeholder is Text ph) ph.text = Strings.Get("key.placeholder");
+
+            if (first)
+            {
+                var message = string.IsNullOrEmpty(reason)
+                    ? Strings.Get("key.prompt")
+                    : reason + "\n" + Strings.Get("key.prompt");
+                AppendSystem(message);
+            }
+
+            SetStatus(Strings.Get("status.needkey"), _textDim);
+            FocusInput();
+        }
+
+        /// <summary>退出密钥录入态，恢复正常聊天输入。</summary>
+        public void ExitKeyEntry()
+        {
+            if (_input == null) return;
+
+            var wasEntry = _keyEntryMode;
+            _keyEntryMode = false;
+
+            _input.contentType = InputField.ContentType.Standard;
+            _input.text = string.Empty;
+            if (_input.placeholder is Text ph) ph.text = Strings.Get("input.placeholder");
+
+            if (wasEntry) AppendSystem(Strings.Get("key.saved"));
+        }
+
         // ---------------------------------------------------------------- 输入
 
         private void OnInputEndEdit(string value)
@@ -658,11 +714,19 @@ namespace IcarusII.UI
 
             try
             {
-                Submitted?.Invoke(text);
+                if (_keyEntryMode)
+                {
+                    // 密钥走独立通道：绝不进聊天记录，绝不写日志
+                    KeySubmitted?.Invoke(text);
+                }
+                else
+                {
+                    Submitted?.Invoke(text);
+                }
             }
             catch (Exception ex)
             {
-                Plugin.Log.LogError($"提交消息失败：{ex}");
+                Plugin.Log.LogError($"提交失败：{ex}");
             }
         }
 

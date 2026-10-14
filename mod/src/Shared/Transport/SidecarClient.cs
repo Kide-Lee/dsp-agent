@@ -70,6 +70,7 @@ namespace IcarusII.Common.Transport
         private long _lastPongMs;
         private volatile ConnectionState _state = ConnectionState.Disconnected;
         private volatile string _sessionId;
+        private volatile Protocol.ConfigState _config = new Protocol.ConfigState();
 
         private TaskCompletionSource<bool> _readySignal;
 
@@ -89,6 +90,15 @@ namespace IcarusII.Common.Transport
 
         public ConnectionState State => _state;
         public string SessionId => _sessionId;
+
+        /// <summary>
+        /// 服务端配置状态（协议附录 A）。握手完成时由 ready.payload.config 初始化，
+        /// 之后每次 config.set 的结果会更新它。**不含 apiKey**。
+        /// </summary>
+        public Protocol.ConfigState Config => _config;
+
+        /// <summary>配置状态发生变化（首次握手、或 config.set 的结果）。</summary>
+        public event Action<Protocol.ConfigState> ConfigChanged;
         public SidecarOptions Options => _options;
 
         // ---------------------------------------------------------------- 生命周期
@@ -140,6 +150,32 @@ namespace IcarusII.Common.Transport
         }
 
         /// <summary>发一条 prompt；返回消息 id，供 UI 关联回复。</summary>
+        /// <summary>
+        /// 上报配置（provider/model/apiKey）。apiKey 只在此方向传输一次；
+        /// 调用方必须确保它不被写进日志或聊天记录。
+        /// </summary>
+        public string SendConfigSet(string provider = null, string model = null,
+            string apiKey = null, string baseUrl = null)
+        {
+            if (_state != ConnectionState.Ready) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ConfigSet,
+                Protocol.Protocol.BuildConfigSet(provider, model, apiKey, baseUrl),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
+        private void UpdateConfig(Protocol.ConfigState next)
+        {
+            if (next == null) return;
+            _config = next;
+            try { ConfigChanged?.Invoke(next); } catch (Exception ex) { EmitLog($"配置回调异常：{ex.Message}"); }
+        }
+
         public string SendPrompt(string text, string conversationId = null)
         {
             var env = Protocol.Protocol.Envelope(
@@ -370,8 +406,14 @@ namespace IcarusII.Common.Transport
                     // 因此依赖 sessionId 的调用方必须读 SessionId 属性，
                     // 不要在 Received 处理器里缓存字段后再用——会有竞态。
                     _sessionId = payload["sessionId"].AsString();
+                    // ready 会带上配置状态（附录 A.2），据此可省掉一次往返
+                    UpdateConfig(Protocol.ConfigState.Parse(payload["config"]));
                     SetState(ConnectionState.Ready, _sessionId);
                     _readySignal?.TrySetResult(true);
+                    break;
+
+                case Protocol.Protocol.ConfigState:
+                    UpdateConfig(Protocol.ConfigState.Parse(payload));
                     break;
 
                 case Protocol.Protocol.Pong:

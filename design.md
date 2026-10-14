@@ -27,7 +27,7 @@
 7. **玩家侧零附加依赖**：sidecar 打成自包含单文件可执行（已在本机跑通全链路：pi + 全部依赖 → 7.1MB 单 JS → 107MB Windows exe / 132MB Linux 二进制，零原生模块）。玩家只需装 BepInEx；sidecar 由插件自动拉起（§7.1.1、§2.2）。
 8. **Windows 优先**：mod 目标平台为 Windows，主要产物是 `icarus-ii-sidecar.exe`；它同时覆盖原生 Windows 与 Proton（PE 可在 Wine 内直接 `Process.Start`）。全部状态路径按 Windows 语义落在 `%APPDATA%\icarus-ii\`（§2.4）。
 
-**已确认的产品决策**（详见 §19）：默认模型 **DeepSeek**（`deepseek-chat`）；凭证完全自持、**不复用**其他工具；热键**只有 `R`**；**不做**截图工具；**不做**写前自动存档；**接受**发布包体积增大、sidecar 全部内置。
+**已确认的产品决策**（详见 §19）：默认模型 **DeepSeek**（`deepseek-v4-flash`，M1 实测修正见 §7.2）；凭证完全自持、**不复用**其他工具；热键**只有 `R`**；**不做**截图工具；**不做**写前自动存档；**接受**发布包体积增大、sidecar 全部内置。
 
 ---
 
@@ -585,7 +585,7 @@ AutoReconnect = true
 
 [Agent]
 AgentDir =               ; 空=使用 %APPDATA%\icarus-ii（sidecar 自持凭证，不复用其他工具）
-Model =                  ; 空=使用 sidecar 默认（deepseek-chat）
+Model =                  ; 空=使用 sidecar 默认（deepseek-v4-flash）
 SystemPromptFile =       ; 空=使用内置
 
 [Actions]
@@ -758,16 +758,21 @@ import {
          "baseUrl": "https://api.deepseek.com/v1",
          "api": "openai-completions",
          "models": [
-           { "id": "deepseek-chat",     "name": "DeepSeek Chat (V3)",     "contextWindow": 65536, "maxTokens": 8192 },
-           { "id": "deepseek-reasoner", "name": "DeepSeek Reasoner (R1)",  "contextWindow": 65536, "maxTokens": 8192 }
+           { "id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash", "contextWindow": 1000000, "maxTokens": 384000 },
+           { "id": "deepseek-v4-pro",   "name": "DeepSeek V4 Pro",   "contextWindow": 1000000, "maxTokens": 384000 }
          ]
      } } }
      ```
      > `contextWindow` / `maxTokens` 为保守占位值。**本机无法访问 `api-docs.deepseek.com`（DNS 被拦）**，未能在设计阶段核实当前实际数值；首次配置自检时应从端点探测或由玩家覆盖，实现时以官方文档为准。
-   - **默认模型：`deepseek-chat`**（非思考模式）。理由见下。
-2. **工具调用能力是硬前提**：本项目全部功能（读状态、查知识、执行操作）都走 function calling，**不支持工具的模型完全不可用**。
-   - `deepseek-chat` 具备工具调用能力，故设为默认。
-   - `deepseek-reasoner` 的**工具调用支持情况在设计阶段未能核实**（历史版本存在"推理模型不支持 function calling"的限制）。因此：把它作为**可选**模型列出，并在选中时由配置面板的连通性自检判定；若自检发现工具调用不可用，明确提示并建议切回 `deepseek-chat`，**不静默降级**。
+   - **默认模型：`deepseek-v4-flash`**。理由：价格档位最低（$0.14/$0.28 每 M token），
+     适合"按 token 扣能量"的设计——单位算力的成本越低，玩家的资源消耗曲线越好调。
+   - **模型清单已实测修正**（M1）：pi `0.82.1` 内置的 DeepSeek 目录为
+     `deepseek-v4-flash` 与 `deepseek-v4-pro`，**不存在** `deepseek-chat` /
+     `deepseek-reasoner`。设计初稿依据的是旧版 DeepSeek API 命名，已作废。
+     两者均为 `reasoning: true`、上下文 1,000,000、最大输出 384,000。
+   - **思考档位**：两者的 `thinkingLevelMap` 只映射 `high` / `max`
+     （`minimal`/`low`/`medium` 均为 `null`，即不支持更低档）。
+     因此 M1 默认**不请求思考**，需要时再显式开启；开启后思考 token 同样计入能量成本。
    - 首次配置面板必须包含一次**最小工具调用自检**（发一个只含 dummy tool 的请求，断言返回结构里出现 tool_call）——这是唯一能可靠判定"该模型+该端点是否真能驱动本项目"的方法。
 2. **工具集**：`noTools: "builtin"` + `customTools: [...]`。内置 `bash`/`read`/`write`/`edit`/`grep`/`find`/`ls` **全部不可用**。
 3. **系统提示**：`DefaultResourceLoader({ systemPromptOverride })`，内容见 §7.6。
@@ -1111,7 +1116,7 @@ icarus-ii/
   "modelsPath": null,                   // 默认 <dataDir>/models.json
   "authPath": null,                     // 默认 <dataDir>/auth.json（自持，不复用他处）
   "provider": "deepseek",               // 默认 Provider（用户确认）
-  "defaultModel": "deepseek-chat",      // 默认模型（需支持工具调用，见 §7.2）
+  "defaultModel": "deepseek-v4-flash",  // 默认模型（需支持工具调用，见 §7.2）
   "sessionsDir": "<dataDir>/sessions",
   "kb": {
     "sqlitePath": "<dataDir>/kb/ldb.sqlite",
@@ -1357,7 +1362,7 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 
 | # | 决策 | 影响位置 |
 | --- | --- | --- |
-| 1 | **默认模型 = DeepSeek**，默认取 `deepseek-chat`（非思考模式，工具调用支持明确） | §7.2、§13 |
+| 1 | **默认模型 = DeepSeek**，默认取 `deepseek-v4-flash`（M1 实测修正：pi 内置目录中不存在 `deepseek-chat`） | §7.2、§13 |
 | 2 | **不复用任何既有登录**；sidecar 自持凭证。**mod 目标平台是 Windows** ⇒ 全部路径按 Windows 语义（`%APPDATA%\icarus-ii\`），Windows 产物为首要构建目标 | §2.4、§2.3.3、§7.2、§7.5 |
 | 3 | **不需要第二个热键**，只有 `R`（+ `Esc` 关闭） | §6.2、§6.7 |
 | 4 | **不做截图工具**（AI 看不到玩家画面） | §8.1、§9.1、§15 |

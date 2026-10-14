@@ -20,6 +20,14 @@ namespace IcarusII.I18n
             ["status.backoff"] = "重连中…",
             ["status.disconnected"] = "未连接",
             ["input.placeholder"] = "按 Enter 或点击此处开始输入…（Enter 发送 · R 关闭）",
+            ["key.placeholder"] = "粘贴 DeepSeek API Key 后回车…",
+            ["key.prompt"] =
+                "尚未配置 API Key。请把 DeepSeek 的 API Key 粘贴到下面并回车。\n" +
+                "输入内容不会显示在屏幕上，也不会写入聊天记录；它只保存在本机 sidecar 的数据目录里。",
+            ["key.saved"] = "API Key 已保存，可以开始提问了。",
+            ["key.invalid"] = "API Key 被服务端拒绝，请检查后重新输入。",
+            ["key.unreachable"] = "无法连通 DeepSeek，请检查网络后重试。",
+            ["status.needkey"] = "待配置",
             ["hint.disconnected"] = "未连接到 sidecar。请检查 BepInEx 日志，或改用 LaunchMode=connectOnly 自行启动。",
             ["hint.conflict"] = "提示：{0}",
             ["system"] = "系统",

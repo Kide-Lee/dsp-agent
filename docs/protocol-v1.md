@@ -182,3 +182,91 @@ mod                                   sidecar
 2. **加消息类型**：同版本内允许（接收方必须忽略未知 `type`）。
 3. **改字段语义 / 删字段**：必须提升 `v`。
 4. sidecar 与 mod 的版本可以独立演进，但都必须声明并校验 `v`。
+
+---
+
+## 附录 A：v1 增量扩展（M1 — 对话与配置）
+
+以下全部为**增量**变更：新类型对旧客户端不可见（按 §2「未知类型必须忽略」），
+`ready` 仅新增可选字段。因此协议版本 `v` **仍为 1**。
+
+### A.1 新增消息类型
+
+#### `config.set`（mod → sidecar）
+
+```json
+{
+  "v": 1, "id": "m-7", "type": "config.set",
+  "payload": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash",
+    "apiKey": "sk-...",
+    "baseUrl": null
+  }
+}
+```
+
+- 所有字段**均可选**，只更新给出的字段；未给出的保持不变。
+- `apiKey` 只在此方向传输一次；sidecar 持久化后**永不回传**。
+
+#### `config.state`（sidecar → mod）
+
+```json
+{
+  "v": 1, "id": "s-9", "type": "config.state", "replyTo": "m-7",
+  "payload": {
+    "state": "ready",
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash",
+    "message": null
+  }
+}
+```
+
+`state` 取值：
+
+| 值 | 含义 | mod 应做 |
+| --- | --- | --- |
+| `ready` | 已配置且可用 | 正常对话 |
+| `missing_key` | 尚无凭证 | 显示首次引导，进入密钥录入态 |
+| `invalid_key` | 凭证被上游拒绝（401/403） | 提示重新录入 |
+| `unreachable` | 无法连通上游 | 提示网络问题，可重试 |
+
+**`config.state` 的任何字段都不得包含 `apiKey`。**
+
+### A.2 `ready` 新增可选字段
+
+```json
+{
+  "v": 1, "id": "s-1", "type": "ready",
+  "payload": {
+    "protocol": 1,
+    "sessionId": "sess_...",
+    "agent": "pi/deepseek-v4-flash",
+    "config": {
+      "state": "missing_key",
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash"
+    }
+  }
+}
+```
+
+旧客户端忽略 `config` 字段，行为不变。mod 可据此在**第一次握手**就知道要不要进引导态，
+无需额外往返。
+
+### A.3 `error` 新增 code
+
+| code | 触发条件 |
+| --- | --- |
+| `invalid_key` | 上游对凭证返回 401 / 403 |
+| `upstream_error` | 其它上游错误；`payload.message` 携带**已脱敏**的可读信息 |
+| `rate_limited` | 上游限流 |
+
+### A.4 安全要求（实现必须满足）
+
+1. `apiKey` **只允许**出现在 `config.set` 的入站载荷中。
+   任何出站消息（含 `error`、`status`、日志）都不得包含它或它的任何子串。
+2. sidecar 写日志时必须脱敏：最多打印前 4 位与总长度，例如 `sk-a…(48)`。
+3. 配置落盘权限：Linux 下 `0600`；Windows 下依赖 `%APPDATA%` 自身的 ACL。
+4. mod 侧输入密钥时输入框应为**密码态**（不回显明文）。

@@ -241,6 +241,53 @@ namespace IcarusII.Tests
             var future = JsonValue.Parse("{\"v\":1,\"id\":\"x\",\"type\":\"new_thing\",\"payload\":{\"k\":1},\"extra\":true}");
             Eq("未知 type 可读取", "new_thing", future["type"].AsString());
             Check("未知顶层字段不报错", future["extra"].AsBool());
+
+            // ---- M1 增量：配置协议（docs/protocol-v1.md 附录 A）----
+            Eq("config.set 类型名", "config.set", Protocol.ConfigSet);
+            Eq("config.state 类型名", "config.state", Protocol.ConfigState);
+            Eq("error code invalid_key", "invalid_key", Protocol.CodeInvalidKey);
+            Eq("error code config_required", "config_required", Protocol.CodeConfigRequired);
+
+            var cfgSet = Protocol.BuildConfigSet("deepseek", "deepseek-v4-flash", "sk-secret", null);
+            Eq("config.set provider", "deepseek", cfgSet["provider"].AsString());
+            Eq("config.set model", "deepseek-v4-flash", cfgSet["model"].AsString());
+            Eq("config.set apiKey", "sk-secret", cfgSet["apiKey"].AsString());
+            Check("config.set 未给出的 baseUrl 不写入", !cfgSet.Has("baseUrl"));
+
+            var keyOnly = Protocol.BuildConfigSet(null, null, "sk-x", null);
+            Eq("只传 key 时字段数", 1, keyOnly.Count);
+            Eq("只传 key 时 key 存在", "sk-x", keyOnly["apiKey"].AsString());
+
+            // ready.payload.config（附录 A.2）
+            var ready = JsonValue.Parse(
+                "{\"protocol\":1,\"sessionId\":\"sess_1\",\"agent\":\"pi/deepseek-v4-flash\"," +
+                "\"config\":{\"state\":\"missing_key\",\"provider\":\"deepseek\",\"model\":\"deepseek-v4-flash\"}}");
+            var rc = ConfigState.Parse(ready["config"]);
+            Eq("ready.config.state", "missing_key", rc.State);
+            Eq("ready.config.provider", "deepseek", rc.Provider);
+            Eq("ready.config.model", "deepseek-v4-flash", rc.Model);
+            Check("missing_key 需要录入", rc.NeedsKey);
+            Check("missing_key 不是就绪", !rc.IsReady);
+
+            // config.state（附录 A.1）
+            var cs = ConfigState.Parse(JsonValue.Parse("{\"state\":\"ready\",\"model\":\"deepseek-v4-pro\"}"));
+            Check("ready 视为就绪", cs.IsReady);
+            Check("ready 不需要录入", !cs.NeedsKey);
+            Eq("config.state.model", "deepseek-v4-pro", cs.Model);
+
+            var bad = ConfigState.Parse(JsonValue.Parse("{\"state\":\"invalid_key\"}"));
+            Check("invalid_key 需要重新录入", bad.NeedsKey);
+
+            // 缺字段 / null 都必须有安全默认值，不能抛
+            var dflt = ConfigState.Parse(null);
+            Eq("null 载荷的默认 state", "missing_key", dflt.State);
+            var empty = ConfigState.Parse(JsonValue.NewObject());
+            Eq("空对象的默认 state", "missing_key", empty.State);
+            Check("ConfigState.ToString 可读", dflt.ToString().Contains("missing_key"));
+
+            // 前向兼容：config.state 未来新增字段不应影响解析
+            var futureCfg = ConfigState.Parse(JsonValue.Parse("{\"state\":\"ready\",\"futureField\":42}"));
+            Check("config.state 未知字段被容忍", futureCfg.IsReady);
         }
 
         // ---------------------------------------------------------------- 小测试框架
