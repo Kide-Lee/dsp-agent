@@ -1,0 +1,28 @@
+# 构建产物
+bin/
+obj/
+dist/
+
+# 构建依赖（由 scripts/fetch-deps.sh 拉取，不入库）
+.deps/
+.probe/
+.scratch/
+
+# sidecar
+sidecar/node_modules/
+sidecar/dist/
+*.tsbuildinfo
+
+# 运行期数据（开发时可能落在仓库内）
+.dev-data/
+runtime.json
+
+# 编辑器
+.vs/
+.vscode/
+.idea/
+*.user
+
+# 系统
+.DS_Store
+Thumbs.db

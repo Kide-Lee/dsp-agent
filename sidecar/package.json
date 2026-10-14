@@ -1,0 +1,31 @@
+{
+  "name": "dsp-agent-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "dsp-agent 本地 sidecar：WebSocket 服务端（协议 v1），M0 为 echo agent",
+  "license": "MIT",
+  "bin": {
+    "dsp-agent-sidecar": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "serve": "node dist/index.js serve",
+    "dev": "tsx src/index.ts serve",
+    "test:negative": "node test/negative.mjs",
+    "test": "npm run typecheck && npm run build && npm run test:negative"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

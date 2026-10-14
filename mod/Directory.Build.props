@@ -1,0 +1,27 @@
+<Project>
+
+  <!--
+    路径配置。可用环境变量或 -p: 覆盖，例如：
+      dotnet build -p:DspGameDir="/path/to/Dyson Sphere Program"
+      dotnet build -p:BepInExDir="/path/to/BepInEx"
+  -->
+  <PropertyGroup>
+    <DspGameDir Condition="'$(DspGameDir)' == '' AND '$(DSP_GAME_DIR)' != ''">$(DSP_GAME_DIR)</DspGameDir>
+    <DspGameDir Condition="'$(DspGameDir)' == ''">/home/kidelee/.local/share/Steam/steamapps/common/Dyson Sphere Program</DspGameDir>
+    <DspManagedDir>$(DspGameDir)/DSPGAME_Data/Managed</DspManagedDir>
+
+    <BepInExDir Condition="'$(BepInExDir)' == '' AND '$(BEPINEX_DIR)' != ''">$(BEPINEX_DIR)</BepInExDir>
+    <BepInExDir Condition="'$(BepInExDir)' == ''">$(MSBuildThisFileDirectory)../.deps/bepinex</BepInExDir>
+
+    <ModVersion Condition="'$(ModVersion)' == ''">0.1.0</ModVersion>
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+
+  <Target Name="ValidateGameRefs" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(DspManagedDir)/Assembly-CSharp.dll')"
+           Text="找不到游戏程序集：$(DspManagedDir)/Assembly-CSharp.dll —— 请用 -p:DspGameDir=... 指定游戏目录。" />
+    <Error Condition="!Exists('$(BepInExDir)/BepInEx/core/BepInEx.dll')"
+           Text="找不到 BepInEx：$(BepInExDir)/BepInEx/core/BepInEx.dll —— 请用 -p:BepInExDir=... 指定，或先运行 scripts/fetch-deps.sh。" />
+  </Target>
+
+</Project>
