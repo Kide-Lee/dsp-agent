@@ -1,25 +1,32 @@
 #!/usr/bin/env node
 /**
- * icarus-ii sidecar CLI（M0）。
+ * icarus-ii sidecar CLI（M1）。
  *
- *   icarus-ii-sidecar serve [--port 8765] [--data-dir PATH] [--token TOKEN] [--host 127.0.0.1]
+ *   icarus-ii-sidecar serve [--agent pi|echo] [--provider deepseek] [--model deepseek-v4-flash]
+ *                           [--port 8765] [--data-dir PATH] [--token TOKEN] [--host 127.0.0.1]
  *   icarus-ii-sidecar --selfcheck      # 发布流水线的空目录冒烟自检：打印版本号后退出
  *   icarus-ii-sidecar --help | --version
  *
- * 约定（M0 验收脚本依赖它）：
+ * 约定（验收脚本依赖它）：
  *   - stdout **只**输出一行机器可读的启动信息：`READY {"port":8765,"token":"…"}`
  *   - 其余日志全部走 stderr（见 log.ts）
  *   - 启动后写 `<data-dir>/runtime.json`，退出时删除
+ *
+ * 密钥来源：`<data-dir>/config.json` 或运行中的 `config.set`（协议附录 A）。
+ * **不从命令行读密钥**，也不会把密钥写进日志或 stdout。
  */
 
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { DEFAULT_PORT, PROTOCOL_VERSION, type AgentInfo } from './protocol';
-import { errorFields, log, setLevel } from './log';
-import { startServer, type RunningServer } from './server';
+import { DEFAULT_PORT, PROTOCOL_VERSION } from './protocol.js';
+import { EchoAgent, PiAgent, type AgentRunner } from './agent.js';
+import { CONFIG_FILE_NAME, ConfigStore, DEFAULT_MODEL, DEFAULT_PROVIDER } from './config.js';
+import { errorFields, log, setLevel } from './log.js';
+import { startServer, type RunningServer } from './server.js';
 
 /**
  * 打包成单文件（esbuild --bundle，见 scripts/build-sidecar.sh）后 `__dirname` 里没有
@@ -27,47 +34,57 @@ import { startServer, type RunningServer } from './server';
  */
 const SERVER_VERSION = '0.1.0';
 
-/** M0 没有 LLM：agent 身份如实报告为 echo。M1 会由 pi runtime 覆盖这两个字段。 */
-const AGENT_INFO: AgentInfo = { provider: 'echo', model: 'm0-echo', available: true };
-
-/** M0 不注册任何工具（协议 §4.2 的 tools 为空数组）。 */
+/** M1 不注册任何工具（协议 §4.2 的 tools 为空数组）。 */
 const REGISTERED_TOOLS: readonly string[] = [];
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_DATA_DIR_NAME = '.icarus-ii-dev';
+
+export type AgentKind = 'echo' | 'pi';
+
+/** ESM 下的 `__dirname`。esbuild 打包时由 --define/--banner 提供 import.meta.url。 */
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 interface ServeArgs {
   host: string;
   port: number;
   dataDir: string;
   token: string;
+  agentKind: AgentKind;
+  provider: string;
+  model: string;
 }
 
 function usage(): string {
   return [
-    'icarus-ii sidecar (M0)',
+    'icarus-ii sidecar (M1)',
     '',
     '用法:',
     '  icarus-ii-sidecar serve [选项]',
     '',
     '选项:',
+    `  --agent <echo|pi> agent 实现（默认 pi；echo 为 M0 兼容实现，不需要密钥）`,
+    `  --provider <id>   模型提供方（默认 ${DEFAULT_PROVIDER}）`,
+    `  --model <id>      模型 id（默认 ${DEFAULT_MODEL}）`,
     `  --port <n>        监听端口（默认 ${DEFAULT_PORT}，0 = 随机端口）`,
     `  --host <addr>     监听地址（默认 ${DEFAULT_HOST}）`,
-    `  --data-dir <path> 数据目录（默认 ~/${DEFAULT_DATA_DIR_NAME}）；运行时写 runtime.json`,
+    `  --data-dir <path> 数据目录（默认 ~/${DEFAULT_DATA_DIR_NAME}）；写 runtime.json 与 config.json`,
     '  --token <token>   握手 token（默认随机 32 字节 hex）',
     '  --log-level <l>   debug | info | warn | error（默认 info，也可用 ICARUS_II_LOG_LEVEL）',
     '  -h, --help        显示本帮助',
     '  -v, --version     显示版本号',
-    '      --selfcheck   打印版本号并退出（发布流水线冒烟自检）',
+    '      --selfcheck   打印版本号并退出（发布流水线冒烟自检；不联网、不需要密钥）',
     '',
     '环境变量:',
     '  ICARUS_II_LOG_LEVEL   同 --log-level',
+    '',
+    'API Key 通过 config.set（mod）或 <data-dir>/config.json 提供，不从命令行读取。',
   ].join('\n');
 }
 
 function readPackageVersion(): string | null {
   try {
-    const pkgPath = join(__dirname, '..', 'package.json');
+    const pkgPath = join(HERE, '..', 'package.json');
     if (!existsSync(pkgPath)) return null;
     const parsed: unknown = JSON.parse(readFileSync(pkgPath, 'utf8'));
     if (parsed && typeof parsed === 'object' && typeof (parsed as { version?: unknown }).version === 'string') {
@@ -92,6 +109,26 @@ function parsePort(raw: string | undefined): number {
     throw new Error(`--port 必须是 0..65535 的整数，收到 "${raw}"`);
   }
   return value;
+}
+
+function parseAgentKind(raw: string | undefined): AgentKind {
+  if (raw === undefined) return 'pi';
+  if (raw === 'pi' || raw === 'echo') return raw;
+  throw new Error(`--agent 必须是 echo 或 pi，收到 "${raw}"`);
+}
+
+function requireNonEmpty(raw: string | undefined, flag: string, fallback: string): string {
+  if (raw === undefined) return fallback;
+  if (raw.trim().length === 0) throw new Error(`${flag} 不能为空`);
+  return raw;
+}
+
+/**
+ * 装配 agent。
+ * `pi` 的 pi SDK 是懒加载的：这里只构造一个空壳，第一次真正需要模型时才 import。
+ */
+function createAgent(kind: AgentKind, store: ConfigStore, dataDir: string): AgentRunner {
+  return kind === 'echo' ? new EchoAgent() : new PiAgent({ dataDir, store });
 }
 
 export function newToken(): string {
@@ -155,6 +192,23 @@ async function runServe(args: ServeArgs): Promise<void> {
     version: SERVER_VERSION,
   };
 
+  // 数据目录要先建出来：config.json 与 runtime.json 都落在这里。
+  try {
+    mkdirSync(args.dataDir, { recursive: true });
+  } catch (err) {
+    log.error('创建数据目录失败', { dataDir: args.dataDir, ...errorFields(err) });
+    process.exitCode = 1;
+    return;
+  }
+
+  const config = new ConfigStore({
+    path: join(args.dataDir, CONFIG_FILE_NAME),
+    defaults: { provider: args.provider, model: args.model },
+    // echo 不需要凭证：ready.config.state 恒为 ready，prompt 不会被拦。
+    requireApiKey: args.agentKind === 'pi',
+  });
+  const agent = createAgent(args.agentKind, config, args.dataDir);
+
   let server: RunningServer;
   try {
     server = await startServer({
@@ -162,7 +216,8 @@ async function runServe(args: ServeArgs): Promise<void> {
       port: args.port,
       token: args.token,
       version: SERVER_VERSION,
-      agent: AGENT_INFO,
+      agent,
+      config,
       tools: REGISTERED_TOOLS,
     });
   } catch (err) {
@@ -186,6 +241,7 @@ async function runServe(args: ServeArgs): Promise<void> {
   } catch (err) {
     log.error('写入 runtime.json 失败', { dataDir: args.dataDir, ...errorFields(err) });
     await server.close();
+    agent.dispose();
     process.exitCode = 1;
     return;
   }
@@ -195,7 +251,10 @@ async function runServe(args: ServeArgs): Promise<void> {
     runtimeFile,
     version: SERVER_VERSION,
     protocol: PROTOCOL_VERSION,
-    agent: `${AGENT_INFO.provider}/${AGENT_INFO.model}`,
+    agent: `${agent.info.provider}/${agent.info.model}`,
+    agentKind: args.agentKind,
+    configState: config.view().state,
+    apiKey: config.maskedApiKey,
     pid: process.pid,
   });
 
@@ -211,6 +270,11 @@ async function runServe(args: ServeArgs): Promise<void> {
       await server.close();
     } catch (err) {
       log.error('关闭服务时出错', errorFields(err));
+    }
+    try {
+      agent.dispose();
+    } catch (err) {
+      log.warn('释放 agent 时出错', errorFields(err));
     }
     removeRuntimeFile(args.dataDir, runtime.pid);
     process.exit(exitCode);
@@ -239,6 +303,9 @@ interface CliValues {
   'data-dir'?: string;
   token?: string;
   'log-level'?: string;
+  agent?: string;
+  provider?: string;
+  model?: string;
   selfcheck?: boolean;
   help?: boolean;
   version?: boolean;
@@ -259,6 +326,9 @@ async function main(argv: string[]): Promise<void> {
         'data-dir': { type: 'string' },
         token: { type: 'string' },
         'log-level': { type: 'string' },
+        agent: { type: 'string' },
+        provider: { type: 'string' },
+        model: { type: 'string' },
         selfcheck: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
@@ -291,7 +361,8 @@ async function main(argv: string[]): Promise<void> {
   }
 
   if (values['selfcheck']) {
-    // scripts/build-sidecar.sh 在空目录里跑这一条：不碰网络、不写文件，只证明 bundle 能启动。
+    // scripts/build-sidecar.sh 在空目录里跑这一条：不碰网络、不读密钥、不写文件，
+    // 只证明 bundle 能启动。注意不要在这里构造 ConfigStore / agent。
     process.stdout.write(`icarus-ii-sidecar ${SERVER_VERSION} (protocol ${PROTOCOL_VERSION})\n`);
     if (pkgVersion && pkgVersion !== SERVER_VERSION) {
       log.warn('内嵌版本号与 package.json 不一致', { embedded: SERVER_VERSION, package: pkgVersion });
@@ -317,8 +388,14 @@ async function main(argv: string[]): Promise<void> {
   }
 
   let port: number;
+  let agentKind: AgentKind;
+  let provider: string;
+  let model: string;
   try {
     port = parsePort(values['port']);
+    agentKind = parseAgentKind(values['agent']);
+    provider = requireNonEmpty(values['provider'], '--provider', DEFAULT_PROVIDER);
+    model = requireNonEmpty(values['model'], '--model', DEFAULT_MODEL);
   } catch (err) {
     process.stderr.write(`${(err as Error).message}\n`);
     process.exit(2);
@@ -352,6 +429,9 @@ async function main(argv: string[]): Promise<void> {
   log.info('启动中', {
     version: SERVER_VERSION,
     protocol: PROTOCOL_VERSION,
+    agentKind,
+    provider,
+    model,
     host,
     port,
     dataDir,
@@ -359,7 +439,7 @@ async function main(argv: string[]): Promise<void> {
     tokenGenerated: values['token'] === undefined,
   });
 
-  await runServe({ host, port, dataDir, token });
+  await runServe({ host, port, dataDir, token, agentKind, provider, model });
 }
 
 void main(process.argv.slice(2)).catch((err: unknown) => {

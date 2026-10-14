@@ -10,14 +10,11 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
-import {
-  CLOSE_GOING_AWAY,
-  MAX_FRAME_BYTES,
-  isLoopbackHost,
-  type AgentInfo,
-} from './protocol';
-import { errorFields, log as rootLog } from './log';
-import { Session, type SocketLike } from './session';
+import { CLOSE_GOING_AWAY, MAX_FRAME_BYTES, isLoopbackHost } from './protocol.js';
+import type { AgentRunner } from './agent.js';
+import type { ConfigStore } from './config.js';
+import { errorFields, log as rootLog } from './log.js';
+import { Session, type SocketLike } from './session.js';
 
 /**
  * 传输层硬上限：给应用层 8 MiB 判定留出余量。
@@ -35,7 +32,10 @@ export interface ServerOptions {
   port: number;
   token: string;
   version: string;
-  agent: AgentInfo;
+  /** 本次进程的 agent（所有连接共享）。 */
+  agent: AgentRunner;
+  /** 配置存储（所有连接共享）。 */
+  config: ConfigStore;
   tools?: readonly string[];
   helloTimeoutMs?: number;
 }
@@ -130,6 +130,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       token: options.token,
       serverVersion: options.version,
       agent: options.agent,
+      config: options.config,
       tools,
       helloTimeoutMs: options.helloTimeoutMs,
       logger: rootLog,

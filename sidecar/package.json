@@ -2,7 +2,8 @@
   "name": "icarus-ii-sidecar",
   "version": "0.1.0",
   "private": true,
-  "description": "icarus-ii 本地 sidecar：WebSocket 服务端（协议 v1），M0 为 echo agent",
+  "type": "module",
+  "description": "icarus-ii 本地 sidecar：WebSocket 服务端（协议 v1），M1 为 LLM 驱动的对话 agent",
   "license": "MIT",
   "bin": {
     "icarus-ii-sidecar": "dist/index.js"
@@ -17,7 +18,10 @@
     "serve": "node dist/index.js serve",
     "dev": "tsx src/index.ts serve",
     "test:negative": "node test/negative.mjs",
-    "test": "npm run typecheck && npm run build && npm run test:negative"
+    "test:config": "node test/config.mjs",
+    "test:config-protocol": "node test/config-protocol.mjs",
+    "test:live": "node test/live.mjs",
+    "test": "npm run typecheck && npm run build && npm run test:negative && npm run test:config && npm run test:config-protocol"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.82.1",

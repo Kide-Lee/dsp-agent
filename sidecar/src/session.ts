@@ -1,11 +1,14 @@
 /**
- * 每连接会话：状态机 + M0 的 echo agent。
+ * 每连接会话：状态机 + agent 与配置的接线（协议 §3 / §6 / 附录 A）。
  *
  * 状态机（严格按 docs/protocol-v1.md §3 / §6）：
  *
  *   awaiting_hello ──hello(token,v 通过)──▶ ready ──(对端或服务端 close)──▶ closed
  *        │
  *        └──token 不匹配 / v 不支持 / 5s 超时──▶ error + close 1008
+ *
+ * agent 的帧输出走 `AgentEmitter`：本文件实现它，agent 只看到「发一帧」这件事，
+ * 不接触 socket，也不碰握手状态机。
  *
  * 本文件刻意不 import `ws`：只依赖一个极小的 `SocketLike` 接口，
  * 这样会话逻辑可以脱离网络单独测试（server.ts 负责把 ws 包成 SocketLike）。
@@ -20,6 +23,7 @@ import {
   MessageType,
   PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
+  buildConfigStatePayload,
   buildEnvelope,
   buildErrorPayload,
   buildMessagePayload,
@@ -27,15 +31,18 @@ import {
   buildStatusPayload,
   buildStreamPayload,
   errorRetryable,
+  parseConfigSetPayload,
   parseFrame,
   parseHelloPayload,
   parsePromptPayload,
   serializeEnvelope,
-  type AgentInfo,
+  type ConfigView,
   type ErrorCode,
   type JsonObject,
-} from './protocol';
-import { errorFields, type Logger, log as rootLog } from './log';
+} from './protocol.js';
+import type { AgentEmitter, AgentRunner } from './agent.js';
+import { maskSecret, type ConfigStore } from './config.js';
+import { errorFields, type Logger, log as rootLog } from './log.js';
 
 export type SessionState = 'awaiting_hello' | 'ready' | 'closed';
 
@@ -52,8 +59,11 @@ export interface SessionOptions {
   /** 期望的握手 token（sidecar 启动时生成）。 */
   token: string;
   serverVersion: string;
-  agent: AgentInfo;
-  /** 本次连接注册的工具名（M0 恒为空数组）。 */
+  /** 本次进程的 agent（多连接共享；由 index.ts 装配）。 */
+  agent: AgentRunner;
+  /** 配置存储（多连接共享）。 */
+  config: ConfigStore;
+  /** 本次连接注册的工具名（M1 恒为空数组）。 */
   tools: readonly string[];
   helloTimeoutMs?: number;
   logger?: Logger;
@@ -71,11 +81,6 @@ function tokenEquals(a: string, b: string): boolean {
 
 export function defaultSessionId(): string {
   return `sess_${randomBytes(8).toString('hex')}`;
-}
-
-/** 让出一轮事件循环：让 status{thinking} 先落到 socket 上，再开始吐字。 */
-function tick(): Promise<void> {
-  return new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 /** 只在日志里出现、避免把 token 原文写进 stderr。 */
@@ -214,7 +219,7 @@ export class Session {
     this.sendError('bad_request', message, null);
   }
 
-  private dispatch(type: string, env: import('./protocol').ParsedEnvelope): void {
+  private dispatch(type: string, env: import('./protocol.js').ParsedEnvelope): void {
     switch (type) {
       case MessageType.Hello:
         this.handleHello(env);
@@ -225,6 +230,9 @@ export class Session {
       case MessageType.Prompt:
         this.handlePrompt(env);
         return;
+      case MessageType.ConfigSet:
+        this.handleConfigSet(env);
+        return;
       default:
         // 未知 type 必须忽略且不断开（协议 §2）；已预留类型额外记一条 debug。
         this.logger.debug('忽略未知/预留消息类型', { type, id: env.id });
@@ -234,7 +242,7 @@ export class Session {
 
   // ---------------------------------------------------------------- hello
 
-  private handleHello(env: import('./protocol').ParsedEnvelope): void {
+  private handleHello(env: import('./protocol.js').ParsedEnvelope): void {
     if (this._state === 'ready') {
       this.logger.debug('重复 hello，已忽略');
       return;
@@ -278,6 +286,7 @@ export class Session {
       gameLanguage: payload.gameLanguage,
       capabilities: payload.capabilities,
       saveKey: payload.saveKey,
+      configState: this.options.config.view().state,
     });
 
     this.sendEnvelope(
@@ -287,8 +296,10 @@ export class Session {
         payload: buildReadyPayload({
           serverVersion: this.options.serverVersion,
           sessionId: this.sessionId,
-          agent: this.options.agent,
+          agent: this.options.agent.info,
           tools: this.options.tools,
+          // 附录 A.2：让 mod 在第一次握手就知道要不要进密钥引导态。
+          config: this.options.config.view(),
         }),
       }),
     );
@@ -305,9 +316,9 @@ export class Session {
     this.sendErrorAndClose(code, message, replyTo, CLOSE_POLICY_VIOLATION, code, extra);
   }
 
-  // ---------------------------------------------------------------- ping / prompt
+  // ---------------------------------------------------------------- ping / config / prompt
 
-  private handlePing(env: import('./protocol').ParsedEnvelope): void {
+  private handlePing(env: import('./protocol.js').ParsedEnvelope): void {
     // 原样回传 t（协议 §4.7）；t 缺失/非法时回 null，仍然应答。
     const t = env.payload['t'];
     const payload: JsonObject = { t: t === undefined ? null : t };
@@ -320,7 +331,55 @@ export class Session {
     );
   }
 
-  private handlePrompt(env: import('./protocol').ParsedEnvelope): void {
+  /**
+   * `config.set`（附录 A.1）。
+   *
+   * - 只更新给出的字段，然后**立即落盘**并回 `config.state`。
+   * - 不做上游探测：配置状态由「有没有 key」决定，真正的可用性由
+   *   第一次 prompt 的结果反馈（invalid_key / unreachable）。
+   * - `apiKey` 只进不出：回帧与日志里只有脱敏形态。
+   */
+  private handleConfigSet(env: import('./protocol.js').ParsedEnvelope): void {
+    if (this._state !== 'ready') {
+      this.logger.warn('握手未完成就收到 config.set');
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+
+    const patch = parseConfigSetPayload(env.payload);
+    if (!patch) {
+      this.sendError('bad_request', 'config.set fields must be strings', env.id || null);
+      return;
+    }
+
+    const fields = Object.keys(patch);
+    this.logger.info('收到 config.set', {
+      fields,
+      apiKey: maskSecret(typeof patch.apiKey === 'string' ? patch.apiKey : null),
+    });
+
+    let view: ConfigView;
+    try {
+      view = this.options.config.update(patch);
+    } catch (err) {
+      this.logger.error('写入 config.json 失败', errorFields(err));
+      this.sendError('internal', 'failed to persist configuration', env.id || null);
+      return;
+    }
+
+    // 配置变了：让 agent 丢弃旧会话（下一次 prompt 用新配置重建）。
+    this.options.agent.onConfigChanged();
+
+    this.sendEnvelope(
+      buildEnvelope({
+        type: MessageType.ConfigState,
+        replyTo: env.id || null,
+        payload: buildConfigStatePayload(view),
+      }),
+    );
+  }
+
+  private handlePrompt(env: import('./protocol.js').ParsedEnvelope): void {
     if (this._state !== 'ready') {
       this.logger.warn('握手未完成就收到 prompt');
       this.sendError('unauthorized', 'handshake not completed', env.id || null);
@@ -341,72 +400,69 @@ export class Session {
       conversationId: prompt.conversationId,
     });
 
-    // 串行化：M0 的 echo 也要保证同一 prompt 的 status/stream/message 不被交错的下一轮切开。
-    const run = this.promptChain.then(() => this.runEchoAgent(prompt.text, promptId));
+    // 串行化：保证同一 prompt 的 status/stream/message 不被交错的下一轮切开。
+    const emit = this.createEmitter();
+    const run = this.promptChain.then(() => this.options.agent.run(prompt.text, promptId, emit));
     this.promptChain = run.catch((err: unknown) => {
-      this.logger.error('echo agent 失败', errorFields(err));
-      this.sendError('internal', 'echo agent failed', promptId);
+      this.logger.error('agent 执行失败', errorFields(err));
+      this.sendError('internal', 'agent failed', promptId);
     });
   }
 
-  /**
-   * M0 echo agent。帧顺序是协议 §5 的硬约束：
-   *   status{thinking} → stream{"echo: "} → stream{原文} → message{final:true} → status{idle}
-   *
-   * 不变量（C# 端到端测试会断言）：
-   *   stream delta 拼接 == message.content[0].text == "echo: " + 原文
-   *   原文为空时只发一个 delta。
-   */
-  private async runEchoAgent(text: string, promptId: string | null): Promise<void> {
-    if (this._state !== 'ready' || !this.socket.isOpen) return;
+  // ---------------------------------------------------------------- agent 写帧出口
 
-    const full = `echo: ${text}`;
+  /** agent 唯一的写帧出口；所有 replyTo 由 agent 给出。 */
+  private createEmitter(): AgentEmitter {
+    const session = this;
+    return {
+      isActive: () => session._state === 'ready' && session.socket.isOpen,
 
-    this.sendEnvelope(
-      buildEnvelope({
-        type: MessageType.Status,
-        payload: buildStatusPayload('thinking', 'M0 echo agent'),
-      }),
-    );
+      status(state, detail) {
+        session.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.Status,
+            payload: buildStatusPayload(state, detail),
+          }),
+        );
+      },
 
-    await tick();
-    if (this._state !== 'ready' || !this.socket.isOpen) return;
+      stream(channel, delta, replyTo) {
+        if (delta.length === 0) return;
+        session.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.Stream,
+            replyTo,
+            payload: buildStreamPayload(channel, delta),
+          }),
+        );
+      },
 
-    this.sendEnvelope(
-      buildEnvelope({
-        type: MessageType.Stream,
-        replyTo: promptId,
-        payload: buildStreamPayload('text', 'echo: '),
-      }),
-    );
+      message(text, replyTo, final = true) {
+        session.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.Message,
+            replyTo,
+            payload: buildMessagePayload([{ type: 'text', text }], {
+              role: 'assistant',
+              final,
+            }),
+          }),
+        );
+      },
 
-    if (text.length > 0) {
-      this.sendEnvelope(
-        buildEnvelope({
-          type: MessageType.Stream,
-          replyTo: promptId,
-          payload: buildStreamPayload('text', text),
-        }),
-      );
-    }
+      error(code, message, replyTo) {
+        session.sendError(code, message, replyTo);
+      },
 
-    this.sendEnvelope(
-      buildEnvelope({
-        type: MessageType.Message,
-        replyTo: promptId,
-        payload: buildMessagePayload([{ type: 'text', text: full }], {
-          role: 'assistant',
-          final: true,
-        }),
-      }),
-    );
-
-    this.sendEnvelope(
-      buildEnvelope({
-        type: MessageType.Status,
-        payload: buildStatusPayload('idle'),
-      }),
-    );
+      configState(view) {
+        session.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.ConfigState,
+            payload: buildConfigStatePayload(view),
+          }),
+        );
+      },
+    };
   }
 
   // ---------------------------------------------------------------- 出帧

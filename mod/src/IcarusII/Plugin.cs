@@ -56,6 +56,12 @@ namespace IcarusII
         private volatile bool _sidecarStartAttempted;
         private bool _uiCreateFailureLogged;
         private bool _styleApplied;
+        private bool _initFailed;
+        private bool _styleCaptured;
+        private int _styleWaitFrames;
+
+        /// <summary>等待游戏窗口实例化的最大帧数（约 6 秒 @60fps）。</summary>
+        private const int StyleWaitFramesBeforeFallback = 360;
 
         // ---------------------------------------------------------------- 生命周期
 
@@ -64,16 +70,30 @@ namespace IcarusII
             Instance = this;
             Log = Logger;
 
-            _config = new PluginConfig(Config);
-            _dispatcher = new MainThreadDispatcher();
-            _hotkey = new HotkeyService(_config);
-            _chat = new ChatWindow();
-            _chat.Submitted += OnUserSubmitted;
-            _chat.KeySubmitted += OnKeySubmitted;
-            _client.ConfigChanged += OnConfigChanged;
+            try
+            {
+                _config = new PluginConfig(Config);
+                _dispatcher = new MainThreadDispatcher();
+                _hotkey = new HotkeyService(_config);
+                _chat = new ChatWindow();
+                _chat.Submitted += OnUserSubmitted;
+                _chat.KeySubmitted += OnKeySubmitted;
+                // 注意：_client 尚未创建（它在后台的 PrepareSidecar 里才 new），
+                // 所以它的 ConfigChanged 必须在创建之后再订阅。
+                // 这里曾经写成 _client.ConfigChanged += ...，直接 NullReference，
+                // 导致 Awake 抛出、整个插件静默失效（日志里连"已加载"都没有）。
 
-            _pluginDir = ResolvePluginDir();
-            _launcher = new SidecarLauncher(_config, Log, _pluginDir);
+                _pluginDir = ResolvePluginDir();
+                _launcher = new SidecarLauncher(_config, Log, _pluginDir);
+            }
+            catch (Exception ex)
+            {
+                // Awake 抛出会让插件彻底失效。这里兜住并显式记录，
+                // 否则异常只出现在 Unity 的 Player.log 里，BepInEx 日志中毫无线索。
+                _initFailed = true;
+                Logger.LogError($"初始化失败，插件将不可用：{ex}");
+                return;
+            }
 
             Log.LogInfo($"{PluginName} {PluginVersion} 已加载");
             Log.LogInfo($"插件目录：{_pluginDir}");
@@ -88,6 +108,8 @@ namespace IcarusII
 
         private void Update()
         {
+            if (_initFailed) return;
+
             _dispatcher.Drain(MainThreadBudgetMs, ex => Log.LogError($"主线程任务异常：{ex}"));
 
             // UIRoot 会在场景切换时重建；检测到旧对象被销毁就重置，等待重建
@@ -181,6 +203,7 @@ namespace IcarusII
                 client.StateChanged += OnClientStateChanged;
                 client.Received += OnClientMessage;
                 client.Log += msg => Log.LogInfo($"[client] {msg}");
+                client.ConfigChanged += OnConfigChanged;
                 _client = client;
                 client.Start();
             }
@@ -321,6 +344,23 @@ namespace IcarusII
             var root = GameRefs.UiRoot;
             if (root == null) return;
 
+            // 先捕获游戏原生样式，再建 UI。
+            //
+            // 顺序很重要：字号决定标题栏/输入框的高度与录音区布局，建成后再改
+            // 会导致整体错位（M1 实测：捕获到的 fontSize=12 一直没被用上）。
+            // 拿不到就等下一帧重试；超过 _styleWaitMs 仍拿不到才用兜底样式建，
+            // 避免因为找不到参考窗口就永远不显示 UI。
+            if (!_styleCaptured)
+            {
+                _styleCaptured = UiStyle.TryCapture(root, Log);
+                if (!_styleCaptured)
+                {
+                    _styleWaitFrames++;
+                    if (_styleWaitFrames < StyleWaitFramesBeforeFallback) return;
+                    Log.LogWarning("等待游戏样式超时，将使用内置兜底配色。");
+                }
+            }
+
             Font font;
             try
             {
@@ -348,6 +388,7 @@ namespace IcarusII
             }
 
             _chat.Create(root, font, _config);
+            if (_styleCaptured) _chat.ApplyStyle(UiStyle.Current);
             _uiInitialized = true;
             _uiCreateFailureLogged = false;
             Log.LogInfo($"聊天窗口已创建（自建 Canvas，缩放来源 {ChatWindow.ScalerSource}，字体来源 {FontProvider.Source}）");
@@ -372,6 +413,12 @@ namespace IcarusII
             // 只记录长度，绝不记录内容
             Log.LogInfo($"[配置] 收到 API Key（长度 {apiKey.Length}），上报给 sidecar…");
 
+            if (_client == null)
+            {
+                _chat.AppendSystem("连接未就绪，请稍后重试。");
+                return;
+            }
+
             var id = _client.SendConfigSet(apiKey: apiKey);
             if (id == null)
             {
@@ -388,26 +435,31 @@ namespace IcarusII
             if (config == null) return;
             Log.LogInfo($"[配置] 状态：{config}");
 
-            switch (config.State)
+            // 本回调在接收线程上触发，UI 操作必须回主线程
+            Post(() =>
             {
-                case P.ConfigMissingKey:
-                    _chat.EnterKeyEntry(null);
-                    break;
+                if (_chat == null) return;
+                switch (config.State)
+                {
+                    case P.ConfigMissingKey:
+                        _chat.EnterKeyEntry(null);
+                        break;
 
-                case P.ConfigInvalidKey:
-                    _chat.EnterKeyEntry(Strings.Get("key.invalid"));
-                    break;
+                    case P.ConfigInvalidKey:
+                        _chat.EnterKeyEntry(Strings.Get("key.invalid"));
+                        break;
 
-                case P.ConfigUnreachable:
-                    _chat.AppendSystem(Strings.Get("key.unreachable"));
-                    _chat.EnterKeyEntry(null);
-                    break;
+                    case P.ConfigUnreachable:
+                        _chat.AppendSystem(Strings.Get("key.unreachable"));
+                        _chat.EnterKeyEntry(null);
+                        break;
 
-                case P.ConfigReady:
-                    _chat.ExitKeyEntry();
-                    _chat.SetStatus(Strings.Get("status.ready"), null);
-                    break;
-            }
+                    case P.ConfigReady:
+                        _chat.ExitKeyEntry();
+                        _chat.SetStatus(Strings.Get("status.ready"), null);
+                        break;
+                }
+            });
         }
 
         /// <summary>
@@ -422,6 +474,7 @@ namespace IcarusII
             if (root == null) return;
 
             if (!UiStyle.TryCapture(root, Log)) return;
+            _styleCaptured = true;
 
             _chat.ApplyStyle(UiStyle.Current);
             _styleApplied = true;

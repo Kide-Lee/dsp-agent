@@ -84,6 +84,8 @@ namespace IcarusII.UI
 
             try
             {
+                DumpCandidates(reference, log);
+
                 var images = reference.GetComponentsInChildren<Image>(true);
                 var texts = reference.GetComponentsInChildren<Text>(true);
 
@@ -93,10 +95,16 @@ namespace IcarusII.UI
                     return false;
                 }
 
-                // ---- 面板外框：面积最大的、且确实带 sprite 的那个 Image
+                // ---- 面板外框
+                //
+                // 只按"面积最大"挑会选中半透明底衬（实测选中 window-trsl-1-sd，
+                // trsl = translucent），外观上就是一块平板，没有切角与边框。
+                // 因此改成"名称关键词打分 + 面积"：优先带 frame/border 的，
+                // 其次是不含 trsl/trans 的 window/panel 族贴图，同时惩罚半透明底衬。
                 Image panel = null;
                 float panelArea = 0f;
                 Rect panelRect = default;
+                int panelScore = int.MinValue;
                 foreach (var img in images)
                 {
                     if (img == null || img.sprite == null) continue;
@@ -104,8 +112,12 @@ namespace IcarusII.UI
                     if (rt == null) continue;
                     var r = rt.rect;
                     float area = Mathf.Abs(r.width * r.height);
-                    if (area > panelArea)
+                    int score = ScoreFrameSprite(img);
+
+                    // 先比关键词分，同分再比面积
+                    if (score > panelScore || (score == panelScore && area > panelArea))
                     {
+                        panelScore = score;
                         panelArea = area;
                         panel = img;
                         panelRect = r;
@@ -316,6 +328,86 @@ namespace IcarusII.UI
             {
                 image.color = Lighten(PanelColor, 0.8f);
             }
+        }
+
+        /// <summary>
+        /// 给候选外框贴图打分。启发式来自实测：机体信息窗里面积最大的
+        /// 贴图是 window-trsl-1-sd（半透明底衬），真正的装饰外框是别的。
+        /// </summary>
+        private static int ScoreFrameSprite(Image img)
+        {
+            var spriteName = img.sprite != null ? img.sprite.name : string.Empty;
+            var goName = img.gameObject.name;
+            var hay = (spriteName + " " + goName).ToLowerInvariant();
+
+            int score = 0;
+            if (hay.Contains("frame")) score += 100;
+            if (hay.Contains("border")) score += 80;
+            if (hay.Contains("title")) score += 30;
+
+            // 半透明底衬：明确降权（这是上次踩的坑）
+            if (hay.Contains("trsl") || hay.Contains("trans")) score -= 120;
+            if (img.color.a < 0.98f) score -= 40;
+
+            // 九宫格边框类贴图通常是 Sliced
+            if (img.type == Image.Type.Sliced) score += 20;
+            if (img.sprite != null && img.sprite.border != Vector4.zero) score += 30;
+
+            if (hay.Contains("window") || hay.Contains("panel")) score += 10;
+            return score;
+        }
+
+        /// <summary>
+        /// 把窗口里"面积最大的若干 Image"与根的直接子物体打进日志，
+        /// 用于在外框/标题栏挑选错误时快速定位该选哪一张。
+        /// </summary>
+        private static void DumpCandidates(GameObject reference, BepInEx.Logging.ManualLogSource log)
+        {
+            if (log == null) return;
+            try
+            {
+                var sb = new System.Text.StringBuilder();
+                sb.Append("[样式] 根的直接子物体：");
+                for (int i = 0; i < reference.transform.childCount && i < 24; i++)
+                {
+                    var c = reference.transform.GetChild(i);
+                    sb.Append(c.name).Append('(').Append(c.gameObject.activeSelf ? '+' : '-').Append(") ");
+                }
+                log.LogInfo(sb.ToString());
+
+                var list = new List<(float area, string text)>();
+                foreach (var img in reference.GetComponentsInChildren<Image>(true))
+                {
+                    if (img == null || img.sprite == null) continue;
+                    var rt = img.rectTransform;
+                    if (rt == null) continue;
+                    var r = rt.rect;
+                    float area = Mathf.Abs(r.width * r.height);
+                    var b = img.sprite.border;
+                    list.Add((area, string.Format(
+                        "{0} | sprite={1} {2:0}x{3:0} border=({4:0},{5:0},{6:0},{7:0}) type={8} a={9:0.00} score={10}",
+                        Path(img.transform, reference.transform), img.sprite.name,
+                        r.width, r.height, b.x, b.y, b.z, b.w, img.type, img.color.a,
+                        ScoreFrameSprite(img))));
+                }
+                list.Sort((x, y) => y.area.CompareTo(x.area));
+
+                log.LogInfo($"[样式] 候选贴图（按面积前 {Mathf.Min(12, list.Count)} 个，格式：路径 | 贴图 尺寸 边框 类型 透明度 评分）：");
+                for (int i = 0; i < list.Count && i < 12; i++) log.LogInfo("[样式]   " + list[i].text);
+            }
+            catch (Exception ex)
+            {
+                log.LogWarning($"[样式] 候选清单导出失败：{ex.Message}");
+            }
+        }
+
+        private static string Path(Transform node, Transform root)
+        {
+            var sb = new System.Text.StringBuilder(node.name);
+            var t = node.parent;
+            int guard = 0;
+            while (t != null && t != root && guard++ < 6) { sb.Insert(0, t.name + "/"); t = t.parent; }
+            return sb.ToString();
         }
 
         /// <summary>提亮并保持不透明；用于在游戏配色内派生强调色。</summary>

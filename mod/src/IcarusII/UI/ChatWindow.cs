@@ -178,7 +178,9 @@ namespace IcarusII.UI
         {
             if (_root != null) return;
 
-            _fontSize = Mathf.RoundToInt(14f * Mathf.Max(0.5f, config.FontScale));
+            // 字号优先取游戏原生面板的字号（创建前已捕获），拿不到再用兜底 14
+            var baseSize = UiStyle.Current.HasText ? UiStyle.Current.BaseFontSize : 14;
+            _fontSize = Mathf.RoundToInt(baseSize * Mathf.Max(0.5f, config.FontScale));
             _maxLines = Mathf.Max(50, config.MaxTranscriptLines);
             _autoFocusInput = config.AutoFocusInput;
 

@@ -35,6 +35,7 @@ export const MessageType = {
   Hello: 'hello',
   Prompt: 'prompt',
   Ping: 'ping',
+  ConfigSet: 'config.set',
   // sidecar → mod
   Ready: 'ready',
   Pong: 'pong',
@@ -42,6 +43,7 @@ export const MessageType = {
   Stream: 'stream',
   Message: 'message',
   Error: 'error',
+  ConfigState: 'config.state',
 } as const;
 
 export type MessageTypeName = (typeof MessageType)[keyof typeof MessageType];
@@ -65,7 +67,12 @@ export type ErrorCode =
   | 'bad_request'
   | 'agent_unavailable'
   | 'tool_failed'
-  | 'internal';
+  | 'internal'
+  // 附录 A.3：M1 新增
+  | 'invalid_key'
+  | 'upstream_error'
+  | 'rate_limited'
+  | 'config_required';
 
 export type StatusState =
   | 'idle'
@@ -289,6 +296,74 @@ export function parsePromptPayload(payload: JsonObject): PromptPayload | null {
   };
 }
 
+// ---------------------------------------------------------------- 配置（附录 A）
+
+/** `config.state.payload.state` / `ready.payload.config.state` 的取值（附录 A.1）。 */
+export type ConfigStateValue = 'ready' | 'missing_key' | 'invalid_key' | 'unreachable';
+
+/**
+ * `config.state` 与 `ready.payload.config` 共用的视图。
+ * **任何字段都不得包含 apiKey**（附录 A.4）。
+ */
+export interface ConfigView {
+  state: ConfigStateValue;
+  provider: string;
+  model: string;
+  message: string | null;
+}
+
+/**
+ * `config.set` 的增量更新（附录 A.1）。
+ * 只包含**给出**的字段；未给出的保持不变。
+ * `baseUrl: null` 显式表示「清除覆盖」。
+ */
+export interface ConfigUpdatePayload {
+  provider?: string;
+  model?: string;
+  apiKey?: string;
+  baseUrl?: string | null;
+}
+
+/**
+ * 解析 `config.set` 负载（附录 A.1）。
+ *
+ * - 字段缺失 ⇒ 不改动。
+ * - `baseUrl: null` ⇒ 清除 baseUrl 覆盖；其它字段 `null` 视为「未给出」。
+ * - 字段存在但不是 string（且不是 baseUrl 的 null）⇒ 返回 null（bad_request）。
+ *
+ * 注意：`apiKey` 是本协议中**唯一**允许承载密钥的字段（附录 A.4）。
+ */
+export function parseConfigSetPayload(payload: JsonObject): ConfigUpdatePayload | null {
+  const out: ConfigUpdatePayload = {};
+
+  const provider = payload['provider'];
+  if (provider !== undefined && provider !== null) {
+    if (typeof provider !== 'string') return null;
+    out.provider = provider;
+  }
+
+  const model = payload['model'];
+  if (model !== undefined && model !== null) {
+    if (typeof model !== 'string') return null;
+    out.model = model;
+  }
+
+  const apiKey = payload['apiKey'];
+  if (apiKey !== undefined && apiKey !== null) {
+    if (typeof apiKey !== 'string') return null;
+    out.apiKey = apiKey;
+  }
+
+  const baseUrl = payload['baseUrl'];
+  if (baseUrl !== undefined) {
+    if (baseUrl === null) out.baseUrl = null;
+    else if (typeof baseUrl === 'string') out.baseUrl = baseUrl;
+    else return null;
+  }
+
+  return out;
+}
+
 export interface AgentInfo {
   provider: string;
   model: string;
@@ -302,8 +377,10 @@ export function buildReadyPayload(args: {
   sessionId: string;
   agent: AgentInfo;
   tools: readonly string[];
+  /** 附录 A.2 新增的可选字段；给出时才会出现在 `ready.payload.config` 里。 */
+  config?: ConfigView;
 }): JsonObject {
-  return {
+  const payload: JsonObject = {
     serverVersion: args.serverVersion,
     protocol: PROTOCOL_VERSION,
     sessionId: args.sessionId,
@@ -313,6 +390,18 @@ export function buildReadyPayload(args: {
       available: args.agent.available,
     },
     tools: [...args.tools],
+  };
+  if (args.config) payload['config'] = buildConfigStatePayload(args.config);
+  return payload;
+}
+
+/** `config.state` / `ready.payload.config` 的载荷（附录 A.1 / A.2）。绝不含 apiKey。 */
+export function buildConfigStatePayload(view: ConfigView): JsonObject {
+  return {
+    state: view.state,
+    provider: view.provider,
+    model: view.model,
+    message: view.message,
   };
 }
 
@@ -347,7 +436,12 @@ export function buildErrorPayload(
 
 /** `error` 常用的 `retryable` 字段（协议 §4.8 示例里有它）。 */
 export function errorRetryable(code: ErrorCode): boolean {
-  return code === 'agent_unavailable' || code === 'internal';
+  return (
+    code === 'agent_unavailable' ||
+    code === 'internal' ||
+    code === 'upstream_error' ||
+    code === 'rate_limited'
+  );
 }
 
 /** 是否是回环地址（非回环时 server.ts 会打警告）。 */
