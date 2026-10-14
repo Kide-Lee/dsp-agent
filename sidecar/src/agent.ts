@@ -23,7 +23,7 @@ import type {
   ModelRuntime,
 } from '@earendil-works/pi-coding-agent';
 import { type ConfigStore, maskSecret, redactSecrets } from './config.js';
-import { errorFields, type Logger, log as rootLog } from './log.js';
+import { errorFields, type Logger, type LogFields, log as rootLog } from './log.js';
 import type {
   AgentInfo,
   ConfigView,
@@ -190,6 +190,19 @@ function describeError(err: unknown): string {
   return String(err);
 }
 
+/**
+ * `errorFields()` 会把异常原文（含 stack）放进日志字段里；
+ * 上游 SDK 的异常文本可能夹带密钥，所以这里必须先脱敏再落日志。
+ */
+function safeErrorFields(err: unknown, apiKey: string | null): LogFields {
+  const fields = errorFields(err);
+  for (const key of ['errorMessage', 'errorStack'] as const) {
+    const value = fields[key];
+    if (typeof value === 'string') fields[key] = redactSecrets(value, [apiKey]);
+  }
+  return fields;
+}
+
 /** 取出助手消息里的纯文本（不流式时的兜底来源）。 */
 function assistantText(message: { content?: unknown }): string {
   const content = message.content;
@@ -332,7 +345,7 @@ export class PiAgent implements AgentRunner {
       this.logger.error('无法建立 pi 会话', {
         promptId,
         message: safe,
-        ...errorFields(err),
+        ...safeErrorFields(err, data.apiKey),
         apiKey: this.store.maskedApiKey,
       });
       if (emit.isActive()) {
@@ -351,7 +364,7 @@ export class PiAgent implements AgentRunner {
       run.stopReason = 'error';
       this.logger.error('pi 会话执行失败', {
         promptId,
-        ...errorFields(err),
+        ...safeErrorFields(err, data.apiKey),
         apiKey: this.store.maskedApiKey,
       });
     } finally {

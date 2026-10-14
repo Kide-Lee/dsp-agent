@@ -197,12 +197,29 @@ export class Client {
     });
   }
 
+  /** 等到条件成立（不看返回值）；用于「至少 N 帧…」这类断言。 */
+  waitUntil(predicate, timeoutMs = 5000, label = 'condition') {
+    if (predicate()) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`等待 ${label} 超时`)), timeoutMs);
+      const check = () => {
+        if (!predicate()) {
+          this._waiters.push(check);
+          return;
+        }
+        clearTimeout(timer);
+        resolve();
+      };
+      this._waiters.push(check);
+    });
+  }
+
   waitForType(type, timeoutMs = 5000) {
     return this.waitFor((f) => f && f.type === type, timeoutMs, `type=${type}`);
   }
 
   waitForCount(type, count, timeoutMs = 5000) {
-    return this.waitFor(
+    return this.waitUntil(
       () => this.frames.filter((f) => f && f.type === type).length >= count,
       timeoutMs,
       `${count} 个 type=${type}`,

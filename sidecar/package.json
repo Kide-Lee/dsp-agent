@@ -20,8 +20,9 @@
     "test:negative": "node test/negative.mjs",
     "test:config": "node test/config.mjs",
     "test:config-protocol": "node test/config-protocol.mjs",
+    "test:pi-loopback": "node test/pi-loopback.mjs",
     "test:live": "node test/live.mjs",
-    "test": "npm run typecheck && npm run build && npm run test:negative && npm run test:config && npm run test:config-protocol"
+    "test": "npm run typecheck && npm run build && npm run test:negative && npm run test:config && npm run test:config-protocol && npm run test:pi-loopback"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.82.1",
