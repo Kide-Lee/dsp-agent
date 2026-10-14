@@ -567,8 +567,17 @@ namespace IcarusII.UI
 
         public void EndStream()
         {
-            if (_current.Length > 0) PushLine(_current.ToString());
-            _current.Length = 0;
+            // 注意：这里**不能**走 PushLine(_current.ToString())。
+            // PushLine 的第一件事是"把正在流式的行落盘"，也就是把 _current
+            // 再落一次，然后才落参数——而参数本身就是 _current 的内容，
+            // 于是同一行进 _lines 两遍，窗口里就把一段回答画成两段。
+            // 这个写法从 M0 起就在，是"回答重复显示"的真正原因。
+            if (_current.Length > 0)
+            {
+                _lines.Add(_current.ToString());
+                _current.Length = 0;
+                RebuildCommitted();
+            }
             _dirty = true;
         }
 

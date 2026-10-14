@@ -14,14 +14,15 @@
  * `config.set`）。
  *
  * 覆盖：
- *   1. happy path：帧顺序 / delta 拼接 == message 文本 / 上游请求形状
- *      （thinking disabled、无 tools、Authorization 用的是我们注入的 key）
+ *   1. happy path：帧顺序 / delta 拼接 == message 文本 / **恰好一个终稿帧** /
+ *      上游请求形状（thinking disabled、无 tools、Authorization 用的是我们注入的 key）/
+ *      **system prompt 已被替换成游戏内助手人格**（问题 1 与问题 3 的回归）
  *   2. 401 → error{invalid_key} + config.state{invalid_key}，
  *      且上游回显的 key 被脱敏后才出站；下一次成功 → config.state{ready}
  *   3. 429 → error{rate_limited}（并覆盖 status{retrying}）
  *   4. 连不通的端口 → error{upstream_error} + config.state{unreachable}
  *   5. 未知 provider → error{agent_unavailable}
- *   6. 流式过程中 config.set → 流不被截断
+ *   6. 流式过程中 config.set → 流不被截断（且仍然只有一个终稿帧）
  *   7. 以上所有场景：出站帧与 sidecar stderr 都不含密钥明文
  *
  * 收尾保证：每个等待都有超时、整个文件有看门狗；任何失败都**立刻**清理
@@ -34,6 +35,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { maskSecret } from '../dist/config.js';
+import { ICARUS_II_PERSONA_NAME, ICARUS_II_SYSTEM_PROMPT } from '../dist/persona.js';
 import {
   FAKE_KEY,
   assertBuilt,
@@ -48,6 +50,40 @@ import {
 const KEY = FAKE_KEY;
 const PROVIDER = 'deepseek';
 const MODEL = 'deepseek-v4-flash';
+
+/**
+ * pi 默认 system prompt（coding agent）的特征串。
+ *
+ * 这些串**必须**在发给上游的整个请求体里一个都不出现：pi 的默认 prompt 是英文的
+ * （见 pi 的 core/system-prompt.js），而我们的人格是中文的，所以不会有误伤。
+ * 其中 `Current working directory` 最关键：pi 在 customPrompt 分支里**无条件**追加
+ * 这一行，实机就导致模型开口就说"我看到当前工作目录是 …"。
+ */
+const PI_DEFAULT_PROMPT_MARKERS = [
+  'You are an expert coding assistant',
+  'coding agent harness',
+  'Available tools:',
+  'Current working directory',
+  'working directory',
+  'AGENTS.md',
+  'CLAUDE.md',
+  'Pi documentation',
+  'pi-coding-agent',
+];
+
+/** 人格里必须出现的稳定标识串（mod 名）。 */
+const PERSONA_MARKER = '伊卡洛斯·贰';
+
+/** system/user 消息的 content 可能是字符串，也可能是 text block 数组。 */
+function messageText(message) {
+  const content = message?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((block) => block && typeof block === 'object' && block.type === 'text')
+    .map((block) => block.text ?? '')
+    .join('');
+}
 
 /** 单个等待的上限；夹具走 loopback，正常都在毫秒级。 */
 const WAIT_MS = 20000;
@@ -347,7 +383,8 @@ async function main() {
 
     const streams = round.filter((f) => f.type === 'stream');
     const joined = streams.map((f) => f.payload.delta).join('');
-    const message = round.find((f) => f.type === 'message');
+    const messages = round.filter((f) => f.type === 'message');
+    const message = messages[0];
     const text = message?.payload?.content?.[0]?.text;
     check('delta 拼接 = "你好，世界！"', joined === '你好，世界！', joined);
     check('message 文本 = delta 拼接', text === joined, `${text} != ${joined}`);
@@ -355,6 +392,13 @@ async function main() {
     check('message.role = assistant', message?.payload?.role === 'assistant');
     check('stream/message 的 replyTo 指向 prompt', streams.every((f) => f.replyTo === 'm-happy') && message?.replyTo === 'm-happy');
     check('stream channel 均为 text', streams.every((f) => f.payload.channel === 'text'));
+
+    // ---- 问题 2 回归：一次 prompt 恰好一个终稿帧（不是 >= 1）----
+    // 曾经实机出现过"回答在窗口里显示两遍"。这里把协议不变量钉死：
+    // 一次 prompt 的 message 帧数必须**恰好为 1**，且是 final。
+    check('一次 prompt 恰好 1 个 message 帧', messages.length === 1, `实际 ${messages.length} 个`);
+    check('恰好 1 个 message{final:true} 帧', round.filter((f) => f.type === 'message' && f.payload?.final === true).length === 1);
+    check('终稿帧文本非空且 = delta 拼接', typeof text === 'string' && text.length > 0 && text === joined);
 
     // 上游请求形状：证明纯对话（无 tools）且没有请求思考。
     const body = upstream.lastBody();
@@ -370,6 +414,41 @@ async function main() {
     check('不请求思考：无 reasoning_effort', body.reasoning_effort === undefined, String(body.reasoning_effort));
     check('M1 纯对话：请求里没有 tools', body.tools === undefined, JSON.stringify(body.tools ?? null));
     check('Authorization 用的是 config.set 注入的 key', last?.authorization === `Bearer ${KEY}`);
+
+    // ---- 问题 3：system prompt 已经被整个替换（人格），pi 的 coding prompt 不在请求里 ----
+    const reqMessages = body.messages;
+    check('上游请求里有 messages 数组', Array.isArray(reqMessages) && reqMessages.length > 0);
+    const systemMessage = Array.isArray(reqMessages) ? reqMessages[0] : undefined;
+    check('messages[0].role === "system"', systemMessage?.role === 'system', systemMessage?.role);
+    const systemText = messageText(systemMessage);
+    check('system message 非空', systemText.length > 0, `${systemText.length} 字符`);
+    check(
+      'system message 就是代码里的游戏内助手人格（逐字相等）',
+      systemText === ICARUS_II_SYSTEM_PROMPT,
+      `收到 ${systemText.length} 字符 / 期望 ${ICARUS_II_SYSTEM_PROMPT.length} 字符`,
+    );
+    check(
+      `system message 含人格标识串「${PERSONA_MARKER}」`,
+      systemText.includes(PERSONA_MARKER) && systemText.includes(ICARUS_II_PERSONA_NAME),
+    );
+    for (const marker of PI_DEFAULT_PROMPT_MARKERS) {
+      check(
+        `system message 不含 pi 默认 prompt 特征：${JSON.stringify(marker)}`,
+        !systemText.includes(marker),
+      );
+    }
+    const rawBody = last?.body ?? '';
+    for (const marker of PI_DEFAULT_PROMPT_MARKERS) {
+      check(
+        `整个请求体不含 pi 默认 prompt 特征：${JSON.stringify(marker)}`,
+        !rawBody.includes(marker),
+      );
+    }
+    // coding agent 之外，还要确认"它没在承诺自己没有的能力"这件事靠 prompt 兜住了。
+    check(
+      'system message 明确 M1 没有任何工具/看不到游戏',
+      systemText.includes('没有任何工具'),
+    );
   }
 
   // ------------------------------------------------------------ 2. 401 → invalid_key
@@ -512,6 +591,11 @@ async function main() {
     check('三段增量都在', deltas.join('') === '第一段第二段第三段', JSON.stringify(deltas));
     check('message 文本完整', text === '第一段第二段第三段', text);
     check('delta 拼接 = message 文本', deltas.join('') === text);
+    check(
+      '慢速路径同样恰好 1 个终稿帧',
+      round.filter((f) => f.type === 'message' && f.payload?.final === true).length === 1,
+      `实际 ${round.filter((f) => f.type === 'message').length} 个`,
+    );
     check('末帧 status{idle}', round[round.length - 1]?.payload?.state === 'idle');
     upstream.mode = 'ok';
   }

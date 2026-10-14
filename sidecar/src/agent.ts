@@ -20,9 +20,12 @@ import type {
   AgentSession,
   AgentSessionEvent,
   CreateAgentSessionOptions,
+  ExtensionFactory,
   ModelRuntime,
+  ResourceLoader,
 } from '@earendil-works/pi-coding-agent';
 import { type ConfigStore, maskSecret, redactSecrets } from './config.js';
+import { ICARUS_II_PERSONA_NAME, ICARUS_II_SYSTEM_PROMPT } from './persona.js';
 import { errorFields, type Logger, type LogFields, log as rootLog } from './log.js';
 import type {
   AgentInfo,
@@ -221,6 +224,119 @@ function assistantText(message: { content?: unknown }): string {
   return parts.join('');
 }
 
+// ---------------------------------------------------------------- 人格注入
+
+/** `DefaultResourceLoader.extendResources` 的入参类型（pi 根导出没带出来）。 */
+type LoaderExtendPaths = Parameters<ResourceLoader['extendResources']>[0];
+/** `DefaultResourceLoader.reload` 的入参类型（同上）。 */
+type LoaderReloadOptions = Parameters<ResourceLoader['reload']>[0];
+
+/**
+ * 内联扩展：每一轮 prompt 开始时把 `agent.state.systemPrompt` 换成我们的人格。
+ *
+ * 为什么 ResourceLoader 之外还需要它：pi 的 `buildSystemPrompt()` 在 customPrompt
+ * 分支里**无条件**追加 `\nCurrent working directory: ${cwd}`（见 pi 的
+ * core/system-prompt.js），光靠 `systemPrompt(Override)` 去不掉这条尾巴。
+ * 而 `AgentSession.prompt()` 会调用扩展的 `before_agent_start`，返回值里的
+ * `systemPrompt` 会**整轮**替换系统提示（pi 的 core/agent-session.js:898），
+ * 于是 cwd 尾巴也不会进入请求体。
+ *
+ * 它是内联函数（`extensionFactories`），不落任何外部文件。
+ */
+const registerPersonaSystemPrompt: ExtensionFactory = (api) => {
+  api.on('before_agent_start', () => ({ systemPrompt: ICARUS_II_SYSTEM_PROMPT }));
+};
+
+/**
+ * 自定义 ResourceLoader：**装饰** `DefaultResourceLoader`，把「系统提示」与
+ * 「项目上下文文件」两个出口钉死。
+ *
+ *  - `getSystemPrompt()` 恒返回游戏内助手人格 —— pi 的默认 coding prompt 不再可能
+ *    被拼进去（默认 prompt 只在 customPrompt 为空时才会走）。
+ *  - `getAgentsFiles()` 恒返回空 —— 不注入 `<cwd>/AGENTS.md`、`~/.pi/AGENTS.md`
+ *    之类的项目上下文。
+ *  - `getAppendSystemPrompt()` 恒返回空 —— 不追加任何外部 append prompt。
+ *  - 其余（extensions/skills/prompts/themes）委托给 base；base 用 no* 选项构造，
+ *    实际只加载我们自己的内联扩展。
+ *
+ * 装饰而不是直接 `new DefaultResourceLoader({systemPrompt: …})` 的原因：
+ * `getSystemPrompt()` 只有在 `reload()` 成功之后才非空，而这里**永远**非空，
+ * 所以即使资源加载出问题，人格也不会退化成 pi 默认的 coding prompt。
+ */
+class PersonaResourceLoader implements ResourceLoader {
+  private readonly base: ResourceLoader;
+
+  constructor(base: ResourceLoader) {
+    this.base = base;
+  }
+
+  getExtensions(): ReturnType<ResourceLoader['getExtensions']> {
+    return this.base.getExtensions();
+  }
+
+  getSkills(): ReturnType<ResourceLoader['getSkills']> {
+    return this.base.getSkills();
+  }
+
+  getPrompts(): ReturnType<ResourceLoader['getPrompts']> {
+    return this.base.getPrompts();
+  }
+
+  getThemes(): ReturnType<ResourceLoader['getThemes']> {
+    return this.base.getThemes();
+  }
+
+  /** 项目上下文文件（AGENTS.md 等）永不注入。 */
+  getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> } {
+    return { agentsFiles: [] };
+  }
+
+  /** pi 的 coding prompt 永不出现：恒返回游戏内助手人格。 */
+  getSystemPrompt(): string {
+    return ICARUS_II_SYSTEM_PROMPT;
+  }
+
+  getAppendSystemPrompt(): string[] {
+    return [];
+  }
+
+  extendResources(paths: LoaderExtendPaths): void {
+    this.base.extendResources(paths);
+  }
+
+  reload(options?: LoaderReloadOptions): Promise<void> {
+    return this.base.reload(options);
+  }
+}
+
+/**
+ * 组装人格化的 ResourceLoader。
+ *
+ * `noExtensions/noSkills/noPromptTemplates/noThemes/noContextFiles` 全开：
+ * sidecar 不该因为玩家机器上碰巧存在的 pi 配置而改变行为。
+ */
+function createPersonaResourceLoader(
+  pi: PiSdk,
+  options: { cwd: string; agentDir: string },
+): ResourceLoader {
+  const base = new pi.DefaultResourceLoader({
+    cwd: options.cwd,
+    agentDir: options.agentDir,
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+    // 替换（不是追加）pi 的 system prompt；override 是双保险。
+    systemPrompt: ICARUS_II_SYSTEM_PROMPT,
+    systemPromptOverride: () => ICARUS_II_SYSTEM_PROMPT,
+    appendSystemPromptOverride: () => [],
+    agentsFilesOverride: () => ({ agentsFiles: [] }),
+    extensionFactories: [registerPersonaSystemPrompt],
+  });
+  return new PersonaResourceLoader(base);
+}
+
 /**
  * pi 驱动的对话 agent。
  *
@@ -232,6 +348,8 @@ function assistantText(message: { content?: unknown }): string {
  *   - `allowModelNetwork: false`：创建时不做任何模型目录网络刷新
  *   - `thinkingLevel: "off"`：M1 默认不请求思考（deepseek 的 thinkingLevelMap
  *     把 medium 映射为 null，pi 的 clamp 会把默认的 medium 提升成 high）
+ *   - system prompt 被**整个替换**成游戏内助手人格（见 persona.ts），
+ *     pi 的 coding agent 身份不会出现在上游请求里
  */
 export class PiAgent implements AgentRunner {
   private readonly dataDir: string;
@@ -445,6 +563,14 @@ export class PiAgent implements AgentRunner {
     // baseUrl 覆盖：配置里给了就用它，否则用 pi 目录里的官方地址。
     const model = baseUrl ? { ...base, baseUrl } : base;
 
+    const resourceLoader = createPersonaResourceLoader(pi, {
+      cwd: this.dataDir,
+      agentDir: this.agentDir,
+    });
+    // pi 只有在「自己创建 loader」时才自动 reload；外部传入的 loader 必须我们自己 reload，
+    // 否则 getExtensions() 还是空的（内联人格扩展就不会被注册）。
+    await resourceLoader.reload();
+
     const options: CreateAgentSessionOptions = {
       cwd: this.dataDir,
       agentDir: this.agentDir,
@@ -456,12 +582,23 @@ export class PiAgent implements AgentRunner {
       // M1 纯对话：不启用任何工具。
       noTools: 'builtin',
       customTools: [],
+      // 替换 pi 默认的 coding agent system prompt 为游戏内助手人格。
+      resourceLoader,
     };
 
     const created = await pi.createAgentSession(options);
     this.runtime = runtime;
     this.session = created.session;
     this.unsubscribe = created.session.subscribe((event) => this.handleEvent(event));
+
+    // 保险：确认 pi 真的用上了我们的人格（没生效就明确记一条 warn，别静默退化）。
+    const effectivePrompt = created.session.systemPrompt ?? '';
+    if (!effectivePrompt.startsWith(ICARUS_II_SYSTEM_PROMPT)) {
+      this.logger.warn('pi 没有采用自定义 system prompt，助手人格可能未生效', {
+        personaName: ICARUS_II_PERSONA_NAME,
+        promptChars: effectivePrompt.length,
+      });
+    }
 
     this.logger.info('pi 会话已建立', {
       provider,
@@ -470,6 +607,10 @@ export class PiAgent implements AgentRunner {
       agentDir: this.agentDir,
       thinkingLevel: created.session.thinkingLevel,
       tools: created.session.getActiveToolNames(),
+      persona: ICARUS_II_PERSONA_NAME,
+      systemPromptChars: ICARUS_II_SYSTEM_PROMPT.length,
+      extensions: created.extensionsResult.extensions.length,
+      extensionErrors: created.extensionsResult.errors.length,
       apiKey: maskSecret(apiKey),
     });
     if (created.modelFallbackMessage) {
