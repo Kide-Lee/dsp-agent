@@ -61,6 +61,12 @@ namespace IcarusII
 
         /// <summary>最近一个已渲染终稿的 promptId，用于对重复的 message{final} 去重。</summary>
         private string _lastFinalReplyTo;
+
+        /// <summary>当前存档标识（null = 主菜单）。</summary>
+        private string _saveKey;
+
+        /// <summary>当前存档标识是否已经同步给服务端。</summary>
+        private bool _saveSynced;
         private bool _styleCaptured;
         private int _styleWaitFrames;
 
@@ -130,6 +136,7 @@ namespace IcarusII
 
             _chat.Tick();
             TryApplyGameStyle();
+            SyncSaveBinding();
 
             if (_config.DebugLogGate && Time.frameCount % 60 == 0)
             {
@@ -233,6 +240,8 @@ namespace IcarusII
                         break;
                     case ConnectionState.Ready:
                         _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+                        // 新连接上服务端对存档一无所知，必须重新绑定
+                        _saveSynced = false;
                         break;
                     case ConnectionState.Backoff:
                         _chat.SetStatus(Strings.Get("status.backoff") + " " + detail, WarnColor);
@@ -291,6 +300,10 @@ namespace IcarusII
                     }
                     break;
                 }
+
+                case Protocol.SaveBound:
+                    OnSaveBound(SaveBoundInfo.Parse(payload));
+                    break;
 
                 case Protocol.Stream:
                 {
@@ -501,6 +514,59 @@ namespace IcarusII
                     _chat.SetStatus(Strings.Get("status.ready"), null);
                     break;
             }
+        }
+
+        /// <summary>
+        /// 把对话串绑定到当前存档（协议附录 A.6）。
+        ///
+        /// 连接建立时还在主菜单，那时没有存档；玩家进入存档后 saveKey 才会出现。
+        /// 因此这里每帧比对，仅在**变化时**上报（含离开存档 → saveKey=null 解绑）。
+        /// 上报失败（尚未 Ready）不算数，下一帧会重试。
+        /// </summary>
+        private void SyncSaveBinding()
+        {
+            if (_client == null) return;
+
+            var key = GameRefs.CurrentSaveKey();
+            if (key != _saveKey)
+            {
+                _saveKey = key;
+                _saveSynced = false;
+                Log.LogInfo($"[存档] 当前存档变化：{key ?? "(无，主菜单)"}");
+            }
+
+            if (_saveSynced) return;
+            if (_client.State != ConnectionState.Ready) return;
+
+            var name = key != null ? GameRefs.CurrentSaveName() : null;
+            if (_client.SendSaveBind(key, name) == null) return;
+
+            _saveSynced = true;
+            Log.LogInfo($"[存档] 已上报绑定：{key ?? "(解绑)"} / {name ?? "-"}");
+        }
+
+        /// <summary>连接重新就绪时，存档绑定需要重新上报（新连接上服务端一无所知）。</summary>
+        private void OnSaveBound(SaveBoundInfo info)
+        {
+            if (info == null) return;
+
+            Post(() =>
+            {
+                if (_chat == null) return;
+
+                if (string.IsNullOrEmpty(info.SaveKey))
+                {
+                    _chat.AppendSystem(Strings.Get("save.unbound"));
+                    return;
+                }
+
+                var name = string.IsNullOrEmpty(info.SaveName) ? info.SaveKey : info.SaveName;
+                _chat.AppendSystem(info.Existed
+                    ? Strings.Get("save.bound", name, info.MessageCount)
+                    : Strings.Get("save.new", name));
+
+                _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+            });
         }
 
         /// <summary>

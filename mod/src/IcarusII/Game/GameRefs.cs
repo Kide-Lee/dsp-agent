@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Text;
 using UnityEngine;
 
@@ -132,6 +133,66 @@ namespace IcarusII.Game
         private static bool SafeBool(Func<bool> get)
         {
             try { return get(); } catch { return false; }
+        }
+
+        /// <summary>
+        /// 当前存档的**稳定标识**；没有加载存档（主菜单）时返回 null。
+        ///
+        /// 由 `GameDesc.creationTime` + `GameDesc.seedKey64` 经 FNV-1a 64 派生。
+        /// **刻意不包含 `GameData.gameName`**——那是玩家可改的名字，
+        /// 一旦改名就会把已有对话孤立成一个新线程。
+        /// 用 FNV 而非 SHA 是为了不依赖加密库（在 Proton/Mono 下更稳）。
+        /// </summary>
+        public static string CurrentSaveKey()
+        {
+            try
+            {
+                if (!GameMain.isRunning) return null;
+
+                var data = GameMain.data;
+                if (data == null) return null;
+
+                var desc = data.gameDesc;
+                if (desc == null) return null;
+
+                var raw = desc.creationTime.Ticks.ToString("x", CultureInfo.InvariantCulture)
+                        + ":" + desc.seedKey64.ToString("x", CultureInfo.InvariantCulture);
+                return Fnv1a64Hex(raw);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>存档名，仅用于显示；没有存档时为 null。</summary>
+        public static string CurrentSaveName()
+        {
+            try
+            {
+                if (!GameMain.isRunning) return null;
+                return GameMain.data != null ? GameMain.data.gameName : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string Fnv1a64Hex(string text)
+        {
+            unchecked
+            {
+                ulong hash = 14695981039346656037UL;
+                foreach (var ch in text)
+                {
+                    hash ^= (byte)(ch & 0xFF);
+                    hash *= 1099511628211UL;
+                    hash ^= (byte)((ch >> 8) & 0xFF);
+                    hash *= 1099511628211UL;
+                }
+                return hash.ToString("x16", CultureInfo.InvariantCulture);
+            }
         }
 
         /// <summary>UI 根节点；未进入游戏时为 null。</summary>

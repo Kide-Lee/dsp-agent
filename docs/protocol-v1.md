@@ -306,3 +306,47 @@ mod                                   sidecar
    `ERR_PACKAGE_PATH_NOT_EXPORTED`。sidecar 因此整体转为 ESM
    （`"type":"module"` + `nodenext`）。已实测 esbuild `--format=cjs` 单文件
    打包与 Node SEA 注入不受影响。
+
+### A.6 `save.bind` / `save.bound` — 一个存档绑定一个对话串
+
+**需求**：对话上下文跟随存档。玩家换存档 → 换对话；回到主菜单 → 解绑；
+再次进入同一存档 → 恢复该存档此前的上下文。
+
+#### `save.bind`（mod → sidecar）
+
+```json
+{
+  "v": 1, "id": "m-11", "type": "save.bind",
+  "payload": { "saveKey": "3f2a91c4d8e05b17", "saveName": "我的档" }
+}
+```
+
+- `saveKey`：存档的**稳定标识**——同一个存档每次读取都必须得到同一个值。
+  mod 由 `GameDesc.creationTime` 与 `GameDesc.seedKey64` 经 FNV-1a 64 派生为 16 位十六进制串。
+  **刻意不包含 `GameData.gameName`**：那是玩家可改的名字，
+  一旦改名就会把已有对话孤立成新线程。
+- `saveKey: null`：当前没有加载存档（主菜单）→ 解绑，但**不销毁**线程。
+- `saveName`：仅用于显示。
+
+#### `save.bound`（sidecar → mod）
+
+```json
+{
+  "v": 1, "id": "s-12", "type": "save.bound", "replyTo": "m-11",
+  "payload": { "saveKey": "3f2a91c4d8e05b17", "saveName": "我的档",
+               "existed": true, "messageCount": 12 }
+}
+```
+
+- `existed`：该存档此前是否已有对话（`false` = 新建）
+- `messageCount`：恢复的历史消息条数
+
+#### 语义
+
+1. 尚未绑定就收到 `prompt` → `error{code:"save_required"}`。
+2. 换绑**不打断**进行中的回合；新绑定在回合结束后生效（与 A.1 的 `config.set` 同规则）。
+3. 线程在 sidecar 重启后仍可恢复——持久化在数据目录内。
+4. `hello.payload.saveKey`（§4.1）在连接时若已有存档则填值。
+   实际几乎总是 `null`：mod 在插件加载时就连接，那时还在主菜单，
+   真正的绑定靠随后的 `save.bind`。
+5. 重复绑定同一个 `saveKey` 必须**幂等**（不重建、不丢历史）。

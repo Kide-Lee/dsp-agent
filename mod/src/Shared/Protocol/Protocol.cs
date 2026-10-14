@@ -39,11 +39,18 @@ namespace IcarusII.Common.Protocol
         public const string ConfigInvalidKey = "invalid_key";
         public const string ConfigUnreachable = "unreachable";
 
+        /// <summary>mod → sidecar：把对话串绑定到某个存档（附录 A.6）。</summary>
+        public const string SaveBind = "save.bind";
+
+        /// <summary>sidecar → mod：绑定结果。</summary>
+        public const string SaveBound = "save.bound";
+
         /// <summary>error.payload.code 的 M1 新增取值。</summary>
         public const string CodeInvalidKey = "invalid_key";
         public const string CodeUpstreamError = "upstream_error";
         public const string CodeRateLimited = "rate_limited";
         public const string CodeConfigRequired = "config_required";
+        public const string CodeSaveRequired = "save_required";
 
         // status.state 取值
         public const string StateIdle = "idle";
@@ -108,6 +115,19 @@ namespace IcarusII.Common.Protocol
             return p;
         }
 
+        /// <summary>
+        /// 构造 save.bind。saveKey 为 null 表示"当前没有存档"（主菜单）——
+        /// 必须**显式写出 null**，因为 sidecar 要靠"字段存在且为 null"
+        /// 区分"解绑"与"没提这件事"。
+        /// </summary>
+        public static JsonValue BuildSaveBind(string saveKey, string saveName)
+        {
+            var p = JsonValue.NewObject();
+            p.Set("saveKey", saveKey == null ? JsonValue.Null : JsonValue.Of(saveKey));
+            if (!string.IsNullOrEmpty(saveName)) p.Set("saveName", saveName);
+            return p;
+        }
+
         public static JsonValue BuildPing(long timestampMs)
         {
             var p = JsonValue.NewObject();
@@ -118,6 +138,33 @@ namespace IcarusII.Common.Protocol
         public static long NowMs()
         {
             return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        }
+    }
+
+    /// <summary>存档绑定结果（协议附录 A.6）。</summary>
+    public sealed class SaveBoundInfo
+    {
+        public string SaveKey { get; private set; }
+        public string SaveName { get; private set; }
+        /// <summary>该存档此前是否已有对话（false = 新建）。</summary>
+        public bool Existed { get; private set; }
+        /// <summary>恢复的历史消息条数。</summary>
+        public int MessageCount { get; private set; }
+
+        public static SaveBoundInfo Parse(JsonValue payload)
+        {
+            var r = new SaveBoundInfo();
+            if (payload == null || payload.IsNull) return r;
+            r.SaveKey = payload["saveKey"].AsString(null);
+            r.SaveName = payload["saveName"].AsString(null);
+            r.Existed = payload["existed"].AsBool(false);
+            r.MessageCount = payload["messageCount"].AsInt(0);
+            return r;
+        }
+
+        public override string ToString()
+        {
+            return $"{SaveName ?? SaveKey ?? "(无存档)"} existed={Existed} messages={MessageCount}";
         }
     }
 

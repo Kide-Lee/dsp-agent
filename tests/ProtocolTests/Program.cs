@@ -290,6 +290,40 @@ namespace IcarusII.Tests
             Check("缺 config 字段时假定为就绪", legacy.IsReady);
             Check("缺 config 字段时不要求录入", !legacy.NeedsKey);
 
+            // ---- 附录 A.6：存档 ↔ 对话串绑定 ----
+            Eq("save.bind 类型名", "save.bind", Protocol.SaveBind);
+            Eq("save.bound 类型名", "save.bound", Protocol.SaveBound);
+            Eq("error code save_required", "save_required", Protocol.CodeSaveRequired);
+
+            var bind = Protocol.BuildSaveBind("3f2a91c4d8e05b17", "我的档");
+            Eq("save.bind saveKey", "3f2a91c4d8e05b17", bind["saveKey"].AsString());
+            Eq("save.bind saveName", "我的档", bind["saveName"].AsString());
+
+            // 解绑：字段必须**存在且为 null**，sidecar 靠这个区分"解绑"与"没提"
+            var unbind = Protocol.BuildSaveBind(null, null);
+            Check("解绑时 saveKey 字段存在", unbind.Has("saveKey"));
+            Check("解绑时 saveKey 为 null", unbind["saveKey"].IsNull);
+            Check("解绑时不写 saveName", !unbind.Has("saveName"));
+            Eq("解绑载荷字段数", 1, unbind.Count);
+
+            // 名字可改，但键必须稳定：键里不允许出现存档名
+            Check("saveKey 不含存档名", !bind["saveKey"].AsString().Contains("我的档"));
+
+            var bound = SaveBoundInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"3f2a\",\"saveName\":\"我的档\",\"existed\":true,\"messageCount\":12}"));
+            Eq("save.bound saveKey", "3f2a", bound.SaveKey);
+            Eq("save.bound existed", true, bound.Existed);
+            Eq("save.bound messageCount", 12, bound.MessageCount);
+            Check("save.bound ToString 可读", bound.ToString().Contains("我的档"));
+
+            var fresh = SaveBoundInfo.Parse(JsonValue.Parse("{\"saveKey\":\"aa\",\"existed\":false}"));
+            Check("新对话 existed=false", !fresh.Existed);
+            Eq("缺 messageCount 时为 0", 0, fresh.MessageCount);
+
+            var noBound = SaveBoundInfo.Parse(null);
+            Eq("null 载荷的安全默认", 0, noBound.MessageCount);
+            Check("null 载荷的 SaveKey 为空", string.IsNullOrEmpty(noBound.SaveKey));
+
             // 前向兼容：config.state 未来新增字段不应影响解析
             var futureCfg = ConfigState.Parse(JsonValue.Parse("{\"state\":\"ready\",\"futureField\":42}"));
             Check("config.state 未知字段被容忍", futureCfg.IsReady);

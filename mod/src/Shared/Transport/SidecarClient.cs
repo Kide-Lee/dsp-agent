@@ -30,6 +30,13 @@ namespace IcarusII.Common.Transport
         public string GameLanguage = "unknown";
         public string[] Capabilities = new string[0];
 
+        /// <summary>
+        /// 连接时已加载的存档标识（协议 §4.1 的 saveKey）。
+        /// 实际几乎总是 null——插件在加载时就连接，那时还在主菜单；
+        /// 真正的绑定靠随后的 save.bind（附录 A.6）。
+        /// </summary>
+        public string SaveKey;
+
         public int ConnectTimeoutMs = 3000;
         public int HandshakeTimeoutMs = 5000;
         public int MinBackoffMs = 1000;
@@ -169,6 +176,24 @@ namespace IcarusII.Common.Transport
             return env["id"].AsString();
         }
 
+        /// <summary>
+        /// 把对话串绑定到某个存档（协议附录 A.6）。
+        /// saveKey 为 null 表示"当前没有存档"，即解绑（不销毁线程）。
+        /// </summary>
+        public string SendSaveBind(string saveKey, string saveName = null)
+        {
+            if (_state != ConnectionState.Ready) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.SaveBind,
+                Protocol.Protocol.BuildSaveBind(saveKey, saveName),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
         private void UpdateConfig(Protocol.ConfigState next)
         {
             if (next == null) return;
@@ -221,7 +246,7 @@ namespace IcarusII.Common.Transport
                         Protocol.Protocol.Hello,
                         Protocol.Protocol.BuildHello(
                             _options.Token, _options.ModVersion, _options.GameVersion,
-                            _options.GameLanguage, _options.Capabilities, null),
+                            _options.GameLanguage, _options.Capabilities, _options.SaveKey),
                         NextId(), null);
                     await SendRawAsync(hello, connCts.Token).ConfigureAwait(false);
 
