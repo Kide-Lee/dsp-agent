@@ -51,7 +51,7 @@ namespace IcarusII.Config
             Streaming = cfg.Bind("General", "Streaming", true,
                 "是否逐字显示流式回复。").Value;
 
-            DebugLogGate = cfg.Bind("General", "DebugLogGate", true,
+            DebugLogGate = cfg.Bind("General", "DebugLogGate", false,
                 "每秒输出一次热键判定依据与窗口可见性，用于排查「按 R 没反应」。\n" +
                 "排查完成后可关闭。").Value;
 

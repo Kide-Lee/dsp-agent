@@ -58,6 +58,9 @@ namespace IcarusII
         private bool _styleApplied;
         private bool _initFailed;
         private ConfigState _lastConfig;
+
+        /// <summary>最近一个已渲染终稿的 promptId，用于对重复的 message{final} 去重。</summary>
+        private string _lastFinalReplyTo;
         private bool _styleCaptured;
         private int _styleWaitFrames;
 
@@ -246,10 +249,10 @@ namespace IcarusII
         private void OnClientMessage(string type, JsonValue payload, string replyTo)
         {
             // 事件在后台线程触发，必须回到主线程再碰 Unity
-            Post(() => HandleMessage(type, payload));
+            Post(() => HandleMessage(type, payload, replyTo));
         }
 
-        private void HandleMessage(string type, JsonValue payload)
+        private void HandleMessage(string type, JsonValue payload, string replyTo)
         {
             switch (type)
             {
@@ -316,6 +319,16 @@ namespace IcarusII
                 case Protocol.Message:
                 {
                     if (!payload["final"].AsBool()) break;
+
+                    // 协议规定一轮 prompt 只有一个 final 终稿。若服务端因缺陷发了
+                    // 第二个，这里必须忽略——否则会走下面的"非流式追加"分支，
+                    // 把同一段回答在窗口里再写一遍（实测出现过）。
+                    if (!string.IsNullOrEmpty(replyTo))
+                    {
+                        if (replyTo == _lastFinalReplyTo) break;
+                        _lastFinalReplyTo = replyTo;
+                    }
+
                     if (_streaming)
                     {
                         // 流式已经渲染过同样内容，直接收尾即可
