@@ -185,7 +185,10 @@ READY {"port":8765,"token":"..."}
 dotnet run --project tests/ProtocolTests
 
 # 端到端（先起 sidecar）
-node sidecar/dist/index.js serve --port 8799 --token testtoken &
+# --agent echo：这条用例断言的是 M0 的 echo 帧序与文本不变量。
+# M1 起 sidecar 默认 --agent pi，没有 API Key 时会回 config_required，
+# 该用例会失败——这是预期行为，不是回归。
+node sidecar/dist/index.js serve --port 8799 --token testtoken --agent echo &
 dotnet run --project tests/ProtocolTests -- e2e ws://127.0.0.1:8799 testtoken
 
 # 重新构建

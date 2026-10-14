@@ -2,11 +2,19 @@
 
 [《戴森球计划》(Dyson Sphere Program)](https://store.steampowered.com/app/1366540/) 的游戏内 AI 助手 mod。
 
+首次使用：打开窗口后按提示粘贴 DeepSeek API Key（输入不回显，也不会进聊天记录）。
+
 游戏里按 **`R`** 打开聊天窗，可以问机制、要攻略、让 AI 读取你当前的存档状态给建议，
 也可以在**你确认之后**让 AI 执行游戏内操作。
 
-> 状态：**M0（骨架）**。目前打通的是"插件加载 → 窗口开关 → 与 sidecar 握手 → 消息回显"这条链路，
-> 还没有接入大模型。设计与路线图见 [design.md](design.md)。
+> 状态：**M1（接入对话）**。
+> - M0 已完成并实机验证：插件加载 → 窗口开关（`R`）→ 与 sidecar 握手 → 消息回显。
+> - M1 已完成：sidecar 接入 [pi](https://github.com/earendil-works/pi-mono) + DeepSeek，
+>   mod 侧实现首次密钥引导与配置上报。
+> - ⚠️ **真实 DeepSeek 端点尚未实测**（开发环境没有 API Key）。
+>   pi 的完整链路已用本地 loopback 假端点离线验证（帧序、错误分类、密钥不外泄）。
+>
+> 设计与路线图见 [design.md](design.md)，待定想法见 [docs/ideas.md](docs/ideas.md)。
 
 ---
 
@@ -14,9 +22,9 @@
 
 ```
 ┌─ Icarus II ──────────────────────── 就绪 ─┐
-│ 系统  已连接 sidecar（会话 3f9a…，模型 echo）│
+│ 系统  已连接 sidecar（会话 3f9a…，模型 deepseek-v4-flash）│
 │ 你    你好                                │
-│ 助手  echo: 你好                          │
+│ 助手  你好！有什么可以帮你的？              │
 │                                           │
 ├───────────────────────────────────────────┤
 │ 输入问题…（Enter 发送，Esc 关闭）          │
@@ -176,7 +184,7 @@ scripts/install.sh --with-bepinex
 dotnet run --project tests/ProtocolTests
 
 # 端到端：用与 mod 相同的协议实现去连真实 sidecar
-node sidecar/dist/index.js serve --port 8799 --token testtoken &
+node sidecar/dist/index.js serve --port 8799 --token testtoken --agent echo &
 dotnet run --project tests/ProtocolTests -- e2e ws://127.0.0.1:8799 testtoken
 ```
 

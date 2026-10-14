@@ -231,6 +231,8 @@ export class PiAgent implements AgentRunner {
   private runtime: ModelRuntime | null = null;
   private unsubscribe: (() => void) | null = null;
   private active: RunState | null = null;
+  /** 回合运行中收到 config.set 时，延后到回合结束再重建会话。 */
+  private pendingTeardown = false;
   /** 进程内全局串行：多连接共用同一个 pi 会话。 */
   private chain: Promise<unknown> = Promise.resolve();
 
@@ -249,6 +251,15 @@ export class PiAgent implements AgentRunner {
   }
 
   onConfigChanged(): void {
+    // 正在跑回合时不要拆会话：否则流式输出会被拦腰截断。
+    // 记下来，等这一轮结束后再重建。
+    if (this.active) {
+      this.pendingTeardown = true;
+      this.logger.info('配置变化：当前回合结束后重建 pi 会话', {
+        apiKey: this.store.maskedApiKey,
+      });
+      return;
+    }
     this.logger.info('配置变化，丢弃 pi 会话，下一次 prompt 重新建立', {
       apiKey: this.store.maskedApiKey,
     });
@@ -256,6 +267,12 @@ export class PiAgent implements AgentRunner {
   }
 
   dispose(): void {
+    this.teardown();
+  }
+
+  private applyPendingTeardown(): void {
+    if (!this.pendingTeardown) return;
+    this.pendingTeardown = false;
     this.teardown();
   }
 
@@ -277,11 +294,16 @@ export class PiAgent implements AgentRunner {
   }
 
   run(text: string, promptId: string | null, emit: AgentEmitter): Promise<void> {
+    const task = async (): Promise<void> => {
+      try {
+        await this.runOnce(text, promptId, emit);
+      } finally {
+        this.active = null;
+        this.applyPendingTeardown();
+      }
+    };
     const previous = this.chain;
-    const next = previous.then(
-      () => this.runOnce(text, promptId, emit),
-      () => this.runOnce(text, promptId, emit),
-    );
+    const next = previous.then(task, task);
     this.chain = next.catch(() => undefined);
     return next;
   }
@@ -301,8 +323,26 @@ export class PiAgent implements AgentRunner {
 
     emit.status('thinking', `${data.provider}/${data.model}`);
 
+    let session: AgentSession;
     try {
-      const session = await this.ensureSession(data.provider, data.model, data.apiKey, data.baseUrl);
+      session = await this.ensureSession(data.provider, data.model, data.apiKey, data.baseUrl);
+    } catch (err) {
+      // 建会话失败 = LLM/模型不可用（协议 §4.8），与上游请求错误区分开。
+      const safe = redactSecrets(describeError(err), [data.apiKey]);
+      this.logger.error('无法建立 pi 会话', {
+        promptId,
+        message: safe,
+        ...errorFields(err),
+        apiKey: this.store.maskedApiKey,
+      });
+      if (emit.isActive()) {
+        emit.error('agent_unavailable', safe, promptId);
+        emit.status('idle');
+      }
+      return;
+    }
+
+    try {
       if (!emit.isActive()) return;
       // 纯对话：不解析斜杠命令/模板。
       await session.prompt(text, { expandPromptTemplates: false });

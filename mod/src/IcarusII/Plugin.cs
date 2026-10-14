@@ -290,7 +290,19 @@ namespace IcarusII
 
                 case Protocol.Stream:
                 {
-                    if (payload["channel"].AsString("text") != "text") break;
+                    var streamChannel = payload["channel"].AsString("text");
+
+                    // reasoning：模型的思考增量。不进正文（正文只该包含答案），
+                    // 但必须让玩家看到"它在想"——之前这里是静默 break，
+                    // 开了思考档位就会表现为"卡住没有任何反应"。
+                    if (streamChannel == "reasoning")
+                    {
+                        _chat.SetStatus(Strings.Get("status.thinking"), AccentColor);
+                        break;
+                    }
+
+                    // 未知 channel 忽略（前向兼容）
+                    if (streamChannel != "text") break;
                     if (!_streaming)
                     {
                         _streaming = true;

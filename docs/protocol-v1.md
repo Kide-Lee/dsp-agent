@@ -242,7 +242,7 @@ mod                                   sidecar
   "payload": {
     "protocol": 1,
     "sessionId": "sess_...",
-    "agent": "pi/deepseek-v4-flash",
+    "agent": { "provider": "deepseek", "model": "deepseek-v4-flash", "available": true },
     "config": {
       "state": "missing_key",
       "provider": "deepseek",
@@ -254,6 +254,10 @@ mod                                   sidecar
 
 旧客户端忽略 `config` 字段，行为不变。mod 可据此在**第一次握手**就知道要不要进引导态，
 无需额外往返。
+
+> `agent` 是**对象**（与 §4.2 一致），不是字符串。实现时曾把这里写成
+> `"agent": "pi/deepseek-v4-flash"`，与 C# 客户端的 `payload["agent"]["model"]` 冲突，
+> 会导致 mod 显示不出模型名。以 §4.2 为准。
 
 ### A.3 `error` 新增 code
 
@@ -270,3 +274,35 @@ mod                                   sidecar
 2. sidecar 写日志时必须脱敏：最多打印前 4 位与总长度，例如 `sk-a…(48)`。
 3. 配置落盘权限：Linux 下 `0600`；Windows 下依赖 `%APPDATA%` 自身的 ACL。
 4. mod 侧输入密钥时输入框应为**密码态**（不回显明文）。
+
+### A.5 实现注意（M1 实测，踩过的坑）
+
+以下几条都是**读类型定义看不出来、只有实跑才会暴露**的行为，写在这里避免重复踩：
+
+1. **必须显式关掉思考档位。** pi 的 `thinkingLevel` 默认是 `medium`，
+   而 DeepSeek 的 `thinkingLevelMap` 把 `minimal`/`low`/`medium` 全设为 `null`，
+   clamp 逻辑会**向后找**到 `high` —— 于是"什么都没配"反而变成
+   `thinking:{type:"enabled"}` + `reasoning_effort:"high"`，既变慢又变贵。
+   M1 必须显式传 `thinkingLevel: "off"`。
+
+2. **凭证注入不能走 `ModelRuntime.create({ apiKey })`** —— 该选项不存在。
+   带 `apiKey` 的类型是 `ModelRuntimeAuthOverrides`，只被 `getAuth()` 接受；
+   `setRuntimeApiKey()` 存在但内部会触发**联网**刷新模型目录。
+   正确做法：自建内存 `CredentialStore` 传给 `create({ credentials })`，
+   并显式 `allowModelNetwork: false`。
+
+3. **即使传了 `credentials`，`modelsPath` 仍默认 `~/.pi/agent/models.json`。**
+   要真正隔离用户环境，必须**同时**显式传 `authPath` 与 `modelsPath`
+   （指向 sidecar 数据目录），否则会读写用户的全局 pi 目录。
+
+4. **`AgentSession.prompt()` 在上游出错时不会 reject**，而是以合成助手消息
+   （`stopReason:"error"` + `errorMessage`）经事件送达。
+   因此错误分类必须读事件载荷，不能靠 catch。
+
+5. **文本增量不在 `AgentEvent` 上**，而在 `message_update.assistantMessageEvent`
+   （pi-ai 的 `AssistantMessageEvent`：`text_delta` / `thinking_delta` / `error` / `done`）。
+
+6. **pi 包是 ESM-only**（exports 只有 `import`），`require()` 会直接
+   `ERR_PACKAGE_PATH_NOT_EXPORTED`。sidecar 因此整体转为 ESM
+   （`"type":"module"` + `nodenext`）。已实测 esbuild `--format=cjs` 单文件
+   打包与 Node SEA 注入不受影响。
