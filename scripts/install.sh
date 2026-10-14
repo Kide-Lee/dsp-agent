@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 把 VibeDsp 安装到 Dyson Sphere Program 的游戏目录。
+# 把 IcarusII 安装到 Dyson Sphere Program 的游戏目录。
 #
 # 前提：**BepInEx 5 已安装**。本脚本不会替你装 BepInEx
 #       （除非显式加 --with-bepinex，那是开发自用路径）。
@@ -15,7 +15,7 @@
 # 脚本做的事：
 #   1. 定位游戏目录（Steam libraryfolders.vdf + 常见路径）
 #   2. 校验 BepInEx 是否就位
-#   3. 复制 BepInEx/plugins/VibeDsp/
+#   3. 复制 BepInEx/plugins/IcarusII/
 #   4. 若是 Proton 运行：向前缀注册表写入 winhttp 覆盖，
 #      使 BepInEx 无需 Steam 启动项即可生效
 #
@@ -28,7 +28,7 @@ GAME_DIR=""
 WITH_BEPINEX=0
 NO_REGISTRY=0
 UNINSTALL=0
-PLUGIN_SUBDIR="BepInEx/plugins/VibeDsp"
+PLUGIN_SUBDIR="BepInEx/plugins/IcarusII"
 
 log()  { printf '\033[36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[!]\033[0m %s\n' "$*" >&2; }
@@ -117,15 +117,15 @@ log "BepInEx 已就位。"
 
 # ---------------------------------------------------------------- 复制插件
 SRC_PLUGIN="$PKG_DIR/$PLUGIN_SUBDIR"
-if [[ ! -f "$SRC_PLUGIN/VibeDsp.dll" ]]; then
+if [[ ! -f "$SRC_PLUGIN/IcarusII.dll" ]]; then
   # 允许直接从未打包的构建输出安装（开发便利）
-  ALT="$(cd "$SELF_DIR/.." && pwd)/mod/src/VibeDsp/bin/Release/VibeDsp.dll"
+  ALT="$(cd "$SELF_DIR/.." && pwd)/mod/src/IcarusII/bin/Release/IcarusII.dll"
   if [[ -f "$ALT" ]]; then
     log "使用构建输出：$ALT"
     mkdir -p "$SRC_PLUGIN"
-    cp -f "$ALT" "$SRC_PLUGIN/VibeDsp.dll"
+    cp -f "$ALT" "$SRC_PLUGIN/IcarusII.dll"
   else
-    die "找不到 $SRC_PLUGIN/VibeDsp.dll"
+    die "找不到 $SRC_PLUGIN/IcarusII.dll"
   fi
 fi
 
@@ -213,6 +213,6 @@ cat <<EOF
   3. 首次使用需在窗口内填入 API Key
 
   日志：$GAME_DIR/BepInEx/LogOutput.log
-  配置：$GAME_DIR/BepInEx/config/vibe-dsp.cfg
-  数据：%APPDATA%\\vibe-dsp\\（Proton 下在 compatdata/$APPID/pfx/drive_c/users/<user>/AppData/Roaming/vibe-dsp）
+  配置：$GAME_DIR/BepInEx/config/icarus-ii.cfg
+  数据：%APPDATA%\\icarus-ii\\（Proton 下在 compatdata/$APPID/pfx/drive_c/users/<user>/AppData/Roaming/icarus-ii）
 EOF

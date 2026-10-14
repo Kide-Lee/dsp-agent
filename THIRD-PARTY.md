@@ -6,13 +6,13 @@
 | --- | --- | --- | --- |
 | [BepInEx](https://github.com/BepInEx/BepInEx) 5.4.23.5 | mod 加载器（doorstop 代理 + Harmony） | LGPL-2.1 | **不随包分发**，由玩家自行安装；`scripts/fetch-deps.sh` 仅用于开发期拉取参考程序集 |
 | [pi](https://github.com/earendil-works/pi-mono) (`@earendil-works/pi-coding-agent`) | Agent 运行时（Provider 抽象、工具调用循环、会话管理） | MIT | 经 esbuild 打包进 sidecar 可执行文件（M1 起） |
-| [Node.js](https://nodejs.org/) | sidecar 运行时 | MIT | 以 SEA（Single Executable Application）形式**内嵌**进 `vibe-dsp-sidecar.exe` |
+| [Node.js](https://nodejs.org/) | sidecar 运行时 | MIT | 以 SEA（Single Executable Application）形式**内嵌**进 `icarus-ii-sidecar.exe` |
 | [ws](https://github.com/websockets/ws) | sidecar 的 WebSocket 服务端 | MIT | 打包进 sidecar |
 
 ## 关于 BepInEx
 
 BepInEx 采用 **LGPL-2.1**。本项目**不再分发** BepInEx 本体：
-发布包只包含 `vibe-dsp` 自己的程序集与 sidecar 可执行文件，
+发布包只包含 `icarus-ii` 自己的程序集与 sidecar 可执行文件，
 玩家需自行从其官方发布页获取 BepInEx。
 
 仓库内的 `scripts/fetch-deps.sh` 会把 BepInEx 下载到 `.deps/`（已被 `.gitignore` 忽略），
@@ -20,7 +20,7 @@ BepInEx 采用 **LGPL-2.1**。本项目**不再分发** BepInEx 本体：
 
 ## 关于内嵌的 Node.js
 
-`vibe-dsp-sidecar.exe` 是通过 Node 官方的 SEA 机制，把 sidecar 代码注入官方 Node 二进制得到的。
+`icarus-ii-sidecar.exe` 是通过 Node 官方的 SEA 机制，把 sidecar 代码注入官方 Node 二进制得到的。
 因此该文件内含 Node.js 运行时，遵循 Node.js 的 MIT 许可证。
 
 ## 游戏本体

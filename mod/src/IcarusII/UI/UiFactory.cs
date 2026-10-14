@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace VibeDsp.UI
+namespace IcarusII.UI
 {
     /// <summary>
     /// 运行时构建 UGUI 的小工具集。
@@ -91,7 +91,7 @@ namespace VibeDsp.UI
                 var existing = Object.FindObjectOfType<UnityEngine.EventSystems.EventSystem>();
                 if (existing != null) return;
 
-                var go = new GameObject("VibeDspEventSystem");
+                var go = new GameObject("IcarusIIEventSystem");
                 go.AddComponent<UnityEngine.EventSystems.EventSystem>();
                 go.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
                 Object.DontDestroyOnLoad(go);

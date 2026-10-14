@@ -2,11 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading;
-using VibeDsp.Common.Json;
-using VibeDsp.Common.Protocol;
-using VibeDsp.Common.Transport;
+using IcarusII.Common.Json;
+using IcarusII.Common.Protocol;
+using IcarusII.Common.Transport;
 
-namespace VibeDsp.Tests
+namespace IcarusII.Tests
 {
     /// <summary>
     /// 端到端：用**与 mod 完全相同的** Shared 源码去连真实的 sidecar，

@@ -3,8 +3,8 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <LangVersion>9.0</LangVersion>
-    <AssemblyName>VibeDsp</AssemblyName>
-    <RootNamespace>VibeDsp</RootNamespace>
+    <AssemblyName>IcarusII</AssemblyName>
+    <RootNamespace>IcarusII</RootNamespace>
     <Version>$(ModVersion)</Version>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>

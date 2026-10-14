@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 using UnityEngine.UI;
-using VibeDsp.Config;
-using VibeDsp.I18n;
+using IcarusII.Config;
+using IcarusII.I18n;
 
-namespace VibeDsp.UI
+namespace IcarusII.UI
 {
     /// <summary>
     /// 聊天窗口。
@@ -185,7 +185,7 @@ namespace VibeDsp.UI
             // 父级变换影响，结果面板的锚点解算到错误的位置（实测表现：
             // panelRect/anchoredPosition 都对，却渲染在屏幕左上角）。
             // 顶层 + DontDestroyOnLoad 才是标准做法。
-            var rootRt = UiFactory.Node("VibeDspCanvas", null);
+            var rootRt = UiFactory.Node("IcarusIICanvas", null);
             UnityEngine.Object.DontDestroyOnLoad(rootRt.gameObject);
 
             var canvas = rootRt.gameObject.AddComponent<Canvas>();

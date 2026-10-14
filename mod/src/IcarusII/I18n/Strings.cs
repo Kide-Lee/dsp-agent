@@ -1,7 +1,7 @@
 using System.Collections.Generic;
-using VibeDsp.Game;
+using IcarusII.Game;
 
-namespace VibeDsp.I18n
+namespace IcarusII.I18n
 {
     /// <summary>
     /// 界面文案。M0 只有中文，但所有文案都走查表，
@@ -11,7 +11,7 @@ namespace VibeDsp.I18n
     {
         private static readonly Dictionary<string, string> ZhCn = new Dictionary<string, string>
         {
-            ["title"] = "Vibe DSP",
+            ["title"] = "伊卡洛斯·贰",
             ["status.connecting"] = "连接中…",
             ["status.handshaking"] = "握手中…",
             ["status.ready"] = "就绪",

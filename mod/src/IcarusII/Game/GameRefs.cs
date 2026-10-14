@@ -2,7 +2,7 @@ using System;
 using System.Text;
 using UnityEngine;
 
-namespace VibeDsp.Game
+namespace IcarusII.Game
 {
     /// <summary>
     /// 对游戏内部 API 的**唯一**访问点。

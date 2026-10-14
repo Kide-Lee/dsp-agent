@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
-namespace VibeDsp.Common.Json
+namespace IcarusII.Common.Json
 {
     public enum JsonKind
     {

@@ -4,10 +4,10 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using VibeDsp.Common.Json;
-using VibeDsp.Common.Protocol;
+using IcarusII.Common.Json;
+using IcarusII.Common.Protocol;
 
-namespace VibeDsp.Common.Transport
+namespace IcarusII.Common.Transport
 {
     public enum ConnectionState
     {
@@ -49,7 +49,7 @@ namespace VibeDsp.Common.Transport
     /// 本类**刻意不依赖 UnityEngine**：
     ///  - 所有事件都在后台线程触发，调用方（Unity 层）负责 marshal 回主线程；
     ///  - 因此同一份源码可以在普通 .NET 进程里编译运行，用于端到端测试。
-    ///    （见 tests/VibeDsp.ProtocolTests）
+    ///    （见 tests/IcarusII.ProtocolTests）
     /// </summary>
     public sealed class SidecarClient : IDisposable
     {

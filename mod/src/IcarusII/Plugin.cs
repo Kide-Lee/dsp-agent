@@ -3,18 +3,18 @@ using System.IO;
 using System.Threading.Tasks;
 using BepInEx;
 using BepInEx.Logging;
-using VibeDsp.Common.Json;
-using VibeDsp.Common.Protocol;
-using VibeDsp.Common.Transport;
-using VibeDsp.Config;
-using VibeDsp.Core;
-using VibeDsp.Game;
-using VibeDsp.Input;
-using VibeDsp.I18n;
-using VibeDsp.UI;
+using IcarusII.Common.Json;
+using IcarusII.Common.Protocol;
+using IcarusII.Common.Transport;
+using IcarusII.Config;
+using IcarusII.Core;
+using IcarusII.Game;
+using IcarusII.Input;
+using IcarusII.I18n;
+using IcarusII.UI;
 using UnityEngine;
 
-namespace VibeDsp
+namespace IcarusII
 {
     /// <summary>
     /// 插件入口。
@@ -27,8 +27,8 @@ namespace VibeDsp
     [BepInProcess("DSPGAME.exe")]
     public sealed class Plugin : BaseUnityPlugin
     {
-        public const string Guid = "vibe-dsp";
-        public const string PluginName = "Vibe DSP";
+        public const string Guid = "icarus-ii";
+        public const string PluginName = "Icarus II";
         public const string PluginVersion = "0.1.0";
 
         /// <summary>每帧用于处理后台线程回调的时间预算（毫秒）。</summary>

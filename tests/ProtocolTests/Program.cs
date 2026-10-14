@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
-using VibeDsp.Common.Json;
-using VibeDsp.Common.Protocol;
+using IcarusII.Common.Json;
+using IcarusII.Common.Protocol;
 
-namespace VibeDsp.Tests
+namespace IcarusII.Tests
 {
     /// <summary>
     /// M0 的本机验证程序（零测试框架依赖，便于在任何环境跑）。

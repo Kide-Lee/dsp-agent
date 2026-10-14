@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * vibe-dsp sidecar CLI（M0）。
+ * icarus-ii sidecar CLI（M0）。
  *
- *   vibe-dsp-sidecar serve [--port 8765] [--data-dir PATH] [--token TOKEN] [--host 127.0.0.1]
- *   vibe-dsp-sidecar --selfcheck      # 发布流水线的空目录冒烟自检：打印版本号后退出
- *   vibe-dsp-sidecar --help | --version
+ *   icarus-ii-sidecar serve [--port 8765] [--data-dir PATH] [--token TOKEN] [--host 127.0.0.1]
+ *   icarus-ii-sidecar --selfcheck      # 发布流水线的空目录冒烟自检：打印版本号后退出
+ *   icarus-ii-sidecar --help | --version
  *
  * 约定（M0 验收脚本依赖它）：
  *   - stdout **只**输出一行机器可读的启动信息：`READY {"port":8765,"token":"…"}`
@@ -34,7 +34,7 @@ const AGENT_INFO: AgentInfo = { provider: 'echo', model: 'm0-echo', available: t
 const REGISTERED_TOOLS: readonly string[] = [];
 
 const DEFAULT_HOST = '127.0.0.1';
-const DEFAULT_DATA_DIR_NAME = '.vibe-dsp-dev';
+const DEFAULT_DATA_DIR_NAME = '.icarus-ii-dev';
 
 interface ServeArgs {
   host: string;
@@ -45,23 +45,23 @@ interface ServeArgs {
 
 function usage(): string {
   return [
-    'vibe-dsp sidecar (M0)',
+    'icarus-ii sidecar (M0)',
     '',
     '用法:',
-    '  vibe-dsp-sidecar serve [选项]',
+    '  icarus-ii-sidecar serve [选项]',
     '',
     '选项:',
     `  --port <n>        监听端口（默认 ${DEFAULT_PORT}，0 = 随机端口）`,
     `  --host <addr>     监听地址（默认 ${DEFAULT_HOST}）`,
     `  --data-dir <path> 数据目录（默认 ~/${DEFAULT_DATA_DIR_NAME}）；运行时写 runtime.json`,
     '  --token <token>   握手 token（默认随机 32 字节 hex）',
-    '  --log-level <l>   debug | info | warn | error（默认 info，也可用 VIBE_DSP_LOG_LEVEL）',
+    '  --log-level <l>   debug | info | warn | error（默认 info，也可用 ICARUS_II_LOG_LEVEL）',
     '  -h, --help        显示本帮助',
     '  -v, --version     显示版本号',
     '      --selfcheck   打印版本号并退出（发布流水线冒烟自检）',
     '',
     '环境变量:',
-    '  VIBE_DSP_LOG_LEVEL   同 --log-level',
+    '  ICARUS_II_LOG_LEVEL   同 --log-level',
   ].join('\n');
 }
 
@@ -292,7 +292,7 @@ async function main(argv: string[]): Promise<void> {
 
   if (values['selfcheck']) {
     // scripts/build-sidecar.sh 在空目录里跑这一条：不碰网络、不写文件，只证明 bundle 能启动。
-    process.stdout.write(`vibe-dsp-sidecar ${SERVER_VERSION} (protocol ${PROTOCOL_VERSION})\n`);
+    process.stdout.write(`icarus-ii-sidecar ${SERVER_VERSION} (protocol ${PROTOCOL_VERSION})\n`);
     if (pkgVersion && pkgVersion !== SERVER_VERSION) {
       log.warn('内嵌版本号与 package.json 不一致', { embedded: SERVER_VERSION, package: pkgVersion });
     }

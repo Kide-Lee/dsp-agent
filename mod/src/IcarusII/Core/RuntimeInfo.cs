@@ -1,8 +1,8 @@
 using System;
 using System.IO;
-using VibeDsp.Common.Json;
+using IcarusII.Common.Json;
 
-namespace VibeDsp.Core
+namespace IcarusII.Core
 {
     /// <summary>
     /// sidecar 启动后写出的 runtime.json（见 docs/protocol-v1.md §1 与 design.md §7.1.4）。

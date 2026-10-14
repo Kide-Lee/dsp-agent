@@ -1,11 +1,11 @@
 {
-  "name": "vibe-dsp-sidecar",
+  "name": "icarus-ii-sidecar",
   "version": "0.1.0",
   "private": true,
-  "description": "vibe-dsp 本地 sidecar：WebSocket 服务端（协议 v1），M0 为 echo agent",
+  "description": "icarus-ii 本地 sidecar：WebSocket 服务端（协议 v1），M0 为 echo agent",
   "license": "MIT",
   "bin": {
-    "vibe-dsp-sidecar": "dist/index.js"
+    "icarus-ii-sidecar": "dist/index.js"
   },
   "main": "dist/index.js",
   "engines": {

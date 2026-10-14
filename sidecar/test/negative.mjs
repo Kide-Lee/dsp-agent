@@ -31,7 +31,7 @@ function check(name, cond, detail) { cond ? ok(name) : fail(name, detail); }
 /** 启动 sidecar，等它打印 READY，返回 { proc, port, stop() }。 */
 function startSidecar() {
   return new Promise((resolve, reject) => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'vibe-dsp-neg-'));
+    const dataDir = mkdtempSync(join(tmpdir(), 'icarus-ii-neg-'));
     const proc = spawn(process.execPath, [ENTRY, 'serve', '--port', '0', '--token', TOKEN, '--data-dir', dataDir], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });

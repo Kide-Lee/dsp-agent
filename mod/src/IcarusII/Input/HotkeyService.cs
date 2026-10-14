@@ -1,9 +1,9 @@
 using System;
 using UnityEngine;
-using VibeDsp.Config;
-using VibeDsp.Game;
+using IcarusII.Config;
+using IcarusII.Game;
 
-namespace VibeDsp.Input
+namespace IcarusII.Input
 {
     /// <summary>
     /// 热键判定。

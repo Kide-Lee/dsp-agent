@@ -1,7 +1,7 @@
 using System;
-using VibeDsp.Common.Json;
+using IcarusII.Common.Json;
 
-namespace VibeDsp.Common.Protocol
+namespace IcarusII.Common.Protocol
 {
     /// <summary>
     /// 协议 v1 的常量与信封辅助。

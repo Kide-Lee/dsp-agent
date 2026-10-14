@@ -2,7 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 
-namespace VibeDsp.Core
+namespace IcarusII.Core
 {
     /// <summary>
     /// 把后台线程（WebSocket 收帧、进程回调）的工作搬回 Unity 主线程。

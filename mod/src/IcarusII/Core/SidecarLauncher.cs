@@ -3,10 +3,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using BepInEx.Logging;
-using VibeDsp.Common.Transport;
-using VibeDsp.Config;
+using IcarusII.Common.Transport;
+using IcarusII.Config;
 
-namespace VibeDsp.Core
+namespace IcarusII.Core
 {
     /// <summary>
     /// 负责让 sidecar 就位：拉起进程（spawnExe）或直接连接（connectOnly），
@@ -39,18 +39,18 @@ namespace VibeDsp.Core
         public static string DefaultDataDir()
         {
             // Windows 语义；Proton 下会落在
-            // compatdata/<appid>/pfx/drive_c/users/<user>/AppData/Roaming/vibe-dsp
+            // compatdata/<appid>/pfx/drive_c/users/<user>/AppData/Roaming/icarus-ii
             var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             if (string.IsNullOrEmpty(appData))
-                appData = Path.Combine(Path.GetTempPath(), "vibe-dsp");
-            return Path.Combine(appData, "vibe-dsp");
+                appData = Path.Combine(Path.GetTempPath(), "icarus-ii");
+            return Path.Combine(appData, "icarus-ii");
         }
 
         public string ResolveExePath()
         {
             if (!string.IsNullOrWhiteSpace(_config.SidecarExePath))
                 return _config.SidecarExePath;
-            return Path.Combine(_pluginDir, "sidecar", "vibe-dsp-sidecar.exe");
+            return Path.Combine(_pluginDir, "sidecar", "icarus-ii-sidecar.exe");
         }
 
         /// <summary>
@@ -126,7 +126,7 @@ namespace VibeDsp.Core
                 if (!File.Exists(exe))
                 {
                     error = $"找不到 sidecar 可执行文件：{exe}\n" +
-                            "请确认发布包内 BepInEx/plugins/VibeDsp/sidecar/ 下有 vibe-dsp-sidecar.exe，" +
+                            "请确认发布包内 BepInEx/plugins/IcarusII/sidecar/ 下有 icarus-ii-sidecar.exe，" +
                             "或在配置中改用 LaunchMode=connectOnly 自行启动 sidecar。";
                     return false;
                 }

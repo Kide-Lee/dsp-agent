@@ -17,10 +17,10 @@ log() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 # NuGet 缓存在受限环境里可能不可写，统一落到仓库内
 export NUGET_PACKAGES="${NUGET_PACKAGES:-$ROOT/.deps/nuget}"
 
-log "编译 VibeDsp ($CONFIG)"
-dotnet build "$ROOT/mod/src/VibeDsp/VibeDsp.csproj" \
+log "编译 IcarusII ($CONFIG)"
+dotnet build "$ROOT/mod/src/IcarusII/IcarusII.csproj" \
   -c "$CONFIG" -v q --nologo "$@"
 
-OUT="$ROOT/mod/src/VibeDsp/bin/$CONFIG/VibeDsp.dll"
+OUT="$ROOT/mod/src/IcarusII/bin/$CONFIG/IcarusII.dll"
 [[ -f "$OUT" ]] || { echo "未找到产物 $OUT" >&2; exit 1; }
 log "产物：$OUT ($(du -h "$OUT" | cut -f1))"

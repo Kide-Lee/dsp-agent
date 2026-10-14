@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace VibeDsp.UI
+namespace IcarusII.UI
 {
     /// <summary>
     /// 找一个能显示中文的字体。
