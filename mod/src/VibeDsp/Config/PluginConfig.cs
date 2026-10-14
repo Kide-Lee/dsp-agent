@@ -2,10 +2,10 @@ using System;
 using BepInEx.Configuration;
 using UnityEngine;
 
-namespace DSPAgent.Config
+namespace VibeDsp.Config
 {
     /// <summary>
-    /// BepInEx 配置（BepInEx/config/dsp-agent.cfg）。
+    /// BepInEx 配置（BepInEx/config/vibe-dsp.cfg）。
     /// 字段与 design.md §6.7 对应；M0 只实现其中一部分，其余先占位以便配置文件稳定。
     /// </summary>
     internal sealed class PluginConfig
@@ -56,16 +56,16 @@ namespace DSPAgent.Config
                 "排查完成后可关闭。").Value;
 
             LaunchMode = cfg.Bind("Sidecar", "LaunchMode", "spawnExe",
-                "spawnExe = 由本插件拉起随包分发的 dsp-agent-sidecar.exe（默认）\n" +
+                "spawnExe = 由本插件拉起随包分发的 vibe-dsp-sidecar.exe（默认）\n" +
                 "connectOnly = 只连接，不拉起（需自行启动 sidecar）\n" +
                 "spawnNode = 开发用，拉起本机 node + dist/sidecar.cjs").Value;
 
             SidecarHost = cfg.Bind("Sidecar", "Host", "127.0.0.1", "sidecar 监听地址。").Value;
             SidecarPort = cfg.Bind("Sidecar", "Port", 8765, "sidecar 监听端口。").Value;
             SidecarExePath = cfg.Bind("Sidecar", "ExePath", "",
-                "留空 = 使用插件目录下的 sidecar/dsp-agent-sidecar.exe。").Value;
+                "留空 = 使用插件目录下的 sidecar/vibe-dsp-sidecar.exe。").Value;
             DataDir = cfg.Bind("Sidecar", "DataDir", "",
-                "留空 = %APPDATA%\\dsp-agent（Windows 语义，Proton 下同样适用）。").Value;
+                "留空 = %APPDATA%\\vibe-dsp（Windows 语义，Proton 下同样适用）。").Value;
             ConnectTimeoutMs = cfg.Bind("Sidecar", "ConnectTimeoutMs", 3000, "单次连接超时（毫秒）。").Value;
             SidecarStartupTimeoutMs = cfg.Bind("Sidecar", "StartupTimeoutMs", 15000,
                 "spawnExe 模式下等待 runtime.json 出现的超时（毫秒）。").Value;

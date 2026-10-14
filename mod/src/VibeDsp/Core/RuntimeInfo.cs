@@ -1,8 +1,8 @@
 using System;
 using System.IO;
-using DSPAgent.Common.Json;
+using VibeDsp.Common.Json;
 
-namespace DSPAgent.Core
+namespace VibeDsp.Core
 {
     /// <summary>
     /// sidecar 启动后写出的 runtime.json（见 docs/protocol-v1.md §1 与 design.md §7.1.4）。

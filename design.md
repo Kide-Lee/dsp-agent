@@ -1,4 +1,4 @@
-# dsp-agent 设计文档
+# vibe-dsp 设计文档
 
 > Dyson Sphere Program 的 AI 助手 mod：按 `R` 打开聊天窗口，可就游戏内容提问、索取指引，并在玩家确认后让 AI 执行游戏内操作。
 
@@ -25,7 +25,7 @@
 5. **复用游戏自身的 UI 组件**：`UnityEngine.UI` 被 DSP 深度定制（含 `UnityEngine.UI.Youthcat` 富文本/多语言字体栈），直接复用可自动获得中文字体、IME 输入与美术风格一致性。
 6. **`R` 热键主动避让建造旋转**：`R` 在游戏中已是"旋转建筑"（已核实，见 §6.2），因此热键以 `PlayerAction_Build.activeTool` 为主门控——建造模式下 `R` 归游戏，其余状态才开窗；配置可切 `Ctrl+R`。
 7. **玩家侧零附加依赖**：sidecar 打成自包含单文件可执行（已在本机跑通全链路：pi + 全部依赖 → 7.1MB 单 JS → 107MB Windows exe / 132MB Linux 二进制，零原生模块）。玩家只需装 BepInEx；sidecar 由插件自动拉起（§7.1.1、§2.2）。
-8. **Windows 优先**：mod 目标平台为 Windows，主要产物是 `dsp-agent-sidecar.exe`；它同时覆盖原生 Windows 与 Proton（PE 可在 Wine 内直接 `Process.Start`）。全部状态路径按 Windows 语义落在 `%APPDATA%\dsp-agent\`（§2.4）。
+8. **Windows 优先**：mod 目标平台为 Windows，主要产物是 `vibe-dsp-sidecar.exe`；它同时覆盖原生 Windows 与 Proton（PE 可在 Wine 内直接 `Process.Start`）。全部状态路径按 Windows 语义落在 `%APPDATA%\vibe-dsp\`（§2.4）。
 
 **已确认的产品决策**（详见 §19）：默认模型 **DeepSeek**（`deepseek-chat`）；凭证完全自持、**不复用**其他工具；热键**只有 `R`**；**不做**截图工具；**不做**写前自动存档；**接受**发布包体积增大、sidecar 全部内置。
 
@@ -91,9 +91,9 @@
 | LLM API Key | ✅ 必需 | **不可消除** | 这是 mod 的功能本体；可用本地模型，但那样反而多一个推理运行时依赖 |
 | 网络访问 | ✅ 必需（除非纯本地模型） | 不可消除 | 仅访问 `127.0.0.1` + 所配 LLM 端点；Wiki 抓取可关 |
 
-**结论**：除 API Key 与网络外，**可以做到零附加依赖**——玩家装好 BepInEx 后，mod 自带 `dsp-agent-sidecar.exe`，由插件自动拉起、退出时回收。
+**结论**：除 API Key 与网络外，**可以做到零附加依赖**——玩家装好 BepInEx 后，mod 自带 `vibe-dsp-sidecar.exe`，由插件自动拉起、退出时回收。
 
-> **已决定（用户确认）**：接受发布包变大，`sidecar/dsp-agent-sidecar.exe` **直接内置**，不做"首次启动引导下载"。`LaunchMode` 仍保留引导下载的抽象以备将来，但默认不启用。
+> **已决定（用户确认）**：接受发布包变大，`sidecar/vibe-dsp-sidecar.exe` **直接内置**，不做"首次启动引导下载"。`LaunchMode` 仍保留引导下载的抽象以备将来，但默认不启用。
 
 ---
 
@@ -112,9 +112,9 @@ Dyson Sphere Program/
 ├── doorstop_config.ini
 └── BepInEx/
     ├── core/…
-    └── plugins/DSPAgent/
-        ├── DSPAgent.dll
-        └── sidecar/dsp-agent-sidecar.exe   （自包含，§7.1.1）
+    └── plugins/VibeDsp/
+        ├── VibeDsp.dll
+        └── sidecar/vibe-dsp-sidecar.exe   （自包含，§7.1.1）
 ```
 
 解压进去、启动游戏、按 `R` 即可。**无需任何额外配置**（除首次填 API Key）。
@@ -152,7 +152,7 @@ Dyson Sphere Program/
 API Key 是外部服务凭证，mod 无从得知，**这一步不可自动化**。但可以做到**不必手改配置文件**：
 
 - 首次启动时，`R` 打开的聊天窗口直接进入**首次配置面板**：选择 Provider → 粘贴 API Key → 选择模型 → **连通性自检** → 完成。
-- 凭证写入 sidecar 自己的数据目录 `%APPDATA%\dsp-agent\auth.json`（§2.4），**不回写游戏目录**，卸载干净。
+- 凭证写入 sidecar 自己的数据目录 `%APPDATA%\vibe-dsp\auth.json`（§2.4），**不回写游戏目录**，卸载干净。
 - **已决定（用户确认）：不复用 `pi` 或其他工具的既有登录**。sidecar 使用完全独立的凭证与模型配置，避免与玩家其他工具的配置相互干扰。因此首次配置面板是**必经路径**，必须做好（不能依赖"检测到已有登录就跳过"）。
 
 #### 2.3.4 目标安装流程
@@ -162,7 +162,7 @@ API Key 是外部服务凭证，mod 无从得知，**这一步不可自动化**�
 ② 运行 install.sh（Windows: install.bat，或直接解压 zip）
    ├─ 从 steamapps/libraryfolders.vdf 定位游戏目录
    ├─ 检测运行形态（原生 Windows / Proton）
-   ├─ 复制 BepInEx 5 + BepInEx/plugins/DSPAgent/
+   ├─ 复制 BepInEx 5 + BepInEx/plugins/VibeDsp/
    └─ Proton 分支：向 pfx/user.reg 追加 AppDefaults\DSPGAME.exe\DllOverrides
 ③ 启动游戏 → 按 R → 首次配置面板粘贴 API Key
 ```
@@ -179,14 +179,14 @@ API Key 是外部服务凭证，mod 无从得知，**这一步不可自动化**�
 
 | 项 | 约定 |
 | --- | --- |
-| 首要构建目标 | **Windows x64**（`dsp-agent-sidecar.exe`），Proton 下同样运行此 Windows 产物 |
+| 首要构建目标 | **Windows x64**（`vibe-dsp-sidecar.exe`），Proton 下同样运行此 Windows 产物 |
 | 次要/开发目标 | Linux x64 二进制——**仅用于开发期在本机原生调试 sidecar**，不作为发布形态 |
 | sidecar 运行身份 | 一个 **Windows 进程**（原生 Windows 直接运行；Proton 下在 Wine 内运行） |
-| 数据目录 | **`%APPDATA%\dsp-agent\`**（Windows 语义）。该代码路径在原生 Windows 与 Wine 下完全一致，无需分支 |
-| Proton 下的实际落盘位置 | `compatdata/1366540/pfx/drive_c/users/<user>/AppData/Roaming/dsp-agent/` |
+| 数据目录 | **`%APPDATA%\vibe-dsp\`**（Windows 语义）。该代码路径在原生 Windows 与 Wine 下完全一致，无需分支 |
+| Proton 下的实际落盘位置 | `compatdata/1366540/pfx/drive_c/users/<user>/AppData/Roaming/vibe-dsp/` |
 | 游戏目录 | 只读+单向写入：安装器写入 `BepInEx/`；**运行期不回写游戏目录**（配置、会话、知识库都在 `%APPDATA%`） |
 
-**因此全文不采用 `~/.config/dsp-agent/`、`~/.pi/agent` 等 Linux 家目录路径。** 附录与配置示例中出现的所有路径均按 Windows 语义。
+**因此全文不采用 `~/.config/vibe-dsp/`、`~/.pi/agent` 等 Linux 家目录路径。** 附录与配置示例中出现的所有路径均按 Windows 语义。
 
 ---
 
@@ -259,7 +259,7 @@ API Key 是外部服务凭证，mod 无从得知，**这一步不可自动化**�
 ┌─ DSPGAME.exe (Wine/Proton 内) ─────────────────┐
 │                                                │
 │  BepInEx 5 (winhttp doorstop)                  │
-│   └─ DSPAgent.dll                              │
+│   └─ VibeDsp.dll                              │
 │       ├─ Plugin.cs            插件入口/Harmony │
 │       ├─ ChatWindow           UGUI 聊天窗口    │
 │       ├─ HotkeyService        R 键 / 焦点管理  │
@@ -272,7 +272,7 @@ API Key 是外部服务凭证，mod 无从得知，**这一步不可自动化**�
                     │  ↑ 流式事件 / 工具调用 / 确认请求
                     │  ↓ 用户输入 / 工具结果 / 确认答复
 ┌───────────────────┴────────────────────────────┐
-│ dsp-agent-sidecar (宿主 Node/TS)               │
+│ vibe-dsp-sidecar (宿主 Node/TS)               │
 │                                                │
 │  Fastify + ws  ── 会话与协议层                 │
 │      └─ AgentRuntime (接口)                    │
@@ -383,7 +383,7 @@ API Key 是外部服务凭证，mod 无从得知，**这一步不可自动化**�
 ### 6.1 插件装配与补丁点
 
 ```csharp
-[BepInPlugin("dsp-agent", "DSP Agent", "0.1.0")]
+[BepInPlugin("vibe-dsp", "Vibe DSP", "0.1.0")]
 [BepInProcess("DSPGAME.exe")]
 public sealed class Plugin : BaseUnityPlugin
 ```
@@ -478,7 +478,7 @@ AgentRoot (RectTransform, 默认 inactive)
 ├─ Backdrop            Image (半透明遮罩, 点击=关闭, 可选)
 └─ Panel               Image (九宫格, 仿游戏面板)
    ├─ TitleBar
-   │   ├─ Title        Text      "DSP Agent"
+   │   ├─ Title        Text      "Vibe DSP"
    │   ├─ StatusDot    Image     连接/思考状态
    │   └─ CloseButton  UIButton
    ├─ MessageScroll    ScrollRect
@@ -564,7 +564,7 @@ AgentRoot (RectTransform, 默认 inactive)
 
 ### 6.7 配置（BepInEx）
 
-配置文件 `BepInEx/config/dsp-agent.cfg`：
+配置文件 `BepInEx/config/vibe-dsp.cfg`：
 
 ```ini
 [General]
@@ -578,13 +578,13 @@ LogLevel = Info
 LaunchMode = spawnExe    ; spawnExe(推荐) | connectOnly | spawnNode | spawnBinary
 Host = 127.0.0.1
 Port = 8765
-ExePath =                ; 空=使用随包分发的 dsp-agent-sidecar.exe
+ExePath =                ; 空=使用随包分发的 vibe-dsp-sidecar.exe
 NodePath =               ; 仅 spawnNode 模式
 ConnectTimeoutMs = 3000
 AutoReconnect = true
 
 [Agent]
-AgentDir =               ; 空=使用 %APPDATA%\dsp-agent（sidecar 自持凭证，不复用其他工具）
+AgentDir =               ; 空=使用 %APPDATA%\vibe-dsp（sidecar 自持凭证，不复用其他工具）
 Model =                  ; 空=使用 sidecar 默认（deepseek-chat）
 SystemPromptFile =       ; 空=使用内置
 
@@ -659,9 +659,9 @@ EOF
 node --experimental-sea-config sea-config.json
 
 # 2b. 拷贝对应平台的 node 二进制并注入 blob
-cp "$(command -v node)" dsp-agent-sidecar            # Linux x64
-# cp node.exe dsp-agent-sidecar.exe                 # Windows x64（可从 nodejs.org 下载后离线注入）
-npx postject dsp-agent-sidecar NODE_SEA_BLOB sea-prep.blob \
+cp "$(command -v node)" vibe-dsp-sidecar            # Linux x64
+# cp node.exe vibe-dsp-sidecar.exe                 # Windows x64（可从 nodejs.org 下载后离线注入）
+npx postject vibe-dsp-sidecar NODE_SEA_BLOB sea-prep.blob \
   --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
 ```
 
@@ -669,10 +669,10 @@ npx postject dsp-agent-sidecar NODE_SEA_BLOB sea-prep.blob \
 
 | 产物 | 体积 | 验证状态 |
 | --- | --- | --- |
-| Linux x64 `dsp-agent-sidecar` | **132 MB** | ✅ 在**空目录**（无 `node_modules`、无 Node 安装）中运行成功，正确加载 pi SDK |
-| Windows x64 `dsp-agent-sidecar.exe` | **107 MB** | ⚠️ 注入成功、PE 有效；运行测试被本机沙箱挡住（见下），M0 复测 |
+| Linux x64 `vibe-dsp-sidecar` | **132 MB** | ✅ 在**空目录**（无 `node_modules`、无 Node 安装）中运行成功，正确加载 pi SDK |
+| Windows x64 `vibe-dsp-sidecar.exe` | **107 MB** | ⚠️ 注入成功、PE 有效；运行测试被本机沙箱挡住（见下），M0 复测 |
 
-> **沙箱限制说明**：Windows 产物在 Wine 下的运行验证未能完成——`wineserver` 强制使用 `/run/user/1000/wine`，在当前沙箱下只读。这是**验证环境**的限制，不是方案的限制。M0 需在真实环境跑一次冒烟测试（`wine dsp-agent-sidecar.exe` 应打印 `esbuild-bundle-ok`）。
+> **沙箱限制说明**：Windows 产物在 Wine 下的运行验证未能完成——`wineserver` 强制使用 `/run/user/1000/wine`，在当前沙箱下只读。这是**验证环境**的限制，不是方案的限制。M0 需在真实环境跑一次冒烟测试（`wine vibe-dsp-sidecar.exe` 应打印 `esbuild-bundle-ok`）。
 
 **体积说明与优化方向**：132MB 中约 125MB 是 Node 运行时本身，JS 只占 7MB。若需缩小，可选方案（按性价比排序）：
 
@@ -686,7 +686,7 @@ npx postject dsp-agent-sidecar NODE_SEA_BLOB sea-prep.blob \
 
 | 模式 | 适用环境 | 机制 | 玩家依赖 |
 | --- | --- | --- | --- |
-| **`spawnExe`（默认）** | 原生 Windows **与** Proton | mod `Process.Start` 随包分发的 `dsp-agent-sidecar.exe`（Windows x64） | **无** |
+| **`spawnExe`（默认）** | 原生 Windows **与** Proton | mod `Process.Start` 随包分发的 `vibe-dsp-sidecar.exe`（Windows x64） | **无** |
 | `connectOnly` | 开发期 / 高级玩家 | 已有 sidecar 常驻，mod 只连接 | 视情况 |
 | `spawnNode` | 开发期（宿主循环最快） | mod 启动本机 `node` + `dist/sidecar.cjs` | Node |
 | `spawnBinary` | 开发期（Linux 原生调试） | mod 启动随包的 Linux 二进制 | 无 |
@@ -706,12 +706,12 @@ spawnExe（随包 exe）                        ← 默认，覆盖原生 Window
 
 适合希望 sidecar 独立于游戏生命周期（多存档共用、便于调试）或需要在本机原生运行 sidecar 的开发场景。
 
-**Windows**：把 `dsp-agent-sidecar.exe` 注册为计划任务/启动项，或直接手动运行。
+**Windows**：把 `vibe-dsp-sidecar.exe` 注册为计划任务/启动项，或直接手动运行。
 
 **Linux（开发期，本机原生运行 sidecar 以便热重载）**：systemd 用户级 socket 激活——
 
 ```ini
-# ~/.config/systemd/user/dsp-agent-sidecar.socket
+# ~/.config/systemd/user/vibe-dsp-sidecar.socket
 [Socket]
 ListenStream=127.0.0.1:8765
 
@@ -720,14 +720,14 @@ WantedBy=sockets.target
 ```
 
 ```ini
-# ~/.config/systemd/user/dsp-agent-sidecar.service
+# ~/.config/systemd/user/vibe-dsp-sidecar.service
 [Service]
-ExecStart=%h/.local/bin/dsp-agent-sidecar serve --systemd-socket
+ExecStart=%h/.local/bin/vibe-dsp-sidecar serve --systemd-socket
 Restart=on-failure
 ```
 
 ```bash
-systemctl --user enable --now dsp-agent-sidecar.socket
+systemctl --user enable --now vibe-dsp-sidecar.socket
 ```
 
 效果：mod 首次连接时 systemd 才拉起 sidecar（空闲零开销），游戏退出后 sidecar 自动空闲退出。
@@ -747,7 +747,7 @@ import {
 
 要点（均与 pi 文档核实）：
 
-1. **模型与凭证**：`ModelRuntime.create({ authPath, modelsPath })`，两者都指向 **`%APPDATA%\dsp-agent\`**（§2.4）。**不复用 `pi` 的既有登录**（用户确认）——sidecar 完全自持凭证。
+1. **模型与凭证**：`ModelRuntime.create({ authPath, modelsPath })`，两者都指向 **`%APPDATA%\vibe-dsp\`**（§2.4）。**不复用 `pi` 的既有登录**（用户确认）——sidecar 完全自持凭证。
    - **默认 Provider：DeepSeek**（用户确认）。
    - Anthropic Messages：pi 原生支持，作为备选 Provider 保留。
    - 其它 OpenAI 兼容端点（OpenAI / 智谱 / 本地 Ollama / vLLM…）：通过 `models.json` 声明。
@@ -843,7 +843,7 @@ function gameTool<T>(spec: {
 ### 7.5 会话与持久化
 
 ```
-%APPDATA%\dsp-agent\                     # 原生 Windows 与 Wine 内一致
+%APPDATA%\vibe-dsp\                     # 原生 Windows 与 Wine 内一致
 ├── config.json            # sidecar 自身配置
 ├── models.json            # Provider/模型声明（默认含 DeepSeek）
 ├── auth.json              # 凭证（sidecar 自持，不复用其他工具）
@@ -858,7 +858,7 @@ function gameTool<T>(spec: {
 └── logs/
 ```
 
-> Proton 下的宿主侧实际路径：`steamapps/compatdata/1366540/pfx/drive_c/users/<user>/AppData/Roaming/dsp-agent/`。开发时直接看这个目录即可，与 Windows 上同构。
+> Proton 下的宿主侧实际路径：`steamapps/compatdata/1366540/pfx/drive_c/users/<user>/AppData/Roaming/vibe-dsp/`。开发时直接看这个目录即可，与 Windows 上同构。
 
 - `saveKey = sha1(gameName + creationTime + 存档标识)`，避免不同存档串话（`GameMain.creationTime` 已核实存在）。
 - 聊天历史即 pi 的会话文件；游戏内"历史"按钮调用 `get_entries` 分页读取。
@@ -1024,7 +1024,7 @@ sidecar                                          mod
 ## 12. 目录结构与构建
 
 ```
-dsp-agent/
+vibe-dsp/
 ├── design.md                     # 本文档
 ├── README.md                     # 安装与使用（含 Proton 步骤）
 ├── docs/
@@ -1033,10 +1033,10 @@ dsp-agent/
 │   ├── configuration.md
 │   └── tools-reference.md        # 自动从工具注册表生成
 ├── mod/                          # C# BepInEx 插件
-│   ├── DSPAgent.sln
+│   ├── VibeDsp.sln
 │   ├── Directory.Build.props     # DSPGameDir / BepInExDir 路径变量
-│   └── src/DSPAgent/
-│       ├── DSPAgent.csproj       # netstandard2.1
+│   └── src/VibeDsp/
+│       ├── VibeDsp.csproj       # netstandard2.1
 │       ├── Plugin.cs
 │       ├── Config/PluginConfig.cs
 │       ├── Transport/{SidecarClient,Protocol,ReconnectPolicy}.cs
@@ -1069,23 +1069,23 @@ dsp-agent/
 
 **构建**
 
-- mod：`dotnet build -c Release`，产物 `DSPAgent.dll` → `BepInEx/plugins/DSPAgent/`。
+- mod：`dotnet build -c Release`，产物 `VibeDsp.dll` → `BepInEx/plugins/VibeDsp/`。
 - sidecar（四步流水线，`scripts/build-sidecar.sh`）：
   1. `tsc` 类型检查 + `esbuild` 打单文件 `dist/sidecar.cjs`（7.1MB，零原生依赖，参数见 §7.1.1）
   2. `node --experimental-sea-config` 生成 blob
-  3. 对每个目标平台注入：Windows x64（`node.exe`）→ `dsp-agent-sidecar.exe`；Linux x64 → `dsp-agent-sidecar`
+  3. 对每个目标平台注入：Windows x64（`node.exe`）→ `vibe-dsp-sidecar.exe`；Linux x64 → `vibe-dsp-sidecar`
   4. 校验：在空目录中冒烟运行，断言输出版本号
 - 发布包布局（面向后续 Thunderstore 发布）：
   ```
-  DSPAgent/
+  VibeDsp/
   ├── manifest.json
   ├── README.md
   ├── icon.png
   ├── BepInEx/
-  │   ├── plugins/DSPAgent/
-  │   │   ├── DSPAgent.dll
-  │   │   └── sidecar/dsp-agent-sidecar.exe      # 自包含，约 107MB（Windows）
-  │   └── config/dsp-agent.cfg (示例)
+  │   ├── plugins/VibeDsp/
+  │   │   ├── VibeDsp.dll
+  │   │   └── sidecar/vibe-dsp-sidecar.exe      # 自包含，约 107MB（Windows）
+  │   └── config/vibe-dsp.cfg (示例)
   └── CHANGELOG.md
   ```
   > **已决定（用户确认）**：接受发布包变大，sidecar **全部内置**，不做引导下载。
@@ -1101,13 +1101,13 @@ dsp-agent/
 
 ## 13. 配置项一览
 
-见 §6.7（mod 侧）与下（sidecar 侧，`%APPDATA%\dsp-agent\config.json`）：
+见 §6.7（mod 侧）与下（sidecar 侧，`%APPDATA%\vibe-dsp\config.json`）：
 
 ```jsonc
 {
   "host": "127.0.0.1",
   "port": 8765,
-  "dataDir": "%APPDATA%\\dsp-agent",   // 全部状态的根目录（§2.4）
+  "dataDir": "%APPDATA%\\vibe-dsp",   // 全部状态的根目录（§2.4）
   "modelsPath": null,                   // 默认 <dataDir>/models.json
   "authPath": null,                     // 默认 <dataDir>/auth.json（自持，不复用他处）
   "provider": "deepseek",               // 默认 Provider（用户确认）
@@ -1358,18 +1358,18 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 | # | 决策 | 影响位置 |
 | --- | --- | --- |
 | 1 | **默认模型 = DeepSeek**，默认取 `deepseek-chat`（非思考模式，工具调用支持明确） | §7.2、§13 |
-| 2 | **不复用任何既有登录**；sidecar 自持凭证。**mod 目标平台是 Windows** ⇒ 全部路径按 Windows 语义（`%APPDATA%\dsp-agent\`），Windows 产物为首要构建目标 | §2.4、§2.3.3、§7.2、§7.5 |
+| 2 | **不复用任何既有登录**；sidecar 自持凭证。**mod 目标平台是 Windows** ⇒ 全部路径按 Windows 语义（`%APPDATA%\vibe-dsp\`），Windows 产物为首要构建目标 | §2.4、§2.3.3、§7.2、§7.5 |
 | 3 | **不需要第二个热键**，只有 `R`（+ `Esc` 关闭） | §6.2、§6.7 |
 | 4 | **不做截图工具**（AI 看不到玩家画面） | §8.1、§9.1、§15 |
 | 5 | **不做写前自动存档** | §3.5、§6.5、§6.7、§9.1、§16 R7 |
-| 6 | **接受发布包变大**，`dsp-agent-sidecar.exe` 直接内置 | §2.2、§12、§16 R9 |
+| 6 | **接受发布包变大**，`vibe-dsp-sidecar.exe` 直接内置 | §2.2、§12、§16 R9 |
 
 ### 19.1 仍需在实现阶段坐实的技术项（非产品决策）
 
 | 项 | 何时 | 验证方法 |
 | --- | --- | --- |
 | Proton 是否尊重 `AppDefaults\DSPGAME.exe\DllOverrides` | M0 | 写入后启动游戏，看 BepInEx 是否加载（§2.3.2、§16 R13） |
-| Wine 内 `Process.Start` 拉起自包含 exe | M0 | 游戏内观察 sidecar 进程与日志；沙箱外复测 `wine dsp-agent-sidecar.exe` |
+| Wine 内 `Process.Start` 拉起自包含 exe | M0 | 游戏内观察 sidecar 进程与日志；沙箱外复测 `wine vibe-dsp-sidecar.exe` |
 | BepInEx 5 在 DSP 上使用哪个代理 DLL 名 | M0 | 查看 BepInEx 发行包内的 `winhttp.dll` / `version.dll` / `dinput8.dll` |
 | `R` / `Shift+R` 的确切绑键与是否还有第三个动作占用裸 `R` | M0 | 运行时打印 `KeyConfig.builtinKeys`；游戏内「设置 → 按键」 |
 | DeepSeek 当前的 `contextWindow` / `maxTokens` 实际值 | M1 | 设计阶段 `api-docs.deepseek.com` 被 DNS 拦截，未能核实；实现时按官方文档填入 `models.json` 默认值 |

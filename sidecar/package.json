@@ -1,11 +1,11 @@
 {
-  "name": "dsp-agent-sidecar",
+  "name": "vibe-dsp-sidecar",
   "version": "0.1.0",
   "private": true,
-  "description": "dsp-agent 本地 sidecar：WebSocket 服务端（协议 v1），M0 为 echo agent",
+  "description": "vibe-dsp 本地 sidecar：WebSocket 服务端（协议 v1），M0 为 echo agent",
   "license": "MIT",
   "bin": {
-    "dsp-agent-sidecar": "dist/index.js"
+    "vibe-dsp-sidecar": "dist/index.js"
   },
   "main": "dist/index.js",
   "engines": {

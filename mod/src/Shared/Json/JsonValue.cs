@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
-namespace DSPAgent.Common.Json
+namespace VibeDsp.Common.Json
 {
     public enum JsonKind
     {

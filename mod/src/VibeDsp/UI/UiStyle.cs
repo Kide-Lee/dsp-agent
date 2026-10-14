@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace DSPAgent.UI
+namespace VibeDsp.UI
 {
     /// <summary>
     /// 从游戏自己的 UI 窗口"抄"一份视觉样式。

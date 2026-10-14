@@ -1,7 +1,7 @@
 using System.Collections.Generic;
-using DSPAgent.Game;
+using VibeDsp.Game;
 
-namespace DSPAgent.I18n
+namespace VibeDsp.I18n
 {
     /// <summary>
     /// 界面文案。M0 只有中文，但所有文案都走查表，
@@ -11,7 +11,7 @@ namespace DSPAgent.I18n
     {
         private static readonly Dictionary<string, string> ZhCn = new Dictionary<string, string>
         {
-            ["title"] = "DSP Agent",
+            ["title"] = "Vibe DSP",
             ["status.connecting"] = "连接中…",
             ["status.handshaking"] = "握手中…",
             ["status.ready"] = "就绪",

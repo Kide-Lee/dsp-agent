@@ -2,11 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading;
-using DSPAgent.Common.Json;
-using DSPAgent.Common.Protocol;
-using DSPAgent.Common.Transport;
+using VibeDsp.Common.Json;
+using VibeDsp.Common.Protocol;
+using VibeDsp.Common.Transport;
 
-namespace DSPAgent.Tests
+namespace VibeDsp.Tests
 {
     /// <summary>
     /// 端到端：用**与 mod 完全相同的** Shared 源码去连真实的 sidecar，

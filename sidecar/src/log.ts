@@ -25,7 +25,7 @@ function isLevel(value: string): value is LogLevel {
 }
 
 function initialLevel(): LogLevel {
-  const raw = (process.env['DSP_AGENT_LOG_LEVEL'] ?? '').toLowerCase();
+  const raw = (process.env['VIBE_DSP_LOG_LEVEL'] ?? '').toLowerCase();
   return isLevel(raw) ? raw : 'info';
 }
 

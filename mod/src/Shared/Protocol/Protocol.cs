@@ -1,7 +1,7 @@
 using System;
-using DSPAgent.Common.Json;
+using VibeDsp.Common.Json;
 
-namespace DSPAgent.Common.Protocol
+namespace VibeDsp.Common.Protocol
 {
     /// <summary>
     /// 协议 v1 的常量与信封辅助。

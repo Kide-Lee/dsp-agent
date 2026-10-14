@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 构建自包含的 dsp-agent sidecar 可执行文件。
+# 构建自包含的 vibe-dsp sidecar 可执行文件。
 #
 # 本脚本中的每一步都在开发机上实测通过（见 design.md §7.1.1 与附录 A）：
 #   pi SDK + 全部依赖  ->  7.1MB 单 JS 文件（零原生模块）
@@ -112,10 +112,10 @@ build_target() {
   local target="$1"
   local runtime out
   case "$target" in
-    linux-x64)    runtime="$RUNTIME_DIR/node-linux-x64";   out="$OUT_DIR/dsp-agent-sidecar";     fetch_node_runtime linux  x64 "$runtime" ;;
-    windows-x64)  runtime="$RUNTIME_DIR/node-win-x64.exe"; out="$OUT_DIR/dsp-agent-sidecar.exe"; fetch_node_runtime win    x64 "$runtime" ;;
-    darwin-x64)   runtime="$RUNTIME_DIR/node-darwin-x64";  out="$OUT_DIR/dsp-agent-sidecar-macos"; fetch_node_runtime darwin x64 "$runtime" ;;
-    darwin-arm64) runtime="$RUNTIME_DIR/node-darwin-arm64";out="$OUT_DIR/dsp-agent-sidecar-macos-arm64"; fetch_node_runtime darwin arm64 "$runtime" ;;
+    linux-x64)    runtime="$RUNTIME_DIR/node-linux-x64";   out="$OUT_DIR/vibe-dsp-sidecar";     fetch_node_runtime linux  x64 "$runtime" ;;
+    windows-x64)  runtime="$RUNTIME_DIR/node-win-x64.exe"; out="$OUT_DIR/vibe-dsp-sidecar.exe"; fetch_node_runtime win    x64 "$runtime" ;;
+    darwin-x64)   runtime="$RUNTIME_DIR/node-darwin-x64";  out="$OUT_DIR/vibe-dsp-sidecar-macos"; fetch_node_runtime darwin x64 "$runtime" ;;
+    darwin-arm64) runtime="$RUNTIME_DIR/node-darwin-arm64";out="$OUT_DIR/vibe-dsp-sidecar-macos-arm64"; fetch_node_runtime darwin arm64 "$runtime" ;;
     *) echo "未知目标 $target" >&2; return 2 ;;
   esac
 

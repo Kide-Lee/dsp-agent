@@ -7,14 +7,14 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>ProtocolTests</AssemblyName>
-    <RootNamespace>DSPAgent.Tests</RootNamespace>
+    <RootNamespace>VibeDsp.Tests</RootNamespace>
     <NoWarn>$(NoWarn);NU1900</NoWarn>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
   </PropertyGroup>
 
   <!--
     直接把 mod 的 Shared 源码编进来，而不是引用工程：
-    Shared 是刻意保持 Unity-free 的，同一份源码既进 DSPAgent.dll 也进本测试程序，
+    Shared 是刻意保持 Unity-free 的，同一份源码既进 VibeDsp.dll 也进本测试程序，
     这样 M0 就能在没有游戏的情况下端到端验证 C# 侧代码。
   -->
   <ItemGroup>

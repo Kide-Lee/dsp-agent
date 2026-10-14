@@ -46,13 +46,13 @@ if (await WaitForReady()) Use(client.SessionId);
 **期望**日志出现：
 
 ```
-DSP Agent 0.1.0 已加载
-插件目录：.../BepInEx/plugins/DSPAgent
+Vibe DSP 0.1.0 已加载
+插件目录：.../BepInEx/plugins/VibeDsp
 热键：R（建造模式让位 = True）
 sidecar：spawnExe @ 127.0.0.1:8765
 ```
 
-**失败**：日志里完全没有 `DSP Agent` → BepInEx 没生效。
+**失败**：日志里完全没有 `Vibe DSP` → BepInEx 没生效。
 Proton 下多半是 `winhttp` 覆盖没写上，见 §3。
 
 ---
@@ -73,9 +73,9 @@ READY {"port":8765,"token":"..."}
 
 | 日志里的线索 | 原因 | 处理 |
 | --- | --- | --- |
-| `找不到 sidecar 可执行文件` | 没复制 sidecar | 确认 `BepInEx/plugins/DSPAgent/sidecar/dsp-agent-sidecar.exe` 存在 |
+| `找不到 sidecar 可执行文件` | 没复制 sidecar | 确认 `BepInEx/plugins/VibeDsp/sidecar/vibe-dsp-sidecar.exe` 存在 |
 | `sidecar 进程提前退出` | Wine 下起不来 | 看紧跟的 `[sidecar:err]` 行 |
-| `等待 sidecar 启动超时` | 端口被占 / 启动慢 | 看 `%APPDATA%\dsp-agent\runtime.json` 是否生成 |
+| `等待 sidecar 启动超时` | 端口被占 / 启动慢 | 看 `%APPDATA%\vibe-dsp\runtime.json` 是否生成 |
 | 一直没有 `[连接]` | 网络层问题 | 日志搜 `[client]` |
 
 ---
@@ -85,7 +85,7 @@ READY {"port":8765,"token":"..."}
 **操作**：进入存档 → 按 `R`。
 
 **期望**：
-- 右下角出现深色面板，标题 `DSP Agent`，右上角状态 `就绪`（绿色）
+- 右下角出现深色面板，标题 `Vibe DSP`，右上角状态 `就绪`（绿色）
 - 输入框获得焦点，可直接打字
 - 中文正常显示（不是方块/问号）
 
@@ -98,7 +98,7 @@ READY {"port":8765,"token":"..."}
 | 按 R 无反应 | 见 V4；或字体创建失败 | 日志搜 `聊天窗口已创建` / `找不到可用字体` |
 | 中文显示成方块 | 没借到游戏字体 | 日志搜 `字体来源`；若是 `builtin-arial(no-cjk)` 需要报告 |
 | 窗口打开但 WASD 还在动 | 输入压制被游戏覆盖 | 报告，需要改用 Harmony patch `VFInput` |
-| 窗口位置/大小不合适 | 配置项 | 改 `BepInEx/config/dsp-agent.cfg` 的 `[UI]` |
+| 窗口位置/大小不合适 | 配置项 | 改 `BepInEx/config/vibe-dsp.cfg` 的 `[UI]` |
 
 ---
 
@@ -138,7 +138,7 @@ READY {"port":8765,"token":"..."}
 
 ### V6 断线重连
 
-**操作**：窗口打开状态下，用任务管理器/`kill` 结束 `dsp-agent-sidecar.exe`。
+**操作**：窗口打开状态下，用任务管理器/`kill` 结束 `vibe-dsp-sidecar.exe`。
 
 **期望**：状态变 `重连中…`（黄色），日志出现退避重试；sidecar 不会自动重启（M0 已知限制）。
 

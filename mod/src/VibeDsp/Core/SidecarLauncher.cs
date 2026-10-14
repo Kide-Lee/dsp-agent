@@ -3,10 +3,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using BepInEx.Logging;
-using DSPAgent.Common.Transport;
-using DSPAgent.Config;
+using VibeDsp.Common.Transport;
+using VibeDsp.Config;
 
-namespace DSPAgent.Core
+namespace VibeDsp.Core
 {
     /// <summary>
     /// 负责让 sidecar 就位：拉起进程（spawnExe）或直接连接（connectOnly），
@@ -39,18 +39,18 @@ namespace DSPAgent.Core
         public static string DefaultDataDir()
         {
             // Windows 语义；Proton 下会落在
-            // compatdata/<appid>/pfx/drive_c/users/<user>/AppData/Roaming/dsp-agent
+            // compatdata/<appid>/pfx/drive_c/users/<user>/AppData/Roaming/vibe-dsp
             var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             if (string.IsNullOrEmpty(appData))
-                appData = Path.Combine(Path.GetTempPath(), "dsp-agent");
-            return Path.Combine(appData, "dsp-agent");
+                appData = Path.Combine(Path.GetTempPath(), "vibe-dsp");
+            return Path.Combine(appData, "vibe-dsp");
         }
 
         public string ResolveExePath()
         {
             if (!string.IsNullOrWhiteSpace(_config.SidecarExePath))
                 return _config.SidecarExePath;
-            return Path.Combine(_pluginDir, "sidecar", "dsp-agent-sidecar.exe");
+            return Path.Combine(_pluginDir, "sidecar", "vibe-dsp-sidecar.exe");
         }
 
         /// <summary>
@@ -126,7 +126,7 @@ namespace DSPAgent.Core
                 if (!File.Exists(exe))
                 {
                     error = $"找不到 sidecar 可执行文件：{exe}\n" +
-                            "请确认发布包内 BepInEx/plugins/DSPAgent/sidecar/ 下有 dsp-agent-sidecar.exe，" +
+                            "请确认发布包内 BepInEx/plugins/VibeDsp/sidecar/ 下有 vibe-dsp-sidecar.exe，" +
                             "或在配置中改用 LaunchMode=connectOnly 自行启动 sidecar。";
                     return false;
                 }

@@ -3,18 +3,18 @@ using System.IO;
 using System.Threading.Tasks;
 using BepInEx;
 using BepInEx.Logging;
-using DSPAgent.Common.Json;
-using DSPAgent.Common.Protocol;
-using DSPAgent.Common.Transport;
-using DSPAgent.Config;
-using DSPAgent.Core;
-using DSPAgent.Game;
-using DSPAgent.Input;
-using DSPAgent.I18n;
-using DSPAgent.UI;
+using VibeDsp.Common.Json;
+using VibeDsp.Common.Protocol;
+using VibeDsp.Common.Transport;
+using VibeDsp.Config;
+using VibeDsp.Core;
+using VibeDsp.Game;
+using VibeDsp.Input;
+using VibeDsp.I18n;
+using VibeDsp.UI;
 using UnityEngine;
 
-namespace DSPAgent
+namespace VibeDsp
 {
     /// <summary>
     /// 插件入口。
@@ -27,8 +27,8 @@ namespace DSPAgent
     [BepInProcess("DSPGAME.exe")]
     public sealed class Plugin : BaseUnityPlugin
     {
-        public const string Guid = "dsp-agent";
-        public const string PluginName = "DSP Agent";
+        public const string Guid = "vibe-dsp";
+        public const string PluginName = "Vibe DSP";
         public const string PluginVersion = "0.1.0";
 
         /// <summary>每帧用于处理后台线程回调的时间预算（毫秒）。</summary>

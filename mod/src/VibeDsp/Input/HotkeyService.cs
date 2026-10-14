@@ -1,9 +1,9 @@
 using System;
 using UnityEngine;
-using DSPAgent.Config;
-using DSPAgent.Game;
+using VibeDsp.Config;
+using VibeDsp.Game;
 
-namespace DSPAgent.Input
+namespace VibeDsp.Input
 {
     /// <summary>
     /// 热键判定。

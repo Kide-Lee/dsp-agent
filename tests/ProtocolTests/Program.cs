@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
-using DSPAgent.Common.Json;
-using DSPAgent.Common.Protocol;
+using VibeDsp.Common.Json;
+using VibeDsp.Common.Protocol;
 
-namespace DSPAgent.Tests
+namespace VibeDsp.Tests
 {
     /// <summary>
     /// M0 的本机验证程序（零测试框架依赖，便于在任何环境跑）。

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 生成可分发目录 dist/pkg/DSPAgent/。
+# 生成可分发目录 dist/pkg/VibeDsp/。
 #
 #   scripts/package.sh                 # 默认 Release + windows-x64 sidecar
 #   SKIP_SIDECAR=1 scripts/package.sh  # 只打 mod（sidecar 已存在时省时间）
@@ -8,8 +8,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${CONFIG:-Release}"
-PKG="$ROOT/dist/pkg/DSPAgent"
-PLUGIN="$PKG/BepInEx/plugins/DSPAgent"
+PKG="$ROOT/dist/pkg/VibeDsp"
+PLUGIN="$PKG/BepInEx/plugins/VibeDsp"
 
 log() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 
@@ -19,9 +19,9 @@ mkdir -p "$PLUGIN/sidecar" "$PKG/docs"
 
 log "编译 mod"
 CONFIG="$CONFIG" "$ROOT/scripts/build-mod.sh"
-cp "$ROOT/mod/src/DSPAgent/bin/$CONFIG/DSPAgent.dll" "$PLUGIN/"
+cp "$ROOT/mod/src/VibeDsp/bin/$CONFIG/VibeDsp.dll" "$PLUGIN/"
 
-EXE="$ROOT/dist/dsp-agent-sidecar.exe"
+EXE="$ROOT/dist/vibe-dsp-sidecar.exe"
 if [[ "${SKIP_SIDECAR:-0}" != "1" || ! -f "$EXE" ]]; then
   log "构建 sidecar 自包含可执行文件"
   "$ROOT/scripts/build-sidecar.sh" windows-x64

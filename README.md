@@ -1,4 +1,4 @@
-# dsp-agent
+# vibe-dsp
 
 [《戴森球计划》(Dyson Sphere Program)](https://store.steampowered.com/app/1366540/) 的游戏内 AI 助手 mod。
 
@@ -13,7 +13,7 @@
 ## 它长什么样
 
 ```
-┌─ DSP Agent ──────────────────────── 就绪 ─┐
+┌─ Vibe DSP ──────────────────────── 就绪 ─┐
 │ 系统  已连接 sidecar（会话 3f9a…，模型 echo）│
 │ 你    你好                                │
 │ 助手  echo: 你好                          │
@@ -28,8 +28,8 @@
 ```
 游戏进程（Windows / Proton）
 ├── BepInEx 5
-│   └── DSPAgent.dll          UI、热键、游戏状态、操作执行
-└── sidecar: dsp-agent-sidecar.exe
+│   └── VibeDsp.dll          UI、热键、游戏状态、操作执行
+└── sidecar: vibe-dsp-sidecar.exe
       内嵌 pi 的 Agent SDK     LLM 调用、工具编排、知识库
 ```
 
@@ -107,14 +107,14 @@ WINEDLLOVERRIDES="winhttp=n,b" %command%
 | 全屏界面（星图、戴森球编辑器） | 不响应 |
 | 窗口已打开 | 不响应（只有 `Esc` 能关） |
 
-如果你仍觉得别扭，可以在 `BepInEx/config/dsp-agent.cfg` 里改成别的键
+如果你仍觉得别扭，可以在 `BepInEx/config/vibe-dsp.cfg` 里改成别的键
 （例如 `F8`，该键在 DSP 中未被占用）。
 
 ---
 
 ## 配置
 
-`BepInEx/config/dsp-agent.cfg`
+`BepInEx/config/vibe-dsp.cfg`
 
 ```ini
 [General]
@@ -139,7 +139,7 @@ MaxTranscriptLines = 500
 
 | 配置项 | 说明 |
 | --- | --- |
-| `LaunchMode=spawnExe` | 由插件自动拉起随包的 `dsp-agent-sidecar.exe`（默认，推荐） |
+| `LaunchMode=spawnExe` | 由插件自动拉起随包的 `vibe-dsp-sidecar.exe`（默认，推荐） |
 | `LaunchMode=connectOnly` | 插件只连接；你自己先启动 sidecar（便于调试 / 多存档共用） |
 | `Hotkey` | 任意 Unity `KeyCode` 名 |
 
@@ -150,7 +150,7 @@ MaxTranscriptLines = 500
 | 现象 | 处理 |
 | --- | --- |
 | 按 `R` 没反应 | 看 `BepInEx/LogOutput.log` 里有没有 `[热键]`/`聊天窗口已创建` |
-| 窗口显示"未连接" | 日志里搜 `[sidecar]`；确认 `dsp-agent-sidecar.exe` 在 `BepInEx/plugins/DSPAgent/sidecar/` |
+| 窗口显示"未连接" | 日志里搜 `[sidecar]`；确认 `vibe-dsp-sidecar.exe` 在 `BepInEx/plugins/VibeDsp/sidecar/` |
 | 中文显示成方块 | 日志里看字体来源；`borrowed-from-game-ui` 正常，`builtin-arial(no-cjk)` 说明没借到游戏字体 |
 | BepInEx 完全没加载 | Proton 下多半是 `winhttp` 覆盖没生效，见上文 |
 | 建造时按 R 弹窗 | 检查 `HotkeyRequireNoBuildTool` 是否为 `true` |
@@ -161,10 +161,10 @@ MaxTranscriptLines = 500
 
 ```bash
 scripts/fetch-deps.sh          # 拉取 BepInEx 参考程序集到 .deps/
-scripts/build-mod.sh           # 编译 DSPAgent.dll
+scripts/build-mod.sh           # 编译 VibeDsp.dll
 
 cd sidecar && npm install      # 首次
-scripts/build-sidecar.sh       # 生成自包含的 dsp-agent-sidecar.exe
+scripts/build-sidecar.sh       # 生成自包含的 vibe-dsp-sidecar.exe
 
 scripts/install.sh --with-bepinex
 ```
@@ -189,7 +189,7 @@ design.md              设计文档（含已核实的游戏 API 证据）
 docs/protocol-v1.md    mod ↔ sidecar 通信协议（唯一契约）
 mod/                   C# BepInEx 插件
   src/Shared/          协议/JSON/传输层（刻意 Unity-free，可独立测试）
-  src/DSPAgent/        Unity 侧：UI、热键、游戏访问
+  src/VibeDsp/        Unity 侧：UI、热键、游戏访问
 sidecar/               Node/TypeScript 本地服务
 tests/ProtocolTests/   本机可跑的验证程序
 tools/MetaDump/        开发辅助：转储游戏程序集元数据
