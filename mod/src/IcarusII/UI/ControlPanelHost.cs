@@ -296,30 +296,51 @@ namespace IcarusII.UI
         }
 
         /// <summary>
-        /// 对齐对话区。`fullWidth` 为真时铺满左栏+右栏（未解锁物流的情况）。
-        /// 直接沿用 `<c>right-group</c>` 的锚点与偏移，这样分辨率变化时自然跟随。
+        /// 对齐对话区。
+        ///
+        /// **必须用拉伸锚点**（`0,0 .. 1,1`）来表达"距父级四边的边距"。
+        /// 先前这里直接抄 `<c>right-group</c>` 的锚点与 offsetMin/offsetMax，
+        /// 并在全宽时把 `left-group.offsetMin.x` 混进来——那是错的：
+        /// `offsetMin` 是**相对各自锚点**的，而 right-group 锚在右边界、
+        /// left-group 锚在左边界，两者不在同一坐标系里。
+        /// 后果是 sizeDelta.x 变成 -36（面板宽度为负，完全不可见）。
+        ///
+        /// 现在改成：先把两栏的边缘统一换算成"距父级边界的边距"，再用拉伸锚点写回。
+        /// 这样两种情形（只占右栏 / 铺满整行）都只差一个左边距。
         /// </summary>
         private void ApplyChatRect(bool fullWidth)
         {
-            if (_chatGo == null || _rightGroup == null) return;
+            if (_chatGo == null || _rightGroup == null || _panelRt == null) return;
             var rt = _chatGo.GetComponent<RectTransform>();
             if (rt == null) return;
 
-            rt.anchorMin = _rightGroup.anchorMin;
-            rt.anchorMax = _rightGroup.anchorMax;
-            rt.pivot = _rightGroup.pivot;
+            // right-group 锚在右上：它的 offset 直接就是距右/上/下边界的边距
+            float marginRight = -_rightGroup.offsetMax.x;
+            float marginTop = -_rightGroup.offsetMax.y;
+            float marginBottom = _rightGroup.offsetMin.y;
 
-            var min = _rightGroup.offsetMin;
-            var max = _rightGroup.offsetMax;
-
+            float marginLeft;
             if (fullWidth && _leftGroup != null)
             {
-                // 左边界扩展到左栏的左边界（保持右侧与 right-group 一致）
-                min.x = _leftGroup.offsetMin.x;
+                // left-group 锚在左边界，offsetMin.x 就是它的左边距
+                marginLeft = _leftGroup.offsetMin.x;
+            }
+            else
+            {
+                // 只占右栏：左边距 = 父级宽 - 右栏宽 - 右边距
+                marginLeft = _panelRt.rect.width - _rightGroup.rect.width - marginRight;
             }
 
-            rt.offsetMin = min;
-            rt.offsetMax = max;
+            rt.anchorMin = Vector2.zero;
+            rt.anchorMax = Vector2.one;
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.offsetMin = new Vector2(marginLeft, marginBottom);
+            rt.offsetMax = new Vector2(-marginRight, -marginTop);
+
+            _log?.LogInfo($"[总控面板] 对话区：{(fullWidth ? "铺满整行" : "仅右栏")} " +
+                          $"左边距={marginLeft:0.#} 右边距={marginRight:0.#} " +
+                          $"上={marginTop:0.#} 下={marginBottom:0.#} " +
+                          $"⇒ {rt.rect.width:0.#}x{rt.rect.height:0.#}");
         }
 
         // ---------------------------------------------------------------- 每帧
