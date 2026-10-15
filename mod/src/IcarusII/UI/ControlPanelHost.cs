@@ -42,6 +42,9 @@ namespace IcarusII.UI
         private readonly UIButton[] _tabs;
 
         private GameObject _chatGo;
+        private Text _panelTitle;
+        private string _savedTitle;
+        private bool _titleSaved;
         private GameObject _aiTabGo;
         private bool _aiActive;
 
@@ -148,6 +151,15 @@ namespace IcarusII.UI
             }
 
             SetTabLabel(_aiTabGo, Strings.Get("tab.ai"));
+
+            // 诊断：截图里看不到 tab-1..4，需要确认标签容器是否可见、
+            // 我们的标签落在哪里。这些数字能一次性定位问题。
+            var containerRt = container as RectTransform;
+            _log?.LogInfo($"[总控面板] AI 标签：pos={rt.anchoredPosition} size={rt.sizeDelta} " +
+                          $"active={_aiTabGo.activeSelf} inHierarchy={_aiTabGo.activeInHierarchy} " +
+                          $"容器={container.name} size={(containerRt != null ? containerRt.rect.width + "x" + containerRt.rect.height : "?")} " +
+                          $"容器activeInHierarchy={container.gameObject.activeInHierarchy} " +
+                          $"容器子物体数={container.childCount}");
         }
 
         /// <summary>把原版物流标签也接上：玩家点回物流时，我们把 AI 视图让出去。</summary>
@@ -239,24 +251,17 @@ namespace IcarusII.UI
 
             _chatGo = chatGo;
 
-            // 未解锁物流时，左栏是空的（列表里一个对象都没有），
-            // 此时把对话铺满整行，比让玩家对着一半空白好。
-            SetAiActive(ShouldStartWithAi());
-        }
-
-        /// <summary>
-        /// 开局默认视图：物流系统还没解锁时直接进 AI 视图，
-        /// 因为那时总控面板里**只有** AI 这一样东西是有内容的。
-        /// </summary>
-        private static bool ShouldStartWithAi()
-        {
-            try
-            {
-                var h = GameMain.history;
-                if (h == null) return true;
-                return !(h.logisticsSystemUnlocked || h.markerUnlocked);
-            }
-            catch { return true; }
+            // **初始一律不激活 AI 视图。**
+            //
+            // 曾经这里按"是否解锁物流"去猜初始视图，那是错的：
+            // InstallChat 发生在界面首次创建时（往往还在主菜单，
+            // `GameMain.history` 还是 null），于是被判定为"未解锁"而强制激活，
+            // 结果进了存档、游戏自己用 I 打开面板时，我们的对话仍然盖在上面，
+            // 把物流列表整个挡住（实测截图确认）。
+            //
+            // 正确语义：总控面板是**游戏的**窗口，它怎么开、显示什么，
+            // 由游戏决定；我们只在玩家明确选择 AI 时（点标签或按我们的键）才现身。
+            SetAiActive(false);
         }
 
         // ---------------------------------------------------------------- 视图切换
@@ -277,12 +282,55 @@ namespace IcarusII.UI
 
             if (_chatGo != null)
             {
-                ApplyChatRect(active && !LogisticsUnlocked());
+                ApplyChatRect();
                 _chatGo.SetActive(active);
             }
 
+            UpdatePanelTitle(active);
+
             try { AiActiveChanged?.Invoke(active); }
             catch (Exception ex) { _log?.LogWarning($"[总控面板] 切换回调异常：{ex.Message}"); }
+        }
+
+        /// <summary>
+        /// 让游戏窗口自己的标题反映当前视图。
+        ///
+        /// 与其让"游戏窗口标题"和"我们面板的标题"两个并存（实测截图里
+        /// 一个写「地图标记」一个写「伊卡洛斯·贰」，很混乱），
+        /// 不如共用游戏那一个标题：切到 AI 时改成我们的名字，
+        /// 切回物流时还原。游戏在切换筛选类型时会自己重设标题，
+        /// 所以这个覆盖本来就是"临时"的，不需要长期接管。
+        /// </summary>
+        private void UpdatePanelTitle(bool active)
+        {
+            try
+            {
+                if (_panelTitle == null && _panelRt != null)
+                {
+                    var t = _panelRt.Find("title-group/title-text");
+                    if (t != null) _panelTitle = t.GetComponent<Text>();
+                }
+                if (_panelTitle == null) return;
+
+                if (active)
+                {
+                    if (!_titleSaved)
+                    {
+                        _savedTitle = _panelTitle.text;
+                        _titleSaved = true;
+                    }
+                    _panelTitle.text = Strings.Get("title");
+                }
+                else if (_titleSaved)
+                {
+                    _panelTitle.text = _savedTitle;
+                    _titleSaved = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log?.LogWarning($"[总控面板] 改写窗口标题失败：{ex.Message}");
+            }
         }
 
         private static bool LogisticsUnlocked()
@@ -308,7 +356,7 @@ namespace IcarusII.UI
         /// 现在改成：先把两栏的边缘统一换算成"距父级边界的边距"，再用拉伸锚点写回。
         /// 这样两种情形（只占右栏 / 铺满整行）都只差一个左边距。
         /// </summary>
-        private void ApplyChatRect(bool fullWidth)
+        private void ApplyChatRect()
         {
             if (_chatGo == null || _rightGroup == null || _panelRt == null) return;
             var rt = _chatGo.GetComponent<RectTransform>();
@@ -319,17 +367,12 @@ namespace IcarusII.UI
             float marginTop = -_rightGroup.offsetMax.y;
             float marginBottom = _rightGroup.offsetMin.y;
 
-            float marginLeft;
-            if (fullWidth && _leftGroup != null)
-            {
-                // left-group 锚在左边界，offsetMin.x 就是它的左边距
-                marginLeft = _leftGroup.offsetMin.x;
-            }
-            else
-            {
-                // 只占右栏：左边距 = 父级宽 - 右栏宽 - 右边距
-                marginLeft = _panelRt.rect.width - _rightGroup.rect.width - marginRight;
-            }
+            // **始终只占右栏**（与三个检查器同栏）。
+            //
+            // 曾经在"未解锁物流"时铺满整行，但那样会盖住左侧物流列表，
+            // 而且一旦解锁状态变化就必须重算，反而更脆弱。
+            // 只占右栏时：列表始终可用，面板观感与原生检查器一致。
+            float marginLeft = _panelRt.rect.width - _rightGroup.rect.width - marginRight;
 
             rt.anchorMin = Vector2.zero;
             rt.anchorMax = Vector2.one;
@@ -337,7 +380,7 @@ namespace IcarusII.UI
             rt.offsetMin = new Vector2(marginLeft, marginBottom);
             rt.offsetMax = new Vector2(-marginRight, -marginTop);
 
-            _log?.LogInfo($"[总控面板] 对话区：{(fullWidth ? "铺满整行" : "仅右栏")} " +
+            _log?.LogInfo($"[总控面板] 对话区：" +
                           $"左边距={marginLeft:0.#} 右边距={marginRight:0.#} " +
                           $"上={marginTop:0.#} 下={marginBottom:0.#} " +
                           $"⇒ {rt.rect.width:0.#}x{rt.rect.height:0.#}");

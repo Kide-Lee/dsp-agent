@@ -19,7 +19,7 @@ namespace IcarusII.I18n
             ["status.tools"] = "调用工具…",
             ["status.backoff"] = "重连中…",
             ["status.disconnected"] = "未连接",
-            ["input.placeholder"] = "按 Enter 或点击此处开始输入…（Enter 发送 · R 关闭）",
+            ["input.placeholder"] = "按 Enter 或点击此处输入…",
             ["key.placeholder"] = "粘贴 DeepSeek API Key 后回车…",
             ["key.prompt"] =
                 "尚未配置 API Key。请把 DeepSeek 的 API Key 粘贴到下面并回车。\n" +

@@ -280,12 +280,50 @@ namespace IcarusII.UI
 
             _host = host;
             _root = panelGo;
-            panelGo.SetActive(false);        // 交给 InstallChat 决定初始视图
+            panelGo.SetActive(false);
+            ApplyEmbeddedChrome();
             host.InstallChat(panelGo);
 
             Plugin.Log.LogInfo($"[UI] 窗口已嵌入总控面板（{WindowPrefab.Status}，" +
                                $"初始视图={(host.AiActive ? "AI" : "物流")}）");
             return true;
+        }
+
+        /// <summary>
+        /// 嵌入总控面板时的外观调整。
+        ///
+        /// 我们这套 prefab 原本是照**独立窗口**做的，自带边框与标题栏。
+        /// 嵌进游戏窗口后那些层就和游戏自己的窗口装饰重复了——实测截图里
+        /// 表现为"两层边框 + 两个标题"，我们的标题文字还因为标题栏透明而
+        /// 像是散落在游戏背景上。
+        ///
+        /// 所以嵌入时把重复的层摘掉，只留：底衬 + 内容（对话 + 输入）。
+        /// 标题栏保留但去掉标题文字（状态文字还挂在上面），并给它一层底色。
+        /// </summary>
+        private void ApplyEmbeddedChrome()
+        {
+            if (_panel == null) return;
+
+            // 边框与玻璃高光：游戏窗口已经有了，重复会形成双边框
+            var frame = _panel.Find("Frame");
+            if (frame != null) frame.gameObject.SetActive(false);
+            var glass = _panel.Find("Glass");
+            if (glass != null) glass.gameObject.SetActive(false);
+
+            // 标题文字：游戏窗口自己有标题，我们的会重复
+            var title = _panel.Find("Header/Title");
+            if (title != null) title.gameObject.SetActive(false);
+
+            if (_headerImage != null)
+            {
+                // 标题栏本身透明会让状态文字看着像浮在游戏背景上，
+                // 给它一层与底衬同色的底，形成一条细状态栏。
+                var baseColor = _panelImage != null ? _panelImage.color : DefaultPanelBg;
+                _headerImage.sprite = null;
+                _headerImage.color = new Color(baseColor.r, baseColor.g, baseColor.b, 0.9f);
+            }
+
+            Plugin.Log.LogInfo("[UI] 嵌入外观：已隐藏 Frame/Glass/标题（避免与游戏窗口重复）");
         }
 
         /// <summary>代码构建整棵面板子树（原路径，也是 prefab 缺失时的兜底）。</summary>
