@@ -213,6 +213,31 @@ namespace IcarusII.UI
 
             _root = rootRt.gameObject;
 
+            // 优先用随 mod 分发的 prefab（可在 Unity 里可视化编辑，见 mod/unity）。
+            // 拿不到、或结构不完整时退回代码构建——"少一个资源文件"不该让窗口整个消失。
+            var prefabPanel = WindowPrefab.Instantiate(rootRt);
+            if (prefabPanel != null && TryWireFromPrefab(prefabPanel, config, font))
+            {
+                Plugin.Log.LogInfo($"[UI] 窗口来自 prefab（{WindowPrefab.Status}）");
+            }
+            else
+            {
+                if (prefabPanel != null)
+                {
+                    // 结构不完整：销毁半成品，避免留下一个残缺窗口
+                    UnityEngine.Object.Destroy(prefabPanel);
+                    Plugin.Log.LogWarning("[UI] prefab 结构不完整，回退到代码构建");
+                }
+                BuildUiInCode(rootRt, config, font);
+            }
+
+            SetStatus(Strings.Get("status.disconnected"), _textDim);
+            _root.SetActive(false);
+        }
+
+        /// <summary>代码构建整棵面板子树（原路径，也是 prefab 缺失时的兜底）。</summary>
+        private void BuildUiInCode(RectTransform rootRt, PluginConfig config, Font font)
+        {
             // 面板：默认屏幕正中
             _panel = UiFactory.Node("Panel", rootRt);
             ApplyPanelPlacement(_panel, config);
@@ -236,10 +261,99 @@ namespace IcarusII.UI
             BuildHeader(font);
             BuildTranscript(font);
             BuildInputBar(font);
-
-            SetStatus(Strings.Get("status.disconnected"), _textDim);
-            _root.SetActive(false);
         }
+
+        /// <summary>
+        /// 把 prefab 实例接到本类的字段上。
+        ///
+        /// 契约：prefab 只负责**结构与贴图**，行为（事件、本地化文案、颜色、字体）
+        /// 全部由运行期接管——因为 prefab 无法引用本 mod 的类型，
+        /// 而颜色与字体需要从游戏原生窗口捕获。
+        ///
+        /// 返回 false 表示结构不符合预期，调用方会销毁它并回退到代码构建。
+        /// </summary>
+        private bool TryWireFromPrefab(GameObject panelGo, PluginConfig config, Font font)
+        {
+            var panel = panelGo.GetComponent<RectTransform>();
+            if (panel == null) return false;
+
+            var panelImage = panelGo.GetComponent<Image>();
+            var frame = FindImage(panel, "Frame");
+            var glass = FindImage(panel, "Glass");
+            var header = FindImage(panel, "Header");
+            var status = FindText(panel, "Header/Status");
+            var scroll = FindComponent<ScrollRect>(panel, "Scroll");
+            var content = panel.Find("Scroll/Viewport/Content") as RectTransform;
+            var transcript = content != null ? content.GetComponent<Text>() : null;
+            var input = FindComponent<InputField>(panel, "InputBar/Input");
+            var inputImage = FindImage(panel, "InputBar/Input");
+
+            // 前四个是必需的；缺任意一个都说明 prefab 与代码对不上
+            if (panelImage == null || frame == null || glass == null || transcript == null || input == null)
+            {
+                Plugin.Log.LogWarning(
+                    $"[UI] prefab 缺少必需节点：panel={panelImage != null} frame={frame != null} " +
+                    $"glass={glass != null} transcript={transcript != null} input={input != null}");
+                return false;
+            }
+
+            _panel = panel;
+            _panelImage = panelImage;
+            _frameImage = frame;
+            _glassImage = glass;
+            _headerImage = header;
+            _statusText = status;
+            _scroll = scroll;
+            _content = content;
+            _transcript = transcript;
+            _input = input;
+            _inputImage = inputImage;
+
+            ApplyPanelPlacement(_panel, config);
+
+            // 行为必须运行期接管：prefab 引用不了本 mod 的类型
+            _input.onEndEdit.AddListener(OnInputEndEdit);
+            _panel.gameObject.AddComponent<ClickToFocus>().Target = this;
+
+            // 文案走本地化（prefab 里只是占位）
+            var title = FindText(panel, "Header/Title");
+            if (title != null) title.text = Strings.Get("title");
+            var placeholder = FindText(panel, "InputBar/Input/Placeholder");
+            if (placeholder != null) placeholder.text = Strings.Get("input.placeholder");
+
+            // 字体与字号：prefab 有意留空字体，这里套用游戏真实字体；
+            // 字号按 prefab 里烘焙的值整体缩放，尊重你在 Unity 里的排版。
+            var scale = Mathf.Max(0.5f, config.FontScale);
+            foreach (var t in panelGo.GetComponentsInChildren<Text>(true))
+            {
+                if (t.font == null && font != null) t.font = font;
+                if (!Mathf.Approximately(scale, 1f))
+                {
+                    t.fontSize = Mathf.Max(8, Mathf.RoundToInt(t.fontSize * scale));
+                }
+            }
+
+            return true;
+        }
+
+        private static Image FindImage(RectTransform root, string path)
+        {
+            var t = root.Find(path);
+            return t != null ? t.GetComponent<Image>() : null;
+        }
+
+        private static Text FindText(RectTransform root, string path)
+        {
+            var t = root.Find(path);
+            return t != null ? t.GetComponent<Text>() : null;
+        }
+
+        private static T FindComponent<T>(RectTransform root, string path) where T : Component
+        {
+            var t = root.Find(path);
+            return t != null ? t.GetComponent<T>() : null;
+        }
+
 
         /// <summary>
         /// 面板摆放。居中用 (0.5,0.5) 锚点：它只依赖 Canvas 矩形的**中心**，

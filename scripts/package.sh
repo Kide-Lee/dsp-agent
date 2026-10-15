@@ -15,7 +15,7 @@ log() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 
 log "清理 $PKG"
 rm -rf "$ROOT/dist/pkg"
-mkdir -p "$PLUGIN/sidecar" "$PKG/docs"
+mkdir -p "$PLUGIN/sidecar" "$PLUGIN/ui" "$PKG/docs"
 
 log "编译 mod"
 CONFIG="$CONFIG" "$ROOT/scripts/build-mod.sh"
@@ -28,6 +28,18 @@ if [[ "${SKIP_SIDECAR:-0}" != "1" || ! -f "$EXE" ]]; then
 fi
 [[ -f "$EXE" ]] || { echo "缺少 $EXE" >&2; exit 1; }
 cp "$EXE" "$PLUGIN/sidecar/"
+
+# UI AssetBundle（Windows，由 scripts/build-ui-bundle.sh 生成）。
+# 这是可选的：拿不到时 mod 会回退到代码构建的界面，所以缺了只警告不失败。
+BUNDLE="$ROOT/dsp-game/Build/IcarusIIBundle/icarusii-ui"
+if [ -f "$BUNDLE" ]; then
+  cp "$BUNDLE" "$PLUGIN/ui/"
+  log "已打入 UI AssetBundle（$(($(stat -c%s "$BUNDLE")/1024)) KB）"
+else
+  log "警告：未找到 UI AssetBundle，将使用代码构建的界面"
+  log "     如需打包界面，先运行 scripts/build-ui-bundle.sh"
+  rmdir "$PLUGIN/ui" 2>/dev/null || true
+fi
 
 log "复制文档与安装脚本"
 cp "$ROOT/scripts/install.sh" "$PKG/install.sh"
