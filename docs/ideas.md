@@ -74,72 +74,107 @@
 
 ---
 
-## 想法三：解锁科技后制造第二台伊卡洛斯，由 LLM 控制
+## 想法三：第二台伊卡洛斯（已按源码重写）
 
-**原始表述**：
-> 通过解锁某项科技，玩家可以制造第二台伊卡洛斯，该机由 LLM 控制。
+> 本节已用游戏源码（`dsp-game/Assets/Scripts/`，1797 个 C# 文件）**逐条核对**，
+> 替换掉此前仅凭程序集元数据做的推断。每条结论附 `文件:行号`。
 
-### 技术摸底结果（重要）
+### 源码结论：原设想不成立
 
-对 `Mecha` 类的元数据核实显示：
+原设想是"造一台新的 `Mecha`"。源码证明这条路在结构上就不通：
+
+| 原假设 | 源码事实 | 依据 |
+| --- | --- | --- |
+| `Mecha` 是机甲实体 | **`Mecha` 是挂在 `Player` 上的数值/能量模块**，整个类里**没有任何位置字段**，位置全读 `player.position/uPosition` | `Controller/Player/Mecha/Mecha.cs:1570,1577,1644` |
+| 再造一个 `Player` | **不可能**。`mainPlayer` 是 `private set`，全文 **814 处**引用；建造工具 `_Init` **无视传入的 player**，直接 `player = gameData.mainPlayer; mainCamera = GameCamera.main;` | `Data/GameData.cs:291`；`Controller/Player/Build/BuildTool.cs:31-41` |
+| 复用建设无人机 | **可行但受死限**。`CraftData.owner` 只有 `0/-1 = 伊卡洛斯` 与 `>0 = 实体` 两种，非玩家 owner **必须是真实战场分析基站**，而实体是静态建筑、**无任何移动 API** | `Data/CraftData.cs:8`；`Component/Systems/ConstructionSystem.cs:436-439`；`Component/Fleet/FleetComponent.cs:103-146` |
+| 复用载具系统 | **现在不行**。`CreationSystem` 的 Export 被注释掉（`// creationSystem.Export(w); // version 2+`），`CreationPhysics` 是空壳 | `Data/SpaceSector.cs:818`；`Physics/CreationPhysics.cs:126-135` |
+| 第二台能被攻击 / 被仇恨 | **不会**。战斗系统只有 `target.id == 1` 一个玩家分支；黑雾 AI 直接读 `gameData.mainPlayer` | `Component/Systems/SkillSystem.cs:4698-4707`；`Component/Enemy/Enemy Unit/EnemyUnit_SensorLogic_Ground.cs:199` |
+| 第二台能在别的星球存在 | **不能**。`localPlanet` 单例，`factoryLoaded` 单星球，`PlanetData.gameObject` 只对当前星球创建 | `Data/GameData.cs:289,322-343`；`Data/PlanetData.cs:133` |
+
+**⇒ 结论：需要做的是给游戏补上"第二个玩家"这个概念，而不是"造一台机甲"。**
+
+### 已确认路线：A —— 自建虚拟实体，完全自定义
+
+我们自己持有它的位置、速度、能量、生命与任务队列；用源码内建的 `MechaDIY` 方式渲染外观；
+通过游戏公开 API 执行动作；用官方预留的存档扩展点持久化。
+
+**外观有源码先例可循**（这是最省事的一环）：机甲编辑器造"预览机甲"的方式就是直接实例化 DIY prefab：
 
 ```csharp
-class Mecha {
-    Player player;          // ← 每台 Mecha 绑定一个 Player
-    GameData gameData;
-    double coreEnergy, coreEnergyCap;
-    ...
-    ConstructionModuleComponent constructionModule;
-    MechaForge forge;
-    MechaLab lab;
-}
-class Player { Mecha mecha; PlayerController controller; ... }
+// Mecha DIY/Modeling/MechaDIY.cs:13-41
+GameObject res = Resources.Load<GameObject>(proto.DIYPath);   // "Characters/Icarus 1/Mecha DIY (Icarus 1)"
+GameObject go = GameObject.Instantiate(res);
 ```
 
-同时**没有发现任何"多机甲"支持**：全程序集里不存在 Mecha 集合类型的字段，
-`GameMain.data.mainPlayer` 是唯一玩家，`PlayerController` 直接绑摄像机与输入。
+⇒ 我们能得到一台**有完整骨骼装甲、可上色**的机体，且**不需要 `Player`**。注意 `MechaArmorModel._OnInit` 里 `data as Player` + `player.mecha` 是硬要求（`MechaArmorModel.cs:68-85`），
+所以外观数据会共享 `player.mecha.diyAppearance`，独立配色需要额外 hack。
 
-**⇒ 直接 `new Mecha()` 造第二台是不可行的**：它需要一个 `Player`，
-而 `Player` 又与摄像机、输入、存档、UI 深度耦合。硬造出来的实例极可能
-在存档、渲染或 UI 环节出问题。
+### 分期（按"每期都有可玩结果"切）
 
-### 三条可选路线
-
-| 路线 | 做法 | 风险 | 能力上限 |
+| 期 | 目标 | 关键工作 | 风险 |
 | --- | --- | --- | --- |
-| **A. 轻量自定义实体**（推荐先验证） | 自己维护一个实体：一个可视化模型（可复用游戏的机甲模型资源）+ 自己实现移动 + 通过游戏的 `PlanetFactory` 建造 API 执行建造 | 中：建造 API 是公开的，但移动/寻路要自己写 | 移动、建造、采矿；**不**参与战斗、不进机甲面板 |
-| **B. 复用建设无人机系统** | 让 LLM 调度玩家已有的 `constructionModule`（那本身就是一群会自动飞过去建造的无人机） | 低 | 只是"无人机的自动化"，**不是第二台伊卡洛斯**，与想法有落差 |
-| **C. 强行造第二台 Mecha** | 构造 `Player` + `Mecha` 并注册进 `GameData` | **高**：存档格式、渲染、UI、输入全线风险 | 上限最高，但可能做了很久发现走不通 |
+| **A1** | 它**存在且可见**：一个自建实体，有机甲外观，能按我们给的位置移动，能存读档 | `Instantiate(DIYPath)` + 自建 tick + `featureValues` 持久化身份 | 低 |
+| **A2** | 它**能替玩家做事**：下达"去 X 建 Y"，动作通过游戏 API 执行 | 复用建设无人机（`EjectMechaDrone`）或 `PlanetFactory` 建造路径 | **中高**：`ConstructionSystem.UpdateDrones` 对非玩家 owner 硬绑基站，需实验验证 |
+| **A3** | 它**是个"角色"**：有能量、有任务队列、能被 LLM 编排、UI 里能看状态 | Agent 工具层 + 状态 UI | 中 |
+| **A4**（可选） | 它**参与战斗/会被打** | Harmony 补 `SkillSystem` 的 Player 分支、黑雾仇恨 | 高，且可能影响平衡与成就 |
 
-**建议**：先做一次**限定时间的可行性验证**（spike），目标是回答两个问题：
-1. 能否创建一个**被游戏渲染系统接受**的机甲外观实体（借用 `ModelProto` / 模型资源）？
-2. 能否用公开 API 让它在行星上**建造一格建筑**并消耗玩家物品？
+**建议先做 A1**：它不依赖任何未验证的假设，却能立刻验证"外观 + 移动 + 存档"这条主干。
+A2 之前必须先做两个低成本实验（见下）。
 
-这两个问题都能跑通，路线 A 就成立，再谈完整玩法。
+### 必须实验验证的问题（源码看不出）
 
-### 模糊点
+1. 把 `ConstructionModuleComponent.baseEjectPos` 每帧改成"移动载体"位置，能否让无人机的发射点跟着动？
+   （`ConstructionSystem.cs:411` 只在那一处使用该值，理论上可动；但返程语义与 `battleBase.energy` 扣能是否可接受，源码看不出。）
+2. 让自建 module 指向一个**真实**战场分析基站，会不会与基站自己的无人机/编队/能量互踩？
+   （`BattleBaseComponent.cs:40-45` 会互相覆写引用。）
+3. 非本地星球上模拟"抽象机甲"（无 transform、无碰撞，只跑逻辑）能否被工厂后台 tick 正常处理——
+   游戏没有"player-like 实体在未加载星球上"的先例。
 
-1. **能力范围**：只会移动？会建造？会采矿？会跨行星？会战斗？
-   （建议起点极窄：**移动到指定位置 + 建造指定建筑**，先验证乐趣）
-2. **资源归属**：用它自己的库存，还是直接消耗玩家背包？
-3. **指令方式**：聊天里自然语言（"让二号去北极建 10 个矿机"）？还是专门的指令面板？
-4. **存档持久化**：它是游戏实体，**必须能被存档/读档**。DSP 的 mod 存档数据是独立课题，
-   这条是隐藏的大工作量，需要单独立项。
-5. **能否被摧毁 / 能量耗尽会怎样**？
-6. **它是"第二台伊卡洛斯"还是"伊卡洛斯的僚机"**？后者在叙事与实现上都更轻。
+### 持久化：用官方预留的扩展点
 
----
+```csharp
+// Data/GameHistoryData.cs:2880
+public const int FEATURES_FOR_CUSTOM_MOD_ID_START = 100010000;   // 注释即"给自定义 mod 预留"
+```
 
-## 对现有里程碑的影响
+- `featureKeys: HashSet<int>`（布尔标记）与 `featureValues: Dictionary<int,int>`，
+  **随存档读写，且 `Import` 不做任何 LDB 校验**（`GameHistoryData.cs:2152-2163,2303-2327`）
+- API：`RegFeatureKey / SetFeatureValue / AddFeatureValue / GetFeatureValue`（`:1317-1349`）
+- ⚠️ 只有 `int → int`。第二台机甲的完整状态（位置/能量/任务队列）需要**打包成整数**
+  （位置按 0.01m 定点、能量取 kJ 等），或者只用它存**身份与版本**、把大块状态放存档同目录的旁路文件
+- 它的 ID 区间（≥100010000）与 `JournalData` 那类"塞未知 ID 会 NRE 导致读档失败"的坑无关
+  （`Component/Journal/JournalData.cs:84-86` 是明确的反例，不能用来存 mod 数据）
 
-当前 | 范围
---- | ---
-M1（计划中） | 接入 DeepSeek，让"能聊天"真正可用
+### 顺带发现：对**当前**工作立刻有用的东西
 
-三条想法引入了一个**新支柱（游戏化整合）**，它比 M1 大得多，且路线 C 有推翻现有架构的风险。
-因此需要先定优先级（见待确认清单 Q5）。
+| 发现 | 用途 |
+| --- | --- |
+| `GameMain.history.onTechUnlocked` 事件（`GameHistoryData.cs:277`） | 想法二要的"解锁某科技后触发"的现成钩子。⚠️ `history` 每次读档都会 `new`，订阅必须重挂 |
+| `IntelliAssist`（`Misc/IntelliAssist.cs:29,60,306,430`） | **只读**游戏状态查询：附近矿脉、阵列建筑、物体坐标、建议。后续做"让 AI 感知游戏"的工具层可直接复用 |
+| `Player.Order(OrderNode.MoveTo(pos), false)`（`Player.cs:126`） | 程序化指挥**玩家自己那台**机甲移动的现成接口 |
+| `.mecha` 外观文件目录（`Configs/GameConfig.cs:167-178`） | 新增机甲外观**不改存档、不改程序集**，纯资源通道 |
 
----
+## 修订后的里程碑
+
+| 里程碑 | 内容 | 状态 | 依赖 |
+| --- | --- | --- | --- |
+| **M0** | 骨架：插件加载 → 窗口（`R` 开/关）→ 握手 → 回显 | ✅ 实机验证 | — |
+| **M1** | 真实对话：pi + DeepSeek、首次密钥引导、游戏助手人格、窗口原生外观 | 收尾中 | — |
+| **M2** | 存档绑定对话串；「解锁科技 → 提升 AI 输出速率 + 每 token 扣能量」（想法二） | 未开始 | 自定义科技线怎么做（源码调查中） |
+| **M3** | 第二台伊卡洛斯 **A1**：自建实体 + 机甲外观 + 我们驱动的位置 + `featureValues` 存档 | 未开始 | 无（不依赖未验证假设） |
+| **M4** | 第二台伊卡洛斯 **A2**：能替玩家做事（建造） | 未开始 | **先做上面两个实验**（无人机发射点 / 基站互踩） |
+| **M5** | 第二台伊卡洛斯 **A3**：能量、任务队列、LLM 编排、状态 UI | 未开始 | M4 |
+| **M6**（可选） | 第二台参与战斗、会被攻击 | 未开始 | Harmony 补 `SkillSystem` 玩家分支与黑雾仇恨；需评估平衡与成就影响 |
+
+**排序理由**：
+- M2 在 M3 之前，因为它是**廉价且立刻改变手感**的一期，且自定义科技线一旦跑通，
+  第二台机甲的"解锁"也能复用同一条流水线。
+- M3 刻意只做"存在且可见"，因为它是**唯一不依赖任何未验证假设**的一期——
+  外观方式已由 `MechaDIY` 源码证实，移动由我们自己实现，存档有官方扩展点。
+- M4 之前必须做实验：源码明确不支持"非玩家 owner 的无人机"，
+  如果实验失败，A2 的执行器要换成别的（例如直接调 `PlanetFactory` 建造路径），
+  这会改变工作量但不改变 A1。
 
 ## 已确认决策
 
@@ -148,7 +183,8 @@ M1（计划中） | 接入 DeepSeek，让"能聊天"真正可用
 | Q1 | 标识规范 **`IcarusII`（程序集/类名） / `icarus-ii`（目录、包名、GUID） / `Icarus II`（显示名）**；游戏内窗口标题用**「伊卡洛斯·贰」** |
 | Q2 | **TPS 约束聊天文字的滞出速度，并扣除能量**（即"算力"直接限制阅读速度） |
 | Q3 | **新增自定义科技/升级线**，不复用现有升级 |
-| Q4 | 先做**限定时间的可行性 spike**，拿到结论再定第二台机甲的实现路线 |
+| Q4 | ~~先做可行性 spike~~ → **spike 已完成**（源码调查），选定**路线 A：自建虚拟实体，完全自定义**；分四期，先做 A1（存在且可见） |
+| Q4b | 持久化**用官方预留的 `FEATURES_FOR_CUSTOM_MOD_ID_START` + `featureValues`** |
 | Q5 | **先完成 M1（接入 DeepSeek）**，之后再做游戏化整合 |
 
 ### Q2 的必要护栏（用户选择了"约束阅读速度"，因此这三条不是可选项）
@@ -173,16 +209,6 @@ M1（计划中） | 接入 DeepSeek，让"能聊天"真正可用
 - 新增图标资源
 - 中英文本地化词条（接 `Locale/<lcid>/` 体系）
 - 与现有科技树 UI 的兼容性验证
-
-### Q4 的 spike 目标
-
-一次限定时间的验证，只需回答两个问题：
-1. 能否创建一个**被游戏渲染系统接受**的机甲外观实体？
-2. 能否用公开 API 让它**建造一格建筑并消耗玩家物品**？
-
-两个都跑通 → 路线 A（轻量自定义实体）成立，再谈完整玩法。任一失败 → 回到路线 B/C 重新权衡。
-
----
 
 ## 仍然有效的默认建议（未经否决的部分）
 
