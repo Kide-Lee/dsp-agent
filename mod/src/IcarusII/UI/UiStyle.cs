@@ -1,47 +1,61 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace IcarusII.UI
 {
     /// <summary>
-    /// 从游戏自己的 UI 窗口"抄"一份视觉样式。
+    /// 聊天窗的外观来源。
     ///
-    /// 为什么这么做：机体信息窗（C）等面板的外框贴图来自 UI 预制体，
-    /// 程序集里没有可直接引用的资源字段（UIMechaWindow 的 182 个字段里
-    /// 没有背景 Image）。与其自己调一组近似色，不如**在运行时把游戏窗口上
-    /// Image / Text 的真实 sprite、颜色、字号、九宫格设置读出来**，
-    /// 套到我们的控件上——这样观感与游戏原生面板一致，且游戏换皮时自动跟随。
+    /// 经源码核对（`dsp-game/Assets/Scripts`）后，这里不再靠"从活窗口猜"，
+    /// 而是分成两个确定性来源：
     ///
-    /// 全部为启发式挑选，失败时回退到内置配色（见 ChatWindow 的默认值），
-    /// 并在日志里说明选中了什么。
+    /// 1. **贴图**：直接按已知资源路径加载。
+    ///    机体信息窗由三层同尺寸九宫格叠出来：
+    ///      shadow   → window-trsl-1-sd   （投影）
+    ///      panel-bg → window-trsl-1      （底衬）
+    ///      border   → window-border-1    （装饰边框，带切角）
+    ///      glass    → window-glass-1     （玻璃高光）
+    ///    资源在 `Assets/Resources/UI/Textures/Sprites/Sci-fi/`，
+    ///    运行时路径即 `UI/Textures/Sprites/Sci-fi/<name>`。
+    ///    它们是**纯白的单图**（实测像素为 (255,255,255,α)，无 spritePackingTag、未进图集），
+    ///    九宫格边界在 .meta 的 spriteBorder 里（236,42,57,57）。
+    ///
+    /// 2. **颜色**：贴图是白的，所以配色**全部**来自 `Image.color`；
+    ///    而颜色只存在于场景二进制里（这三张贴图在 C# 代码中**一次都没被引用**，
+    ///    是场景直接赋给 Image 的）。因此只能从活的机体信息窗上读——
+    ///    好在结构已知且稳定，**按节点名直接取**即可，不需要打分挑选。
+    ///
+    /// 任一来源失败时回退到旧的启发式，再失败才用内置兜底色，
+    /// 保证任何情况下窗口都能建出来。
     /// </summary>
     internal sealed class UiStyle
     {
-        // ---- 面板外框
+        // ---- 面板底衬（兜底色；正常情况下会被活窗口的真实颜色覆盖）
         public bool HasPanel;
         public Sprite PanelSprite;
-        public Color PanelColor;
-        public Image.Type PanelType = Image.Type.Simple;
+        public Color PanelColor = new Color(0.10f, 0.15f, 0.22f, 1f);
+        public Image.Type PanelType = Image.Type.Sliced;
         public bool PanelFillCenter = true;
 
-        // ---- 装饰边框（叠在底衬之上的那层，机体窗为 window-border-1）
+        // ---- 装饰边框（叠在底衬之上）
         public bool HasFrame;
         public Sprite FrameSprite;
-        public Color FrameColor;
+        public Color FrameColor = new Color(1f, 1f, 1f, 0.29f);
         public Image.Type FrameType = Image.Type.Sliced;
 
-        // ---- 玻璃高光层（可选，很淡）
+        // ---- 玻璃高光（很淡）
         public bool HasGlass;
         public Sprite GlassSprite;
-        public Color GlassColor;
+        public Color GlassColor = new Color(1f, 1f, 1f, 0.15f);
 
         // ---- 输入区背景
         public bool HasInput;
         public Sprite InputSprite;
         public Color InputColor;
-        public Image.Type InputType = Image.Type.Simple;
+        public Image.Type InputType = Image.Type.Sliced;
 
         // ---- 文本
         public bool HasText;
@@ -52,6 +66,19 @@ namespace IcarusII.UI
         public Color Accent = new Color(0.353f, 0.749f, 1f, 1f);
 
         public string Source = "(未捕获)";
+
+        // ---------------------------------------------------------------- 已知常量
+
+        private const string SciFiDir = "UI/Textures/Sprites/Sci-fi/";
+        private const string SpriteShadow = "window-trsl-1-sd";
+        private const string SpriteBackdrop = "window-trsl-1";
+        private const string SpriteBorder = "window-border-1";
+        private const string SpriteGlass = "window-glass-1";
+
+        /// <summary>机体信息窗各层的节点名（与场景结构一致）。</summary>
+        private const string NodePanelBg = "panel-bg";
+        private const string NodeBorder = "border";
+        private const string NodeGlass = "glass";
 
         private static UiStyle _current;
 
@@ -81,182 +108,267 @@ namespace IcarusII.UI
         private bool Capture(UIRoot uiRoot, BepInEx.Logging.ManualLogSource log)
         {
             var reference = FindReferenceWindow(uiRoot);
-            if (reference == null)
+
+            // 1) 贴图：按路径直接加载，不依赖活窗口
+            var spritesOk = LoadKnownSprites(log);
+
+            // 2) 颜色：从活窗口按名字取（贴图是白的，颜色只在这里）
+            var colorsOk = reference != null && CaptureColorsByName(reference, log);
+
+            // 3) 任一来源不完整 → 退回启发式
+            if (!spritesOk || !colorsOk)
             {
-                log?.LogInfo("[样式] 尚未找到可参考的游戏窗口，稍后重试。");
+                if (reference != null)
+                {
+                    log?.LogInfo($"[样式] 确定性来源不完整（贴图={spritesOk} 颜色={colorsOk}），改用启发式兜底。");
+                    DumpCandidates(reference, log);
+                    HeuristicCapture(reference, log);
+                }
+                else
+                {
+                    log?.LogWarning("[样式] 找不到参考窗口，且贴图加载失败，将使用内置兜底配色。");
+                }
+            }
+
+            CaptureText(reference, log);
+
+            // 输入区没有原生控件可抄（机体窗里没有 InputField），用底衬贴图 + 略暗的颜色
+            HasInput = HasPanel && PanelSprite != null;
+            InputSprite = PanelSprite;
+            InputType = PanelType;
+            InputColor = Darken(PanelColor, 0.78f);
+
+            if (!HasPanel) return false;
+
+            Source = $"sprites={(spritesOk ? "direct" : "heuristic")} colors={(colorsOk ? "by-name" : "fallback")}" +
+                     $" ref={(reference != null ? reference.name : "none")}";
+            log?.LogInfo(
+                $"[样式] 已捕获：{Source} panel={PanelSprite?.name ?? "无"}" +
+                $" frame={FrameSprite?.name ?? "无"} glass={(HasGlass ? GlassSprite?.name : "无")}" +
+                $" fontSize={BaseFontSize} panelRGBA={Fmt(PanelColor)} frameRGBA={Fmt(FrameColor)}");
+            return true;
+        }
+
+        // ---------------------------------------------------------------- 来源 1：贴图
+
+        private bool LoadKnownSprites(BepInEx.Logging.ManualLogSource log)
+        {
+            var backdrop = Resources.Load<Sprite>(SciFiDir + SpriteBackdrop);
+            var border = Resources.Load<Sprite>(SciFiDir + SpriteBorder);
+            var glass = Resources.Load<Sprite>(SciFiDir + SpriteGlass);
+
+            if (backdrop == null)
+            {
+                log?.LogWarning($"[样式] 加载失败：{SciFiDir}{SpriteBackdrop}（游戏版本可能改了资源路径）");
                 return false;
             }
 
+            HasPanel = true;
+            PanelSprite = backdrop;
+            PanelType = Image.Type.Sliced;
+            PanelFillCenter = true;
+
+            if (border != null)
+            {
+                HasFrame = true;
+                FrameSprite = border;
+                FrameType = Image.Type.Sliced;
+            }
+
+            if (glass != null)
+            {
+                HasGlass = true;
+                GlassSprite = glass;
+            }
+
+            return border != null;
+        }
+
+        // ---------------------------------------------------------------- 来源 2：颜色
+
+        /// <summary>
+        /// 按已知节点名取颜色。机体信息窗的结构稳定：
+        ///   Mecha Window/panel-bg        ← 底衬
+        ///   Mecha Window/panel-bg/border ← 装饰边框
+        ///   Mecha Window/panel-bg/glass  ← 玻璃
+        ///   Mecha Window/shadow          ← 投影
+        /// 按名字取比"按面积打分挑选"可靠得多——后者曾选中 GUIFrame_thin 这种小图。
+        /// </summary>
+        private bool CaptureColorsByName(GameObject reference, BepInEx.Logging.ManualLogSource log)
+        {
             try
             {
-                DumpCandidates(reference, log);
-
-                var images = reference.GetComponentsInChildren<Image>(true);
-                var texts = reference.GetComponentsInChildren<Text>(true);
-
-                if (images == null || images.Length == 0)
+                var root = reference.transform;
+                var panelBg = root.Find(NodePanelBg);
+                if (panelBg == null)
                 {
-                    log?.LogInfo($"[样式] {reference.name} 下没有 Image，放弃捕获。");
+                    log?.LogInfo($"[样式] {reference.name} 下没有 {NodePanelBg} 节点，颜色改用启发式。");
                     return false;
                 }
 
-                // ---- 图层挑选
-                //
-                // 实测（机体信息窗）结构是**同尺寸多图层叠加**：
-                //   shadow          window-trsl-1-sd 760x502 a=0.31  ← 投影
-                //   panel-bg        window-trsl-1    760x502 a=1.00  ← 底衬（不透明）
-                //   panel-bg/border window-border-1  760x502 a=0.29  ← 装饰边框
-                //   panel-bg/glass  window-glass-1   760x502 a=0.15  ← 玻璃高光
-                //
-                // 正确做法是「先取窗口级尺寸的图层，再按名字分类」。
-                // 上一版按名字打分抢面积，结果"名字含 frame"的小图 GUIFrame_thin
-                // 拿到 150 分，把真正的 760x502 外框挤掉了。
-                float maxArea = 0f;
-                foreach (var img in images)
+                var bgImage = panelBg.GetComponent<Image>();
+                if (bgImage == null) return false;
+
+                PanelColor = bgImage.color;
+                HasPanel = true;
+                if (bgImage.sprite != null) PanelSprite = bgImage.sprite;
+
+                var border = panelBg.Find(NodeBorder);
+                if (border != null)
                 {
-                    if (img == null || img.sprite == null || img.rectTransform == null) continue;
-                    var rr = img.rectTransform.rect;
-                    maxArea = Mathf.Max(maxArea, Mathf.Abs(rr.width * rr.height));
+                    var img = border.GetComponent<Image>();
+                    if (img != null)
+                    {
+                        HasFrame = true;
+                        FrameColor = img.color;
+                        if (FrameSprite == null) FrameSprite = img.sprite;
+                    }
                 }
 
-                var layers = new List<Image>();
-                foreach (var img in images)
-                {
-                    if (img == null || img.sprite == null || img.rectTransform == null) continue;
-                    var rr = img.rectTransform.rect;
-                    if (Mathf.Abs(rr.width * rr.height) < maxArea * 0.9f) continue;
-                    if (img.type != Image.Type.Sliced) continue;
-                    layers.Add(img);
-                }
-
-                Image bg = null, frame = null, glass = null;
-                foreach (var img in layers)
-                {
-                    var hay = (img.sprite.name + " " + img.gameObject.name).ToLowerInvariant();
-                    bool isShadow = hay.Contains("shadow") || img.sprite.name.EndsWith("-sd");
-                    bool isBorder = img.gameObject.name == "border" || hay.Contains("border");
-                    bool isGlass = hay.Contains("glass");
-
-                    if (isShadow) continue;
-                    if (isBorder) { if (frame == null) frame = img; }
-                    else if (isGlass) { if (glass == null) glass = img; }
-                    else if (bg == null || img.color.a > bg.color.a) bg = img;  // 底衬取最不透明的
-                }
-
-                if (bg == null && layers.Count > 0) bg = layers[0];
-
-                if (bg != null)
-                {
-                    HasPanel = true;
-                    PanelSprite = bg.sprite;
-                    PanelColor = bg.color;
-                    PanelType = bg.type;
-                    PanelFillCenter = bg.fillCenter;
-                }
-
-                if (frame != null)
-                {
-                    HasFrame = true;
-                    FrameSprite = frame.sprite;
-                    FrameColor = frame.color;
-                    FrameType = frame.type;
-                }
-
+                var glass = panelBg.Find(NodeGlass);
                 if (glass != null)
                 {
-                    HasGlass = true;
-                    GlassSprite = glass.sprite;
-                    GlassColor = glass.color;
-                }
-
-                // ---- 输入框背景：窗口里若有 InputField，直接用它的 targetGraphic
-                var inputField = reference.GetComponentInChildren<InputField>(true);
-                if (inputField != null && inputField.targetGraphic is Image inputImage && inputImage.sprite != null)
-                {
-                    HasInput = true;
-                    InputSprite = inputImage.sprite;
-                    InputColor = inputImage.color;
-                    InputType = inputImage.type;
-                }
-
-                // ---- 文本：取窗口内最常用的字号与颜色作为正文字号/颜色
-                if (texts != null && texts.Length > 0)
-                {
-                    var sizeCount = new Dictionary<int, int>();
-                    var colorCount = new Dictionary<int, int>();
-                    var colorValue = new Dictionary<int, Color>();
-                    Font font = null;
-
-                    foreach (var t in texts)
+                    var img = glass.GetComponent<Image>();
+                    if (img != null)
                     {
-                        if (t == null) continue;
-                        if (font == null && t.font != null) font = t.font;
-
-                        sizeCount.TryGetValue(t.fontSize, out var sc);
-                        sizeCount[t.fontSize] = sc + 1;
-
-                        // Color 不能直接做字典键（浮点相等不可靠），量化到 8 位
-                        var c = t.color;
-                        int key = (Mathf.RoundToInt(c.r * 255) << 24) | (Mathf.RoundToInt(c.g * 255) << 16)
-                                | (Mathf.RoundToInt(c.b * 255) << 8) | Mathf.RoundToInt(c.a * 255);
-                        colorCount.TryGetValue(key, out var cc);
-                        colorCount[key] = cc + 1;
-                        colorValue[key] = c;
+                        HasGlass = true;
+                        GlassColor = img.color;
+                        if (GlassSprite == null) GlassSprite = img.sprite;
                     }
-
-                    int bestSize = 0, bestSizeCount = 0;
-                    foreach (var kv in sizeCount)
-                        if (kv.Value > bestSizeCount) { bestSizeCount = kv.Value; bestSize = kv.Key; }
-
-                    int bestColor = 0, bestColorCount = 0;
-                    foreach (var kv in colorCount)
-                        if (kv.Value > bestColorCount) { bestColorCount = kv.Value; bestColor = kv.Key; }
-
-                    if (font != null) { Font = font; HasText = true; }
-                    if (bestSize > 0) BaseFontSize = bestSize;
-                    if (colorCount.Count > 0 && colorValue.TryGetValue(bestColor, out var mainColor))
-                    {
-                        TextMain = mainColor;
-                        HasText = true;
-                    }
-
-                    // 次常用颜色当作"次要文本"（状态栏等），没有就用主色的 70% 亮度
-                    int secondKey = -1, secondCount = 0;
-                    foreach (var kv in colorCount)
-                        if (kv.Key != bestColor && kv.Value > secondCount) { secondCount = kv.Value; secondKey = kv.Key; }
-                    TextDim = secondKey >= 0 && colorValue.TryGetValue(secondKey, out var dimColor)
-                        ? dimColor
-                        : new Color(TextMain.r * 0.75f, TextMain.g * 0.75f, TextMain.b * 0.75f, 1f);
                 }
 
-                // 强调色（发言者标签、活动状态）：优先从装饰边框的 RGB 派生
-                //（那正是游戏用来画亮边的颜色），否则用主文本色提亮——
-                // 总之不引入与游戏无关的自定义色。
-                if (HasFrame)
-                    Accent = Brighten(new Color(FrameColor.r, FrameColor.g, FrameColor.b, 1f), 1.9f);
-                else
-                    Accent = Brighten(TextMain, 1.35f);
-
-                Source = $"{reference.name}(images={images.Length}, texts={(texts?.Length ?? 0)})";
-                log?.LogInfo(
-                    $"[样式] 已从 {Source} 捕获：panel={(HasPanel ? PanelSprite?.name ?? "no-sprite" : "无")}" +
-
-                    $" frame={(HasFrame ? FrameSprite?.name ?? "no-sprite" : "无")}" +
-                    $" glass={(HasGlass ? "有" : "无")}" +
-                    $" input={(HasInput ? "有" : "无")} fontSize={BaseFontSize}" +
-                    $" panelType={(HasPanel ? PanelType.ToString() : "-")}");
                 return true;
             }
             catch (Exception ex)
             {
-                log?.LogWarning($"[样式] 捕获失败：{ex.Message}");
+                log?.LogWarning($"[样式] 按名字取色失败：{ex.Message}");
                 return false;
             }
         }
 
+        // ---------------------------------------------------------------- 来源 3：启发式兜底
+
         /// <summary>
-        /// 挑一个"长得像标准面板"的游戏窗口作为参考。
-        /// 优选用机体信息窗（就是用户指定的目标观感）。
+        /// 旧路径：按面积与名字猜测各层。只在确定性来源失效时使用，
+        /// 因此刻意保持简单，不再追求"猜得准"。
+        /// </summary>
+        private void HeuristicCapture(GameObject reference, BepInEx.Logging.ManualLogSource log)
+        {
+            try
+            {
+                var images = reference.GetComponentsInChildren<Image>(true);
+
+                float maxArea = 0f;
+                foreach (var img in images)
+                {
+                    if (img == null || img.sprite == null || img.rectTransform == null) continue;
+                    var r = img.rectTransform.rect;
+                    maxArea = Mathf.Max(maxArea, Mathf.Abs(r.width * r.height));
+                }
+
+                foreach (var img in images)
+                {
+                    if (img == null || img.sprite == null || img.rectTransform == null) continue;
+                    var r = img.rectTransform.rect;
+                    if (Mathf.Abs(r.width * r.height) < maxArea * 0.9f) continue;
+                    if (img.type != Image.Type.Sliced) continue;
+
+                    var hay = (img.sprite.name + " " + img.gameObject.name).ToLowerInvariant();
+                    if (hay.Contains("shadow") || img.sprite.name.EndsWith("-sd")) continue;
+
+                    if (img.gameObject.name == NodeBorder || hay.Contains("border"))
+                    {
+                        if (!HasFrame) { HasFrame = true; FrameSprite = img.sprite; FrameColor = img.color; FrameType = img.type; }
+                    }
+                    else if (hay.Contains("glass"))
+                    {
+                        if (!HasGlass) { HasGlass = true; GlassSprite = img.sprite; GlassColor = img.color; }
+                    }
+                    else if (!HasPanel || img.color.a > PanelColor.a)
+                    {
+                        HasPanel = true;
+                        PanelSprite = img.sprite;
+                        PanelColor = img.color;
+                        PanelType = img.type;
+                        PanelFillCenter = img.fillCenter;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                log?.LogWarning($"[样式] 启发式兜底失败：{ex.Message}");
+            }
+        }
+
+        // ---------------------------------------------------------------- 文本
+
+        private void CaptureText(GameObject reference, BepInEx.Logging.ManualLogSource log)
+        {
+            if (reference == null) return;
+
+            try
+            {
+                var texts = reference.GetComponentsInChildren<Text>(true);
+                if (texts == null || texts.Length == 0) return;
+
+                var sizeCount = new Dictionary<int, int>();
+                var colorCount = new Dictionary<int, int>();
+                var colorValue = new Dictionary<int, Color>();
+                Font font = null;
+
+                foreach (var t in texts)
+                {
+                    if (t == null) continue;
+                    if (font == null && t.font != null) font = t.font;
+
+                    sizeCount.TryGetValue(t.fontSize, out var sc);
+                    sizeCount[t.fontSize] = sc + 1;
+
+                    var c = t.color;
+                    int key = (Mathf.RoundToInt(c.r * 255) << 24) | (Mathf.RoundToInt(c.g * 255) << 16)
+                            | (Mathf.RoundToInt(c.b * 255) << 8) | Mathf.RoundToInt(c.a * 255);
+                    colorCount.TryGetValue(key, out var cc);
+                    colorCount[key] = cc + 1;
+                    colorValue[key] = c;
+                }
+
+                int bestSize = 0, bestSizeCount = 0;
+                foreach (var kv in sizeCount)
+                    if (kv.Value > bestSizeCount) { bestSizeCount = kv.Value; bestSize = kv.Key; }
+
+                int bestColor = 0, bestColorCount = 0;
+                foreach (var kv in colorCount)
+                    if (kv.Value > bestColorCount) { bestColorCount = kv.Value; bestColor = kv.Key; }
+
+                if (font != null) { Font = font; HasText = true; }
+                if (bestSize > 0) BaseFontSize = bestSize;
+
+                if (colorCount.Count > 0 && colorValue.TryGetValue(bestColor, out var mainColor))
+                {
+                    TextMain = mainColor;
+                    HasText = true;
+                }
+
+                int secondKey = -1, secondCount = 0;
+                foreach (var kv in colorCount)
+                    if (kv.Key != bestColor && kv.Value > secondCount) { secondCount = kv.Value; secondKey = kv.Key; }
+                TextDim = secondKey >= 0 && colorValue.TryGetValue(secondKey, out var dimColor)
+                    ? dimColor
+                    : new Color(TextMain.r * 0.75f, TextMain.g * 0.75f, TextMain.b * 0.75f, 1f);
+
+                // 强调色从装饰边框的 RGB 派生（那正是游戏画亮边用的颜色）
+                Accent = HasFrame
+                    ? Brighten(new Color(FrameColor.r, FrameColor.g, FrameColor.b, 1f), 1.9f)
+                    : Brighten(TextMain, 1.35f);
+            }
+            catch (Exception ex)
+            {
+                log?.LogWarning($"[样式] 文本样式捕获失败：{ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 挑参考窗口。优先机体信息窗（就是目标观感），拿不到再依次退到统计窗/背包窗/科技树。
         /// </summary>
         private static GameObject FindReferenceWindow(UIRoot uiRoot)
         {
@@ -264,30 +376,10 @@ namespace IcarusII.UI
             var uiGame = uiRoot.uiGame;
             if (uiGame == null) return null;
 
-            try
-            {
-                if (uiGame.mechaWindow != null) return uiGame.mechaWindow.gameObject;
-            }
-            catch { /* 字段缺失时继续尝试其它窗口 */ }
-
-            try
-            {
-                if (uiGame.statWindow != null) return uiGame.statWindow.gameObject;
-            }
-            catch { }
-
-            try
-            {
-                if (uiGame.inventoryWindow != null) return uiGame.inventoryWindow.gameObject;
-            }
-            catch { }
-
-            try
-            {
-                if (uiGame.techTree != null) return uiGame.techTree.gameObject;
-            }
-            catch { }
-
+            try { if (uiGame.mechaWindow != null) return uiGame.mechaWindow.gameObject; } catch { }
+            try { if (uiGame.statWindow != null) return uiGame.statWindow.gameObject; } catch { }
+            try { if (uiGame.inventoryWindow != null) return uiGame.inventoryWindow.gameObject; } catch { }
+            try { if (uiGame.techTree != null) return uiGame.techTree.gameObject; } catch { }
             return null;
         }
 
@@ -307,8 +399,7 @@ namespace IcarusII.UI
 
         /// <summary>
         /// 标题栏。机体信息窗**没有**独立标题栏——「机体信息」四个字直接画在面板上，
-        /// 顶部右侧只有窗口按钮。所以这里固定做成全透明，让底衬与边框透出来，
-        /// 而不是自己加一条实心色带（那是初版的做法，观感不像游戏原生面板）。
+        /// 顶部右侧只有窗口按钮。所以这里固定全透明，让底衬与边框透出来。
         /// </summary>
         public static void ApplyHeader(Image image)
         {
@@ -357,95 +448,20 @@ namespace IcarusII.UI
             }
             else
             {
-                image.color = Lighten(PanelColor, 0.8f);
+                image.color = Darken(PanelColor, 0.8f);
             }
         }
 
-        /// <summary>
-        /// 给候选外框贴图打分。启发式来自实测：机体信息窗里面积最大的
-        /// 贴图是 window-trsl-1-sd（半透明底衬），真正的装饰外框是别的。
-        /// </summary>
-        private static int ScoreFrameSprite(Image img)
+        // ---------------------------------------------------------------- 工具
+
+        private static Color Darken(Color c, float factor)
         {
-            var spriteName = img.sprite != null ? img.sprite.name : string.Empty;
-            var goName = img.gameObject.name;
-            var hay = (spriteName + " " + goName).ToLowerInvariant();
-
-            int score = 0;
-            if (hay.Contains("frame")) score += 100;
-            if (hay.Contains("border")) score += 80;
-            if (hay.Contains("title")) score += 30;
-
-            // 半透明底衬：明确降权（这是上次踩的坑）
-            if (hay.Contains("trsl") || hay.Contains("trans")) score -= 120;
-            if (img.color.a < 0.98f) score -= 40;
-
-            // 九宫格边框类贴图通常是 Sliced
-            if (img.type == Image.Type.Sliced) score += 20;
-            if (img.sprite != null && img.sprite.border != Vector4.zero) score += 30;
-
-            if (hay.Contains("window") || hay.Contains("panel")) score += 10;
-            return score;
+            return new Color(c.r * factor, c.g * factor, c.b * factor, c.a);
         }
 
-        /// <summary>
-        /// 把窗口里"面积最大的若干 Image"与根的直接子物体打进日志，
-        /// 用于在外框/标题栏挑选错误时快速定位该选哪一张。
-        /// </summary>
-        private static void DumpCandidates(GameObject reference, BepInEx.Logging.ManualLogSource log)
-        {
-            if (log == null) return;
-            try
-            {
-                var sb = new System.Text.StringBuilder();
-                sb.Append("[样式] 根的直接子物体：");
-                for (int i = 0; i < reference.transform.childCount && i < 24; i++)
-                {
-                    var c = reference.transform.GetChild(i);
-                    sb.Append(c.name).Append('(').Append(c.gameObject.activeSelf ? '+' : '-').Append(") ");
-                }
-                log.LogInfo(sb.ToString());
-
-                var list = new List<(float area, string text)>();
-                foreach (var img in reference.GetComponentsInChildren<Image>(true))
-                {
-                    if (img == null || img.sprite == null) continue;
-                    var rt = img.rectTransform;
-                    if (rt == null) continue;
-                    var r = rt.rect;
-                    float area = Mathf.Abs(r.width * r.height);
-                    var b = img.sprite.border;
-                    list.Add((area, string.Format(
-                        "{0} | sprite={1} {2:0}x{3:0} border=({4:0},{5:0},{6:0},{7:0}) type={8} a={9:0.00} score={10}",
-                        Path(img.transform, reference.transform), img.sprite.name,
-                        r.width, r.height, b.x, b.y, b.z, b.w, img.type, img.color.a,
-                        ScoreFrameSprite(img))));
-                }
-                list.Sort((x, y) => y.area.CompareTo(x.area));
-
-                log.LogInfo($"[样式] 候选贴图（按面积前 {Mathf.Min(12, list.Count)} 个，格式：路径 | 贴图 尺寸 边框 类型 透明度 评分）：");
-                for (int i = 0; i < list.Count && i < 12; i++) log.LogInfo("[样式]   " + list[i].text);
-            }
-            catch (Exception ex)
-            {
-                log.LogWarning($"[样式] 候选清单导出失败：{ex.Message}");
-            }
-        }
-
-        private static string Path(Transform node, Transform root)
-        {
-            var sb = new System.Text.StringBuilder(node.name);
-            var t = node.parent;
-            int guard = 0;
-            while (t != null && t != root && guard++ < 6) { sb.Insert(0, t.name + "/"); t = t.parent; }
-            return sb.ToString();
-        }
-
-        /// <summary>提亮并保持不透明；用于在游戏配色内派生强调色。</summary>
+        /// <summary>提亮并保持不透明；灰度色提亮会溢出，改为往青白偏移。</summary>
         private static Color Brighten(Color c, float factor)
         {
-            // 灰度色（如白/浅灰标题栏）提亮会溢出，改为往青色偏移一点点，
-            // 这样在深色面板上仍然是"高亮"而不是纯白。
             float max = Mathf.Max(c.r, Mathf.Max(c.g, c.b));
             if (max > 0.85f)
                 return new Color(Mathf.Clamp01(c.r * 0.75f + 0.15f), Mathf.Clamp01(c.g * 0.85f + 0.15f), 1f, 1f);
@@ -457,13 +473,56 @@ namespace IcarusII.UI
                 1f);
         }
 
-        private static Color Lighten(Color c, float factor)
+        private static string Fmt(Color c)
         {
-            return new Color(
-                Mathf.Clamp01(c.r * factor),
-                Mathf.Clamp01(c.g * factor),
-                Mathf.Clamp01(c.b * factor),
-                c.a);
+            return $"({c.r:0.###},{c.g:0.###},{c.b:0.###},{c.a:0.###})";
+        }
+
+        /// <summary>把窗口里面积最大的若干 Image 打进日志，便于启发式失效时定位。</summary>
+        private static void DumpCandidates(GameObject reference, BepInEx.Logging.ManualLogSource log)
+        {
+            if (log == null) return;
+            try
+            {
+                var sb = new StringBuilder();
+                sb.Append("[样式] 根的直接子物体：");
+                for (int i = 0; i < reference.transform.childCount && i < 24; i++)
+                {
+                    var c = reference.transform.GetChild(i);
+                    sb.Append(c.name).Append('(').Append(c.gameObject.activeSelf ? '+' : '-').Append(") ");
+                }
+                log.LogInfo(sb.ToString());
+
+                var list = new List<(float area, string text)>();
+                foreach (var img in reference.GetComponentsInChildren<Image>(true))
+                {
+                    if (img == null || img.sprite == null || img.rectTransform == null) continue;
+                    var r = img.rectTransform.rect;
+                    float area = Mathf.Abs(r.width * r.height);
+                    var b = img.sprite.border;
+                    list.Add((area, string.Format(
+                        "{0} | sprite={1} {2:0}x{3:0} border=({4:0},{5:0},{6:0},{7:0}) type={8} color={9}",
+                        Path(img.transform, reference.transform), img.sprite.name,
+                        r.width, r.height, b.x, b.y, b.z, b.w, img.type, Fmt(img.color))));
+                }
+                list.Sort((x, y) => y.area.CompareTo(x.area));
+
+                log.LogInfo($"[样式] 候选贴图（按面积前 {Mathf.Min(8, list.Count)} 个）：");
+                for (int i = 0; i < list.Count && i < 8; i++) log.LogInfo("[样式]   " + list[i].text);
+            }
+            catch (Exception ex)
+            {
+                log?.LogWarning($"[样式] 候选清单导出失败：{ex.Message}");
+            }
+        }
+
+        private static string Path(Transform node, Transform root)
+        {
+            var sb = new StringBuilder(node.name);
+            var t = node.parent;
+            int guard = 0;
+            while (t != null && t != root && guard++ < 6) { sb.Insert(0, t.name + "/"); t = t.parent; }
+            return sb.ToString();
         }
     }
 }
