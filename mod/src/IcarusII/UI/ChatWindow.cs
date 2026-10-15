@@ -52,6 +52,9 @@ namespace IcarusII.UI
         /// <summary>非空表示窗口嵌在游戏的总控面板里（而不是独立窗口）。</summary>
         private ControlPanelHost _host;
 
+        /// <summary>嵌入时改用宿主窗口的底衬色，避免看起来像一块外来面板。</summary>
+        private Color? _hostBackdrop;
+
         private bool IsEmbedded => _host != null;
 
         /// <summary>
@@ -314,11 +317,19 @@ namespace IcarusII.UI
             var title = _panel.Find("Header/Title");
             if (title != null) title.gameObject.SetActive(false);
 
+            // 改用宿主窗口自己的底衬色：不同窗口的 panel-bg 颜色并不相同，
+            // 套用机体信息窗的配色会显得格格不入。
+            _hostBackdrop = _host != null ? _host.HostBackdropColor : null;
+            if (_panelImage != null && _hostBackdrop.HasValue)
+            {
+                _panelImage.color = _hostBackdrop.Value;
+            }
+
             if (_headerImage != null)
             {
                 // 标题栏本身透明会让状态文字看着像浮在游戏背景上，
                 // 给它一层与底衬同色的底，形成一条细状态栏。
-                var baseColor = _panelImage != null ? _panelImage.color : DefaultPanelBg;
+                var baseColor = _hostBackdrop ?? (_panelImage != null ? _panelImage.color : DefaultPanelBg);
                 _headerImage.sprite = null;
                 _headerImage.color = new Color(baseColor.r, baseColor.g, baseColor.b, 0.9f);
             }
@@ -572,7 +583,12 @@ namespace IcarusII.UI
                 _accent = style.Accent;
             }
 
-            if (_panelImage != null) style.ApplyPanel(_panelImage);
+            if (_panelImage != null)
+            {
+                style.ApplyPanel(_panelImage);
+                // 嵌入时宿主配色优先：ApplyStyle 用的是机体信息窗那套色
+                if (_hostBackdrop.HasValue) _panelImage.color = _hostBackdrop.Value;
+            }
             if (_frameImage != null) style.ApplyFrame(_frameImage);
             if (_glassImage != null) style.ApplyGlass(_glassImage);
             if (_headerImage != null) UiStyle.ApplyHeader(_headerImage);
@@ -816,6 +832,9 @@ namespace IcarusII.UI
             }
             _dirty = true;
         }
+
+        /// <summary>聊天记录是否为空（用于决定要不要显示欢迎语）。</summary>
+        public bool TranscriptEmpty => _lines.Count == 0 && _current.Length == 0;
 
         public void ClearTranscript()
         {

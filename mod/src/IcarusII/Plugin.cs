@@ -73,6 +73,9 @@ namespace IcarusII
 
         /// <summary>宿主只尝试接入一次（失败就退回独立窗口，避免每帧重试造成重复标签）。</summary>
         private bool _hostAttempted;
+
+        /// <summary>欢迎语只补一次，之后即使清空记录也不再打扰。</summary>
+        private bool _welcomeShown;
         private bool _styleCaptured;
         private int _styleWaitFrames;
 
@@ -636,6 +639,14 @@ namespace IcarusII
 
         private void OnWindowOpened()
         {
+            // 空记录时给一句欢迎语：一块什么都没有的深色面板看着像没做完，
+            // 而且玩家也不知道这个窗口到底能问什么。
+            if (!_welcomeShown && _chat.TranscriptEmpty)
+            {
+                _welcomeShown = true;
+                _chat.AppendSystem(Strings.Get("welcome"));
+            }
+
             if (_client == null)
             {
                 _chat.AppendSystem(Strings.Get("hint.disconnected"));

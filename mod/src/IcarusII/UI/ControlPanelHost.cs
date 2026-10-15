@@ -49,6 +49,15 @@ namespace IcarusII.UI
         private bool _aiActive;
 
         public bool IsAvailable { get; private set; }
+
+        /// <summary>
+        /// 宿主窗口自己的底衬配色。
+        ///
+        /// 不同窗口的 panel-bg 颜色**并不相同**（我们原先统一用从机体信息窗
+        /// 捕获的那套色），直接套上去会显得像贴在旁边的一块外来面板。
+        /// 嵌入时改用宿主自己的底衬色，才能融为一体。
+        /// </summary>
+        public Color? HostBackdropColor { get; private set; }
         public bool AiActive => _aiActive;
 
         /// <summary>AI 视图与物流视图互换时触发（参数：AI 是否激活）。</summary>
@@ -100,6 +109,10 @@ namespace IcarusII.UI
                 catch { /* 字段名变了就退化为"不加标签"，但仍可挂载 */ }
 
                 var host = new ControlPanelHost(log, panel, leftGroup, rightGroup, tabs);
+
+                var bg = panelRt.Find("panel-bg");
+                var bgImage = bg != null ? bg.GetComponent<Image>() : null;
+                if (bgImage != null) host.HostBackdropColor = bgImage.color;
                 host.BuildAiTab();
                 host.WireLogisticsTabs();
 
@@ -319,7 +332,8 @@ namespace IcarusII.UI
                         _savedTitle = _panelTitle.text;
                         _titleSaved = true;
                     }
-                    _panelTitle.text = Strings.Get("title");
+                    var want = Strings.Get("title");
+                    if (_panelTitle.text != want) _panelTitle.text = want;
                 }
                 else if (_titleSaved)
                 {
@@ -395,8 +409,10 @@ namespace IcarusII.UI
         /// </summary>
         public void Tick()
         {
-            // 目前无需每帧同步：视图切换完全由标签点击与 InstallChat 驱动。
-            // 保留此方法以便将来接入选中态高亮。
+            // 游戏在切换筛选类型、刷新列表等时机都会重设窗口标题，
+            // 所以 AI 视图激活期间需要每帧重申一次，否则标题会被改回
+            // 「地图标记」之类（实测截图确认）。
+            if (_aiActive) UpdatePanelTitle(true);
         }
     }
 }
