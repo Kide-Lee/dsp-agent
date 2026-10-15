@@ -165,6 +165,40 @@ namespace IcarusII.Game
             }
         }
 
+        /// <summary>
+        /// 总控面板的按键是否在本帧按下。
+        /// 用 `VFInput._openControlPanel` 而不是直接读 `KeyCode.I`，
+        /// 这样**尊重玩家在游戏里改过的按键绑定**（它是从
+        /// `override_keys[BuiltinKey.打开全局控制面板]` 解析出来的）。
+        /// </summary>
+        public static bool ControlPanelKeyPressedThisFrame()
+        {
+            try { return VFInput._openControlPanel; }
+            catch { return false; }
+        }
+
+        /// <summary>游戏是否已解锁总控面板。</summary>
+        public static bool ControlPanelUnlocked()
+        {
+            try
+            {
+                var h = GameMain.history;
+                return h != null && (h.logisticsSystemUnlocked || h.markerUnlocked);
+            }
+            catch
+            {
+                // 读不到状态时保守处理：**不接管**，让游戏按原样走
+                return true;
+            }
+        }
+
+        /// <summary>游戏是否处于全屏暂停（此时热键应失效，与原版一致）。</summary>
+        public static bool FullscreenPaused()
+        {
+            try { return GameMain.isFullscreenPaused; }
+            catch { return false; }
+        }
+
         /// <summary>存档名，仅用于显示；没有存档时为 null。</summary>
         public static string CurrentSaveName()
         {

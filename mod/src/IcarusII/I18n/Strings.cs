@@ -28,6 +28,7 @@ namespace IcarusII.I18n
             ["key.invalid"] = "API Key 被服务端拒绝，请检查后重新输入。",
             ["key.unreachable"] = "无法连通 DeepSeek，请检查网络后重试。",
             ["status.needkey"] = "待配置",
+            ["tab.ai"] = "AI",
             ["save.bound"] = "已绑定存档「{0}」的对话（恢复 {1} 条历史）。",
             ["save.new"] = "已为存档「{0}」开启新对话。",
             ["save.unbound"] = "已离开存档，对话暂时解绑。",

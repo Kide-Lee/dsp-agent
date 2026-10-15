@@ -67,6 +67,12 @@ namespace IcarusII
 
         /// <summary>当前存档标识是否已经同步给服务端。</summary>
         private bool _saveSynced;
+
+        /// <summary>总控面板宿主；非空表示对话嵌在游戏的总控面板里。</summary>
+        private UI.ControlPanelHost _host;
+
+        /// <summary>宿主只尝试接入一次（失败就退回独立窗口，避免每帧重试造成重复标签）。</summary>
+        private bool _hostAttempted;
         private bool _styleCaptured;
         private int _styleWaitFrames;
 
@@ -151,6 +157,37 @@ namespace IcarusII
                 if (_chat.InputFocused) _chat.BlurInput();
                 else _chat.SetOpen(false);
                 return;
+            }
+
+            if (_host != null) _host.Tick();
+
+            // I：总控面板的原生键。但游戏把它门控在「解锁行星内物流 / 标记」之后——
+            //    未解锁时按 I 毫无反应。而我们的对话就住在那个面板里，
+            //    那意味着新存档在解锁前根本用不了 AI。
+            //
+            //    这里在**门控关着时**替游戏开关面板；门控一开就完全不插手
+            //    （游戏自己的 UIGame 分支会处理）。两者条件互斥，不会双重触发。
+            if (_host != null && _host.IsAvailable
+                && GameRefs.ControlPanelKeyPressedThisFrame()
+                && !GameRefs.ControlPanelUnlocked()
+                && !GameRefs.TextInputActive
+                && GameRefs.IsRunning
+                && !GameRefs.FullscreenPaused())
+            {
+                if (!_chat.InputFocused)
+                {
+                    var willOpen = !_host.PanelActive;
+                    _host.TogglePanel(true);      // 我们自己的入口一律直奔 AI 视图
+                    if (willOpen)
+                    {
+                        OnWindowOpened();
+                        Log.LogInfo($"[总控面板] 未解锁物流，由本 mod 代为打开。{_chat.DescribeVisibility()}");
+                    }
+                    else
+                    {
+                        Log.LogInfo("[总控面板] 已关闭。");
+                    }
+                }
             }
 
             // R：开关窗口（输入框聚焦时让位给文字输入）
@@ -426,7 +463,16 @@ namespace IcarusII
                 return;
             }
 
-            _chat.Create(root, font, _config);
+            // 接入游戏的总控面板：让对话**住进它里面**，而不是另开一个窗口。
+            // 失败（结构不符/拿不到面板）时 _host 为 null，ChatWindow 会走独立窗口那条路。
+            if (!_hostAttempted)
+            {
+                _hostAttempted = true;
+                _host = UI.ControlPanelHost.TryCreate(root, Log);
+                if (_host == null) Log.LogInfo("[总控面板] 未接入，窗口将以独立形式存在");
+            }
+
+            _chat.Create(root, font, _config, _host);
             if (_styleCaptured) _chat.ApplyStyle(UiStyle.Current);
             _uiInitialized = true;
 

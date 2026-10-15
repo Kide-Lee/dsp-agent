@@ -48,6 +48,18 @@ namespace IcarusII.UI
         private Color _accent = DefaultAccent;
 
         private GameObject _root;
+
+        /// <summary>非空表示窗口嵌在游戏的总控面板里（而不是独立窗口）。</summary>
+        private ControlPanelHost _host;
+
+        private bool IsEmbedded => _host != null;
+
+        /// <summary>
+        /// 窗口当前是否真的可见。
+        /// 嵌入模式下不能只看自己：总控面板被游戏关掉时，
+        /// 我们的 activeSelf 仍是 true，但 activeInHierarchy 已经 false。
+        /// </summary>
+        private bool ViewVisible => _root != null && (IsEmbedded ? _root.activeInHierarchy : _root.activeSelf);
         private RectTransform _panel;
         private RectTransform _content;
         private Image _panelImage;
@@ -176,7 +188,7 @@ namespace IcarusII.UI
 
         // ---------------------------------------------------------------- 构建
 
-        public void Create(UIRoot uiRoot, Font font, PluginConfig config)
+        public void Create(UIRoot uiRoot, Font font, PluginConfig config, ControlPanelHost host = null)
         {
             if (_root != null) return;
 
@@ -188,7 +200,15 @@ namespace IcarusII.UI
 
             UiFactory.EnsureEventSystem();
 
-            // 自建 Canvas，而不是挂到游戏的 overlayCanvasTop 下。
+            // ① 优先嵌进游戏的总控面板：这样"一个窗口"就是真的一个窗口，
+            //    按 I（以及我们的快捷键）打开的都是它。
+            if (host != null && host.IsAvailable && TryCreateEmbedded(host, config, font))
+            {
+                SetStatus(Strings.Get("status.disconnected"), _textDim);
+                return;
+            }
+
+            // ② 独立窗口：自建 Canvas，而不是挂到游戏的 overlayCanvasTop 下。
             //
             // 原因（实机日志证实）：Overlay Canvas - Top 与它的父级 Always on Top
             // 在游戏中都处于 **inactive** 状态（activeInHierarchy=False），
@@ -233,6 +253,39 @@ namespace IcarusII.UI
 
             SetStatus(Strings.Get("status.disconnected"), _textDim);
             _root.SetActive(false);
+        }
+
+        /// <summary>
+        /// 嵌入模式：把 prefab 实例挂到总控面板下面。
+        ///
+        /// **要求 prefab 可用**：嵌入模式不做代码构建的兜底——若 bundle 缺失，
+        /// 直接返回 false，调用方走独立窗口那条路（那条路有完整的代码构建兜底）。
+        /// 两条路各有一种兜底，比三条路互相交叉要可靠。
+        /// </summary>
+        private bool TryCreateEmbedded(ControlPanelHost host, PluginConfig config, Font font)
+        {
+            var panelGo = WindowPrefab.Instantiate(host.ChatParent);
+            if (panelGo == null)
+            {
+                Plugin.Log.LogInfo($"[UI] 没有可用的 UI bundle，改用独立窗口（{WindowPrefab.Status}）");
+                return false;
+            }
+
+            if (!TryWireFromPrefab(panelGo, config, font))
+            {
+                UnityEngine.Object.Destroy(panelGo);
+                Plugin.Log.LogWarning("[UI] prefab 结构不完整，改用独立窗口");
+                return false;
+            }
+
+            _host = host;
+            _root = panelGo;
+            panelGo.SetActive(false);        // 交给 InstallChat 决定初始视图
+            host.InstallChat(panelGo);
+
+            Plugin.Log.LogInfo($"[UI] 窗口已嵌入总控面板（{WindowPrefab.Status}，" +
+                               $"初始视图={(host.AiActive ? "AI" : "物流")}）");
+            return true;
         }
 
         /// <summary>代码构建整棵面板子树（原路径，也是 prefab 缺失时的兜底）。</summary>
@@ -510,8 +563,39 @@ namespace IcarusII.UI
         {
             if (_root == null) return;
 
+            // 嵌入模式：开关的是总控面板本身，"打开"始终指向 AI 视图，
+            // 这样我们的快捷键就是一个"直奔对话"的入口。
+            if (IsEmbedded)
+            {
+                if (_host == null) return;
+
+                if (open)
+                {
+                    // 面板没开 → 打开并直接进 AI 视图；
+                    // 面板开着但停在物流视图 → 只是切过去，不要重复开关
+                    if (!_host.PanelActive) _host.TogglePanel(true);
+                    else _host.SetAiActive(true);
+                }
+                else if (_host.PanelActive)
+                {
+                    _host.TogglePanel(false);
+                }
+
+                ApplyOpenState(open);
+                return;
+            }
+
             IsOpen = open;
             _root.SetActive(open);
+            if (!open) _wantInputFocus = false;
+
+            ApplyOpenState(open);
+        }
+
+        /// <summary>开关时与游戏输入状态的交接（两条路径共用）。</summary>
+        private void ApplyOpenState(bool open)
+        {
+            IsOpen = open;
             if (!open) _wantInputFocus = false;
 
             if (open)
@@ -519,7 +603,7 @@ namespace IcarusII.UI
                 // 让游戏停止响应移动/建造输入。记录原值以便还原。
                 _savedInputing = Game.GameRefs.SetTextInputActive(true);
                 UiFactory.EnsureEventSystem();
-                // 默认不自动聚焦：这样打开后 R 仍可立即关窗。
+                // 默认不自动聚焦：这样打开后按键仍可立即关窗。
                 // 需要"开窗即打字"的玩家可在配置里打开 AutoFocusInput。
                 // 密钥录入态总是自动聚焦：此时玩家唯一要做的事就是填 Key
                 if (_autoFocusInput || _keyEntryMode) FocusInput();
@@ -749,7 +833,18 @@ namespace IcarusII.UI
 
         public void Tick()
         {
-            if (_root == null || !_root.activeSelf) return;
+            if (_root == null) return;
+
+            // 嵌入模式下总控面板可能被游戏自己关掉（打开背包、机体信息等都会触发
+            // ShutAllFunctionWindow）。这里把"打开"状态同步回来，
+            // 否则我们会一直以为窗口还开着，继续抢占文本输入。
+            if (IsEmbedded && _host != null)
+            {
+                var shouldBeOpen = _host.PanelActive && _host.AiActive;
+                if (IsOpen != shouldBeOpen) ApplyOpenState(shouldBeOpen);
+            }
+
+            if (!ViewVisible) return;
 
             // VFInput 的状态每帧由游戏输入系统重算，单次赋值可能被覆盖，
             // 因此窗口打开期间每帧重申一次；关闭时由 SetOpen 还原原值。
