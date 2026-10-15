@@ -27,19 +27,34 @@
 - 输出的**速率（TPS）**不是一个固定值，而是随玩家的科技/升级进度增长。
 - 输出**有资源成本**：消耗玩家的能量。
 
-### 技术锚点（已对 0.10.30.3100 的 `Assembly-CSharp` 元数据核实）
+### 技术锚点（已用游戏源码核实，修正了此前的元数据推断）
 
-| 需求 | 游戏侧锚点 | 备注 |
+> 上一版这张表是从程序集元数据推断的，**有两处是错的**，已按源码改正（附 `文件:行号`）。
+
+| 需求 | 游戏侧锚点 | 说明 |
 | --- | --- | --- |
-| 消耗能量 | `Mecha.coreEnergy` / `Mecha.coreEnergyCap` | 这就是机甲面板上的核心能量条，扣减后游戏自己的 UI 会实时反映 |
-| 能量消耗系数 | `Mecha.energyConsumptionCoef` | 游戏已有"能耗系数"概念，我们的每次输出可以复用它，让升级收益一致 |
-| 科技/升级驱动 | `Mecha.coreLevel`（机甲核心等级） | 由科技树解锁上限、再用升级物品提升 |
-| 科技进度 | `GameHistoryData`（已解锁科技/升级） | 用于读取"当前科技到哪一步了" |
-| 同类能耗参考 | `Mecha.miningPower` / `replicatePower` / `researchPower` / `instantBuildEnergy` | 游戏对每种行为都定了能量单价；我们的"每次输出"按同一套量纲定价才不会突兀 |
+| 扣能量 | **`Mecha.UseEnergy(double)` / `Mecha.QueryEnergy(...)`** | 唯一权威 API（`Mecha.cs:1325,1339`）。既有扣能点全是"`QueryEnergy` → `coreEnergy -= energyGet` → `MarkEnergyChange(slot, -energyWant)`"，例如采矿 `PlayerAction_Mine.cs:82-135`、建造 `PlayerAction_Inspect.cs:763-770` |
+| 能量明细 | `Mecha.energyChanges[EC_*]` + `MarkEnergyChange` | `EC_MAX = 32`，现有语义只用到 **0..15** ⇒ **16..31 是空槽**，可给"LLM token"单开一类（`Mecha.cs:2682-2699`）。⚠️ 该数组**每 tick 在 `GenerateEnergy` 首行被清零** ⇒ 必须每 tick 都标记，且顺序在 `GenerateEnergy` **之后** |
+| 能量单价 | `Configs/ModeConfig.cs` 的 `mechaMiningPower` / `mechaResearchPower` / `mechaInstantBuildEnergy` … | 我们的每-token 成本应**照这套量纲定价**，才不会突兀（`Mecha.cs:195-208` 装载） |
+| ~~能耗系数~~ | ~~`energyConsumptionCoef`~~ | ❌ **更正**：它**不是科技升级来的**，唯一写入点是机甲 DIY 编辑器（`UIMechaEditor.cs:599`）。用它做"科技约束"是错的 |
+| ~~核心等级~~ | ~~`mecha.coreLevel`~~ | ⚠️ 它是**升级产物**（`case 6` 同时改 `coreEnergyCap` 与 `coreLevel`），可以作为"进度"读数，但不是"输出速率"的现成字段 |
+| 速率类数值的现成范式 | `gameHistory.techSpeed`（`case 22` 提升） | 研究速度倍率，其消费方式是"能量足够才推进，进度 += speed"（`MechaLab.cs:99-131`）——**这正是我们做"TPS 受科技约束"最该抄的范式** |
 
-**结论：这条想法在技术上是低成本、高契合度的**——能量与等级都是现成的公开字段，不需要新增资源系统。
+**新增自定义科技的完整做法（源码结论）**
 
-### 模糊点
+| 项 | 结论 |
+| --- | --- |
+| 数据源 | `LDB.techs` ← `Resources.Load("Prototypes/TechProtoSet")`，是 **ScriptableObject 资源、不是代码硬编码**（`LDB.cs:14-21,68`；`ProtoSet.cs:19-20` 注释"每个数据集将通过 Excel 导入成一个 Asset"） |
+| 官方扩展点 | **没有**。源码无第二个构建入口、无 Import/Export、无 hook |
+| 可行做法 | 在 `LDB.techs` 懒加载完成之后、`GameHistoryData.Init`（`GameHistoryData.cs:415`）之前**追加**到 `dataArray`。techStates 是 `Dictionary<int,TechState>` 且每次读档从 LDB 重建，缺 ID 有默认值兜底（`:639-643`） |
+| ⚠️ 最容易踩的坑 | 追加后**必须调用 `LDB.techs.OnAfterDeserialize()`** 重建 `dataIndices`（`ProtoSet.cs:38` 是 public virtual）；否则 `LDB.techs.Select(新ID)` **永远返回 null**（`:55-60`） |
+| ID 限制 | `kMaxProtoId = 12000`，超过会 `LogError`（`TechProto.cs:43,272`）；`page => ID < 2000 ? 0 : 1` 决定落在科技树哪一页（`:258`） |
+| 图标 | 放 `Assets/Resources/Icons/Tech/<ID>.png`，`IconPath = "Icons/Tech/<ID>"`（`TechProto.cs:283`） |
+| 本地化 | `Locale/<lcid>/prototype.txt`（UTF-16LE、Tab 分隔）：键为 `T<名字>` / `<名字>描述` / `<名字>结果`，第 3 列固定 `5`。需覆盖 `2052/1033/1031/1036/1041/1042/1049/3082` 各一份 |
+| ⚠️ 升级函数的坑 | `UnlockTechFunction(int func, ...)` 是**裸 int switch，没有 enum、没有 default 消费**（`GameHistoryData.cs:1602`）⇒ **自定义 func 号不会被处理**。应复用现成分支（如 `case 22` = techSpeed） |
+| 解锁触发 | `GameMain.history.onTechUnlocked`（`GameHistoryData.cs:277`）。⚠️ **`history` 每次读档都会被 new**，订阅必须重挂 |
+
+### 模糊点### 模糊点
 
 1. **TPS 约束作用在"哪里"？** 三种可能，体验差别很大：
    - (a) 约束**聊天文字**的滚出速度 → 玩家直接感受到"AI 在想得慢"；
@@ -58,8 +73,10 @@
    让 1 级是"明显慢但能用"，而不是"不可用"。
 3. **能量耗尽不截断**：改为**自动暂停并保留上下文**，充能后继续；
    窗口显示"能量不足，已暂停"。绝不半句话截断。
-4. **能量单价对齐游戏量纲**：用 `energyConsumptionCoef` 参与计算，
-   使得玩家升"能量回路"类升级时，AI 输出的成本也同步下降——与游戏内其他行为一致。
+4. **能量单价对齐游戏量纲**：照 `Configs/ModeConfig.cs` 里的
+   `mechaMiningPower`/`mechaResearchPower`/`mechaInstantBuildEnergy` 定价，
+   并复用"能量不足则按 `ratio` 降级"的既有范式（`MechaLab.cs:129-131`）。
+   （原稿写的"用 `energyConsumptionCoef`"已证伪——那是机甲 DIY 属性，不是升级）
 5. **科技先复用后自定义**：M2 先用 `Mecha.coreLevel` 验证手感（零新增内容），
    确认好玩之后再考虑加一条自定义科技线，避免一上来就做 LDB 补丁。
 
@@ -199,8 +216,10 @@ public const int FEATURES_FOR_CUSTOM_MOD_ID_START = 100010000;   // 注释即"�
 3. **能量耗尽不截断**：改为自动暂停 + 保留上下文，充能后继续，
    窗口显示「能量不足，已暂停」。绝不半句话截断。
 
-另外**能量单价需对齐游戏量纲**（复用 `Mecha.energyConsumptionCoef`），
-使玩家升级"能量回路"类科技时，AI 输出的成本同步下降——与游戏内其他行为一致。
+另外**能量单价需对齐游戏量纲**：照 `Configs/ModeConfig.cs` 的
+`mechaMiningPower`/`mechaResearchPower`/`mechaInstantBuildEnergy` 定价，
+并复用游戏"能量不足按 `ratio` 降级"的范式。
+（原稿写的 `energyConsumptionCoef` 已证伪：那是机甲 DIY 属性，与科技无关。）
 
 ### Q3 带来的工作量（需单独立项）
 
