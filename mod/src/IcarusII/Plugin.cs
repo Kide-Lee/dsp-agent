@@ -466,13 +466,22 @@ namespace IcarusII
                 return;
             }
 
-            // 接入游戏的总控面板：让对话**住进它里面**，而不是另开一个窗口。
-            // 失败（结构不符/拿不到面板）时 _host 为 null，ChatWindow 会走独立窗口那条路。
-            if (!_hostAttempted)
+            // 界面形态由配置决定。默认 standalone：独立窗口，按 Hotkey（R）开关。
+            //
+            // controlPanel 是实验性的"嵌进游戏总控面板"方案。放弃它作为默认的原因：
+            // 那个面板受科技门控（未解锁行星内物流前按 I 无效），而且它属于游戏的
+            // 「功能窗口」互斥集合——打开背包/机体信息都会把它连同对话一起关掉，
+            // 与"对话要能一直开着"的使用节奏冲突。代码保留在 ControlPanelHost 里。
+            var wantControlPanel = string.Equals(_config.UiMode, "controlPanel", StringComparison.OrdinalIgnoreCase);
+            if (wantControlPanel && !_hostAttempted)
             {
                 _hostAttempted = true;
                 _host = UI.ControlPanelHost.TryCreate(root, Log);
                 if (_host == null) Log.LogInfo("[总控面板] 未接入，窗口将以独立形式存在");
+            }
+            else if (!wantControlPanel)
+            {
+                Log.LogInfo($"[UI] 界面形态：独立窗口（UiMode={_config.UiMode}，热键 {_hotkey.Key}）");
             }
 
             _chat.Create(root, font, _config, _host);

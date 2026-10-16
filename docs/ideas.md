@@ -172,7 +172,38 @@ public const int FEATURES_FOR_CUSTOM_MOD_ID_START = 100010000;   // 注释即"�
 | `Player.Order(OrderNode.MoveTo(pos), false)`（`Player.cs:126`） | 程序化指挥**玩家自己那台**机甲移动的现成接口 |
 | `.mecha` 外观文件目录（`Configs/GameConfig.cs:167-178`） | 新增机甲外观**不改存档、不改程序集**，纯资源通道 |
 
-## 修订后的里程碑
+## 界面形态的决定：独立窗口（不是总控面板）
+
+曾经尝试把对话**嵌进游戏的总控面板**（`UIControlPanelWindow`），实现完成并实机跑通，
+**最终放弃**，改回独立窗口 + 热键 `R`。原因有两条，都是源码级的事实：
+
+1. **总控面板受科技门控**（`UIGame.cs:1419`）：
+   ```csharp
+   && (GameMain.history.logisticsSystemUnlocked || GameMain.history.markerUnlocked)
+   ```
+   未解锁「行星内物流」前按 `I` 完全无效。虽然可以由 mod 代为打开（门控关着时
+   我们处理、门控开了不插手，两者条件互斥不会双重触发），但这意味着**界面形态
+   取决于存档进度**，而不是玩家的选择。
+
+2. **它属于游戏的「功能窗口」互斥集合**（`UIGame.ShutAllFunctionWindow`，约 30 个窗口）：
+   打开背包 `E`、机体信息 `C`、任何建筑详情，都会把总控面板连同对话一起关掉。
+   `ManualBehaviour._Close()` 只做 `SetActive(false)`，所以**内容不会丢**，
+   但**对话会被不断打断**——而对话的使用节奏是"问一句、去做事、回来看答案"。
+
+**保留但默认关闭**：实现留在 `mod/src/IcarusII/UI/ControlPanelHost.cs`，
+由配置 `[UI] UiMode` 控制（`standalone` 默认 / `controlPanel` 实验性）。
+如果将来游戏的科技门控或窗口互斥行为改变，这个方案还能再评估。
+
+### 这一轮记录下来的、将来仍有用的源码事实
+
+| 事实 | 出处 | 日后的用处 |
+| --- | --- | --- |
+| `ManualBehaviour._Close()` 只是 `SetActive(false)`，不销毁 | `UI/ManualBehaviour.cs:128-138` | 任何"嵌进游戏窗口"的方案，内容都不会因开关而丢失 |
+| 所有热键都带 `!VFInput.inputing` 守卫 | `UI/Game/UIGame.cs:1398-1440` | 在自建输入框里打字不会被游戏当成快捷键 |
+| `VFInput._openControlPanel` 尊重玩家改键 | `Controller/VFInputConfig.cs:255` | 想接管某个游戏热键时，用它而不是硬编码 `KeyCode` |
+| 无边框全屏/独占全屏/窗口化的枚举与存档字段 | `Data/GameOption.cs:1286,891-892` | 改 `options.xml` 调分辨率时要对齐语义 |
+
+
 
 | 里程碑 | 内容 | 状态 | 依赖 |
 | --- | --- | --- | --- |
