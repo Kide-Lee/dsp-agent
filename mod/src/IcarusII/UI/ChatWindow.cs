@@ -49,20 +49,8 @@ namespace IcarusII.UI
 
         private GameObject _root;
 
-        /// <summary>非空表示窗口嵌在游戏的总控面板里（而不是独立窗口）。</summary>
-        private ControlPanelHost _host;
-
-        /// <summary>嵌入时改用宿主窗口的底衬色，避免看起来像一块外来面板。</summary>
-        private Color? _hostBackdrop;
-
-        private bool IsEmbedded => _host != null;
-
-        /// <summary>
-        /// 窗口当前是否真的可见。
-        /// 嵌入模式下不能只看自己：总控面板被游戏关掉时，
-        /// 我们的 activeSelf 仍是 true，但 activeInHierarchy 已经 false。
-        /// </summary>
-        private bool ViewVisible => _root != null && (IsEmbedded ? _root.activeInHierarchy : _root.activeSelf);
+        /// <summary>窗口当前是否可见。</summary>
+        private bool ViewVisible => _root != null && _root.activeSelf;
         private RectTransform _panel;
         private RectTransform _content;
         private Image _panelImage;
@@ -191,7 +179,7 @@ namespace IcarusII.UI
 
         // ---------------------------------------------------------------- 构建
 
-        public void Create(UIRoot uiRoot, Font font, PluginConfig config, ControlPanelHost host = null)
+        public void Create(UIRoot uiRoot, Font font, PluginConfig config)
         {
             if (_root != null) return;
 
@@ -203,15 +191,7 @@ namespace IcarusII.UI
 
             UiFactory.EnsureEventSystem();
 
-            // ① 优先嵌进游戏的总控面板：这样"一个窗口"就是真的一个窗口，
-            //    按 I（以及我们的快捷键）打开的都是它。
-            if (host != null && host.IsAvailable && TryCreateEmbedded(host, config, font))
-            {
-                SetStatus(Strings.Get("status.disconnected"), _textDim);
-                return;
-            }
-
-            // ② 独立窗口：自建 Canvas，而不是挂到游戏的 overlayCanvasTop 下。
+            // 自建 Canvas，而不是挂到游戏的 overlayCanvasTop 下。
             //
             // 原因（实机日志证实）：Overlay Canvas - Top 与它的父级 Always on Top
             // 在游戏中都处于 **inactive** 状态（activeInHierarchy=False），
@@ -256,85 +236,6 @@ namespace IcarusII.UI
 
             SetStatus(Strings.Get("status.disconnected"), _textDim);
             _root.SetActive(false);
-        }
-
-        /// <summary>
-        /// 嵌入模式：把 prefab 实例挂到总控面板下面。
-        ///
-        /// **要求 prefab 可用**：嵌入模式不做代码构建的兜底——若 bundle 缺失，
-        /// 直接返回 false，调用方走独立窗口那条路（那条路有完整的代码构建兜底）。
-        /// 两条路各有一种兜底，比三条路互相交叉要可靠。
-        /// </summary>
-        private bool TryCreateEmbedded(ControlPanelHost host, PluginConfig config, Font font)
-        {
-            var panelGo = WindowPrefab.Instantiate(host.ChatParent);
-            if (panelGo == null)
-            {
-                Plugin.Log.LogInfo($"[UI] 没有可用的 UI bundle，改用独立窗口（{WindowPrefab.Status}）");
-                return false;
-            }
-
-            if (!TryWireFromPrefab(panelGo, config, font))
-            {
-                UnityEngine.Object.Destroy(panelGo);
-                Plugin.Log.LogWarning("[UI] prefab 结构不完整，改用独立窗口");
-                return false;
-            }
-
-            _host = host;
-            _root = panelGo;
-            panelGo.SetActive(false);
-            ApplyEmbeddedChrome();
-            host.InstallChat(panelGo);
-
-            Plugin.Log.LogInfo($"[UI] 窗口已嵌入总控面板（{WindowPrefab.Status}，" +
-                               $"初始视图={(host.AiActive ? "AI" : "物流")}）");
-            return true;
-        }
-
-        /// <summary>
-        /// 嵌入总控面板时的外观调整。
-        ///
-        /// 我们这套 prefab 原本是照**独立窗口**做的，自带边框与标题栏。
-        /// 嵌进游戏窗口后那些层就和游戏自己的窗口装饰重复了——实测截图里
-        /// 表现为"两层边框 + 两个标题"，我们的标题文字还因为标题栏透明而
-        /// 像是散落在游戏背景上。
-        ///
-        /// 所以嵌入时把重复的层摘掉，只留：底衬 + 内容（对话 + 输入）。
-        /// 标题栏保留但去掉标题文字（状态文字还挂在上面），并给它一层底色。
-        /// </summary>
-        private void ApplyEmbeddedChrome()
-        {
-            if (_panel == null) return;
-
-            // 边框与玻璃高光：游戏窗口已经有了，重复会形成双边框
-            var frame = _panel.Find("Frame");
-            if (frame != null) frame.gameObject.SetActive(false);
-            var glass = _panel.Find("Glass");
-            if (glass != null) glass.gameObject.SetActive(false);
-
-            // 标题文字：游戏窗口自己有标题，我们的会重复
-            var title = _panel.Find("Header/Title");
-            if (title != null) title.gameObject.SetActive(false);
-
-            // 改用宿主窗口自己的底衬色：不同窗口的 panel-bg 颜色并不相同，
-            // 套用机体信息窗的配色会显得格格不入。
-            _hostBackdrop = _host != null ? _host.HostBackdropColor : null;
-            if (_panelImage != null && _hostBackdrop.HasValue)
-            {
-                _panelImage.color = _hostBackdrop.Value;
-            }
-
-            if (_headerImage != null)
-            {
-                // 标题栏本身透明会让状态文字看着像浮在游戏背景上，
-                // 给它一层与底衬同色的底，形成一条细状态栏。
-                var baseColor = _hostBackdrop ?? (_panelImage != null ? _panelImage.color : DefaultPanelBg);
-                _headerImage.sprite = null;
-                _headerImage.color = new Color(baseColor.r, baseColor.g, baseColor.b, 0.9f);
-            }
-
-            Plugin.Log.LogInfo("[UI] 嵌入外观：已隐藏 Frame/Glass/标题（避免与游戏窗口重复）");
         }
 
         /// <summary>代码构建整棵面板子树（原路径，也是 prefab 缺失时的兜底）。</summary>
@@ -583,12 +484,7 @@ namespace IcarusII.UI
                 _accent = style.Accent;
             }
 
-            if (_panelImage != null)
-            {
-                style.ApplyPanel(_panelImage);
-                // 嵌入时宿主配色优先：ApplyStyle 用的是机体信息窗那套色
-                if (_hostBackdrop.HasValue) _panelImage.color = _hostBackdrop.Value;
-            }
+            if (_panelImage != null) style.ApplyPanel(_panelImage);
             if (_frameImage != null) style.ApplyFrame(_frameImage);
             if (_glassImage != null) style.ApplyGlass(_glassImage);
             if (_headerImage != null) UiStyle.ApplyHeader(_headerImage);
@@ -616,28 +512,6 @@ namespace IcarusII.UI
         public void SetOpen(bool open)
         {
             if (_root == null) return;
-
-            // 嵌入模式：开关的是总控面板本身，"打开"始终指向 AI 视图，
-            // 这样我们的快捷键就是一个"直奔对话"的入口。
-            if (IsEmbedded)
-            {
-                if (_host == null) return;
-
-                if (open)
-                {
-                    // 面板没开 → 打开并直接进 AI 视图；
-                    // 面板开着但停在物流视图 → 只是切过去，不要重复开关
-                    if (!_host.PanelActive) _host.TogglePanel(true);
-                    else _host.SetAiActive(true);
-                }
-                else if (_host.PanelActive)
-                {
-                    _host.TogglePanel(false);
-                }
-
-                ApplyOpenState(open);
-                return;
-            }
 
             IsOpen = open;
             _root.SetActive(open);
@@ -891,15 +765,6 @@ namespace IcarusII.UI
         public void Tick()
         {
             if (_root == null) return;
-
-            // 嵌入模式下总控面板可能被游戏自己关掉（打开背包、机体信息等都会触发
-            // ShutAllFunctionWindow）。这里把"打开"状态同步回来，
-            // 否则我们会一直以为窗口还开着，继续抢占文本输入。
-            if (IsEmbedded && _host != null)
-            {
-                var shouldBeOpen = _host.PanelActive && _host.AiActive;
-                if (IsOpen != shouldBeOpen) ApplyOpenState(shouldBeOpen);
-            }
 
             if (!ViewVisible) return;
 

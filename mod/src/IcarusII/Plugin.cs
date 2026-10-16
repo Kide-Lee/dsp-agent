@@ -68,11 +68,6 @@ namespace IcarusII
         /// <summary>当前存档标识是否已经同步给服务端。</summary>
         private bool _saveSynced;
 
-        /// <summary>总控面板宿主；非空表示对话嵌在游戏的总控面板里。</summary>
-        private UI.ControlPanelHost _host;
-
-        /// <summary>宿主只尝试接入一次（失败就退回独立窗口，避免每帧重试造成重复标签）。</summary>
-        private bool _hostAttempted;
 
         /// <summary>欢迎语只补一次，之后即使清空记录也不再打扰。</summary>
         private bool _welcomeShown;
@@ -160,37 +155,6 @@ namespace IcarusII
                 if (_chat.InputFocused) _chat.BlurInput();
                 else _chat.SetOpen(false);
                 return;
-            }
-
-            if (_host != null) _host.Tick();
-
-            // I：总控面板的原生键。但游戏把它门控在「解锁行星内物流 / 标记」之后——
-            //    未解锁时按 I 毫无反应。而我们的对话就住在那个面板里，
-            //    那意味着新存档在解锁前根本用不了 AI。
-            //
-            //    这里在**门控关着时**替游戏开关面板；门控一开就完全不插手
-            //    （游戏自己的 UIGame 分支会处理）。两者条件互斥，不会双重触发。
-            if (_host != null && _host.IsAvailable
-                && GameRefs.ControlPanelKeyPressedThisFrame()
-                && !GameRefs.ControlPanelUnlocked()
-                && !GameRefs.TextInputActive
-                && GameRefs.IsRunning
-                && !GameRefs.FullscreenPaused())
-            {
-                if (!_chat.InputFocused)
-                {
-                    var willOpen = !_host.PanelActive;
-                    _host.TogglePanel(true);      // 我们自己的入口一律直奔 AI 视图
-                    if (willOpen)
-                    {
-                        OnWindowOpened();
-                        Log.LogInfo($"[总控面板] 未解锁物流，由本 mod 代为打开。{_chat.DescribeVisibility()}");
-                    }
-                    else
-                    {
-                        Log.LogInfo("[总控面板] 已关闭。");
-                    }
-                }
             }
 
             // R：开关窗口（输入框聚焦时让位给文字输入）
@@ -466,25 +430,9 @@ namespace IcarusII
                 return;
             }
 
-            // 界面形态由配置决定。默认 standalone：独立窗口，按 Hotkey（R）开关。
-            //
-            // controlPanel 是实验性的"嵌进游戏总控面板"方案。放弃它作为默认的原因：
-            // 那个面板受科技门控（未解锁行星内物流前按 I 无效），而且它属于游戏的
-            // 「功能窗口」互斥集合——打开背包/机体信息都会把它连同对话一起关掉，
-            // 与"对话要能一直开着"的使用节奏冲突。代码保留在 ControlPanelHost 里。
-            var wantControlPanel = string.Equals(_config.UiMode, "controlPanel", StringComparison.OrdinalIgnoreCase);
-            if (wantControlPanel && !_hostAttempted)
-            {
-                _hostAttempted = true;
-                _host = UI.ControlPanelHost.TryCreate(root, Log);
-                if (_host == null) Log.LogInfo("[总控面板] 未接入，窗口将以独立形式存在");
-            }
-            else if (!wantControlPanel)
-            {
-                Log.LogInfo($"[UI] 界面形态：独立窗口（UiMode={_config.UiMode}，热键 {_hotkey.Key}）");
-            }
+            Log.LogInfo($"[UI] 界面形态：独立窗口（热键 {_hotkey.Key}）");
 
-            _chat.Create(root, font, _config, _host);
+            _chat.Create(root, font, _config);
             if (_styleCaptured) _chat.ApplyStyle(UiStyle.Current);
             _uiInitialized = true;
 

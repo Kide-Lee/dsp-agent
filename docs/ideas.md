@@ -190,9 +190,19 @@ public const int FEATURES_FOR_CUSTOM_MOD_ID_START = 100010000;   // 注释即"�
    `ManualBehaviour._Close()` 只做 `SetActive(false)`，所以**内容不会丢**，
    但**对话会被不断打断**——而对话的使用节奏是"问一句、去做事、回来看答案"。
 
-**保留但默认关闭**：实现留在 `mod/src/IcarusII/UI/ControlPanelHost.cs`，
-由配置 `[UI] UiMode` 控制（`standalone` 默认 / `controlPanel` 实验性）。
-如果将来游戏的科技门控或窗口互斥行为改变，这个方案还能再评估。
+**实现已删除**，但完整保留在 git 历史里，需要时可取回：
+
+| 提交 | 内容 |
+| --- | --- |
+| `5246431` | 对话嵌入总控面板（标签克隆、视图切换、覆盖层方案） |
+| `82ecfeb` | 修复坐标系混用导致对话区宽度为负 |
+| `af67c27` | 修复强制激活 / 铺满整行 / 双层边框与标题 |
+| `adadb4e` | 共用窗口标题、改用宿主配色、补欢迎语 |
+
+取回方式：`git show adadb4e:mod/src/IcarusII/UI/ControlPanelHost.cs > 目标路径`，
+或直接 `git revert` 那串提交（注意后面的独立窗口回退是 `5c2e438`）。
+
+若将来游戏的科技门控或窗口互斥行为改变，可基于上面的提交重新评估。
 
 ### 这一轮记录下来的、将来仍有用的源码事实
 

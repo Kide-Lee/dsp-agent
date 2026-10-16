@@ -33,13 +33,6 @@ namespace IcarusII.Config
         public float PanelHeight { get; private set; }
         public int MaxTranscriptLines { get; private set; }
         public string PositionMode { get; private set; }
-
-        /// <summary>
-        /// 界面形态：
-        ///   "standalone"  = 独立窗口，按 Hotkey（默认 R）开关（**默认**）
-        ///   "controlPanel"= 嵌进游戏的总控面板（实验性，见 ControlPanelHost）
-        /// </summary>
-        public string UiMode { get; private set; }
         public bool AutoFocusInput { get; private set; }
 
         internal PluginConfig(ConfigFile cfg)
@@ -85,10 +78,6 @@ namespace IcarusII.Config
                 "聊天记录保留的最大行数（超出丢弃最早的行）。").Value;
             PositionMode = cfg.Bind("UI", "PositionMode", "center",
                 "center = 屏幕正中（默认）；bottomRight = 右下角。").Value;
-            UiMode = cfg.Bind("UI", "UiMode", "standalone",
-                "standalone = 独立窗口，按 Hotkey 开关（默认）。\n" +
-                "controlPanel = 嵌进游戏的总控面板（实验性；该面板受科技门控，\n" +
-                "未解锁行星内物流前需要本 mod 代为打开）。").Value;
             AutoFocusInput = cfg.Bind("UI", "AutoFocusInput", false,
                 "true = 打开窗口时自动聚焦输入框（可直接打字，但此时 R 是文字输入、不能关窗）。\n" +
                 "false = 需按 Enter 或点击窗口后开始输入；R 可随时开关窗口（默认）。").Value;
