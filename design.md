@@ -383,7 +383,7 @@ API Key 是外部服务凭证，mod 无从得知，**这一步不可自动化**�
 ### 6.1 插件装配与补丁点
 
 ```csharp
-[BepInPlugin("icarus-ii", "Icarus II", "0.1.0")]
+[BepInPlugin("icarus-ii", "Icarus II", "0.2.0")]
 [BepInProcess("DSPGAME.exe")]
 public sealed class Plugin : BaseUnityPlugin
 ```

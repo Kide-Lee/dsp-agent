@@ -1,5 +1,34 @@
 # 更新日志
 
+## 0.2.0
+
+从「能聊」到「能查、能看、能算、能规划」。
+
+**新工具**
+
+- 视觉：`game_capture_view` 截图进模型上下文，聊天窗显示缩略图
+- 建筑：`game_get_entity` / `game_get_entities`（配方、输入输出槽、供电、物流塔槽位、
+  传送带线路与货物、分拣器手上物品；其余建筑走通用组件快照）
+- 进度：`game_get_progress`
+- 量化：`kb_plan` 按目标产量算机器数 / 电力 / 传送带
+- 产线：`game_analyze_area`（装机产能、耗电、物流设施、电网）、`game_render_layout` 字符布局图
+- 跨行星：`game_get_planets`（按宇宙探索等级披露矿脉）、`game_get_logistics`（全银河物流塔供需）
+- 蓝图：`blueprint_search` / `blueprint_info` / `blueprint_save`（在线检索、格式体检、直接存到游戏蓝图目录）、
+  `game_copy_blueprint`（把现有建筑存成蓝图）
+- 知识：`kb_search` / `kb_get` / `kb_recipe_tree`、中英 `wiki_search` / `wiki_page`
+- 脚本：`run_script`（QuickJS-WASM 只读沙箱，`dsp.call` 复用同一工具注册表）
+
+**界面**
+
+- 工具卡支持图片缩略图；`kb_*` / `run_script` 也会显示工具卡（`tool_activity`）
+- 聊天索引的删除按钮现在会同步改写会话文件，重进存档不再出现
+
+**修复**
+
+- 产线统计为空时回退装机产能，不再误报“没有产线”
+- `run_script` 中 `dsp.call` 被 try/catch 吞掉时明确报错，而不是返回假数据
+
+
 ## 0.1.0
 
 首个公开版本。

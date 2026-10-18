@@ -11,7 +11,7 @@ scripts/package-thunderstore.sh
 # 不含 UI bundle 的变体（不重分发游戏美术资源）→ dist/IcarusII-<ver>-nogameassets.zip
 SKIP_UI=1 scripts/package-thunderstore.sh
 
-# 手动安装包（Nexus / 网盘）→ dist/IcarusII-0.1.0-manual.zip
+# 手动安装包（Nexus / 网盘）→ dist/IcarusII-0.2.0-manual.zip
 scripts/package.sh && (cd dist/pkg && zip -r ../../dist/IcarusII-<ver>-manual.zip IcarusII)
 ```
 
@@ -36,14 +36,14 @@ scripts/package.sh && (cd dist/pkg && zip -r ../../dist/IcarusII-<ver>-manual.zi
   `Fix for unity 2022.3.62f3` 就升级编译目标（那条只影响取不到
   `Application.isBatchMode` 的构建，本游戏不受影响）。
 - 实测记录（2026-10-17）：DSP 0.10.30.3100 + BepInEx 5.4.17 → `Chainloader ready` →
-  `Loading [Icarus II 0.1.0]` → sidecar 握手 `gameVersion=0.10.30.3100`。
+  `Loading [Icarus II 0.2.0]` → sidecar 握手 `gameVersion=0.10.30.3100`。
 
 ## 三、上传
 
 ### Thunderstore（主站）
 
 1. 注册/登录，Create Team（团队名会成为包前缀，例如 `YourName-IcarusII`）；
-2. Upload Package → 选 `dist/IcarusII-0.1.0.zip`；
+2. Upload Package → 选 `dist/IcarusII-0.2.0.zip`；
 3. 首次上传后页面 URL 形如 `https://thunderstore.io/c/dyson-sphere-program/p/<Team>/IcarusII/`，
    把它回填到 `packaging/thunderstore/manifest.json` 的 `website_url`（或填 GitHub 仓库）；
 4. 后续更新：递增 `version_number` → 重新打包 → 上传同一包名。
@@ -51,7 +51,7 @@ scripts/package.sh && (cd dist/pkg && zip -r ../../dist/IcarusII-<ver>-manual.zi
 ### Nexus（第二入口）
 
 1. 在 [Dyson Sphere Program](https://www.nexusmods.com/dysonsphereprogram) 建 mod 页；
-2. 上传 `dist/IcarusII-0.1.0-manual.zip`（手动安装包，含 `install.sh`）；
+2. 上传 `dist/IcarusII-0.2.0-manual.zip`（手动安装包，含 `install.sh`）；
 3. 描述里直接贴 Thunderstore 链接，不要用网盘做主分发。
 
 ### 中文社区
