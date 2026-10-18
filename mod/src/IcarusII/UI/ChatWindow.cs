@@ -2701,8 +2701,8 @@ namespace IcarusII.UI
             }
 
             var linkWidth = linkTf is RectTransform linkRect && linkRect.rect.width > 20f
-                ? linkRect.rect.width - 6f
-                : 190f;
+                ? linkRect.rect.width - 12f
+                : 176f;
             label.text = IndexLabel(entry.Text, linkWidth);
             label.supportRichText = false;
             label.horizontalOverflow = HorizontalWrapMode.Overflow;
