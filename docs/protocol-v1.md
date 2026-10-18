@@ -622,6 +622,7 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 | `wiki_page` | 读取 Wiki 页面纯文本（自动重定向，≤8000 字） |
 | `blueprint_search` | 在线搜索 DSPBluePrints/FactoryBluePrints 的 `.txt` 蓝图路径（不打包内容） |
 | `blueprint_info` | 读取蓝图并做格式体检（header/base64+gzip/md5），带来源与许可 |
+| `blueprint_save` | 保存到游戏蓝图目录（Documents/Dyson Sphere Program/Blueprint），同名自动加序号 |
 
 - 全部由 sidecar 直接访问外网；失败显式返回 `wiki_unavailable` / `blueprint_unavailable`，
   不允许用模型记忆补内容。

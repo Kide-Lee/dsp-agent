@@ -10,9 +10,12 @@
 
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { gunzipSync } from 'node:zlib';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { Type } from 'typebox';
 
-export const BLUEPRINT_TOOL_NAMES = ['blueprint_search', 'blueprint_info'] as const;
+export const BLUEPRINT_TOOL_NAMES = ['blueprint_search', 'blueprint_info', 'blueprint_save'] as const;
 
 const REPO = 'DSPBluePrints/FactoryBluePrints';
 const LICENSE = 'CC BY-NC-SA 4.0';
@@ -142,6 +145,21 @@ function reply(payload: unknown, ok: boolean, code?: string): ToolReply {
   };
 }
 
+/** 游戏读取蓝图的目录（Windows/Wine 下 Documents 被映射到前缀里）。 */
+export function resolveBlueprintDir(): string {
+  const override = process.env['ICARUS_BLUEPRINT_DIR'];
+  if (override && override.trim()) return override.trim();
+  const home = process.env['USERPROFILE'] || homedir();
+  return join(home, 'Documents', 'Dyson Sphere Program', 'Blueprint');
+}
+
+/** 文件名只保留安全字符；不允许路径分隔符与 ..，避免越出蓝图目录。 */
+export function sanitizeBlueprintName(raw: string): string {
+  const base = raw.replace(/\.txt$/i, '').replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ').replace(/\.+\./g, ' ');
+  const cleaned = base.replace(/\s+/g, ' ').replace(/^[. ]+|[. ]+$/g, '').slice(0, 80);
+  return cleaned.length > 0 ? cleaned : 'blueprint';
+}
+
 export function createBlueprintTools(client: BlueprintClient = new BlueprintClient()): ToolDefinition[] {
   return [
     {
@@ -227,6 +245,91 @@ export function createBlueprintTools(client: BlueprintClient = new BlueprintClie
           },
           info.valid,
           'blueprint_invalid',
+        );
+      },
+    },
+
+    {
+      name: 'blueprint_save',
+      label: '保存蓝图',
+      description:
+        '把 blueprint_search 找到的蓝图直接保存到游戏的蓝图目录（Documents/Dyson Sphere Program/Blueprint），' +
+        '保存后打开游戏内蓝图界面即可使用，无需退出游戏下载。' +
+        `内容许可 ${LICENSE}；保存的是仓库原文件，请遵守许可并署名。`,
+      promptSnippet: '把社区蓝图保存到游戏蓝图目录',
+      promptGuidelines: [
+        'Use blueprint_save 当玩家说“帮我保存/导入这个蓝图”时；path 来自 blueprint_search。',
+        '默认不覆盖同名文件，会自动加 (2)/(3)；玩家明确要求覆盖时才传 overwrite=true。',
+        `保存不改变游戏状态，但回答要说明保存位置，并保留 repository 与 ${LICENSE} 署名。`,
+      ],
+      parameters: Type.Object({
+        path: Type.String({ description: 'blueprint_search 返回的仓库路径' }),
+        name: Type.Optional(Type.String({ description: '保存名（不含 .txt），默认用原文件名' })),
+        overwrite: Type.Optional(Type.Boolean({ description: '同名时覆盖，默认 false' })),
+      }),
+      async execute(_id, params) {
+        const args = (params ?? {}) as Record<string, unknown>;
+        const path = typeof args['path'] === 'string' ? args['path'] : '';
+        if (!path.trim()) return reply({ error: 'path 不能为空' }, false, 'bad_request');
+
+        const fetched = await client.fetch(path);
+        if (!fetched.text) {
+          const code = fetched.error === 'not_found' ? 'blueprint_not_found' : 'blueprint_unavailable';
+          return reply({ ...client.meta(path), error: fetched.error ?? 'unknown' }, false, code);
+        }
+        const info = inspectBlueprintText(fetched.text);
+        if (!info.valid) {
+          return reply({ ...client.meta(path), ...info, error: '蓝图格式无效，未保存' }, false, 'blueprint_invalid');
+        }
+
+        const dir = resolveBlueprintDir();
+        let requested = typeof args['name'] === 'string' && args['name'].trim()
+          ? args['name']
+          : '';
+        if (!requested) {
+          const parts = path.replace(/\.txt$/i, '').split('/');
+          const stem = parts[parts.length - 1] ?? 'blueprint';
+          const parent = parts.length > 1 ? (parts[parts.length - 2] ?? '') : '';
+          // 有些仓库用 “xxx/min.txt” 这种命名，文件名会退化成 min/max/1，
+          // 这时补上上级目录，避免保存出一堆同名文件。
+          requested = stem.length < 4 && parent ? `${parent} ${stem}` : stem;
+        }
+        const base = sanitizeBlueprintName(requested);
+        const overwrite = args['overwrite'] === true;
+
+        let fileName = `${base}.txt`;
+        if (!overwrite && existsSync(join(dir, fileName))) {
+          let index = 2;
+          while (index < 50 && existsSync(join(dir, `${base} (${index}).txt`))) index += 1;
+          fileName = `${base} (${index}).txt`;
+        }
+
+        const target = join(dir, fileName);
+        try {
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(target, fetched.text, { encoding: 'utf8' });
+        } catch (err) {
+          return reply(
+            { ...client.meta(path), error: err instanceof Error ? err.message : String(err), dir },
+            false,
+            'blueprint_save_failed',
+          );
+        }
+
+        return reply(
+          {
+            ...client.meta(path),
+            saved: true,
+            fileName,
+            dir,
+            bytes: fetched.text.length,
+            header: info.header,
+            decodedBytes: info.decodedBytes,
+            note:
+              `已保存到游戏蓝图目录，打开游戏内蓝图界面即可使用（列表没刷新就关掉重开）。` +
+              `内容来自社区仓库，许可 ${LICENSE}，请遵守许可并署名。`,
+          },
+          true,
         );
       },
     },
