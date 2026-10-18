@@ -24,7 +24,7 @@ namespace IcarusII.EditorTools
 
         private static readonly Color Accent = new Color(0.353f, 0.749f, 1f, 1f);
         private static readonly Color Dim = new Color(0.596f, 0.678f, 0.757f, 1f);
-        private static readonly Color PanelBg = new Color(0.02f, 0.045f, 0.07f, 0.55f);
+        private static readonly Color PanelBg = new Color(0f, 0f, 0f, 0.56f);
 
         /// <summary>确保 prefab 里有完整 chat-index。返回 false 表示 prefab 缺失/保存失败。</summary>
         public static bool Ensure(string prefabPath)
@@ -57,12 +57,10 @@ namespace IcarusII.EditorTools
                 var font = titleText != null ? titleText.font : null;
                 var material = titleText != null ? titleText.material : null;
 
-                if (index.GetComponent<Image>() == null)
-                {
-                    var bg = index.gameObject.AddComponent<Image>();
-                    bg.color = PanelBg;
-                    bg.raycastTarget = false;
-                }
+                var bg = index.GetComponent<Image>();
+                if (bg == null) bg = index.gameObject.AddComponent<Image>();
+                bg.color = PanelBg;
+                bg.raycastTarget = false;
 
                 var header = index.Find(HeaderName) as RectTransform;
                 if (header == null) header = NewRect(HeaderName, index);
@@ -73,7 +71,7 @@ namespace IcarusII.EditorTools
                 header.sizeDelta = new Vector2(0f, 22f);
                 var headerText = header.GetComponent<Text>();
                 if (headerText == null) headerText = header.gameObject.AddComponent<Text>();
-                Style(headerText, font, material, Mathf.Max(10, 13), Accent, TextAnchor.MiddleLeft);
+                Style(headerText, font, material, 12, Dim, TextAnchor.MiddleLeft);
                 headerText.text = "对话索引";
                 headerText.raycastTarget = false;
 
@@ -82,6 +80,16 @@ namespace IcarusII.EditorTools
                     ? scroll.Find(ViewportName + "/" + ContentName) as RectTransform
                     : null;
                 var template = content != null ? content.Find(TemplateName) as RectTransform : null;
+                if (template != null &&
+                    (template.Find("link/label") == null ||
+                     template.GetComponent<Image>() == null ||
+                     template.Find("link").GetComponent<Button>() != null ||
+                     template.Find("delete").GetComponent<Button>() != null))
+                {
+                    // 旧版模板：重建为带行底色/遮罩/删除 hover 的新结构。
+                    UnityEngine.Object.DestroyImmediate(template.gameObject);
+                    template = null;
+                }
 
                 if (scroll == null || content == null || template == null)
                 {
@@ -148,6 +156,9 @@ namespace IcarusII.EditorTools
                     scrollRect.inertia = true;
                     scrollRect.decelerationRate = 0.135f;
                     scrollRect.scrollSensitivity = 24f;
+                    viewport.offsetMin = new Vector2(0f, 0f);
+                    viewport.offsetMax = new Vector2(-10f, 0f);
+                    EnsureScrollbar(scroll, scrollRect);
 
                     if (template == null)
                         template = BuildRowTemplate(content, font, material);
@@ -161,7 +172,7 @@ namespace IcarusII.EditorTools
                 empty.offsetMax = new Vector2(-4f, -22f);
                 var emptyText = empty.GetComponent<Text>();
                 if (emptyText == null) emptyText = empty.gameObject.AddComponent<Text>();
-                Style(emptyText, font, material, Mathf.Max(10, 13), Dim, TextAnchor.MiddleCenter);
+                Style(emptyText, font, material, 12, Dim, TextAnchor.MiddleCenter);
                 emptyText.text = "暂无提问";
                 emptyText.raycastTarget = false;
 
@@ -186,6 +197,9 @@ namespace IcarusII.EditorTools
             row.pivot = new Vector2(0.5f, 1f);
             row.anchoredPosition = Vector2.zero;
             row.sizeDelta = new Vector2(0f, 24f);
+            var rowBg = row.gameObject.AddComponent<Image>();
+            rowBg.color = Color.clear;
+            rowBg.raycastTarget = true;
             var le = row.gameObject.AddComponent<LayoutElement>();
             le.minHeight = 24f;
             le.preferredHeight = 24f;
@@ -193,21 +207,26 @@ namespace IcarusII.EditorTools
             var link = NewRect("link", row);
             link.anchorMin = Vector2.zero;
             link.anchorMax = Vector2.one;
-            link.offsetMin = new Vector2(4f, 0f);
-            link.offsetMax = new Vector2(-24f, 0f);
-            var linkText = link.gameObject.AddComponent<Text>();
+            link.offsetMin = new Vector2(8f, 0f);
+            link.offsetMax = new Vector2(-28f, 0f);
+            var linkHit = link.gameObject.AddComponent<Image>();
+            linkHit.color = Color.clear;
+            linkHit.raycastTarget = true;
+            link.gameObject.AddComponent<RectMask2D>();
+
+            var label = NewRect("label", link);
+            Stretch(label);
+            var linkText = label.gameObject.AddComponent<Text>();
             Style(linkText, font, material, Mathf.Max(10, 12), Accent, TextAnchor.MiddleLeft);
             linkText.text = "提问";
             linkText.supportRichText = false;
             linkText.horizontalOverflow = HorizontalWrapMode.Overflow;
             linkText.verticalOverflow = VerticalWrapMode.Truncate;
             linkText.wideCharSpacing = 1f;
-            linkText.raycastTarget = true;
-            var linkButton = link.gameObject.AddComponent<Button>();
-            linkButton.targetGraphic = linkText;
-            linkButton.transition = Selectable.Transition.ColorTint;
-            linkButton.colors = ButtonColors();
-            linkButton.navigation = new Navigation { mode = Navigation.Mode.None };
+            linkText.raycastTarget = false;
+
+            // link 故意不加 Button：Button 会截获 pointerEnter，行级 hover 就收不到。
+            // 点击由运行期 ChatIndexRowHover 统一处理；delete 仍使用自己的 Button。
 
             var del = NewRect("delete", row);
             del.anchorMin = new Vector2(1f, 0.5f);
@@ -218,11 +237,8 @@ namespace IcarusII.EditorTools
             var delImage = del.gameObject.AddComponent<Image>();
             delImage.color = new Color(1f, 1f, 1f, 0.01f);
             delImage.raycastTarget = true;
-            var delButton = del.gameObject.AddComponent<Button>();
-            delButton.targetGraphic = delImage;
-            delButton.transition = Selectable.Transition.ColorTint;
-            delButton.colors = ButtonColors();
-            delButton.navigation = new Navigation { mode = Navigation.Mode.None };
+            // delete 也不加 Button：点击由运行期 ChatIndexRowHover 按点击位置判断，
+            // 这样 pointerEnter/Exit 不会被 Selectable 截断。
 
             var delText = NewRect("x", del);
             Stretch(delText);
@@ -233,6 +249,55 @@ namespace IcarusII.EditorTools
 
             row.gameObject.SetActive(false);
             return row;
+        }
+
+        private static void EnsureScrollbar(RectTransform scroll, ScrollRect scrollRect)
+        {
+            var sb = scroll.Find("Scrollbar Vertical") as RectTransform;
+            if (sb == null)
+            {
+                sb = NewRect("Scrollbar Vertical", scroll);
+                sb.anchorMin = new Vector2(1f, 0f);
+                sb.anchorMax = new Vector2(1f, 1f);
+                sb.pivot = new Vector2(1f, 1f);
+                sb.sizeDelta = new Vector2(7f, -4f);
+                sb.anchoredPosition = new Vector2(-2f, -2f);
+            }
+
+            var track = sb.GetComponent<Image>();
+            if (track == null) track = sb.gameObject.AddComponent<Image>();
+            track.color = new Color(0f, 0f, 0f, 0.70f);
+            track.raycastTarget = true;
+
+            var sliding = sb.Find("Sliding Area") as RectTransform;
+            if (sliding == null)
+            {
+                sliding = NewRect("Sliding Area", sb);
+                Stretch(sliding);
+            }
+            var handle = sliding.Find("Handle") as RectTransform;
+            if (handle == null)
+            {
+                handle = NewRect("Handle", sliding);
+                Stretch(handle);
+                handle.offsetMin = new Vector2(1f, 1f);
+                handle.offsetMax = new Vector2(-1f, -1f);
+            }
+            var handleImage = handle.GetComponent<Image>();
+            if (handleImage == null) handleImage = handle.gameObject.AddComponent<Image>();
+            handleImage.color = new Color(1f, 1f, 1f, 0.55f);
+            handleImage.raycastTarget = true;
+
+            var scrollbar = sb.GetComponent<Scrollbar>();
+            if (scrollbar == null) scrollbar = sb.gameObject.AddComponent<Scrollbar>();
+            scrollbar.handleRect = handle;
+            scrollbar.targetGraphic = track;
+            scrollbar.direction = Scrollbar.Direction.BottomToTop;
+            scrollbar.navigation = new Navigation { mode = Navigation.Mode.None };
+
+            scrollRect.verticalScrollbar = scrollbar;
+            scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
+            scrollRect.verticalScrollbarSpacing = 2f;
         }
 
         private static void Style(Text text, Font font, Material material, int fontSize, Color color, TextAnchor anchor)

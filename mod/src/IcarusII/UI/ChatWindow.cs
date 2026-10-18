@@ -205,6 +205,7 @@ namespace IcarusII.UI
             public GameObject UserGo;
             public GameObject Row;
             public Text Link;
+            public ChatIndexRowHover Hover;
         }
 
         private readonly List<Line> _lines = new List<Line>();
@@ -2693,7 +2694,7 @@ namespace IcarusII.UI
             if (_chatIndex.GetComponent<Image>() == null)
             {
                 var bg = _chatIndex.gameObject.AddComponent<Image>();
-                bg.color = new Color(0.02f, 0.045f, 0.07f, 0.55f);
+                bg.color = new Color(0f, 0f, 0f, 0.56f);
                 bg.raycastTarget = false;
             }
 
@@ -2712,8 +2713,8 @@ namespace IcarusII.UI
                 _chatIndexTitle = header.GetComponent<Text>();
                 if (_chatIndexTitle == null)
                 {
-                    _chatIndexTitle = UiFactory.AddLabel(header, _bodyFont, Mathf.Max(10, _fontSize - 2),
-                        _accent, TextAnchor.MiddleLeft);
+                    _chatIndexTitle = UiFactory.AddLabel(header, _bodyFont, 12,
+                        _textDim, TextAnchor.MiddleLeft);
                 }
                 _chatIndexTitle.text = Strings.Get("chat.index.title");
                 _chatIndexTitle.horizontalOverflow = HorizontalWrapMode.Overflow;
@@ -2815,7 +2816,7 @@ namespace IcarusII.UI
                 _chatIndexEmpty = emptyRt.GetComponent<Text>();
                 if (_chatIndexEmpty == null)
                 {
-                    _chatIndexEmpty = UiFactory.AddLabel(emptyRt, _bodyFont, Mathf.Max(10, _fontSize - 2),
+                    _chatIndexEmpty = UiFactory.AddLabel(emptyRt, _bodyFont, 12,
                         _textDim, TextAnchor.MiddleCenter);
                 }
                 _chatIndexEmpty.text = Strings.Get("chat.index.empty");
@@ -2875,12 +2876,11 @@ namespace IcarusII.UI
             go.SetActive(true);
 
             var linkTf = go.transform.Find("link");
-            var link = linkTf != null ? linkTf.GetComponent<Text>() : null;
-            var linkButton = linkTf != null ? linkTf.GetComponent<Button>() : null;
+            var label = linkTf != null ? linkTf.Find("label")?.GetComponent<Text>() : null;
+            if (label == null && linkTf != null) label = linkTf.GetComponent<Text>();
             var delTf = go.transform.Find("delete");
-            var delButton = delTf != null ? delTf.GetComponent<Button>() : null;
 
-            if (link == null || linkButton == null || delButton == null)
+            if (label == null || delTf == null || linkTf == null)
             {
                 // prefab 结构不完整：退回运行期构建，不让索引整块消失。
                 UnityEngine.Object.Destroy(go);
@@ -2888,26 +2888,47 @@ namespace IcarusII.UI
                 return;
             }
 
-            link.text = IndexLabel(entry.Text);
-            link.supportRichText = false;
-            link.horizontalOverflow = HorizontalWrapMode.Overflow;
-            link.verticalOverflow = VerticalWrapMode.Truncate;
-            link.wideCharSpacing = 1f;
-            link.raycastTarget = true;
-            linkButton.targetGraphic = link;
-            linkButton.onClick.RemoveAllListeners();
+            // 链接/删除都不用子级 Button：任何子级 Selectable 都会吃掉 pointerEnter/Exit，
+            // 导致行级 hover 卡住。点击统一交给行上的 ChatIndexRowHover，按点击位置区分。
+            var linkButton = linkTf.GetComponent<Button>();
+            if (linkButton != null)
+            {
+                linkButton.enabled = false;
+                UnityEngine.Object.Destroy(linkButton);
+            }
+            var delButton = delTf.GetComponent<Button>();
+            if (delButton != null)
+            {
+                delButton.enabled = false;
+                UnityEngine.Object.Destroy(delButton);
+            }
+
+            label.text = IndexLabel(entry.Text);
+            label.supportRichText = false;
+            label.horizontalOverflow = HorizontalWrapMode.Overflow;
+            label.verticalOverflow = VerticalWrapMode.Truncate;
+            label.wideCharSpacing = 1f;
+            label.raycastTarget = false;
+
+            var hover = go.GetComponent<ChatIndexRowHover>();
+            if (hover == null) hover = go.AddComponent<ChatIndexRowHover>();
+            hover.DeleteButton = delTf.gameObject;
+            hover.DeleteArea = delTf as RectTransform;
+            hover.HoverBackground = go.GetComponent<Graphic>();
             int linkId = entry.Id;
-            linkButton.onClick.AddListener(() => FocusTurn(linkId));
-
-            delButton.onClick.RemoveAllListeners();
             int delId = entry.Id;
-            delButton.onClick.AddListener(() => DeleteTurn(delId));
-
+            hover.Clicked += () => FocusTurn(linkId);
+            hover.DeleteClicked += () => DeleteTurn(delId);
             entry.Row = go;
-            entry.Link = link;
+            entry.Link = label;
+            entry.Hover = hover;
+
+            // 只有鼠标进入该行时才显示删除按钮。
+            delTf.gameObject.SetActive(false);
+            hover.SetSelected(entry.Id == _focusedTurnId);
+
             if (_hostCanvas != null)
                 SetLayerRecursively(go.transform, _hostCanvas.gameObject.layer);
-            RefreshIndexSelection();
             RefreshIndexEmpty();
         }
 
@@ -2919,6 +2940,9 @@ namespace IcarusII.UI
             var le = row.gameObject.AddComponent<LayoutElement>();
             le.minHeight = 24f;
             le.preferredHeight = 24f;
+            var rowBg = row.gameObject.AddComponent<Image>();
+            rowBg.color = Color.clear;
+            rowBg.raycastTarget = true;
 
             var linkRt = UiFactory.Node("link", row);
             linkRt.anchorMin = Vector2.zero;
@@ -2935,13 +2959,7 @@ namespace IcarusII.UI
             link.wideCharSpacing = 1f;
             link.raycastTarget = true;
 
-            var linkButton = linkRt.gameObject.AddComponent<Button>();
-            linkButton.targetGraphic = link;
-            linkButton.transition = Selectable.Transition.ColorTint;
-            linkButton.colors = IndexButtonColors();
-            linkButton.navigation = new Navigation { mode = Navigation.Mode.None };
-            int linkId = entry.Id;
-            linkButton.onClick.AddListener(() => FocusTurn(linkId));
+            // 链接不使用 Button；行级 hover 负责 click + 显示删除按钮。
 
             var delRt = UiFactory.Node("delete", row);
             delRt.anchorMin = new Vector2(1f, 0.5f);
@@ -2953,25 +2971,28 @@ namespace IcarusII.UI
             var delBg = delRt.gameObject.AddComponent<Image>();
             delBg.color = new Color(1f, 1f, 1f, 0.01f);
             delBg.raycastTarget = true;
+            delRt.gameObject.SetActive(false);
 
             var delText = UiFactory.AddLabel(delRt, _bodyFont, Mathf.Max(12, _fontSize),
                 _textDim, TextAnchor.MiddleCenter);
             delText.text = "×";
             delText.raycastTarget = false;
 
-            var delButton = delRt.gameObject.AddComponent<Button>();
-            delButton.targetGraphic = delBg;
-            delButton.transition = Selectable.Transition.ColorTint;
-            delButton.colors = IndexButtonColors();
-            delButton.navigation = new Navigation { mode = Navigation.Mode.None };
-            int delId = entry.Id;
-            delButton.onClick.AddListener(() => DeleteTurn(delId));
 
+            var hover = row.gameObject.AddComponent<ChatIndexRowHover>();
+            hover.DeleteButton = delRt.gameObject;
+            hover.DeleteArea = delRt;
+            hover.HoverBackground = rowBg;
+            int linkId = entry.Id;
+            int delId = entry.Id;
+            hover.Clicked += () => FocusTurn(linkId);
+            hover.DeleteClicked += () => DeleteTurn(delId);
             entry.Row = row.gameObject;
             entry.Link = link;
+            entry.Hover = hover;
+            hover.SetSelected(entry.Id == _focusedTurnId);
             if (_hostCanvas != null)
                 SetLayerRecursively(row, _hostCanvas.gameObject.layer);
-            RefreshIndexSelection();
             RefreshIndexEmpty();
         }
 
@@ -2991,14 +3012,13 @@ namespace IcarusII.UI
             var s = (text ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
             if (s.Length > 80) s = s.Substring(0, 80);
 
-            const string prefix = "• ";
             var fontSize = Mathf.Max(10, _fontSize - 2);
-            const float maxWidth = 210f;
-            if (EstimateTextWidth(prefix + s, fontSize) <= maxWidth) return prefix + s;
+            const float maxWidth = 190f;
+            if (EstimateTextWidth(s, fontSize) <= maxWidth) return s;
 
-            while (s.Length > 0 && EstimateTextWidth(prefix + s + "…", fontSize) > maxWidth)
+            while (s.Length > 0 && EstimateTextWidth(s + "…", fontSize) > maxWidth)
                 s = s.Substring(0, s.Length - 1);
-            return prefix + s + "…";
+            return s + "…";
         }
 
         private void FocusTurn(int turnId)
@@ -3133,8 +3153,9 @@ namespace IcarusII.UI
         {
             foreach (var entry in _turns)
             {
-                if (entry.Link == null) continue;
-                entry.Link.color = entry.Id == _focusedTurnId ? _textMain : _accent;
+                if (entry.Link != null)
+                    entry.Link.color = entry.Id == _focusedTurnId ? _textMain : _accent;
+                entry.Hover?.SetSelected(entry.Id == _focusedTurnId);
             }
         }
 
