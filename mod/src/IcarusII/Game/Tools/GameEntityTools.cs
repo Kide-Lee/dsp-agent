@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Globalization;
 using IcarusII.Common.Json;
 using IcarusII.Game;
@@ -46,13 +47,24 @@ namespace IcarusII.Game.Tools
             if (e.ejectorId > 0) return "ejector";
             if (e.siloId > 0) return "silo";
             if (e.spraycoaterId > 0) return "spray_coater";
+            if (e.splitterId > 0) return "splitter";
+            if (e.pilerId > 0) return "piler";
+            if (e.monitorId > 0) return "monitor";
             if (e.storageId > 0) return "storage";
             if (e.tankId > 0) return "tank";
             if (e.powerGenId > 0) return "power_generator";
             if (e.powerNodeId > 0) return "power_node";
             if (e.powerAccId > 0) return "power_accumulator";
             if (e.powerExcId > 0) return "power_exchanger";
+            if (e.dispenserId > 0) return "dispenser";
+            if (e.beaconId > 0) return "beacon";
+            if (e.speakerId > 0) return "speaker";
+            if (e.warningId > 0) return "warning";
             if (e.turretId > 0) return "turret";
+            if (e.fieldGenId > 0) return "field_generator";
+            if (e.battleBaseId > 0) return "battle_base";
+            if (e.constructionModuleId > 0) return "construction_module";
+            if (e.combatModuleId > 0) return "combat_module";
             return "other";
         }
 
@@ -211,6 +223,7 @@ namespace IcarusII.Game.Tools
             }
 
             AppendCategoryDetail(data, factory, entity);
+            AppendComponents(data, factory, entity);
             data.Set("display", BuildDisplay(data));
             return new GameToolJobResult { Data = data };
         }
@@ -324,6 +337,15 @@ namespace IcarusII.Game.Tools
                 detail.Set("insertTarget", inserter.insertTarget);
                 detail.Set("pickTargetName", TargetName(factory, inserter.pickTarget));
                 detail.Set("insertTargetName", TargetName(factory, inserter.insertTarget));
+                detail.Set("handItemId", inserter.itemId);
+                detail.Set("handItemName", inserter.itemId > 0 ? EntityToolUtil.ProtoName(inserter.itemId) : string.Empty);
+                detail.Set("handItemCount", (int)inserter.itemCount);
+                detail.Set("handItemInc", (int)inserter.itemInc);
+                detail.Set("stackCount", inserter.stackCount);
+                detail.Set("canStack", inserter.canStack);
+                detail.Set("stackInput", (int)inserter.stackInput);
+                detail.Set("stackOutput", (int)inserter.stackOutput);
+                detail.Set("delay", inserter.delay);
                 data.Set("inserter", detail);
             }
 
@@ -357,6 +379,7 @@ namespace IcarusII.Game.Tools
                         }
                     }
                     detail.Set("pathCargoCount", cargoCount);
+                    detail.Set("cargoItems", CargoItems(path, 8));
                 }
                 detail.Set("outputId", belt.outputId);
                 detail.Set("backInputId", belt.backInputId);
@@ -475,6 +498,149 @@ namespace IcarusII.Game.Tools
                 items.Add(row);
             }
             return items;
+        }
+
+        /// <summary>
+        /// 传送带线路上的货物聚合：解码 CargoPath.buffer 的 cargo 头，
+        /// 和游戏传送带面板的“线路货物数”同源。
+        /// </summary>
+        private static JsonValue CargoItems(CargoPath path, int max)
+        {
+            var rows = JsonValue.NewArray();
+            if (path == null || path.buffer == null || path.cargoContainer == null) return rows;
+            var counts = new Dictionary<int, int>();
+            for (int i = 0; i < path.pathLength; i++)
+            {
+                if (path.buffer[i] != CargoPath.kCargoHead) continue;
+                int index = i + (CargoPath.kCargoSign - path.buffer[i]);
+                if (index + 4 >= path.pathLength) continue;
+                int cargoId = (path.buffer[index + 1] - 1)
+                    + (path.buffer[index + 2] - 1) * 100
+                    + (path.buffer[index + 3] - 1) * 10000
+                    + (path.buffer[index + 4] - 1) * 1000000;
+                if (cargoId < 0 || cargoId >= path.cargoContainer.cargoPool.Length) continue;
+                var cargo = path.cargoContainer.cargoPool[cargoId];
+                if (cargo.item <= 0) continue;
+                int current;
+                counts.TryGetValue(cargo.item, out current);
+                counts[cargo.item] = current + cargo.stack;
+                i += CargoPath.kCargoLength - 1;
+            }
+            var list = new List<KeyValuePair<int, int>>(counts);
+            list.Sort((a, b) => b.Value.CompareTo(a.Value));
+            for (int i = 0; i < list.Count && i < max; i++)
+            {
+                var row = JsonValue.NewObject();
+                row.Set("itemId", list[i].Key);
+                row.Set("name", EntityToolUtil.ProtoName(list[i].Key));
+                row.Set("iconTag", GameToolFormat.ItemIconTag(list[i].Key));
+                row.Set("count", list[i].Value);
+                rows.Add(row);
+            }
+            return rows;
+        }
+
+        /// <summary>
+        /// 所有建筑的通用组件快照：按 EntityData 的组件 id 找到对应 pool，
+        /// 反射导出公有字段（最多 30 个）。新增建筑类型不需要再改这里。
+        /// </summary>
+        private static void AppendComponents(JsonValue data, PlanetFactory factory, EntityData e)
+        {
+            var components = JsonValue.NewObject();
+            var system = factory.factorySystem;
+            var traffic = factory.cargoTraffic;
+            var storage = factory.factoryStorage;
+            var transport = factory.transport;
+            var power = factory.powerSystem;
+            var digital = factory.digitalSystem;
+            if (system != null)
+            {
+                // assembler/miner/inserter/belt/storage/station 已有专门字段，避免重复占 payload。
+                AddComponent(components, "fractionator", e.fractionatorId, system.fractionatorPool);
+                AddComponent(components, "ejector", e.ejectorId, system.ejectorPool);
+                AddComponent(components, "silo", e.siloId, system.siloPool);
+                AddComponent(components, "lab", e.labId, system.labPool);
+            }
+            if (traffic != null)
+            {
+                AddComponent(components, "splitter", e.splitterId, traffic.splitterPool);
+                AddComponent(components, "monitor", e.monitorId, traffic.monitorPool);
+                AddComponent(components, "spraycoater", e.spraycoaterId, traffic.spraycoaterPool);
+                AddComponent(components, "piler", e.pilerId, traffic.pilerPool);
+            }
+            if (storage != null)
+            {
+                AddComponent(components, "tank", e.tankId, storage.tankPool);
+            }
+            if (transport != null)
+            {
+                AddComponent(components, "dispenser", e.dispenserId, transport.dispenserPool);
+            }
+            if (power != null)
+            {
+                AddComponent(components, "power_consumer", e.powerConId, power.consumerPool);
+                AddComponent(components, "power_generator", e.powerGenId, power.genPool);
+                AddComponent(components, "power_accumulator", e.powerAccId, power.accPool);
+                AddComponent(components, "power_exchanger", e.powerExcId, power.excPool);
+                AddComponent(components, "power_node", e.powerNodeId, power.nodePool);
+            }
+            if (digital != null)
+            {
+                AddComponent(components, "speaker", e.speakerId, digital.speakerPool);
+            }
+            if (components.Count > 0) data.Set("components", components);
+        }
+
+        private static void AddComponent(JsonValue parent, string kind, int id, Array pool)
+        {
+            if (id <= 0 || pool == null || id >= pool.Length) return;
+            var component = pool.GetValue(id);
+            if (component == null) return;
+            var row = JsonValue.NewObject();
+            row.Set("kind", kind);
+            row.Set("poolId", id);
+            row.Set("fields", DumpPublicFields(component));
+            parent.Set(kind, row);
+        }
+
+        private static JsonValue DumpPublicFields(object component)
+        {
+            var fields = JsonValue.NewObject();
+            var type = component.GetType();
+            var infos = type.GetFields(BindingFlags.Public | BindingFlags.Instance);
+            int emitted = 0;
+            foreach (var info in infos)
+            {
+                if (emitted >= 30) break;
+                object value;
+                try { value = info.GetValue(component); }
+                catch { continue; }
+                if (value == null) continue;
+
+                var t = value.GetType();
+                if (value is bool b) { fields.Set(info.Name, b); emitted++; }
+                else if (value is int i) { fields.Set(info.Name, i); emitted++; }
+                else if (value is long l) { fields.Set(info.Name, l); emitted++; }
+                else if (value is short s) { fields.Set(info.Name, (int)s); emitted++; }
+                else if (value is byte by) { fields.Set(info.Name, (int)by); emitted++; }
+                else if (value is float f) { fields.Set(info.Name, GameToolFormat.Round(f, 3)); emitted++; }
+                else if (value is double d) { fields.Set(info.Name, GameToolFormat.Round(d, 3)); emitted++; }
+                else if (value is string str) { fields.Set(info.Name, str); emitted++; }
+                else if (t.IsEnum) { fields.Set(info.Name, value.ToString()); emitted++; }
+                else if (value is Array array)
+                {
+                    fields.Set(info.Name + "_length", array.Length);
+                    if (array.Length <= 12 && array.Rank == 1 &&
+                        (array is int[] || array is short[] || array is byte[] || array is float[]))
+                    {
+                        var parts = new List<string>();
+                        foreach (var item in array) parts.Add(Convert.ToString(item, CultureInfo.InvariantCulture));
+                        fields.Set(info.Name, string.Join(",", parts));
+                        emitted++;
+                    }
+                }
+            }
+            return fields;
         }
 
         private static int ConsumerNetworkId(PlanetFactory factory, EntityData entity)
