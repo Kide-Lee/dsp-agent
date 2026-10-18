@@ -307,6 +307,8 @@ namespace IcarusII.UI
         private ScrollRect _chatIndexScroll;
         private Text _chatIndexTitle;
         private Text _chatIndexEmpty;
+        private RectTransform _chatIndexTooltip;
+        private Text _chatIndexTooltipText;
         private readonly List<TurnEntry> _turns = new List<TurnEntry>();
         private int _nextTurnId;
         private int _currentTurnId;
@@ -514,6 +516,8 @@ namespace IcarusII.UI
             _chatIndexScroll = null;
             _chatIndexTitle = null;
             _chatIndexEmpty = null;
+            _chatIndexTooltip = null;
+            _chatIndexTooltipText = null;
             _turns.Clear();
             _nextTurnId = 0;
             _currentTurnId = 0;
@@ -2901,6 +2905,11 @@ namespace IcarusII.UI
             int delId = entry.Id;
             hover.Clicked += () => FocusTurn(linkId);
             hover.DeleteClicked += () => DeleteTurn(delId);
+            var deleteIcon = delTf.Find("x") != null
+                ? delTf.Find("x").GetComponent<Graphic>()
+                : delTf.GetComponent<Graphic>();
+            hover.SetDeleteIcon(deleteIcon);
+            hover.DeleteHoverChanged += OnIndexDeleteHoverChanged;
             entry.Row = go;
             entry.Link = label;
             entry.Hover = hover;
@@ -2969,6 +2978,8 @@ namespace IcarusII.UI
             int delId = entry.Id;
             hover.Clicked += () => FocusTurn(linkId);
             hover.DeleteClicked += () => DeleteTurn(delId);
+            hover.SetDeleteIcon(delText);
+            hover.DeleteHoverChanged += OnIndexDeleteHoverChanged;
             entry.Row = row.gameObject;
             entry.Link = link;
             entry.Hover = hover;
@@ -3108,6 +3119,7 @@ namespace IcarusII.UI
 
         private void ClearIndexRows()
         {
+            HideChatIndexTooltip();
             if (_chatIndexContent != null)
             {
                 for (int i = _chatIndexContent.childCount - 1; i >= 0; i--)
@@ -3139,6 +3151,85 @@ namespace IcarusII.UI
                     entry.Link.color = entry.Id == _focusedTurnId ? _textMain : _accent;
                 entry.Hover?.SetSelected(entry.Id == _focusedTurnId);
             }
+        }
+
+        /// <summary>删除图标的 hover 提示：红色 × + 一行小提示。</summary>
+        private void OnIndexDeleteHoverChanged(bool over, Vector2 screenPosition)
+        {
+            if (over)
+            {
+                ShowChatIndexTooltip(screenPosition, Strings.Get("chat.index.delete.tip"));
+            }
+            else
+            {
+                HideChatIndexTooltip();
+            }
+        }
+
+        private void EnsureChatIndexTooltip()
+        {
+            if (_chatIndexTooltip != null || _panel == null) return;
+
+            var rt = UiFactory.Node("chat-index-tooltip", _panel);
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0f, 0f);
+            rt.sizeDelta = new Vector2(170f, 24f);
+            rt.anchoredPosition = Vector2.zero;
+
+            var bg = rt.gameObject.AddComponent<Image>();
+            bg.color = new Color(0.02f, 0.03f, 0.04f, 0.96f);
+            bg.raycastTarget = false;
+
+            var outline = rt.gameObject.AddComponent<Outline>();
+            outline.effectColor = new Color(1f, 0.30f, 0.25f, 0.45f);
+            outline.effectDistance = new Vector2(1f, -1f);
+
+            var labelRt = UiFactory.Node("label", rt);
+            labelRt.anchorMin = Vector2.zero;
+            labelRt.anchorMax = Vector2.one;
+            labelRt.offsetMin = new Vector2(8f, 0f);
+            labelRt.offsetMax = new Vector2(-8f, 0f);
+
+            _chatIndexTooltipText = UiFactory.AddLabel(labelRt, _bodyFont, 12,
+                new Color(1f, 0.48f, 0.40f, 1f), TextAnchor.MiddleLeft);
+            _chatIndexTooltipText.text = Strings.Get("chat.index.delete.tip");
+            _chatIndexTooltipText.raycastTarget = false;
+            _chatIndexTooltipText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            _chatIndexTooltipText.verticalOverflow = VerticalWrapMode.Truncate;
+
+            rt.gameObject.SetActive(false);
+            if (_hostCanvas != null)
+                SetLayerRecursively(rt, _hostCanvas.gameObject.layer);
+            _chatIndexTooltip = rt;
+        }
+
+        private void ShowChatIndexTooltip(Vector2 screenPosition, string text)
+        {
+            EnsureChatIndexTooltip();
+            if (_chatIndexTooltip == null || _chatIndexTooltipText == null || _panel == null) return;
+
+            _chatIndexTooltipText.text = text ?? string.Empty;
+            var camera = _hostCanvas != null ? _hostCanvas.worldCamera : null;
+            Vector2 local;
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(_panel, screenPosition, camera, out local))
+                return;
+
+            var panelRect = _panel.rect;
+            var size = _chatIndexTooltip.rect.size;
+            if (size.x < 1f || size.y < 1f) size = new Vector2(170f, 24f);
+            var pos = local + new Vector2(12f, 18f);
+            pos.x = Mathf.Clamp(pos.x, panelRect.xMin + 4f, panelRect.xMax - size.x - 4f);
+            pos.y = Mathf.Clamp(pos.y, panelRect.yMin + 4f, panelRect.yMax - size.y - 4f);
+
+            _chatIndexTooltip.anchoredPosition = pos;
+            _chatIndexTooltip.gameObject.SetActive(true);
+            _chatIndexTooltip.SetAsLastSibling();
+        }
+
+        private void HideChatIndexTooltip()
+        {
+            if (_chatIndexTooltip != null) _chatIndexTooltip.gameObject.SetActive(false);
         }
 
         /// <summary>
