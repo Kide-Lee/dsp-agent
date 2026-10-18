@@ -27,15 +27,16 @@ import { EchoAgent, PiAgent, type AgentRunner } from './agent.js';
 import { CONFIG_FILE_NAME, ConfigStore, DEFAULT_MODEL, DEFAULT_PROVIDER } from './config.js';
 import { errorFields, log, setLevel } from './log.js';
 import { startServer, type RunningServer } from './server.js';
+import { GameToolHost } from './tools/host.js';
+import { KnowledgeManager } from './kb/manager.js';
+import { KnowledgeStore } from './kb/store.js';
+import { toolNamesForCapabilities } from './tools/registry.js';
 
 /**
  * 打包成单文件（esbuild --bundle，见 scripts/build-sidecar.sh）后 `__dirname` 里没有
  * package.json，所以版本号内嵌一份，package.json 只用来交叉核对（不一致时警告）。
  */
 const SERVER_VERSION = '0.1.0';
-
-/** M1 不注册任何工具（协议 §4.2 的 tools 为空数组）。 */
-const REGISTERED_TOOLS: readonly string[] = [];
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_DATA_DIR_NAME = '.icarus-ii-dev';
@@ -127,8 +128,14 @@ function requireNonEmpty(raw: string | undefined, flag: string, fallback: string
  * 装配 agent。
  * `pi` 的 pi SDK 是懒加载的：这里只构造一个空壳，第一次真正需要模型时才 import。
  */
-function createAgent(kind: AgentKind, store: ConfigStore, dataDir: string): AgentRunner {
-  return kind === 'echo' ? new EchoAgent() : new PiAgent({ dataDir, store });
+function createAgent(
+  kind: AgentKind,
+  store: ConfigStore,
+  dataDir: string,
+  host: GameToolHost,
+  kb: KnowledgeStore,
+): AgentRunner {
+  return kind === 'echo' ? new EchoAgent() : new PiAgent({ dataDir, store, host, kb });
 }
 
 export function newToken(): string {
@@ -207,7 +214,10 @@ async function runServe(args: ServeArgs): Promise<void> {
     // echo 不需要凭证：ready.config.state 恒为 ready，prompt 不会被拦。
     requireApiKey: args.agentKind === 'pi',
   });
-  const agent = createAgent(args.agentKind, config, args.dataDir);
+  const host = new GameToolHost();
+  const kbStore = new KnowledgeStore(args.dataDir);
+  const knowledge = new KnowledgeManager({ store: kbStore, logger: log });
+  const agent = createAgent(args.agentKind, config, args.dataDir, host, kbStore);
 
   let server: RunningServer;
   try {
@@ -218,7 +228,9 @@ async function runServe(args: ServeArgs): Promise<void> {
       version: SERVER_VERSION,
       agent,
       config,
-      tools: REGISTERED_TOOLS,
+      knowledge,
+      // M2/M3：按 hello.capabilities 决定游戏工具；kb_* 始终注册。
+      tools: toolNamesForCapabilities,
     });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;

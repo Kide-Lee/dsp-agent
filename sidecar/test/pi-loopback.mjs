@@ -15,7 +15,7 @@
  *
  * 覆盖：
  *   1. happy path：帧顺序 / delta 拼接 == message 文本 / **恰好一个终稿帧** /
- *      上游请求形状（thinking disabled、无 tools、Authorization 用的是我们注入的 key）/
+ *      上游请求形状（默认 thinking enabled/high、无 game_* 工具、有 kb_* 工具、Authorization 用的是我们注入的 key）/
  *      **system prompt 已被替换成游戏内助手人格**（问题 1 与问题 3 的回归）
  *   2. 401 → error{invalid_key} + config.state{invalid_key}，
  *      且上游回显的 key 被脱敏后才出站；下一次成功 → config.state{ready}
@@ -400,19 +400,24 @@ async function main() {
     check('恰好 1 个 message{final:true} 帧', round.filter((f) => f.type === 'message' && f.payload?.final === true).length === 1);
     check('终稿帧文本非空且 = delta 拼接', typeof text === 'string' && text.length > 0 && text === joined);
 
-    // 上游请求形状：证明纯对话（无 tools）且没有请求思考。
+    // 上游请求形状：证明 M3 纯对话（只有 kb_* 本地工具），且默认档位 high 会请求思考。
     const body = upstream.lastBody();
     const last = upstream.requests[upstream.requests.length - 1];
     check('上游收到 POST /chat/completions', last?.method === 'POST' && last?.url === '/chat/completions', `${last?.method} ${last?.url}`);
     check('上游 model 正确', body.model === MODEL, body.model);
     check('上游要求流式', body.stream === true);
     check(
-      '不请求思考：thinking = {type:"disabled"}',
-      body.thinking?.type === 'disabled',
+      '默认请求思考：thinking = {type:"enabled"}',
+      body.thinking?.type === 'enabled',
       JSON.stringify(body.thinking ?? null),
     );
-    check('不请求思考：无 reasoning_effort', body.reasoning_effort === undefined, String(body.reasoning_effort));
-    check('M1 纯对话：请求里没有 tools', body.tools === undefined, JSON.stringify(body.tools ?? null));
+    check('默认思考档位 high', body.reasoning_effort === 'high', String(body.reasoning_effort));
+    // M3：kb_* 是 sidecar 本地工具，始终注册；没有 game.read.v1 时不应出现 game_*。
+    const toolNames = Array.isArray(body.tools)
+      ? body.tools.map((tool) => tool?.function?.name).filter((name) => typeof name === 'string')
+      : [];
+    check('M3 纯对话：不注册 game_* 工具', !toolNames.some((name) => name.startsWith('game_')), JSON.stringify(toolNames));
+    check('M3 纯对话：注册 kb_* 工具', toolNames.includes('kb_search') && toolNames.includes('kb_get') && toolNames.includes('kb_recipe_tree'), JSON.stringify(toolNames));
     check('Authorization 用的是 config.set 注入的 key', last?.authorization === `Bearer ${KEY}`);
 
     // ---- 问题 3：system prompt 已经被整个替换（人格），pi 的 coding prompt 不在请求里 ----
@@ -446,8 +451,8 @@ async function main() {
     }
     // coding agent 之外，还要确认"它没在承诺自己没有的能力"这件事靠 prompt 兜住了。
     check(
-      'system message 明确 M1 没有任何工具/看不到游戏',
-      systemText.includes('没有任何工具'),
+      'system message 说明只读工具与写操作边界',
+      systemText.includes('只能读取当前存档') && systemText.includes('game_get_overview'),
     );
   }
 
@@ -555,7 +560,7 @@ async function main() {
   // ------------------------------------------------------------ 5. 未知 provider → agent_unavailable
   console.log('── 5. 未知 provider → agent_unavailable ──');
   {
-    await configure('c-4', { provider: 'no-such-provider', model: 'no-such-model' });
+    await configure('c-4', { provider: 'no-such-provider', model: 'no-such-model', apiKey: KEY });
 
     const mark = client.frames.length;
     const idles = idleCount();

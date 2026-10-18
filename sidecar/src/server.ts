@@ -13,6 +13,7 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { CLOSE_GOING_AWAY, MAX_FRAME_BYTES, isLoopbackHost } from './protocol.js';
 import type { AgentRunner } from './agent.js';
 import type { ConfigStore } from './config.js';
+import type { KnowledgeManager } from './kb/manager.js';
 import { errorFields, log as rootLog } from './log.js';
 import { Session, type SocketLike } from './session.js';
 
@@ -36,7 +37,10 @@ export interface ServerOptions {
   agent: AgentRunner;
   /** 配置存储（所有连接共享）。 */
   config: ConfigStore;
-  tools?: readonly string[];
+  /** 知识库编排（所有连接共享）。 */
+  knowledge?: KnowledgeManager;
+  /** 工具名列表；给出函数时按 hello 能力动态计算。 */
+  tools?: readonly string[] | ((capabilities: readonly string[]) => readonly string[]);
   helloTimeoutMs?: number;
 }
 
@@ -131,6 +135,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       serverVersion: options.version,
       agent: options.agent,
       config: options.config,
+      knowledge: options.knowledge,
       tools,
       helloTimeoutMs: options.helloTimeoutMs,
       logger: rootLog,

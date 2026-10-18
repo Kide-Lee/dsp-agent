@@ -70,8 +70,8 @@ async function piWithoutKey() {
     check('未配置时 prompt 回 error', !!err);
     check('error.code = config_required', err?.payload?.code === 'config_required', err?.payload?.code);
     check(
-      'error.message = 尚未配置 API Key',
-      err?.payload?.message === '尚未配置 API Key',
+      'error.message 说明是哪个供应商',
+      err?.payload?.message === '尚未配置 API Key（DeepSeek）',
       err?.payload?.message,
     );
     check('error.replyTo 指向 prompt', err?.replyTo === 'm-2', err?.replyTo);
@@ -95,6 +95,19 @@ async function piWithoutKey() {
     check('config.state.provider 回显', state?.payload?.provider === 'deepseek');
     check('config.state.model 回显', state?.payload?.model === 'deepseek-v4-flash');
     check('config.state.message 为 null', state?.payload?.message === null);
+    check('config.state 带 providers 列表', Array.isArray(state?.payload?.providers), typeof state?.payload?.providers);
+    check(
+      'config.state.providers 含 deepseek 且 hasKey',
+      state?.payload?.providers?.find((p) => p.id === 'deepseek')?.hasKey === true,
+    );
+    check(
+      'config.state.providers 的 deepseek 有两个模型',
+      state?.payload?.providers?.find((p) => p.id === 'deepseek')?.models?.length === 2,
+    );
+    check(
+      'config.state.active 指向 deepseek/flash',
+      state?.payload?.active?.provider === 'deepseek' && state?.payload?.active?.model === 'deepseek-v4-flash',
+    );
 
     // 4) 链路仍然活着
     client.send({ v: 1, id: 'm-4', type: 'ping', payload: { t: 7 } });
@@ -121,6 +134,61 @@ async function piWithoutKey() {
     );
     check('只改 model 也能升级状态', state2?.payload?.model === 'deepseek-v4-pro', state2?.payload?.model);
     check('只改 model 后 state = ready', state2?.payload?.state === 'ready');
+
+    // 6b) 思考档位：合法值回显 + 非法值 bad_request
+    client.send({ v: 1, id: 'm-6b', type: 'config.set', payload: { thinkingLevel: 'max' } });
+    const state3 = await client.waitFor(
+      (f) => f && f.type === 'config.state' && f.replyTo === 'm-6b',
+      3000,
+      'config.state#3',
+    );
+    check('thinkingLevel 回显', state3?.payload?.thinkingLevel === 'max', state3?.payload?.thinkingLevel);
+
+    client.send({ v: 1, id: 'm-6c', type: 'config.set', payload: { thinkingLevel: 'turbo' } });
+    const badLevel = await client.waitFor(
+      (f) => f && f.type === 'error' && f.replyTo === 'm-6c',
+      3000,
+      'error#thinkingLevel',
+    );
+    check('thinkingLevel 非法 ⇒ bad_request', badLevel?.payload?.code === 'bad_request', badLevel?.payload?.code);
+
+    // 6d) 多供应商：新增 openai、切 active、state 回显
+    const OPENAI_KEY = 'sk-openai-fake-1234567890';
+    client.send({
+      v: 1,
+      id: 'm-6d',
+      type: 'config.set',
+      payload: {
+        providerConfig: {
+          openai: {
+            apiKey: OPENAI_KEY,
+            models: [
+              { id: 'gpt-4o', name: 'GPT-4o' },
+              { id: 'gpt-4o-mini', name: 'GPT-4o mini' },
+            ],
+          },
+        },
+        activeProvider: 'openai',
+        activeModel: 'gpt-4o',
+      },
+    });
+    const multi = await client.waitFor(
+      (f) => f && f.type === 'config.state' && f.replyTo === 'm-6d',
+      3000,
+      'config.state#multi',
+    );
+    check('多供应商：active 切到 openai', multi?.payload?.active?.provider === 'openai');
+    check('多供应商：activeModel = gpt-4o', multi?.payload?.active?.model === 'gpt-4o');
+    check(
+      '多供应商：openai 出现在 providers',
+      multi?.payload?.providers?.some((p) => p.id === 'openai' && p.hasKey === true),
+    );
+    check(
+      '多供应商：deepseek 仍在',
+      multi?.payload?.providers?.some((p) => p.id === 'deepseek'),
+    );
+    check('多供应商：state = ready', multi?.payload?.state === 'ready', multi?.payload?.state);
+    check('多供应商：出站帧不含 openai 明文 key', !rawContains(clients, OPENAI_KEY));
 
     // 7) 脱敏：任何出站帧都不含 key
     check('出站帧不含 key 明文', !rawContains(clients, FAKE_KEY));

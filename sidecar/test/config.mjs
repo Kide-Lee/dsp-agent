@@ -86,6 +86,85 @@ try {
     check('清除 key 后 state = missing_key', store.view().state === 'missing_key');
   }
 
+  // 3b) 思考档位：默认 off、往返读写、非法值拒绝
+  {
+    const store = fresh();
+    check('默认 thinkingLevel = high', store.view().thinkingLevel === 'high', store.view().thinkingLevel);
+    check('thinkingLevel 写入视图', store.update({ thinkingLevel: 'high' }).thinkingLevel === 'high');
+    check('thinkingLevel 落盘', JSON.parse(readFileSync(configPath, 'utf8')).thinkingLevel === 'high');
+    check('重新加载后 thinkingLevel 仍在', fresh().view().thinkingLevel === 'high');
+    check('thinkingLevel: off 可写', store.update({ thinkingLevel: 'off' }).thinkingLevel === 'off');
+  }
+
+  // 3c) 多供应商 / 多模型
+  {
+    const store = fresh();
+    store.update({ provider: 'deepseek', apiKey: FAKE_KEY });
+    const view = store.update({
+      providerConfig: {
+        openai: {
+          apiKey: 'sk-openai-test',
+          models: [
+            { id: 'gpt-4o', name: 'GPT-4o' },
+            { id: 'gpt-4o-mini', name: 'GPT-4o mini' },
+          ],
+        },
+      },
+      activeProvider: 'openai',
+      activeModel: 'gpt-4o',
+    });
+    check('多供应商：openai 出现', view.providers.some((p) => p.id === 'openai'));
+    check('多供应商：deepseek 仍在', view.providers.some((p) => p.id === 'deepseek'));
+    check('多供应商：active 切换到 openai', view.provider === 'openai' && view.model === 'gpt-4o');
+    check('多供应商：openai 的 hasKey = true', view.providers.find((p) => p.id === 'openai')?.hasKey === true);
+    check(
+      '多供应商：openai 模型列表',
+      view.providers.find((p) => p.id === 'openai')?.models.map((m) => m.id).join(',') === 'gpt-4o,gpt-4o-mini',
+    );
+    check('多供应商：get() 展开 active 的 key', store.get().apiKey === 'sk-openai-test');
+    check('多供应商：deepseek 的 key 不受影响', fresh().get().providers.deepseek?.apiKey === FAKE_KEY);
+
+    const offView = store.update({ activeProvider: 'deepseek', activeModel: 'deepseek-v4-pro' });
+    check('多供应商：切回 deepseek 用回旧 key', offView.provider === 'deepseek' && store.get().apiKey === FAKE_KEY);
+    check('多供应商：切回后 model 正确', store.get().model === 'deepseek-v4-pro');
+
+    const removed = store.update({ removeProviders: ['openai'] });
+    check('删除供应商', !removed.providers.some((p) => p.id === 'openai'));
+
+    const reread = fresh();
+    check('多供应商落盘可重读', Object.keys(reread.get().providers).join(',') === 'deepseek');
+  }
+
+  // 3d) 旧格式自动迁移
+  {
+    writeRaw(JSON.stringify({ provider: 'openai', model: 'gpt-4o', apiKey: 'sk-legacy' }));
+    const store = fresh();
+    check('旧格式迁移出 openai', store.get().provider === 'openai' && store.get().model === 'gpt-4o');
+    check('旧格式迁移保留 key', store.get().apiKey === 'sk-legacy');
+    check('旧格式迁移后 view 有 providers', store.view().providers.length === 1);
+    check('旧格式迁移后 hasKey', store.hasKey() === true);
+  }
+
+  // 3e) 自定义供应商（未知 id + baseUrl）
+  {
+    const store = fresh();
+    const view = store.update({
+      providerConfig: {
+        'my-proxy': {
+          apiKey: 'sk-proxy',
+          baseUrl: 'https://proxy.example/v1',
+          models: [{ id: 'my-model', name: 'My Model' }],
+        },
+      },
+      activeProvider: 'my-proxy',
+      activeModel: 'my-model',
+    });
+    check('自定义供应商出现在 view', view.providers.some((p) => p.id === 'my-proxy'));
+    check('自定义供应商显示名回退到 id', view.providers.find((p) => p.id === 'my-proxy')?.name === 'my-proxy');
+    check('自定义供应商 baseUrl 回显', view.providers.find((p) => p.id === 'my-proxy')?.baseUrl === 'https://proxy.example/v1');
+    check('自定义供应商 hasKey', store.hasKey() === true);
+  }
+
   // 4) 损坏 / 非法 JSON 容错
   {
     writeRaw('{ this is not json');
@@ -186,8 +265,19 @@ try {
     const store = fresh();
     store.update({ apiKey: FAKE_KEY });
     const onDisk = JSON.parse(readFileSync(configPath, 'utf8'));
-    check('落盘文件里保存了 key（唯一允许的明文位置）', onDisk.apiKey === FAKE_KEY);
-    check('落盘文件不含多余字段', Object.keys(onDisk).sort().join(',') === 'apiKey,baseUrl,model,provider', Object.keys(onDisk).join(','));
+    check(
+      '落盘文件里保存了 key（唯一允许的明文位置）',
+      onDisk.providers?.deepseek?.apiKey === FAKE_KEY,
+    );
+    check(
+      '落盘文件不含多余字段',
+      Object.keys(onDisk).sort().join(',') === 'active,providers,thinkingLevel',
+      Object.keys(onDisk).join(','),
+    );
+    check(
+      '落盘文件含 active 指针',
+      onDisk.active?.provider === 'deepseek' && typeof onDisk.active?.model === 'string',
+    );
   }
 
   // 11) 上游错误分类（纯函数，离线；--agent echo 路径不加载 pi）

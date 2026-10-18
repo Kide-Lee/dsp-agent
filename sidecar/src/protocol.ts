@@ -36,6 +36,7 @@ export const MessageType = {
   Prompt: 'prompt',
   Ping: 'ping',
   ConfigSet: 'config.set',
+  SaveBind: 'save.bind',
   // sidecar → mod
   Ready: 'ready',
   Pong: 'pong',
@@ -44,6 +45,13 @@ export const MessageType = {
   Message: 'message',
   Error: 'error',
   ConfigState: 'config.state',
+  SaveBound: 'save.bound',
+  // M3：拉取供应商的可用模型目录 / 检测 Key
+  ModelCatalog: 'model.catalog',
+  ProviderTest: 'provider.test',
+  // M2：只读游戏工具（协议附录 B）
+  ToolCall: 'tool_call',
+  ToolResult: 'tool_result',
 } as const;
 
 export type MessageTypeName = (typeof MessageType)[keyof typeof MessageType];
@@ -51,8 +59,6 @@ export type MessageTypeName = (typeof MessageType)[keyof typeof MessageType];
 /** 服务端未实现、必须忽略的已预留类型（协议 §4.9）。 */
 export const RESERVED_TYPES: readonly string[] = [
   'abort',
-  'tool_call',
-  'tool_result',
   'confirm_request',
   'confirm_result',
   'game_event',
@@ -72,7 +78,15 @@ export type ErrorCode =
   | 'invalid_key'
   | 'upstream_error'
   | 'rate_limited'
-  | 'config_required';
+  | 'config_required'
+  // M2：工具链路
+  | 'tool_not_found'
+  | 'tool_unavailable'
+  | 'not_in_game'
+  | 'invalid_args'
+  | 'timeout'
+  | 'busy'
+  | 'cancelled';
 
 export type StatusState =
   | 'idle'
@@ -101,8 +115,39 @@ export interface ToolContentBlock {
 
 export type ContentBlock = TextContentBlock | ToolContentBlock;
 
+// ---------------------------------------------------------------- 工具（附录 B）
+
 export interface JsonObject {
   [key: string]: unknown;
+}
+
+/** `tool_call` 的负载（sidecar → mod）。 */
+export interface ToolCallPayload {
+  callId: string;
+  name: string;
+  args: JsonObject;
+  risk: 0 | 1 | 2;
+  timeoutMs: number;
+  /** true 表示 sidecar 内部调用（如知识库导出），mod 不显示工具卡。 */
+  internal?: boolean;
+}
+
+/** `tool_result.error`（mod → sidecar）。 */
+export interface ToolErrorPayload {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
+/**
+ * `tool_result` 的负载（mod → sidecar）。
+ * `data` 只要求是合法 JSON；具体形状由各工具自己的 schema 约束。
+ */
+export interface ToolResultPayload {
+  ok: boolean;
+  data: unknown;
+  error: ToolErrorPayload | null;
+  meta: JsonObject;
 }
 
 // ---------------------------------------------------------------- 基础取值
@@ -296,7 +341,60 @@ export function parsePromptPayload(payload: JsonObject): PromptPayload | null {
   };
 }
 
+// ---------------------------------------------------------------- 存档绑定（附录 A.6）
+
+export interface SaveBindPayload {
+  saveKey: string | null;
+  saveName: string | null;
+}
+
+/**
+ * 解析 `save.bind`。`saveKey` 必须存在，但允许为 null（回到主菜单 = 解绑）。
+ * 缺失字段 / 类型不符 ⇒ null（bad_request）。
+ */
+export function parseSaveBindPayload(payload: JsonObject): SaveBindPayload | null {
+  const key = payload['saveKey'];
+  if (key === undefined) return null;
+  if (key !== null && typeof key !== 'string') return null;
+
+  const name = payload['saveName'];
+  if (name !== undefined && name !== null && typeof name !== 'string') return null;
+
+  return {
+    saveKey: key === null ? null : key,
+    saveName: typeof name === 'string' && name.length > 0 ? name : null,
+  };
+}
+
+export function buildSaveBoundPayload(args: {
+  saveKey: string | null;
+  saveName: string | null;
+  existed: boolean;
+  messageCount: number;
+}): JsonObject {
+  return {
+    saveKey: args.saveKey,
+    saveName: args.saveName,
+    existed: args.existed,
+    messageCount: args.messageCount,
+  };
+}
+
 // ---------------------------------------------------------------- 配置（附录 A）
+
+/**
+ * 思考档位，取值与 pi 的 `ThinkingLevel` 完全一致。
+ *
+ * DeepSeek 的 `thinkingLevelMap` 只映射 `high` / `max`，其它档位会被 pi
+ * clamp 到这两个之一；`off` 表示完全不请求思考。
+ */
+export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ThinkingLevelName = (typeof THINKING_LEVELS)[number];
+export const DEFAULT_THINKING_LEVEL: ThinkingLevelName = 'high';
+
+export function isThinkingLevel(value: unknown): value is ThinkingLevelName {
+  return typeof value === 'string' && (THINKING_LEVELS as readonly string[]).includes(value);
+}
 
 /** `config.state.payload.state` / `ready.payload.config.state` 的取值（附录 A.1）。 */
 export type ConfigStateValue = 'ready' | 'missing_key' | 'invalid_key' | 'unreachable';
@@ -305,23 +403,111 @@ export type ConfigStateValue = 'ready' | 'missing_key' | 'invalid_key' | 'unreac
  * `config.state` 与 `ready.payload.config` 共用的视图。
  * **任何字段都不得包含 apiKey**（附录 A.4）。
  */
+export interface ModelEntry {
+  id: string;
+  name: string;
+}
+
+/** 一个供应商的只读视图；`hasKey` 只表示是否配置过，绝不回传 key。 */
+export interface ProviderView {
+  id: string;
+  name: string;
+  hasKey: boolean;
+  baseUrl: string | null;
+  models: ModelEntry[];
+  isActive: boolean;
+}
+
 export interface ConfigView {
   state: ConfigStateValue;
   provider: string;
   model: string;
+  /** 思考档位；只影响下一次 prompt。 */
+  thinkingLevel: ThinkingLevelName;
   message: string | null;
+  /** 多供应商配置；老服务端不返回时 mod 回退到 provider/model 单条。 */
+  providers: ProviderView[];
+  /** 当前选中的 provider/model（与 provider/model 冗余，便于新客户端读取）。 */
+  active: { provider: string; model: string };
+}
+
+/** 对单个供应商的增量更新；未给出的字段保持不变，`apiKey: ""` 表示清除。 */
+export interface ProviderPatch {
+  apiKey?: string;
+  baseUrl?: string | null;
+  /** 整份替换该供应商的模型列表。 */
+  models?: ModelEntry[];
 }
 
 /**
  * `config.set` 的增量更新（附录 A.1）。
  * 只包含**给出**的字段；未给出的保持不变。
  * `baseUrl: null` 显式表示「清除覆盖」。
+ *
+ * 多供应商有两种写法，可同时出现：
+ *   * 老字段（provider/model/apiKey/baseUrl）→ 更新**当前**供应商；
+ *   * `providerConfig` / `removeProviders` / `active*` → 批量维护供应商列表。
  */
 export interface ConfigUpdatePayload {
   provider?: string;
   model?: string;
   apiKey?: string;
   baseUrl?: string | null;
+  /** 思考档位；必须是 {@link THINKING_LEVELS} 之一。 */
+  thinkingLevel?: ThinkingLevelName;
+  /** 键 = provider id，值 = 该供应商的增量。 */
+  providerConfig?: Record<string, ProviderPatch>;
+  /** 要删除的 provider id。 */
+  removeProviders?: string[];
+  activeProvider?: string;
+  activeModel?: string;
+}
+
+function parseModelEntries(value: unknown): ModelEntry[] | null {
+  if (!Array.isArray(value)) return null;
+  const models: ModelEntry[] = [];
+  for (const item of value) {
+    if (!isPlainObject(item)) return null;
+    const id = item['id'];
+    if (typeof id !== 'string' || id.length === 0) return null;
+    const name = item['name'];
+    if (name !== undefined && name !== null && typeof name !== 'string') return null;
+    models.push({ id, name: typeof name === 'string' && name.length > 0 ? name : id });
+  }
+  return models;
+}
+
+function parseProviderConfig(value: unknown): Record<string, ProviderPatch> | null {
+  if (!isPlainObject(value)) return null;
+  const out: Record<string, ProviderPatch> = {};
+  for (const [id, raw] of Object.entries(value)) {
+    if (id.length === 0) return null;
+    if (!isPlainObject(raw)) return null;
+    const patch: ProviderPatch = {};
+
+    const apiKey = raw['apiKey'];
+    if (apiKey !== undefined && apiKey !== null) {
+      if (typeof apiKey !== 'string') return null;
+      patch.apiKey = apiKey;
+    }
+
+    const baseUrl = raw['baseUrl'];
+    if (baseUrl !== undefined) {
+      if (baseUrl === null) patch.baseUrl = null;
+      else if (typeof baseUrl === 'string') patch.baseUrl = baseUrl;
+      else return null;
+    }
+
+    const models = raw['models'];
+    if (models !== undefined && models !== null) {
+      const parsed = parseModelEntries(models);
+      if (parsed === null) return null;
+      patch.models = parsed;
+    }
+
+    out[id] = patch;
+  }
+  return out;
 }
 
 /**
@@ -329,7 +515,7 @@ export interface ConfigUpdatePayload {
  *
  * - 字段缺失 ⇒ 不改动。
  * - `baseUrl: null` ⇒ 清除 baseUrl 覆盖；其它字段 `null` 视为「未给出」。
- * - 字段存在但不是 string（且不是 baseUrl 的 null）⇒ 返回 null（bad_request）。
+ * - 字段存在但类型不对 ⇒ 返回 null（bad_request）。
  *
  * 注意：`apiKey` 是本协议中**唯一**允许承载密钥的字段（附录 A.4）。
  */
@@ -361,7 +547,145 @@ export function parseConfigSetPayload(payload: JsonObject): ConfigUpdatePayload 
     else return null;
   }
 
+  // 思考档位：只接受 pi 认识的取值，避免把任意字符串透传给 pi。
+  const thinkingLevel = payload['thinkingLevel'];
+  if (thinkingLevel !== undefined && thinkingLevel !== null) {
+    if (!isThinkingLevel(thinkingLevel)) return null;
+    out.thinkingLevel = thinkingLevel;
+  }
+
+  // ---- 多供应商（M3）----
+  const providerConfig = payload['providerConfig'];
+  if (providerConfig !== undefined && providerConfig !== null) {
+    const parsed = parseProviderConfig(providerConfig);
+    if (parsed === null) return null;
+    out.providerConfig = parsed;
+  }
+
+  const removeProviders = payload['removeProviders'];
+  if (removeProviders !== undefined && removeProviders !== null) {
+    if (!Array.isArray(removeProviders)) return null;
+    const ids: string[] = [];
+    for (const item of removeProviders) {
+      if (typeof item !== 'string' || item.length === 0) return null;
+      ids.push(item);
+    }
+    out.removeProviders = ids;
+  }
+
+  const activeProvider = payload['activeProvider'];
+  if (activeProvider !== undefined && activeProvider !== null) {
+    if (typeof activeProvider !== 'string' || activeProvider.length === 0) return null;
+    out.activeProvider = activeProvider;
+  }
+
+  const activeModel = payload['activeModel'];
+  if (activeModel !== undefined && activeModel !== null) {
+    if (typeof activeModel !== 'string' || activeModel.length === 0) return null;
+    out.activeModel = activeModel;
+  }
+
   return out;
+}
+
+export interface ModelCatalogEntry {
+  id: string;
+  name: string;
+}
+
+export interface ModelCatalogRequest {
+  provider: string;
+  baseUrl: string | null;
+  apiKey: string | null;
+}
+
+export interface ModelCatalogResult {
+  provider: string;
+  models: ModelCatalogEntry[];
+  source: 'catalog' | 'openai-compatible' | 'none';
+  error: string | null;
+}
+
+/** `model.catalog` 请求：provider 必填；baseUrl/apiKey 可选（草稿值优先）。 */
+export function parseModelCatalogPayload(payload: JsonObject): ModelCatalogRequest | null {
+  const provider = payload['provider'];
+  if (typeof provider !== 'string' || provider.length === 0) return null;
+
+  let baseUrl: string | null = null;
+  const rawBase = payload['baseUrl'];
+  if (rawBase !== undefined && rawBase !== null) {
+    if (typeof rawBase !== 'string') return null;
+    const trimmed = rawBase.trim();
+    baseUrl = trimmed.length > 0 ? trimmed : null;
+  }
+
+  let apiKey: string | null = null;
+  const rawKey = payload['apiKey'];
+  if (rawKey !== undefined && rawKey !== null) {
+    if (typeof rawKey !== 'string') return null;
+    apiKey = rawKey.length > 0 ? rawKey : null;
+  }
+
+  return { provider, baseUrl, apiKey };
+}
+
+export interface ProviderTestRequest {
+  provider: string;
+  baseUrl: string | null;
+  apiKey: string | null;
+}
+
+export interface ProviderTestResult {
+  provider: string;
+  ok: boolean;
+  status: number;
+  latencyMs: number;
+  message: string;
+  source: 'http' | 'none';
+}
+
+/** `provider.test` 请求：provider 必填；baseUrl/apiKey 可选（草稿值优先）。 */
+export function parseProviderTestPayload(payload: JsonObject): ProviderTestRequest | null {
+  const provider = payload['provider'];
+  if (typeof provider !== 'string' || provider.length === 0) return null;
+
+  let baseUrl: string | null = null;
+  const rawBase = payload['baseUrl'];
+  if (rawBase !== undefined && rawBase !== null) {
+    if (typeof rawBase !== 'string') return null;
+    const trimmed = rawBase.trim();
+    baseUrl = trimmed.length > 0 ? trimmed : null;
+  }
+
+  let apiKey: string | null = null;
+  const rawKey = payload['apiKey'];
+  if (rawKey !== undefined && rawKey !== null) {
+    if (typeof rawKey !== 'string') return null;
+    apiKey = rawKey.length > 0 ? rawKey : null;
+  }
+
+  return { provider, baseUrl, apiKey };
+}
+
+export function buildProviderTestPayload(result: ProviderTestResult): JsonObject {
+  return {
+    provider: result.provider,
+    ok: result.ok,
+    status: result.status,
+    latencyMs: result.latencyMs,
+    message: result.message,
+    source: result.source,
+  };
+}
+
+export function buildModelCatalogPayload(result: ModelCatalogResult): JsonObject {
+  const payload: JsonObject = {
+    provider: result.provider,
+    models: result.models.map((model) => ({ id: model.id, name: model.name })),
+    source: result.source,
+  };
+  if (result.error) payload['error'] = result.error;
+  return payload;
 }
 
 export interface AgentInfo {
@@ -397,11 +721,25 @@ export function buildReadyPayload(args: {
 
 /** `config.state` / `ready.payload.config` 的载荷（附录 A.1 / A.2）。绝不含 apiKey。 */
 export function buildConfigStatePayload(view: ConfigView): JsonObject {
+  // 老测试夹具/老 agent 可能只给 provider/model：缺 providers 时合成一条，
+  // 避免 ready 构造直接抛异常（真实 ConfigStore 永远会给全）。
+  const providers = Array.isArray(view.providers) ? view.providers : [];
+  const active = view.active ?? { provider: view.provider, model: view.model };
   return {
     state: view.state,
     provider: view.provider,
     model: view.model,
+    thinkingLevel: view.thinkingLevel,
     message: view.message,
+    providers: providers.map((provider) => ({
+      id: provider.id,
+      name: provider.name,
+      hasKey: provider.hasKey,
+      baseUrl: provider.baseUrl,
+      models: (provider.models ?? []).map((model) => ({ id: model.id, name: model.name })),
+      isActive: provider.isActive,
+    })),
+    active: { provider: active.provider, model: active.model },
   };
 }
 
@@ -409,6 +747,47 @@ export function buildStatusPayload(state: StatusState, detail?: string): JsonObj
   const payload: JsonObject = { state };
   if (detail) payload['detail'] = detail;
   return payload;
+}
+
+export function buildToolCallPayload(args: ToolCallPayload): JsonObject {
+  const payload: JsonObject = {
+    callId: args.callId,
+    name: args.name,
+    args: args.args,
+    risk: args.risk,
+    timeoutMs: args.timeoutMs,
+  };
+  if (args.internal === true) payload['internal'] = true;
+  return payload;
+}
+
+/**
+ * 解析 `tool_result`。`ok` 缺失或不是 boolean ⇒ null（协议违例）。
+ * 其余字段宽容：缺 `error` / `meta` 时给出安全默认值。
+ */
+export function parseToolResultPayload(payload: JsonObject): ToolResultPayload | null {
+  const ok = payload['ok'];
+  if (typeof ok !== 'boolean') return null;
+
+  const data = payload['data'] === undefined ? null : payload['data'];
+
+  let error: ToolErrorPayload | null = null;
+  const rawError = payload['error'];
+  if (rawError !== undefined && rawError !== null) {
+    if (!isPlainObject(rawError)) return null;
+    const code = typeof rawError['code'] === 'string' ? rawError['code'] : 'tool_failed';
+    error = {
+      code,
+      message: typeof rawError['message'] === 'string' ? rawError['message'] : '',
+      retryable:
+        typeof rawError['retryable'] === 'boolean' ? rawError['retryable'] : false,
+    };
+  }
+
+  const rawMeta = payload['meta'];
+  const meta: JsonObject = isPlainObject(rawMeta) ? rawMeta : {};
+
+  return { ok, data, error, meta };
 }
 
 export function buildStreamPayload(channel: StreamChannel, delta: string): JsonObject {

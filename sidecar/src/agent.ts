@@ -24,16 +24,25 @@ import type {
   ModelRuntime,
   ResourceLoader,
 } from '@earendil-works/pi-coding-agent';
-import { type ConfigStore, maskSecret, redactSecrets } from './config.js';
+import type { Api, Model } from '@earendil-works/pi-ai';
+import { type ConfigStore, maskSecret, providerDisplayName, redactSecrets } from './config.js';
 import { ICARUS_II_PERSONA_NAME, ICARUS_II_SYSTEM_PROMPT } from './persona.js';
 import { errorFields, type Logger, type LogFields, log as rootLog } from './log.js';
 import type {
   AgentInfo,
   ConfigView,
   ErrorCode,
+  JsonObject,
+  ModelCatalogEntry,
+  ModelCatalogResult,
+  ProviderTestResult,
   StatusState,
   StreamChannel,
+  ToolResultPayload,
 } from './protocol.js';
+import type { GameToolHost } from './tools/host.js';
+import { createKbTools } from './kb/tools.js';
+import type { KnowledgeStore } from './kb/store.js';
 
 /** pi SDK 的完整类型（仅类型层面；运行时不静态引用）。 */
 type PiSdk = typeof import('@earendil-works/pi-coding-agent');
@@ -56,6 +65,15 @@ export interface AgentEmitter {
   error(code: ErrorCode, message: string, replyTo: string | null): void;
   /** 主动推送一次 `config.state`（上游推导出的状态变化，附录 A.1）。 */
   configState(view: ConfigView): void;
+  /**
+   * 向发起本轮 prompt 的 mod 连接发一次 tool_call 并等待 tool_result。
+   * 失败/超时/断线都必须 resolve 成结构化错误，不能把异常抛给模型工具层。
+   */
+  callTool(
+    name: string,
+    args: JsonObject,
+    options: { timeoutMs: number; signal?: AbortSignal },
+  ): Promise<ToolResultPayload>;
 }
 
 export interface AgentRunner {
@@ -65,6 +83,27 @@ export interface AgentRunner {
   run(text: string, promptId: string | null, emit: AgentEmitter): Promise<void>;
   /** `config.set` 落地后调用：让下一次 run 使用新配置。 */
   onConfigChanged(): void;
+  /** 握手完成后同步 mod 能力；能力变化时 agent 应重建会话。 */
+  onClientCapabilities?(capabilities: readonly string[]): void;
+  /** 切换存档；null = 回到主菜单。agent 应在回合边界重建会话。 */
+  onSaveChanged?(saveKey: string | null): void;
+  /**
+   * 拉取某个供应商的可用模型列表（M3）。
+   * 已知供应商走 pi 目录；显式给了 baseUrl 的走 OpenAI 兼容 `/models`。
+   * 失败时返回 `error`，不抛异常、不泄露 key。
+   */
+  listModels?(
+    provider: string,
+    options: { baseUrl: string | null; apiKey: string | null },
+  ): Promise<ModelCatalogResult>;
+  /**
+   * 检测某个供应商的 API Key/端点是否可用（M3）。只做轻量 `/models` 探测，
+   * 不发聊天请求、不产生 token 费用；失败时返回 ok=false，不抛异常。
+   */
+  testProvider?(
+    provider: string,
+    options: { baseUrl: string | null; apiKey: string | null },
+  ): Promise<ProviderTestResult>;
   dispose(): void;
 }
 
@@ -80,6 +119,32 @@ export function tick(): Promise<void> {
  */
 export class EchoAgent implements AgentRunner {
   readonly info: AgentInfo = { provider: 'echo', model: 'm0-echo', available: true };
+
+  async listModels(
+    provider: string,
+    _options: { baseUrl: string | null; apiKey: string | null },
+  ): Promise<ModelCatalogResult> {
+    return {
+      provider,
+      models: [{ id: this.info.model, name: this.info.model }],
+      source: 'catalog',
+      error: null,
+    };
+  }
+
+  async testProvider(
+    provider: string,
+    _options: { baseUrl: string | null; apiKey: string | null },
+  ): Promise<ProviderTestResult> {
+    return {
+      provider,
+      ok: true,
+      status: 200,
+      latencyMs: 0,
+      message: 'echo agent',
+      source: 'none',
+    };
+  }
 
   async run(text: string, promptId: string | null, emit: AgentEmitter): Promise<void> {
     if (!emit.isActive()) return;
@@ -115,6 +180,10 @@ export class EchoAgent implements AgentRunner {
 export interface PiAgentOptions {
   dataDir: string;
   store: ConfigStore;
+  /** 工具宿主：按本轮 prompt 绑定的 mod 连接执行工具。 */
+  host: GameToolHost;
+  /** M3 知识库；kb_* 工具始终注册，未建立时返回 kb_unavailable。 */
+  kb?: KnowledgeStore;
   logger?: Logger;
   /** 便于测试注入 pi SDK；缺省时懒加载真实 SDK。 */
   loadSdk?: () => Promise<PiSdk>;
@@ -338,6 +407,123 @@ function createPersonaResourceLoader(
 }
 
 /**
+ * 用 `GET /models` 做一次轻量的 Key/连通性探测。
+ * 不发聊天请求，不产生 token 费用；返回人类可读结果，绝不回传 key。
+ */
+async function probeProviderKey(
+  provider: string,
+  baseUrl: string,
+  apiKey: string,
+  api: string | null,
+): Promise<ProviderTestResult> {
+  const anthropic =
+    provider === 'anthropic' || /anthropic/i.test(baseUrl) || Boolean(api && /anthropic/i.test(api));
+  const google =
+    provider === 'google' ||
+    provider.startsWith('google-') ||
+    /generativelanguage|googleapis/i.test(baseUrl);
+
+  const headers: Record<string, string> = { accept: 'application/json' };
+  let url: string;
+  let rawBase = baseUrl.replace(/\/+$/, '');
+
+  if (anthropic) {
+    if (!/\/v1$/.test(rawBase)) rawBase += '/v1';
+    url = `${rawBase}/models`;
+    headers['x-api-key'] = apiKey;
+    headers['anthropic-version'] = '2023-06-01';
+  } else if (google) {
+    if (!/\/(v1beta|v1)$/.test(rawBase)) rawBase += '/v1beta';
+    url = `${rawBase}/models?key=${encodeURIComponent(apiKey)}`;
+  } else {
+    url = rawBase.endsWith('/models') ? rawBase : `${rawBase}/models`;
+    headers.authorization = `Bearer ${apiKey}`;
+  }
+
+  const started = Date.now();
+  try {
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+    const latencyMs = Date.now() - started;
+    if (response.ok) {
+      return { provider, ok: true, status: response.status, latencyMs, message: 'Key 可用', source: 'http' };
+    }
+    const message =
+      response.status === 401 || response.status === 403
+        ? `API Key 被拒绝（HTTP ${response.status}）`
+        : response.status === 404
+          ? '端点没有 /models 接口（HTTP 404）'
+          : response.status === 429
+            ? '请求被限流（HTTP 429）'
+            : `端点返回 HTTP ${response.status}`;
+    return { provider, ok: false, status: response.status, latencyMs, message, source: 'http' };
+  } catch (err) {
+    const raw = describeError(err);
+    const safe = redactSecrets(raw, [apiKey]);
+    const message = /timeout|aborted/i.test(raw) ? '检测超时' : `网络错误：${safe}`;
+    return { provider, ok: false, status: 0, latencyMs: Date.now() - started, message, source: 'http' };
+  }
+}
+
+/**
+ * 调 OpenAI 兼容的 `GET {baseUrl}/models`。
+ * 返回 `models` + 可选错误；调用方仍可退回 pi 目录。
+ */
+async function fetchOpenAICompatibleModels(
+  baseUrl: string,
+  apiKey: string | null,
+): Promise<{ models: ModelCatalogEntry[]; source: 'openai-compatible' | 'none'; error: string | null }> {
+  const base = baseUrl.replace(/\/+$/, '');
+  const url = base.endsWith('/models') ? base : `${base}/models`;
+  const headers: Record<string, string> = { accept: 'application/json' };
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+
+  try {
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(12000) });
+    if (!response.ok) {
+      const hint =
+        response.status === 401 || response.status === 403
+          ? 'API Key 被拒绝'
+          : `HTTP ${response.status}`;
+      return { models: [], source: 'none', error: `获取模型列表失败：${hint}` };
+    }
+    const body = (await response.json()) as unknown;
+    const list =
+      body && typeof body === 'object' && Array.isArray((body as Record<string, unknown>)['data'])
+        ? ((body as Record<string, unknown>)['data'] as unknown[])
+        : body && typeof body === 'object' && Array.isArray((body as Record<string, unknown>)['models'])
+          ? ((body as Record<string, unknown>)['models'] as unknown[])
+          : [];
+
+    const seen = new Set<string>();
+    const models: ModelCatalogEntry[] = [];
+    for (const item of list) {
+      let id = '';
+      let name = '';
+      if (typeof item === 'string') {
+        id = item;
+        name = item;
+      } else if (item && typeof item === 'object') {
+        const obj = item as Record<string, unknown>;
+        if (typeof obj['id'] === 'string') id = obj['id'];
+        else if (typeof obj['name'] === 'string') id = obj['name'];
+        if (typeof obj['name'] === 'string') name = obj['name'];
+        else if (typeof obj['id'] === 'string') name = obj['id'];
+      }
+      id = id.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      models.push({ id, name: name.trim() || id });
+    }
+    return { models, source: 'openai-compatible', error: null };
+  } catch (err) {
+    const raw = describeError(err);
+    const safe = redactSecrets(raw, apiKey ? [apiKey] : []);
+    const message = /timeout|aborted/i.test(raw) ? '获取模型列表超时' : `获取模型列表失败：${safe}`;
+    return { models: [], source: 'none', error: message };
+  }
+}
+
+/**
  * pi 驱动的对话 agent。
  *
  * 隔离约定（不与用户环境互相污染）：
@@ -346,8 +532,8 @@ function createPersonaResourceLoader(
  *   - `ModelRuntime` 的 `authPath` / `modelsPath` 都在 `agentDir` 内，
  *     凭证由内存中的 CredentialStore 提供（不落地 auth.json）
  *   - `allowModelNetwork: false`：创建时不做任何模型目录网络刷新
- *   - `thinkingLevel: "off"`：M1 默认不请求思考（deepseek 的 thinkingLevelMap
- *     把 medium 映射为 null，pi 的 clamp 会把默认的 medium 提升成 high）
+ *   - 思考档位来自配置（默认 `high`）：默认请求思考；玩家可在聊天窗
+ *     下拉框里选 `off` 关闭，或选 `max` 提高强度
  *   - system prompt 被**整个替换**成游戏内助手人格（见 persona.ts），
  *     pi 的 coding agent 身份不会出现在上游请求里
  */
@@ -355,6 +541,8 @@ export class PiAgent implements AgentRunner {
   private readonly dataDir: string;
   private readonly agentDir: string;
   private readonly store: ConfigStore;
+  private readonly host: GameToolHost;
+  private readonly kb: KnowledgeStore | null;
   private readonly logger: Logger;
   private readonly loadSdk: () => Promise<PiSdk>;
 
@@ -364,6 +552,8 @@ export class PiAgent implements AgentRunner {
   private active: RunState | null = null;
   /** 回合运行中收到 config.set 时，延后到回合结束再重建会话。 */
   private pendingTeardown = false;
+  /** 当前绑定的存档；每个存档使用独立的 session 目录。 */
+  private saveKey: string | null = null;
   /** 进程内全局串行：多连接共用同一个 pi 会话。 */
   private chain: Promise<unknown> = Promise.resolve();
 
@@ -371,6 +561,8 @@ export class PiAgent implements AgentRunner {
     this.dataDir = options.dataDir;
     this.agentDir = join(options.dataDir, 'agent');
     this.store = options.store;
+    this.host = options.host;
+    this.kb = options.kb ?? null;
     this.logger = (options.logger ?? rootLog).child({ component: 'pi-agent' });
     this.loadSdk =
       options.loadSdk ?? (() => import('@earendil-works/pi-coding-agent') as Promise<PiSdk>);
@@ -388,12 +580,40 @@ export class PiAgent implements AgentRunner {
       this.pendingTeardown = true;
       this.logger.info('配置变化：当前回合结束后重建 pi 会话', {
         apiKey: this.store.maskedApiKey,
+        thinkingLevel: this.store.get().thinkingLevel,
       });
       return;
     }
     this.logger.info('配置变化，丢弃 pi 会话，下一次 prompt 重新建立', {
       apiKey: this.store.maskedApiKey,
+      thinkingLevel: this.store.get().thinkingLevel,
     });
+    this.teardown();
+  }
+
+  onClientCapabilities(capabilities: readonly string[]): void {
+    const changed = this.host.setCapabilities(capabilities);
+    if (!changed) return;
+
+    this.logger.info('mod 能力变化，工具集将按新能力重建', {
+      capabilities: [...capabilities],
+    });
+    if (this.active) {
+      this.pendingTeardown = true;
+      return;
+    }
+    this.teardown();
+  }
+
+  onSaveChanged(saveKey: string | null): void {
+    if (this.saveKey === saveKey) return;
+    this.saveKey = saveKey;
+    this.logger.info('存档变化，切换对话会话', { saveKey });
+
+    if (this.active) {
+      this.pendingTeardown = true;
+      return;
+    }
     this.teardown();
   }
 
@@ -444,7 +664,8 @@ export class PiAgent implements AgentRunner {
 
     if (!data.apiKey) {
       // 未配置：不建会话、不联网（协议附录 A.3 的 config_required）。
-      emit.error('config_required', '尚未配置 API Key', promptId);
+      const name = providerDisplayName(data.provider);
+      emit.error('config_required', `尚未配置 API Key（${name}）`, promptId);
       return;
     }
     if (!emit.isActive()) return;
@@ -456,7 +677,14 @@ export class PiAgent implements AgentRunner {
 
     let session: AgentSession;
     try {
-      session = await this.ensureSession(data.provider, data.model, data.apiKey, data.baseUrl);
+      session = await this.ensureSession(
+        data.provider,
+        data.model,
+        data.apiKey,
+        data.baseUrl,
+        data.thinkingLevel,
+        data.providers[data.provider]?.models.find((m) => m.id === data.model)?.name,
+      );
     } catch (err) {
       // 建会话失败 = LLM/模型不可用（协议 §4.8），与上游请求错误区分开。
       const safe = redactSecrets(describeError(err), [data.apiKey]);
@@ -473,9 +701,11 @@ export class PiAgent implements AgentRunner {
       return;
     }
 
+    // 工具只发往发起本轮 prompt 的连接；prompt 结束立即解绑。
+    this.host.bind(emit);
     try {
       if (!emit.isActive()) return;
-      // 纯对话：不解析斜杠命令/模板。
+      // 不解析斜杠命令/模板。
       await session.prompt(text, { expandPromptTemplates: false });
     } catch (err) {
       run.error = run.error ?? describeError(err);
@@ -486,6 +716,7 @@ export class PiAgent implements AgentRunner {
         apiKey: this.store.maskedApiKey,
       });
     } finally {
+      this.host.unbind(emit);
       this.active = null;
     }
 
@@ -515,17 +746,224 @@ export class PiAgent implements AgentRunner {
 
   // ---------------------------------------------------------------- pi 生命周期
 
-  private async ensureSession(
+  /** 存档目录名：mod 传的是十六进制串，仍做一次白名单清洗防御异常输入。 */
+  private sessionDirName(): string {
+    const raw = this.saveKey ?? 'menu';
+    const safe = raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+    return safe.length > 0 ? safe : 'menu';
+  }
+
+  /**
+   * 把配置里的 provider/model 解析成 pi 的 `Model` 对象。
+   *
+   * - 目录里有的模型：直接返回；
+   * - 目录里没有、但该 provider 有其它模型：借第一条的 api/baseUrl/compat，
+   *   只替换 id/name（新模型或第三方中转常常这样用）；
+   * - 目录里也没有、但玩家填了 baseUrl：按 OpenAI 兼容协议现造一条；
+   * - 都没有：返回 undefined，由调用方报「未知模型」。
+   */
+  private resolveModel(
+    runtime: ModelRuntime,
     provider: string,
     modelId: string,
     apiKey: string,
     baseUrl: string | null,
-  ): Promise<AgentSession> {
-    if (this.session) return this.session;
+    displayName?: string,
+  ): Model<Api> | undefined {
+    const exact = runtime.getModel(provider, modelId);
+    const template = exact ?? runtime.getModels(provider)[0];
+    if (template) {
+      const model = {
+        ...template,
+        id: modelId,
+        name: displayName || exact?.name || modelId,
+      } as Model<Api>;
+      return baseUrl ? { ...model, baseUrl } : model;
+    }
 
-    const pi = await this.loadSdk();
+    if (!baseUrl) return undefined;
 
-    const runtime = await pi.ModelRuntime.create({
+    // 自定义 OpenAI 兼容端点：没有目录元数据，给一组保守默认值。
+    const custom: Model<Api> = {
+      id: modelId,
+      name: displayName || modelId,
+      api: 'openai-completions',
+      provider,
+      baseUrl,
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 8192,
+    };
+    // 直接传 model 对象还不足以让 ModelRuntime 找到凭证：把整条供应商注册进
+    // runtime（含 key / baseUrl），pi 的 getAuth 才会为它返回 api_key。
+    try {
+      runtime.registerProvider(provider, {
+        name: providerDisplayName(provider),
+        baseUrl,
+        apiKey,
+        api: 'openai-completions',
+        models: [{
+          id: modelId,
+          name: custom.name,
+          api: 'openai-completions',
+          baseUrl,
+          reasoning: false,
+          input: ['text'],
+          cost: custom.cost,
+          contextWindow: custom.contextWindow,
+          maxTokens: custom.maxTokens,
+        }],
+      });
+      return runtime.getModel(provider, modelId) ?? custom;
+    } catch (err) {
+      this.logger.warn('注册自定义供应商失败，改用裸模型对象', {
+        provider,
+        model: modelId,
+        ...errorFields(err),
+      });
+      return custom;
+    }
+  }
+
+  async testProvider(
+    provider: string,
+    options: { baseUrl: string | null; apiKey: string | null },
+  ): Promise<ProviderTestResult> {
+    const data = this.store.get();
+    const stored = data.providers[provider];
+    const baseUrl =
+      options.baseUrl ?? stored?.baseUrl ?? (provider === data.provider ? data.baseUrl : null);
+    const apiKey =
+      options.apiKey ?? stored?.apiKey ?? (provider === data.provider ? data.apiKey : null);
+
+    if (!apiKey) {
+      return {
+        provider,
+        ok: false,
+        status: 0,
+        latencyMs: 0,
+        message: '没有 API Key',
+        source: 'none',
+      };
+    }
+
+    let pi: PiSdk;
+    try {
+      pi = await this.loadSdk();
+    } catch (err) {
+      return {
+        provider,
+        ok: false,
+        status: 0,
+        latencyMs: 0,
+        message: redactSecrets(describeError(err), [apiKey]),
+        source: 'none',
+      };
+    }
+
+    // 没显式 baseUrl 时从 pi 目录里借第一条模型的端点（DeepSeek/OpenAI/Anthropic 都有）。
+    let resolvedBase = baseUrl;
+    let api: string | null = null;
+    if (!resolvedBase) {
+      try {
+        const runtime = await this.createRuntime(pi, provider, apiKey);
+        const first = runtime.getModels(provider)[0];
+        resolvedBase = first?.baseUrl ?? null;
+        api = first?.api ?? null;
+      } catch (err) {
+        this.logger.debug('读取供应商端点失败', { provider, ...errorFields(err) });
+      }
+    }
+    if (!resolvedBase) {
+      return {
+        provider,
+        ok: false,
+        status: 0,
+        latencyMs: 0,
+        message: '没有可用的 API 地址',
+        source: 'none',
+      };
+    }
+
+    const result = await probeProviderKey(provider, resolvedBase, apiKey, api);
+    this.logger.info('检测供应商 Key', {
+      provider,
+      status: result.status,
+      ok: result.ok,
+      source: result.source,
+    });
+    return result;
+  }
+
+  async listModels(
+    provider: string,
+    options: { baseUrl: string | null; apiKey: string | null },
+  ): Promise<ModelCatalogResult> {
+    const data = this.store.get();
+    const stored = data.providers[provider];
+    const baseUrl = options.baseUrl ?? stored?.baseUrl ?? (provider === data.provider ? data.baseUrl : null);
+    const apiKey = options.apiKey ?? stored?.apiKey ?? (provider === data.provider ? data.apiKey : null);
+
+    let pi: PiSdk;
+    try {
+      pi = await this.loadSdk();
+    } catch (err) {
+      const message = redactSecrets(describeError(err), apiKey ? [apiKey] : []);
+      return { provider, models: [], source: 'none', error: message };
+    }
+
+    // 显式 baseUrl 只问端点：中转站/本地推理的模型 id 往往不在 pi 目录里，
+    // 这时拿官方目录来“兜底”反而会列出端点根本没有的模型。
+    if (baseUrl) {
+      const fetched = await fetchOpenAICompatibleModels(baseUrl, apiKey);
+      if (fetched.models.length > 0) {
+        this.logger.info('获取模型目录', { provider, source: fetched.source, count: fetched.models.length });
+        return { provider, models: fetched.models, source: fetched.source, error: null };
+      }
+      return {
+        provider,
+        models: [],
+        source: 'none',
+        error: fetched.error ?? '端点没有返回模型列表',
+      };
+    }
+
+    const catalog = await this.catalogModels(pi, provider, apiKey);
+    if (catalog.length > 0) {
+      this.logger.info('获取模型目录', { provider, source: 'catalog', count: catalog.length });
+      return { provider, models: catalog, source: 'catalog', error: null };
+    }
+
+    return {
+      provider,
+      models: [],
+      source: 'none',
+      error: `没有 ${providerDisplayName(provider)} 的内置模型目录；请填写 API 地址后重试`,
+    };
+  }
+
+  private async catalogModels(pi: PiSdk, provider: string, apiKey: string | null): Promise<ModelCatalogEntry[]> {
+    try {
+      const runtime = await this.createRuntime(pi, provider, apiKey ?? '');
+      const seen = new Set<string>();
+      const out: ModelCatalogEntry[] = [];
+      for (const model of runtime.getModels(provider)) {
+        if (!model || !model.id || seen.has(model.id)) continue;
+        seen.add(model.id);
+        out.push({ id: model.id, name: model.name || model.id });
+      }
+      return out;
+    } catch (err) {
+      this.logger.debug('读取 pi 模型目录失败', { provider, ...errorFields(err) });
+      return [];
+    }
+  }
+
+  /** 建一个只带单个供应商凭证的 pi runtime（不挂会话、不联网）。 */
+  private async createRuntime(pi: PiSdk, provider: string, apiKey: string): Promise<ModelRuntime> {
+    return pi.ModelRuntime.create({
       // 凭证只存在于内存里：不读也不写用户的 ~/.pi/agent/auth.json。
       credentials: {
         read: async (id: string) =>
@@ -549,19 +987,33 @@ export class PiAgent implements AgentRunner {
       modelsPath: join(this.agentDir, 'models.json'),
       allowModelNetwork: false,
     });
+  }
 
-    const base = runtime.getModel(provider, modelId);
-    if (!base) {
+  private async ensureSession(
+    provider: string,
+    modelId: string,
+    apiKey: string,
+    baseUrl: string | null,
+    thinkingLevel: string,
+    displayName?: string,
+  ): Promise<AgentSession> {
+    if (this.session) return this.session;
+
+    const pi = await this.loadSdk();
+
+    const runtime = await this.createRuntime(pi, provider, apiKey);
+
+    const model = this.resolveModel(runtime, provider, modelId, apiKey, baseUrl, displayName);
+    if (!model) {
       const known = runtime
         .getModels(provider)
         .map((m) => m.id)
         .slice(0, 8);
       throw new Error(
-        `未知模型 ${provider}/${modelId}（该 provider 可用：${known.length > 0 ? known.join(', ') : '无'}）`,
+        `未知模型 ${provider}/${modelId}（该 provider 可用：${known.length > 0 ? known.join(', ') : '无'}；` +
+          `自定义供应商请填写 API 地址）`,
       );
     }
-    // baseUrl 覆盖：配置里给了就用它，否则用 pi 目录里的官方地址。
-    const model = baseUrl ? { ...base, baseUrl } : base;
 
     const resourceLoader = createPersonaResourceLoader(pi, {
       cwd: this.dataDir,
@@ -571,17 +1023,24 @@ export class PiAgent implements AgentRunner {
     // 否则 getExtensions() 还是空的（内联人格扩展就不会被注册）。
     await resourceLoader.reload();
 
+    // 每个存档独立的 session 目录：换档 = 换会话；同一存档重连/重启会恢复最近一次会话。
+    const sessionDir = join(this.dataDir, 'sessions', this.sessionDirName());
+    const sessionManager = pi.SessionManager.continueRecent(this.dataDir, sessionDir);
+
     const options: CreateAgentSessionOptions = {
       cwd: this.dataDir,
       agentDir: this.agentDir,
       modelRuntime: runtime,
       model,
-      // deepseek 的 thinkingLevelMap 只承认 high/max；pi 会把默认的 medium
-      // clamp 成 high。M1 默认不请求思考，因此必须显式 off。
-      thinkingLevel: 'off',
-      // M1 纯对话：不启用任何工具。
+      sessionManager,
+      // 玩家选择的思考档位。DeepSeek 的 thinkingLevelMap 只映射 high/max，
+      // 其余档位由 pi 自行 clamp；`off` 表示完全不请求思考。
+      // 类型上 CreateAgentSessionOptions.thinkingLevel 是 pi 的 ThinkingLevel 联合类型，
+      // 这里的字符串已在 protocol.parseConfigSetPayload 里做过白名单校验。
+      thinkingLevel: thinkingLevel as NonNullable<CreateAgentSessionOptions['thinkingLevel']>,
+      // 关闭全部内置工具，只注册按当前 mod 能力生成的游戏工具。
       noTools: 'builtin',
-      customTools: [],
+      customTools: [...this.host.tools(), ...(this.kb ? createKbTools(this.kb) : [])],
       // 替换 pi 默认的 coding agent system prompt 为游戏内助手人格。
       resourceLoader,
     };
@@ -674,6 +1133,15 @@ export class PiAgent implements AgentRunner {
         }
         return;
       }
+
+      case 'tool_execution_start':
+        run.emit.status('tools', event.toolName);
+        return;
+
+      case 'tool_execution_end':
+        // 工具结束后模型还要继续生成；回到 thinking，避免状态栏停在“工具”。
+        run.emit.status('thinking');
+        return;
 
       case 'auto_retry_start':
         run.emit.status('retrying', `第 ${event.attempt}/${event.maxAttempts} 次重试`);

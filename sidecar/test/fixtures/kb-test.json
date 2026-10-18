@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "gameVersion": "test-1.0",
+  "locale": "zh-CN",
+  "source": "offline-extract",
+  "items": [
+    { "id": 1001, "sid": "ore-iron", "name": "铁矿", "type": 1, "isFluid": false, "canBuild": false, "iconTag": "ir" },
+    { "id": 1101, "sid": "iron-ingot", "name": "铁块", "type": 0, "mainRecipeId": 1, "iconTag": "ir" },
+    { "id": 1102, "sid": "magnet", "name": "磁铁", "type": 0, "mainRecipeId": 2 },
+    { "id": 1103, "sid": "copper-ore", "name": "铜矿", "type": 1 },
+    { "id": 1104, "sid": "copper-ingot", "name": "铜块", "type": 0, "mainRecipeId": 5 },
+    { "id": 1201, "sid": "coil", "name": "磁线圈", "type": 0, "mainRecipeId": 3 },
+    { "id": 1202, "sid": "plate", "name": "电路板", "type": 0, "mainRecipeId": 4 },
+    { "id": 1301, "sid": "hydrogen", "name": "氢", "type": 1, "mainRecipeId": 6 },
+    { "id": 1302, "sid": "refined-oil", "name": "精炼油", "type": 1, "mainRecipeId": 7 },
+    { "id": 1401, "sid": "loop-a", "name": "循环甲", "mainRecipeId": 8 },
+    { "id": 1402, "sid": "loop-b", "name": "循环乙", "mainRecipeId": 9 }
+  ],
+  "recipes": [
+    { "id": 1, "name": "铁块", "timeSpend": 60, "timeSeconds": 1, "inputs": [{ "id": 1001, "count": 1 }], "outputs": [{ "id": 1101, "count": 1 }], "handcraft": true },
+    { "id": 2, "name": "磁铁", "timeSpend": 90, "timeSeconds": 1.5, "inputs": [{ "id": 1101, "count": 1 }], "outputs": [{ "id": 1102, "count": 1 }] },
+    { "id": 3, "name": "磁线圈", "timeSpend": 60, "timeSeconds": 1, "inputs": [{ "id": 1102, "count": 1 }, { "id": 1104, "count": 1 }], "outputs": [{ "id": 1201, "count": 2 }] },
+    { "id": 4, "name": "电路板", "timeSpend": 60, "timeSeconds": 1, "inputs": [{ "id": 1201, "count": 2 }, { "id": 1101, "count": 2 }], "outputs": [{ "id": 1202, "count": 1 }] },
+    { "id": 5, "name": "铜块", "timeSpend": 60, "timeSeconds": 1, "inputs": [{ "id": 1103, "count": 1 }], "outputs": [{ "id": 1104, "count": 1 }], "handcraft": true },
+    { "id": 6, "name": "氢（副产）", "timeSpend": 120, "timeSeconds": 2, "inputs": [{ "id": 1302, "count": 1 }], "outputs": [{ "id": 1301, "count": 1 }], "nonProductive": false },
+    { "id": 7, "name": "精炼油", "timeSpend": 120, "timeSeconds": 2, "inputs": [{ "id": 1301, "count": 1 }], "outputs": [{ "id": 1302, "count": 1 }] },
+    { "id": 8, "name": "循环甲", "timeSpend": 60, "timeSeconds": 1, "inputs": [{ "id": 1402, "count": 1 }], "outputs": [{ "id": 1401, "count": 1 }] },
+    { "id": 9, "name": "循环乙", "timeSpend": 60, "timeSeconds": 1, "inputs": [{ "id": 1401, "count": 1 }], "outputs": [{ "id": 1402, "count": 1 }] }
+  ],
+  "techs": [
+    { "id": 1, "name": "基础制造", "description": "解锁铁块", "preTechs": [], "unlockRecipes": [1], "hashNeeded": 10 },
+    { "id": 2, "name": "电磁学", "description": "解锁磁线圈", "preTechs": [1], "unlockRecipes": [3], "hashNeeded": 20 }
+  ],
+  "models": [],
+  "veins": [
+    { "id": 1, "name": "铁矿脉", "miningItem": 1001 }
+  ],
+  "signals": [],
+  "texts": [
+    { "kind": "tip", "id": 1, "title": "低空飞行", "body": "按 [按键] 可以低空飞行。", "spoiler": "low", "source": "base.txt" },
+    { "kind": "tutorial", "id": 1, "title": "前情介绍", "body": "在未来，人类踏入高级文明的行列。", "spoiler": "story", "source": "Wiki/Tutorial/tutorial-1-zh.txt" },
+    { "kind": "milestone", "id": 1, "title": "里程碑：低空飞行", "body": "达成条件：进行一次低空飞行", "spoiler": "low" },
+    { "kind": "goal", "id": 1000, "title": "基础操作", "body": "基础操作", "extra": { "level": 0, "parentId": 0 } },
+    { "kind": "glossary", "id": "戴森球(字典)", "title": "戴森球", "body": "戴森球" }
+  ]
+}

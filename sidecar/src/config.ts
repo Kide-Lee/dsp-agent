@@ -1,10 +1,25 @@
 /**
  * sidecar 配置存储（协议附录 A）。
  *
- * 落盘位置：`<data-dir>/config.json`，形如
+ * 落盘位置：`<data-dir>/config.json`。M3 起支持**多供应商 / 多模型**：
  *
- *   { "provider": "deepseek", "model": "deepseek-v4-flash",
- *     "apiKey": "sk-…", "baseUrl": null }
+ *   {
+ *     "providers": {
+ *       "deepseek": {
+ *         "apiKey": "sk-…",
+ *         "baseUrl": null,
+ *         "models": [
+ *           { "id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash" },
+ *           { "id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro" }
+ *         ]
+ *       }
+ *     },
+ *     "active": { "provider": "deepseek", "model": "deepseek-v4-flash" },
+ *     "thinkingLevel": "high"
+ *   }
+ *
+ * 兼容旧格式（单条 provider/model/apiKey/baseUrl）：读盘时自动迁移成一条
+ * provider；写盘一律用新格式。
  *
  * 硬性约束（附录 A.4）：
  *   1. `apiKey` **只允许**出现在 `config.set` 的入站载荷与本文件里；
@@ -18,16 +33,92 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { errorFields, type Logger, log as rootLog } from './log.js';
-import type { ConfigStateValue, ConfigUpdatePayload, ConfigView } from './protocol.js';
+import {
+  DEFAULT_THINKING_LEVEL,
+  isThinkingLevel,
+  type ConfigStateValue,
+  type ConfigUpdatePayload,
+  type ConfigView,
+  type ModelEntry,
+  type ProviderPatch,
+  type ProviderView,
+  type ThinkingLevelName,
+} from './protocol.js';
 
 /** pi 内置目录里的权威取值（`pi-ai/dist/providers/data/deepseek.json`）。 */
 export const DEFAULT_PROVIDER = 'deepseek';
 export const DEFAULT_MODEL = 'deepseek-v4-flash';
 
+/** 首次启动时给 DeepSeek 预置的模型（与 pi 目录一致）。 */
+export const DEFAULT_DEEPSEEK_MODELS: readonly ModelEntry[] = [
+  { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
+];
+
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  deepseek: 'DeepSeek',
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google',
+  'google-vertex': 'Google Vertex',
+  'amazon-bedrock': 'Amazon Bedrock',
+  openrouter: 'OpenRouter',
+  xai: 'xAI',
+  groq: 'Groq',
+  mistral: 'Mistral',
+  cerebras: 'Cerebras',
+  nvidia: 'NVIDIA',
+  together: 'Together',
+  fireworks: 'Fireworks',
+  moonshotai: 'Moonshot',
+  'moonshotai-cn': 'Moonshot (CN)',
+  minimax: 'MiniMax',
+  'minimax-cn': 'MiniMax (CN)',
+  zai: 'Z.ai',
+  'zai-coding-cn': 'Z.ai Coding (CN)',
+  'github-copilot': 'GitHub Copilot',
+  'vercel-ai-gateway': 'Vercel AI Gateway',
+  'cloudflare-workers-ai': 'Cloudflare Workers AI',
+  'cloudflare-ai-gateway': 'Cloudflare AI Gateway',
+  'openai-codex': 'OpenAI Codex',
+  'azure-openai-responses': 'Azure OpenAI',
+  'radius': 'Radius',
+  'ant-ling': 'Ant Ling',
+  qwen: 'Qwen',
+  'qwen-token-plan': 'Qwen Token Plan',
+  huggingface: 'HuggingFace',
+  opencode: 'OpenCode',
+  kimi: 'Kimi',
+  xiaomi: 'Xiaomi',
+};
+
+export function providerDisplayName(id: string): string {
+  return PROVIDER_DISPLAY_NAMES[id] ?? id;
+}
+
 export const CONFIG_FILE_NAME = 'config.json';
 
-/** 内存中的完整配置。`apiKey` 为 null 表示未配置。 */
+/** 单个供应商的落盘数据。`apiKey` 为 null 表示未配置。 */
+export interface ProviderData {
+  apiKey: string | null;
+  baseUrl: string | null;
+  models: ModelEntry[];
+}
+
+/** 内存中的完整配置。 */
 export interface ConfigData {
+  providers: Record<string, ProviderData>;
+  activeProvider: string;
+  activeModel: string;
+  /** 思考档位；`off` = 不请求思考（默认，控制成本）。 */
+  thinkingLevel: ThinkingLevelName;
+}
+
+/**
+ * `get()` 的返回值：在完整配置之外，把**当前**供应商的 key/baseUrl 展开，
+ * 保持 agent 侧原有 `data.apiKey` / `data.baseUrl` 的用法。
+ */
+export interface ResolvedConfig extends ConfigData {
   provider: string;
   model: string;
   apiKey: string | null;
@@ -62,6 +153,54 @@ export function redactSecrets(text: string, secrets: readonly (string | null | u
   return out.replace(LOOSE_SECRET_PATTERN, (match) => maskSecret(match));
 }
 
+// ---------------------------------------------------------------- 解析工具
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isSafeId(id: string): boolean {
+  return id.length > 0 && id !== '__proto__' && id !== 'constructor' && id !== 'prototype';
+}
+
+/** 归一化模型列表：去空、去重（后出现的覆盖名字），name 缺省用 id。 */
+function normalizeModels(raw: unknown): ModelEntry[] | null {
+  if (!Array.isArray(raw)) return null;
+  const models: ModelEntry[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (!isPlainObject(item)) return null;
+    const id = item['id'];
+    if (typeof id !== 'string' || id.length === 0) return null;
+    const name = item['name'];
+    if (name !== undefined && name !== null && typeof name !== 'string') return null;
+    const entry: ModelEntry = {
+      id,
+      name: typeof name === 'string' && name.length > 0 ? name : id,
+    };
+    if (seen.has(id)) {
+      const index = models.findIndex((m) => m.id === id);
+      models[index] = entry;
+    } else {
+      seen.add(id);
+      models.push(entry);
+    }
+  }
+  return models;
+}
+
+function cloneProviders(providers: Record<string, ProviderData>): Record<string, ProviderData> {
+  const out: Record<string, ProviderData> = Object.create(null) as Record<string, ProviderData>;
+  for (const [id, provider] of Object.entries(providers)) {
+    out[id] = {
+      apiKey: provider.apiKey,
+      baseUrl: provider.baseUrl,
+      models: provider.models.map((model) => ({ ...model })),
+    };
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- 存储
 
 export interface ConfigStoreOptions {
@@ -87,13 +226,30 @@ export class ConfigStore {
     this.path = options.path;
     this.requireApiKey = options.requireApiKey ?? true;
     this.logger = (options.logger ?? rootLog).child({ component: 'config' });
+
+    const provider = options.defaults?.provider ?? DEFAULT_PROVIDER;
+    const model = options.defaults?.model ?? DEFAULT_MODEL;
+    const models =
+      provider === DEFAULT_PROVIDER
+        ? DEFAULT_DEEPSEEK_MODELS.map((m) => ({ ...m }))
+        : [{ id: model, name: model }];
+    if (!models.some((m) => m.id === model)) models.unshift({ id: model, name: model });
+
     this.data = {
-      provider: options.defaults?.provider ?? DEFAULT_PROVIDER,
-      model: options.defaults?.model ?? DEFAULT_MODEL,
-      apiKey: null,
-      baseUrl: null,
+      providers: {
+        [provider]: { apiKey: null, baseUrl: null, models },
+      },
+      activeProvider: provider,
+      activeModel: model,
+      thinkingLevel: DEFAULT_THINKING_LEVEL,
     };
     this.load();
+    this.ensureActive();
+  }
+
+  /** 当前供应商；`ensureActive()` 保证它存在，但类型上仍可能 undefined。 */
+  private active(): ProviderData | undefined {
+    return this.data.providers[this.data.activeProvider];
   }
 
   /** 容错读盘：任何异常都退化成「未配置」。 */
@@ -120,45 +276,179 @@ export class ConfigStore {
       return;
     }
 
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    if (!isPlainObject(parsed)) {
       this.logger.warn('config.json 结构非法，按未配置处理', { path: this.path });
       return;
     }
 
-    const obj = parsed as Record<string, unknown>;
-    const provider = obj['provider'];
-    if (typeof provider === 'string' && provider.length > 0) this.data.provider = provider;
+    const providers: Record<string, ProviderData> = Object.create(null) as Record<string, ProviderData>;
+    const rawProviders = parsed['providers'];
+    if (isPlainObject(rawProviders)) {
+      for (const [id, rawProvider] of Object.entries(rawProviders)) {
+        if (!isSafeId(id) || !isPlainObject(rawProvider)) continue;
+        const models = normalizeModels(rawProvider['models']) ?? [];
+        const apiKey = rawProvider['apiKey'];
+        const baseUrl = rawProvider['baseUrl'];
+        providers[id] = {
+          apiKey: typeof apiKey === 'string' && apiKey.length > 0 ? apiKey : null,
+          baseUrl: typeof baseUrl === 'string' && baseUrl.length > 0 ? baseUrl : null,
+          models,
+        };
+      }
+    }
 
-    const model = obj['model'];
-    if (typeof model === 'string' && model.length > 0) this.data.model = model;
+    // 旧格式迁移：没有 providers 时，把单条配置包成一个供应商。
+    if (Object.keys(providers).length === 0) {
+      const legacyProvider = parsed['provider'];
+      const legacyModel = parsed['model'];
+      const legacyKey = parsed['apiKey'];
+      const legacyBase = parsed['baseUrl'];
+      const provider = typeof legacyProvider === 'string' && legacyProvider.length > 0
+        ? legacyProvider
+        : this.data.activeProvider;
+      const model = typeof legacyModel === 'string' && legacyModel.length > 0
+        ? legacyModel
+        : this.data.activeModel;
+      const models =
+        provider === DEFAULT_PROVIDER
+          ? DEFAULT_DEEPSEEK_MODELS.map((m) => ({ ...m }))
+          : [{ id: model, name: model }];
+      if (!models.some((m) => m.id === model)) models.unshift({ id: model, name: model });
+      providers[provider] = {
+        apiKey: typeof legacyKey === 'string' && legacyKey.length > 0 ? legacyKey : null,
+        baseUrl: typeof legacyBase === 'string' && legacyBase.length > 0 ? legacyBase : null,
+        models,
+      };
+      this.data.activeProvider = provider;
+      this.data.activeModel = model;
+    }
 
-    const apiKey = obj['apiKey'];
-    if (typeof apiKey === 'string' && apiKey.length > 0) this.data.apiKey = apiKey;
+    if (Object.keys(providers).length > 0) {
+      this.data.providers = providers;
+      // active 可能来自新格式或旧字段；都以「存在于 providers 里」为准。
+      const active = parsed['active'];
+      if (isPlainObject(active)) {
+        const provider = active['provider'];
+        const model = active['model'];
+        if (typeof provider === 'string' && providers[provider]) this.data.activeProvider = provider;
+        if (typeof model === 'string' && model.length > 0) this.data.activeModel = model;
+      }
+      const legacyProvider = parsed['provider'];
+      const legacyModel = parsed['model'];
+      if (typeof legacyProvider === 'string' && providers[legacyProvider]) {
+        this.data.activeProvider = legacyProvider;
+      }
+      if (typeof legacyModel === 'string' && legacyModel.length > 0) {
+        this.data.activeModel = legacyModel;
+      }
+    }
 
-    const baseUrl = obj['baseUrl'];
-    if (typeof baseUrl === 'string' && baseUrl.length > 0) this.data.baseUrl = baseUrl;
+    const thinkingLevel = parsed['thinkingLevel'];
+    if (isThinkingLevel(thinkingLevel)) this.data.thinkingLevel = thinkingLevel;
+
+    this.ensureActive();
 
     this.logger.debug('已加载 config.json', {
       path: this.path,
-      provider: this.data.provider,
-      model: this.data.model,
-      apiKey: maskSecret(this.data.apiKey),
-      baseUrl: this.data.baseUrl,
+      provider: this.data.activeProvider,
+      model: this.data.activeModel,
+      providers: Object.keys(this.data.providers),
+      apiKey: maskSecret(this.active()?.apiKey),
+      thinkingLevel: this.data.thinkingLevel,
     });
   }
 
+  /**
+   * 保证 activeProvider 存在、activeModel 属于该供应商。
+   * 数据可能来自旧配置/被手工改坏，这里统一兜底。
+   */
+  private ensureActive(): void {
+    let providerId = this.data.activeProvider;
+    if (!this.data.providers[providerId]) {
+      const ids = Object.keys(this.data.providers);
+      providerId = ids[0] ?? DEFAULT_PROVIDER;
+      if (!this.data.providers[providerId]) {
+        this.data.providers[providerId] = {
+          apiKey: null,
+          baseUrl: null,
+          models: (providerId === DEFAULT_PROVIDER
+            ? DEFAULT_DEEPSEEK_MODELS.map((m) => ({ ...m }))
+            : [{ id: this.data.activeModel, name: this.data.activeModel }]),
+        };
+      }
+      this.data.activeProvider = providerId;
+    }
+
+    const provider = this.data.providers[providerId];
+    if (!provider) return;
+    if (provider.models.length === 0) {
+      const model = this.data.activeModel || DEFAULT_MODEL;
+      provider.models.push({ id: model, name: model });
+    }
+    if (!provider.models.some((m) => m.id === this.data.activeModel)) {
+      const fallback = provider.models[0]?.id ?? DEFAULT_MODEL;
+      // 旧格式可能给出一个目录里没有的自定义模型：保留它，名字用 id。
+      if (this.data.activeModel) {
+        provider.models.push({ id: this.data.activeModel, name: this.data.activeModel });
+      } else {
+        this.data.activeModel = fallback;
+      }
+    }
+  }
+
   /** 当前配置的快照（含明文 key，仅供内部构造请求使用）。 */
-  get(): ConfigData {
-    return { ...this.data };
+  get(): ResolvedConfig {
+    this.ensureActive();
+    const provider = this.active()!;
+    return {
+      provider: this.data.activeProvider,
+      model: this.data.activeModel,
+      apiKey: provider.apiKey,
+      baseUrl: provider.baseUrl,
+      thinkingLevel: this.data.thinkingLevel,
+      providers: cloneProviders(this.data.providers),
+      activeProvider: this.data.activeProvider,
+      activeModel: this.data.activeModel,
+    };
   }
 
   hasKey(): boolean {
-    return typeof this.data.apiKey === 'string' && this.data.apiKey.length > 0;
+    const provider = this.active();
+    return !!provider && typeof provider.apiKey === 'string' && provider.apiKey.length > 0;
   }
 
   /** 只用于日志。 */
   get maskedApiKey(): string {
-    return maskSecret(this.data.apiKey);
+    return maskSecret(this.active()?.apiKey);
+  }
+
+  /** 查询某个 provider 的显示名（不落盘，纯展示）。 */
+  private viewProviders(): ProviderView[] {
+    return Object.entries(this.data.providers).map(([id, provider]) => ({
+      id,
+      name: providerDisplayName(id),
+      hasKey: typeof provider.apiKey === 'string' && provider.apiKey.length > 0,
+      baseUrl: provider.baseUrl,
+      models: provider.models.map((model) => ({ ...model })),
+      isActive: id === this.data.activeProvider,
+    }));
+  }
+
+  /** 切换当前供应商；没有指定模型时优先保留原模型，否则用它自己的第一个。 */
+  private switchActive(providerId: string, model?: string): void {
+    if (!isSafeId(providerId)) return;
+    const provider = this.data.providers[providerId] ?? {
+      apiKey: null,
+      baseUrl: null,
+      models: [] as ModelEntry[],
+    };
+    this.data.providers[providerId] = provider;
+    this.data.activeProvider = providerId;
+    if (model !== undefined && model.length > 0) {
+      this.data.activeModel = model;
+    } else if (!provider.models.some((m) => m.id === this.data.activeModel)) {
+      this.data.activeModel = provider.models[0]?.id ?? this.data.activeModel;
+    }
   }
 
   /**
@@ -166,27 +456,118 @@ export class ConfigStore {
    * 更新成功会清掉上游推导出来的临时状态（重新从 key 推导）。
    */
   update(patch: ConfigUpdatePayload): ConfigView {
-    if (patch.provider !== undefined) this.data.provider = patch.provider;
-    if (patch.model !== undefined) this.data.model = patch.model;
-    if (patch.apiKey !== undefined) {
-      this.data.apiKey = patch.apiKey.length > 0 ? patch.apiKey : null;
+    // 1) 先切 active（后面的 legacy 字段要写到新的 active 上）。
+    if (patch.provider !== undefined) {
+      this.switchActive(patch.provider, patch.model);
     }
-    if (patch.baseUrl !== undefined) {
-      this.data.baseUrl = patch.baseUrl && patch.baseUrl.length > 0 ? patch.baseUrl : null;
+    if (patch.activeProvider !== undefined) {
+      this.switchActive(patch.activeProvider, patch.activeModel);
     }
+
+    // 2) 批量 upsert 供应商。
+    if (patch.providerConfig) {
+      for (const [id, providerPatch] of Object.entries(patch.providerConfig)) {
+        if (!isSafeId(id)) continue;
+        this.applyProviderPatch(id, providerPatch);
+      }
+    }
+
+    // 3) 删除供应商。
+    if (patch.removeProviders) {
+      for (const id of patch.removeProviders) {
+        if (!isSafeId(id)) continue;
+        delete this.data.providers[id];
+      }
+    }
+
+    // 4) 显式 active（providerConfig 之后）。
+    if (patch.activeProvider !== undefined) {
+      this.switchActive(patch.activeProvider, patch.activeModel);
+      if (patch.activeModel === undefined) {
+        const provider = this.data.providers[patch.activeProvider];
+        if (provider && !provider.models.some((m) => m.id === this.data.activeModel)) {
+          this.data.activeModel = provider.models[0]?.id ?? this.data.activeModel;
+        }
+      }
+    } else if (patch.activeModel !== undefined) {
+      this.data.activeModel = patch.activeModel;
+    }
+
+    // 5) 老字段：只作用在当前 active 供应商上。
+    const active = this.active();
+    if (active) {
+      if (patch.model !== undefined) {
+        this.data.activeModel = patch.model;
+        if (!active.models.some((m) => m.id === patch.model)) {
+          active.models.push({ id: patch.model!, name: patch.model! });
+        }
+      }
+      if (patch.apiKey !== undefined) {
+        active.apiKey = patch.apiKey.length > 0 ? patch.apiKey : null;
+      }
+      if (patch.baseUrl !== undefined) {
+        active.baseUrl = patch.baseUrl && patch.baseUrl.length > 0 ? patch.baseUrl : null;
+      }
+    }
+
+    if (patch.thinkingLevel !== undefined) {
+      this.data.thinkingLevel = patch.thinkingLevel;
+    }
+
+    // 6) 切到新供应商后，若原模型不属于它，自动选它的第一个模型。
+    const providerNow = this.active();
+    if (
+      providerNow &&
+      providerNow.models.length > 0 &&
+      !providerNow.models.some((m) => m.id === this.data.activeModel)
+    ) {
+      this.data.activeModel = providerNow.models[0]?.id ?? this.data.activeModel;
+    }
+
+    // 7) 删空 / 改坏后的兜底。
+    if (Object.keys(this.data.providers).length === 0) {
+      this.data.providers[DEFAULT_PROVIDER] = {
+        apiKey: null,
+        baseUrl: null,
+        models: DEFAULT_DEEPSEEK_MODELS.map((m) => ({ ...m })),
+      };
+      this.data.activeProvider = DEFAULT_PROVIDER;
+      this.data.activeModel = DEFAULT_MODEL;
+    }
+    this.ensureActive();
 
     this.runtime = null;
     this.persist();
 
     this.logger.info('配置已更新', {
-      provider: this.data.provider,
-      model: this.data.model,
-      apiKey: maskSecret(this.data.apiKey),
-      baseUrl: this.data.baseUrl,
+      provider: this.data.activeProvider,
+      model: this.data.activeModel,
+      providers: Object.keys(this.data.providers),
+      apiKey: maskSecret(this.active()?.apiKey),
+      baseUrl: this.active()?.baseUrl ?? null,
+      thinkingLevel: this.data.thinkingLevel,
       path: this.path,
     });
 
     return this.view();
+  }
+
+  private applyProviderPatch(id: string, patch: ProviderPatch): void {
+    const provider = this.data.providers[id] ?? {
+      apiKey: null,
+      baseUrl: null,
+      models: [] as ModelEntry[],
+    };
+    if (patch.apiKey !== undefined) {
+      provider.apiKey = patch.apiKey.length > 0 ? patch.apiKey : null;
+    }
+    if (patch.baseUrl !== undefined) {
+      provider.baseUrl = patch.baseUrl && patch.baseUrl.length > 0 ? patch.baseUrl : null;
+    }
+    if (patch.models !== undefined) {
+      provider.models = patch.models.map((m) => ({ id: m.id, name: m.name || m.id }));
+    }
+    this.data.providers[id] = provider;
   }
 
   /** 记录上游请求推导出来的状态；返回最新视图。 */
@@ -203,7 +584,15 @@ export class ConfigStore {
 
   /** 当前对外可见的配置状态（**不含 apiKey**，附录 A.1）。 */
   view(): ConfigView {
-    const base = { provider: this.data.provider, model: this.data.model };
+    this.ensureActive();
+    const providers = this.viewProviders();
+    const base = {
+      provider: this.data.activeProvider,
+      model: this.data.activeModel,
+      thinkingLevel: this.data.thinkingLevel,
+      providers,
+      active: { provider: this.data.activeProvider, model: this.data.activeModel },
+    };
     if (!this.requireApiKey) return { state: 'ready', ...base, message: null };
     if (!this.hasKey()) return { state: 'missing_key', ...base, message: null };
     const runtime = this.runtime;
@@ -213,11 +602,22 @@ export class ConfigStore {
 
   /** 防呆：把 store 直接塞进日志/JSON 时也只有脱敏形态。 */
   toJSON(): Record<string, unknown> {
+    const providers: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+    for (const [id, provider] of Object.entries(this.data.providers)) {
+      providers[id] = {
+        apiKey: maskSecret(provider.apiKey),
+        baseUrl: provider.baseUrl,
+        models: provider.models.map((model) => ({ ...model })),
+      };
+    }
     return {
-      provider: this.data.provider,
-      model: this.data.model,
-      apiKey: maskSecret(this.data.apiKey),
-      baseUrl: this.data.baseUrl,
+      providers,
+      active: { provider: this.data.activeProvider, model: this.data.activeModel },
+      provider: this.data.activeProvider,
+      model: this.data.activeModel,
+      apiKey: maskSecret(this.active()?.apiKey),
+      baseUrl: this.active()?.baseUrl ?? null,
+      thinkingLevel: this.data.thinkingLevel,
     };
   }
 
@@ -225,7 +625,12 @@ export class ConfigStore {
     const dir = dirname(this.path);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const tmp = `${this.path}.tmp-${process.pid}`;
-    writeFileSync(tmp, `${JSON.stringify(this.data, null, 2)}\n`, {
+    const onDisk = {
+      providers: this.data.providers,
+      active: { provider: this.data.activeProvider, model: this.data.activeModel },
+      thinkingLevel: this.data.thinkingLevel,
+    };
+    writeFileSync(tmp, `${JSON.stringify(onDisk, null, 2)}\n`, {
       encoding: 'utf8',
       mode: 0o600,
     });

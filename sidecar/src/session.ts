@@ -27,21 +27,33 @@ import {
   buildEnvelope,
   buildErrorPayload,
   buildMessagePayload,
+  buildModelCatalogPayload,
+  buildProviderTestPayload,
   buildReadyPayload,
+  buildSaveBoundPayload,
   buildStatusPayload,
   buildStreamPayload,
+  buildToolCallPayload,
   errorRetryable,
   parseConfigSetPayload,
   parseFrame,
   parseHelloPayload,
+  parseModelCatalogPayload,
   parsePromptPayload,
+  parseProviderTestPayload,
+  parseSaveBindPayload,
+  parseToolResultPayload,
   serializeEnvelope,
   type ConfigView,
   type ErrorCode,
   type JsonObject,
+  type ModelCatalogResult,
+  type ProviderTestResult,
+  type ToolResultPayload,
 } from './protocol.js';
 import type { AgentEmitter, AgentRunner } from './agent.js';
-import { maskSecret, type ConfigStore } from './config.js';
+import { maskSecret, redactSecrets, type ConfigStore } from './config.js';
+import type { KbTransport, KnowledgeManager } from './kb/manager.js';
 import { errorFields, type Logger, log as rootLog } from './log.js';
 
 export type SessionState = 'awaiting_hello' | 'ready' | 'closed';
@@ -63,8 +75,10 @@ export interface SessionOptions {
   agent: AgentRunner;
   /** 配置存储（多连接共享）。 */
   config: ConfigStore;
-  /** 本次连接注册的工具名（M1 恒为空数组）。 */
-  tools: readonly string[];
+  /** 知识库编排（多连接共享）。 */
+  knowledge?: KnowledgeManager;
+  /** 本次连接注册的工具名；可按 hello 能力动态计算。 */
+  tools: readonly string[] | ((capabilities: readonly string[]) => readonly string[]);
   helloTimeoutMs?: number;
   logger?: Logger;
   /** 便于测试注入。 */
@@ -81,6 +95,21 @@ function tokenEquals(a: string, b: string): boolean {
 
 export function defaultSessionId(): string {
   return `sess_${randomBytes(8).toString('hex')}`;
+}
+
+interface PendingToolCall {
+  resolve: (result: ToolResultPayload) => void;
+  timer: NodeJS.Timeout;
+  cleanup: () => void;
+}
+
+function toolFailure(code: string, message: string): ToolResultPayload {
+  return {
+    ok: false,
+    data: null,
+    error: { code, message, retryable: false },
+    meta: {},
+  };
 }
 
 /** 只在日志里出现、避免把 token 原文写进 stderr。 */
@@ -102,6 +131,13 @@ export class Session {
 
   /** prompt 串行队列：保证同一连接上不会出现交错的流式输出。 */
   private promptChain: Promise<void> = Promise.resolve();
+
+  /** 已发出、尚未收到 tool_result 的调用。 */
+  private readonly pendingTools = new Map<string, PendingToolCall>();
+  private toolSeq = 0;
+
+  /** 本进程见过哪些 saveKey（只用于 save.bound.existed 的显示，不参与会话隔离）。 */
+  private readonly seenSaveKeys = new Set<string>();
 
   private promptCount = 0;
   private frameCount = 0;
@@ -233,6 +269,18 @@ export class Session {
       case MessageType.ConfigSet:
         this.handleConfigSet(env);
         return;
+      case MessageType.SaveBind:
+        this.handleSaveBind(env);
+        return;
+      case MessageType.ToolResult:
+        this.handleToolResult(env);
+        return;
+      case MessageType.ModelCatalog:
+        this.handleModelCatalog(env);
+        return;
+      case MessageType.ProviderTest:
+        this.handleProviderTest(env);
+        return;
       default:
         // 未知 type 必须忽略且不断开（协议 §2）；已预留类型额外记一条 debug。
         this.logger.debug('忽略未知/预留消息类型', { type, id: env.id });
@@ -289,6 +337,18 @@ export class Session {
       configState: this.options.config.view().state,
     });
 
+    // 能力先同步给 agent：它会按能力重建工具集/会话。
+    try {
+      this.options.agent.onClientCapabilities?.(payload.capabilities);
+    } catch (err) {
+      this.logger.warn('同步 mod 能力失败', errorFields(err));
+    }
+
+    const toolNames =
+      typeof this.options.tools === 'function'
+        ? this.options.tools(payload.capabilities)
+        : this.options.tools;
+
     this.sendEnvelope(
       buildEnvelope({
         type: MessageType.Ready,
@@ -297,12 +357,20 @@ export class Session {
           serverVersion: this.options.serverVersion,
           sessionId: this.sessionId,
           agent: this.options.agent.info,
-          tools: this.options.tools,
+          tools: toolNames,
           // 附录 A.2：让 mod 在第一次握手就知道要不要进密钥引导态。
           config: this.options.config.view(),
         }),
       }),
     );
+
+    // 知识库：先读缓存（不阻塞 ready）；如果握手时已经带了存档，立刻尝试导出。
+    try {
+      this.options.knowledge?.onHello(payload.gameVersion, payload.gameLanguage || 'unknown');
+    } catch (err) {
+      this.logger.warn('知识库缓存加载失败', errorFields(err));
+    }
+    if (payload.saveKey) this.ensureKnowledge();
   }
 
   private rejectHandshake(
@@ -329,6 +397,134 @@ export class Session {
         payload,
       }),
     );
+  }
+
+  /**
+   * `model.catalog`（M3）：拉取某个供应商的可用模型，供设置页「获取可用模型」使用。
+   * 请求里的 apiKey 只用于本次探测，不回传、不落盘、不记日志。
+   */
+  private handleModelCatalog(env: import('./protocol.js').ParsedEnvelope): void {
+    if (this._state !== 'ready') {
+      this.logger.warn('握手未完成就收到 model.catalog');
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+
+    const request = parseModelCatalogPayload(env.payload);
+    if (!request) {
+      this.sendError('bad_request', 'model.catalog requires provider (and optional baseUrl/apiKey)', env.id || null);
+      return;
+    }
+
+    const listModels = this.options.agent.listModels;
+    if (!listModels) {
+      const payload = buildModelCatalogPayload({
+        provider: request.provider,
+        models: [],
+        source: 'none',
+        error: '当前 agent 不支持模型目录',
+      });
+      this.sendEnvelope(buildEnvelope({ type: MessageType.ModelCatalog, replyTo: env.id || null, payload }));
+      return;
+    }
+
+    this.logger.info('收到 model.catalog', {
+      provider: request.provider,
+      hasKey: Boolean(request.apiKey),
+    });
+
+    void listModels
+      .call(this.options.agent, request.provider, {
+        baseUrl: request.baseUrl,
+        apiKey: request.apiKey,
+      })
+      .then((result: ModelCatalogResult) => {
+        this.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.ModelCatalog,
+            replyTo: env.id || null,
+            payload: buildModelCatalogPayload(result),
+          }),
+        );
+      })
+      .catch((err: unknown) => {
+        const raw = err instanceof Error ? err.message : String(err);
+        const safe = redactSecrets(raw, request.apiKey ? [request.apiKey] : []);
+        this.logger.error('获取模型目录失败', { provider: request.provider, message: safe });
+        const payload = buildModelCatalogPayload({
+          provider: request.provider,
+          models: [],
+          source: 'none',
+          error: safe,
+        });
+        this.sendEnvelope(buildEnvelope({ type: MessageType.ModelCatalog, replyTo: env.id || null, payload }));
+      });
+  }
+
+  /**
+   * `provider.test`（M3）：轻量检测供应商 Key/端点是否可用。
+   * 请求里的 apiKey 只用于本次探测，不回传、不落盘、不记日志。
+   */
+  private handleProviderTest(env: import('./protocol.js').ParsedEnvelope): void {
+    if (this._state !== 'ready') {
+      this.logger.warn('握手未完成就收到 provider.test');
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+
+    const request = parseProviderTestPayload(env.payload);
+    if (!request) {
+      this.sendError('bad_request', 'provider.test requires provider (and optional baseUrl/apiKey)', env.id || null);
+      return;
+    }
+
+    const testProvider = this.options.agent.testProvider;
+    if (!testProvider) {
+      const payload = buildProviderTestPayload({
+        provider: request.provider,
+        ok: false,
+        status: 0,
+        latencyMs: 0,
+        message: '当前 agent 不支持 Key 检测',
+        source: 'none',
+      });
+      this.sendEnvelope(buildEnvelope({ type: MessageType.ProviderTest, replyTo: env.id || null, payload }));
+      return;
+    }
+
+    this.logger.info('收到 provider.test', {
+      provider: request.provider,
+      hasKey: Boolean(request.apiKey),
+    });
+
+    void testProvider
+      .call(this.options.agent, request.provider, {
+        baseUrl: request.baseUrl,
+        apiKey: request.apiKey,
+      })
+      .then((result: ProviderTestResult) => {
+        this.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.ProviderTest,
+            replyTo: env.id || null,
+            payload: buildProviderTestPayload(result),
+          }),
+        );
+      })
+      .catch((err: unknown) => {
+        const raw = err instanceof Error ? err.message : String(err);
+        const safe = redactSecrets(raw, request.apiKey ? [request.apiKey] : []);
+        this.logger.error('检测供应商 Key 失败', { provider: request.provider, message: safe });
+        const payload = buildProviderTestPayload({
+          provider: request.provider,
+          ok: false,
+          status: 0,
+          latencyMs: 0,
+          message: safe,
+          source: 'none',
+        });
+        this.sendEnvelope(buildEnvelope({ type: MessageType.ProviderTest, replyTo: env.id || null, payload }));
+      });
   }
 
   /**
@@ -379,6 +575,54 @@ export class Session {
     );
   }
 
+  /**
+   * `save.bind`（附录 A.6）：通知 agent 切换到对应存档的会话。
+   * 这里只做路由与回执；真正的会话切换由 agent 负责（它会在回合边界重建 pi session）。
+   */
+  private handleSaveBind(env: import('./protocol.js').ParsedEnvelope): void {
+    if (this._state !== 'ready') {
+      this.logger.warn('握手未完成就收到 save.bind');
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+
+    const bind = parseSaveBindPayload(env.payload);
+    if (!bind) {
+      this.sendError('bad_request', 'save.bind.payload.saveKey must be a string or null', env.id || null);
+      return;
+    }
+
+    const existed = bind.saveKey !== null && this.seenSaveKeys.has(bind.saveKey);
+    if (bind.saveKey !== null) this.seenSaveKeys.add(bind.saveKey);
+
+    this.logger.info('收到 save.bind', {
+      saveKey: bind.saveKey,
+      saveName: bind.saveName,
+      existed,
+    });
+
+    try {
+      this.options.agent.onSaveChanged?.(bind.saveKey);
+    } catch (err) {
+      this.logger.warn('切换存档会话失败', errorFields(err));
+    }
+
+    this.sendEnvelope(
+      buildEnvelope({
+        type: MessageType.SaveBound,
+        replyTo: env.id || null,
+        payload: buildSaveBoundPayload({
+          saveKey: bind.saveKey,
+          saveName: bind.saveName,
+          existed,
+          messageCount: 0,
+        }),
+      }),
+    );
+
+    if (bind.saveKey) this.ensureKnowledge();
+  }
+
   private handlePrompt(env: import('./protocol.js').ParsedEnvelope): void {
     if (this._state !== 'ready') {
       this.logger.warn('握手未完成就收到 prompt');
@@ -402,11 +646,159 @@ export class Session {
 
     // 串行化：保证同一 prompt 的 status/stream/message 不被交错的下一轮切开。
     const emit = this.createEmitter();
-    const run = this.promptChain.then(() => this.options.agent.run(prompt.text, promptId, emit));
+    const run = this.promptChain.then(async () => {
+      const knowledge = this.options.knowledge;
+      if (knowledge) {
+        // 知识库导出通常 <1s；首问等一小会儿，避免模型在旧版本/ kb_unavailable 下回答。
+        // 无导出在途时立即返回，不额外发 status 帧（echo/无知识库路径的帧序必须保持 M0 契约）。
+        await knowledge.whenReady(2500);
+      }
+      await this.options.agent.run(prompt.text, promptId, emit);
+    });
     this.promptChain = run.catch((err: unknown) => {
       this.logger.error('agent 执行失败', errorFields(err));
       this.sendError('internal', 'agent failed', promptId);
     });
+  }
+
+  // ---------------------------------------------------------------- 工具调用
+
+  /**
+   * 发一次 tool_call 并等待 mod 的 tool_result。
+   * 超时、断线、取消都 resolve 成结构化错误；调用方（pi 工具层）不需要 try/catch。
+   */
+  private callTool(
+    name: string,
+    args: JsonObject,
+    options: { timeoutMs: number; signal?: AbortSignal; internal?: boolean },
+  ): Promise<ToolResultPayload> {
+    if (this._state !== 'ready' || !this.socket.isOpen) {
+      return Promise.resolve(toolFailure('tool_unavailable', 'mod 连接未就绪'));
+    }
+
+    const timeoutMs = Math.min(30000, Math.max(500, options.timeoutMs || 8000));
+    const callId = `call_${(this.toolSeq += 1)}`;
+
+    return new Promise<ToolResultPayload>((resolve) => {
+      let cleanup = (): void => {};
+
+      const timer = setTimeout(() => {
+        this.settleTool(callId, toolFailure('timeout', `工具 ${name} 在 ${timeoutMs}ms 内没有返回`));
+      }, timeoutMs);
+      timer.unref?.();
+
+      const signal = options.signal;
+      if (signal) {
+        const onAbort = (): void => {
+          this.settleTool(callId, toolFailure('cancelled', `工具 ${name} 已被取消`));
+        };
+        if (signal.aborted) {
+          clearTimeout(timer);
+          resolve(toolFailure('cancelled', `工具 ${name} 已被取消`));
+          return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+        cleanup = () => signal.removeEventListener('abort', onAbort);
+      }
+
+      this.pendingTools.set(callId, { resolve, timer, cleanup });
+
+      this.logger.debug('发送 tool_call', { callId, name, timeoutMs });
+      this.sendEnvelope(
+        buildEnvelope({
+          type: MessageType.ToolCall,
+          payload: buildToolCallPayload({
+            callId,
+            name,
+            args,
+            risk: 0,
+            timeoutMs,
+            internal: options.internal === true,
+          }),
+        }),
+        (err) => {
+          if (err) {
+            this.settleTool(callId, toolFailure('tool_unavailable', `发送 tool_call 失败：${err.message}`));
+          }
+        },
+      );
+    });
+  }
+
+  /**
+   * 知识库导出专用 transport：走同一条 tool_call 通道，但标记 internal，
+   * mod 不显示工具卡；也不会出现在模型可见工具列表里。
+   */
+  private knowledgeTransport(): KbTransport {
+    return {
+      callTool: (name, args, options) =>
+        this.callTool(name, args, {
+          timeoutMs: options.timeoutMs,
+          internal: true,
+        }),
+    };
+  }
+
+  /** 进入存档后确保当前版本/语言的知识库可用（缓存优先，缺失才导出）。 */
+  private ensureKnowledge(): void {
+    const knowledge = this.options.knowledge;
+    const hello = this.helloPayload;
+    if (!knowledge || !hello) return;
+    if (!hello.gameVersion || hello.gameVersion === 'unknown') return;
+    const locale = hello.gameLanguage || 'unknown';
+    void knowledge.ensure(this.knowledgeTransport(), hello.gameVersion, locale).then((ok) => {
+      if (ok) {
+        this.logger.info('知识库可用', { ...knowledge.knowledge.meta() });
+      }
+    });
+  }
+
+  private handleToolResult(env: import('./protocol.js').ParsedEnvelope): void {
+    if (this._state !== 'ready') {
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+
+    const callId =
+      env.replyTo ??
+      (typeof env.payload['callId'] === 'string' ? (env.payload['callId'] as string) : null);
+    if (!callId) {
+      this.logger.warn('tool_result 缺少 callId/replyTo');
+      this.sendError('bad_request', 'tool_result requires replyTo or payload.callId', env.id || null);
+      return;
+    }
+
+    const parsed = parseToolResultPayload(env.payload);
+    if (!parsed) {
+      this.settleTool(callId, toolFailure('bad_request', 'tool_result.payload.ok must be a boolean'));
+      return;
+    }
+
+    this.logger.debug('收到 tool_result', {
+      callId,
+      ok: parsed.ok,
+      code: parsed.error?.code ?? null,
+    });
+    this.settleTool(callId, parsed);
+  }
+
+  private settleTool(callId: string, result: ToolResultPayload): void {
+    const pending = this.pendingTools.get(callId);
+    if (!pending) return;
+    this.pendingTools.delete(callId);
+    clearTimeout(pending.timer);
+    try {
+      pending.cleanup();
+    } catch {
+      /* ignore */
+    }
+    pending.resolve(result);
+  }
+
+  private failAllTools(reason: string): void {
+    for (const callId of [...this.pendingTools.keys()]) {
+      this.settleTool(callId, toolFailure('tool_unavailable', reason));
+    }
   }
 
   // ---------------------------------------------------------------- agent 写帧出口
@@ -461,6 +853,10 @@ export class Session {
             payload: buildConfigStatePayload(view),
           }),
         );
+      },
+
+      callTool(name, args, options) {
+        return session.callTool(name, args, options);
       },
     };
   }
@@ -534,6 +930,7 @@ export class Session {
     if (this._state === 'closed') return;
     this._state = 'closed';
     this.clearHelloTimer();
+    this.failAllTools(`连接关闭：${reason}`);
     try {
       this.socket.close(code, reason);
     } catch (err) {
@@ -548,6 +945,7 @@ export class Session {
     if (this._state === 'closed') return;
     this._state = 'closed';
     this.clearHelloTimer();
+    this.failAllTools(`连接断开：${reason}`);
     this.logger.info('会话已断开', { reason, ...this.stats });
     this.onClosed();
   }
