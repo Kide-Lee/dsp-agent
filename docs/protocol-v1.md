@@ -577,6 +577,8 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 | --- | --- |
 | `game_get_entity` | 单个建筑详情：原型、配方、产物/消耗、功率、分拣器/传送带/仓储/物流塔、坐标与朝向 |
 | `game_render_layout` | 区域建筑字符布局图（上=+Z，左=-X） |
+| `game_get_planets` | 银河行星一览；矿脉按宇宙探索等级披露 |
+| `game_get_logistics` | 跨行星物流塔供给/需求汇总 |
 | `game_get_entities` | 行星内建筑分页列表；可按 `protoId` / `protoName` / `recipeId` / 区域过滤 |
 
 **`game.analyze.v1`（M4c）**

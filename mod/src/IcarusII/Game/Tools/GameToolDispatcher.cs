@@ -113,6 +113,8 @@ namespace IcarusII.Game.Tools
             Register(new AnalyzeAreaTool());
             Register(new RenderLayoutTool());
             Register(new CopyBlueprintTool());
+            Register(new PlanetsTool());
+            Register(new LogisticsTool());
         }
 
         private void Register(IGameToolHandler handler)

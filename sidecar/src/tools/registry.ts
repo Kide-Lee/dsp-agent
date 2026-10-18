@@ -48,6 +48,8 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_analyze_area: CAPABILITY_GAME_ANALYZE,
   game_render_layout: CAPABILITY_GAME_ENTITY,
   game_copy_blueprint: CAPABILITY_GAME_ENTITY,
+  game_get_planets: CAPABILITY_GAME_ENTITY,
+  game_get_logistics: CAPABILITY_GAME_ENTITY,
 };
 
 const MAX_RESULT_CHARS = 9000;
@@ -346,6 +348,43 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         cellSize: Type.Optional(Type.Number({ description: '每格米数，默认按半径自动（约 2–8m）' })),
       }),
       timeoutMs: 10000,
+    }),
+    gameTool(host, {
+      name: 'game_get_planets',
+      label: '星球一览',
+      description:
+        '列出银河里所有行星：轨道/类型/半径、是否有工厂与建筑数、电力汇总，以及按宇宙探索等级披露的矿脉。' +
+        '未观察的星球只给基础轨道信息（veinsHidden=true），不泄露矿脉；已建工厂的星球可继续用区域工具分析。',
+      promptSnippet: '跨行星总览（受宇宙探索等级限制）',
+      promptGuidelines: [
+        'Use game_get_planets 当玩家问“哪个星球有 X 矿/哪颗星在产什么/银河整体情况”时。',
+        'observed=false 或 veinsHidden=true 表示玩家还没探索到，不要编造矿脉；如实说明需要提升宇宙探索等级。',
+        'hasFactory=true 的行星可继续用 game_analyze_area / game_get_entities / game_get_power 分析。',
+      ],
+      parameters: Type.Object({
+        includeVeins: Type.Optional(Type.Boolean({ description: '是否返回已观察星球的矿脉，默认 true' })),
+      }),
+      timeoutMs: 20000,
+    }),
+    gameTool(host, {
+      name: 'game_get_logistics',
+      label: '星际物流',
+      description:
+        '汇总所有已加载工厂的物流塔：哪些星球/站点在供给或需求某物品、星际塔与轨道采集器、' +
+        '运输船/无人机与翘曲器数量。这是跨行星产线分析的入口。',
+      promptSnippet: '全银河物流塔的供给/需求与站点',
+      promptGuidelines: [
+        'Use game_get_logistics 当玩家问“某个原料从哪来/哪颗星在供应/为什么跨星运不过来”时。',
+        'supply/demand 来自物流塔槽位的远程供应/需求设置；具体航线与在途量用 game_get_entity 看站点详情。',
+        '先在这里定位物品与星球，再用 game_analyze_area / game_get_planet 下钻。',
+      ],
+      parameters: Type.Object({
+        itemFilter: Type.Optional(Type.String({ description: '物品名或 id，例如“钛块”' })),
+        planetId: Type.Optional(Type.Integer({ description: '只看某颗行星' })),
+        offset: offsetArg,
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 40, description: '站点条数，默认 20' })),
+      }),
+      timeoutMs: 20000,
     }),
     gameTool(host, {
       name: 'game_copy_blueprint',
