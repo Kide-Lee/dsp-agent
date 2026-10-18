@@ -12,10 +12,11 @@ PROJ="$ROOT/dsp-game"
 UNITY_VERSION="${UNITY_VERSION:-2022.3.62f3}"
 UNITY="${UNITY:-$HOME/Unity/Hub/Editor/$UNITY_VERSION/Editor/Unity}"
 
-# 默认只在 prefab 缺失时生成；传 --rebuild-prefab 强制重建（会覆盖手改）
+# 默认只打包，绝不重建 prefab（窗口 prefab 是手工维护的，整棵重建会冲掉人的改动）。
+# 传 --add-parts 会先跑一次"只做加法"的移植工具（幂等：加/刷新 Header、正文、信标待办输入框）。
 METHOD="IcarusII.EditorTools.IcarusIIBundleBuilder.BuildAll"
-if [ "${1:-}" = "--rebuild-prefab" ]; then
-  METHOD="IcarusII.EditorTools.IcarusIIBundleBuilder.RebuildAll"
+if [ "${1:-}" = "--add-parts" ]; then
+  METHOD="IcarusII.EditorTools.IcarusIIBundleBuilder.AddPartsAndBuild"
 fi
 
 DEST_ASSETS="$PROJ/Assets/IcarusII/Editor"
@@ -54,7 +55,7 @@ BUNDLE="$OUT/icarusii-ui"
 # 它引用了游戏贴图的 GUID，回存保留 .meta 才能在恢复后不丢引用。
 SNAP="$ROOT/mod/unity/Prefab"
 mkdir -p "$SNAP"
-for f in "$PROJ/Assets/IcarusII/IcarusIIWindow.prefab" "$PROJ/Assets/IcarusII/IcarusIIWindow.prefab.meta"; do
+for f in "$PROJ/Assets/IcarusII/ChatWindow.prefab" "$PROJ/Assets/IcarusII/ChatWindow.prefab.meta"; do
   [ -f "$f" ] && cp "$f" "$SNAP/"
 done
 echo "==> 已回存 prefab 快照到 $SNAP"

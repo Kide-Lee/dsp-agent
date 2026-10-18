@@ -4,10 +4,12 @@
 
 | 组件 | 用途 | 许可证 | 分发方式 |
 | --- | --- | --- | --- |
-| [BepInEx](https://github.com/BepInEx/BepInEx) 5.4.23.5 | mod 加载器（doorstop 代理 + Harmony） | LGPL-2.1 | **不随包分发**，由玩家自行安装；`scripts/fetch-deps.sh` 仅用于开发期拉取参考程序集 |
-| [pi](https://github.com/earendil-works/pi-mono) (`@earendil-works/pi-coding-agent`) | Agent 运行时（Provider 抽象、工具调用循环、会话管理） | MIT | 经 esbuild 打包进 sidecar 可执行文件（M1 起） |
+| [BepInEx](https://github.com/BepInEx/BepInEx) 5.4.17（构建期参考程序集） | mod 加载器（doorstop 代理 + Harmony） | LGPL-2.1 | **不随包分发**，由玩家自行安装；`scripts/fetch-deps.sh` 仅用于开发期拉取参考程序集 |
+| [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`) | Agent 运行时（Provider 抽象、工具调用循环、会话管理） | MIT | 经 esbuild 打包进 sidecar 可执行文件（M1 起） |
 | [Node.js](https://nodejs.org/) | sidecar 运行时 | MIT | 以 SEA（Single Executable Application）形式**内嵌**进 `icarus-ii-sidecar.exe` |
 | [ws](https://github.com/websockets/ws) | sidecar 的 WebSocket 服务端 | MIT | 打包进 sidecar |
+| [typebox](https://github.com/sinclairzx81/typebox) | 工具参数 JSON Schema（M2 起） | MIT | 打包进 sidecar |
+| [Unity Skills](https://github.com/Unity-Technologies/skills) — `ui-ugui` | Agent Skill：Unity uGUI / Canvas / RectTransform / Layout Group 开发规范 | Unity Companion License | 内容收录于 `.dsh/skills/ui-ugui/`，仅用于开发期辅助，不进入发布产物 |
 
 ## 关于 BepInEx
 
@@ -23,8 +25,34 @@ BepInEx 采用 **LGPL-2.1**。本项目**不再分发** BepInEx 本体：
 `icarus-ii-sidecar.exe` 是通过 Node 官方的 SEA 机制，把 sidecar 代码注入官方 Node 二进制得到的。
 因此该文件内含 Node.js 运行时，遵循 Node.js 的 MIT 许可证。
 
+## 关于 `ui-ugui` Agent Skill
+
+`.dsh/skills/ui-ugui/` 收录的是 Unity Technologies 官方发布的
+[skills 仓库](https://github.com/Unity-Technologies/skills) 中的 `ui-ugui` skill，
+遵循 **Unity Companion License**（<https://unity3d.com/legal/licenses/unity_companion_license>）。
+许可证原文见 `.dsh/skills/ui-ugui/LICENSE.md`。
+
+- 上游路径：`skills/ui-ugui/`（版本快照：`main` 分支，2026-10 拉取）
+- 用途：让 agent 在处理 UGUI（Canvas / RectTransform / Layout Group / prefab UI）时
+  遵循官方规范；它是**开发期提示词资产**，不会编译进游戏，也不进入发布产物
+- 更新方式：
+
+  ```bash
+  base=https://cdn.jsdelivr.net/gh/Unity-Technologies/skills@main/skills/ui-ugui
+  curl -sSL -o .dsh/skills/ui-ugui/SKILL.md "$base/SKILL.md"
+  curl -sSL -o .dsh/skills/ui-ugui/references/scrollview-setup.md "$base/references/scrollview-setup.md"
+  ```
+
+> 注：GitHub 原始域名在部分网络环境下不可达，故使用 jsDelivr 镜像。
+
 ## 游戏本体
 
 本项目不包含《戴森球计划》的任何游戏资源或程序集。
 构建时引用的 `Assembly-CSharp.dll`、`UnityEngine.*.dll` 均通过 `<Private>false</Private>`
 标记为**不复制到输出目录**，仅用于编译期类型解析。
+
+## 开发期脚本依赖
+
+`tools/build-kb.py`（M3 离线知识库生成器）使用 [UnityPy](https://github.com/K0lb3/UnityPy)
+读取本地 Unity 资源；它只在开发/离线测试时运行，**不会进入发布产物**，
+也不会把游戏文本/程序集打包进 mod。

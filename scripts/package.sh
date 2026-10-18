@@ -44,9 +44,19 @@ fi
 log "复制文档与安装脚本"
 cp "$ROOT/scripts/install.sh" "$PKG/install.sh"
 chmod +x "$PKG/install.sh"
-cp "$ROOT/README.md" "$PKG/README.md"
+# 玩家向说明优先用 Thunderstore 版（packaging/thunderstore/README.md），
+# 仓库根 README 是开发向的，不适合直接塞给玩家。
+if [ -f "$ROOT/packaging/thunderstore/README.md" ]; then
+  cp "$ROOT/packaging/thunderstore/README.md" "$PKG/README.md"
+else
+  cp "$ROOT/README.md" "$PKG/README.md"
+fi
+cp "$ROOT/THIRD-PARTY.md" "$PKG/" 2>/dev/null || true
+cp "$ROOT/LICENSE" "$PKG/" 2>/dev/null || true
 cp "$ROOT/docs/protocol-v1.md" "$PKG/docs/"
 cp "$ROOT/docs/m0-verification.md" "$PKG/docs/" 2>/dev/null || true
+# 调试符号：玩家报错时能给出可读堆栈
+cp "$ROOT/mod/src/IcarusII/bin/$CONFIG/IcarusII.pdb" "$PLUGIN/" 2>/dev/null || true
 
 log "打包内容："
 ( cd "$PKG" && find . -type f -printf '  %-52p %8s\n' 2>/dev/null | sort ) || ( cd "$PKG" && find . -type f | sort )
