@@ -33,53 +33,6 @@ namespace IcarusII.UI
         }
     }
 
-    /// <summary>
-    /// 关闭按钮的悬停反馈。
-    ///
-    /// 原生窗口的悬停动效来自游戏自己的 `UIButton`——它引用游戏私有类型，
-    /// prefab 里已经剥掉了，所以这里补一个轻量替代：鼠标移入把图标提亮、移出还原。
-    /// 指针事件从真正的命中区（按钮里的 `col` 节点）冒泡到按钮本体，所以挂在按钮上即可。
-    /// </summary>
-    internal sealed class CloseButtonHover : MonoBehaviour,
-        UnityEngine.EventSystems.IPointerEnterHandler,
-        UnityEngine.EventSystems.IPointerExitHandler
-    {
-        public Graphic Target;
-
-        private Color _normal;
-        private Color _hover;
-        private bool _captured;
-
-        private void Capture()
-        {
-            if (_captured || Target == null) return;
-            _normal = Target.color;
-            _hover = new Color(
-                Mathf.Min(1f, _normal.r * 1.2f + 0.08f),
-                Mathf.Min(1f, _normal.g * 1.2f + 0.08f),
-                Mathf.Min(1f, _normal.b * 1.2f + 0.08f),
-                1f);
-            _captured = true;
-        }
-
-        private void OnEnable()
-        {
-            Capture();
-            if (Target != null) Target.color = _normal;
-        }
-
-        public void OnPointerEnter(UnityEngine.EventSystems.PointerEventData eventData)
-        {
-            Capture();
-            if (Target != null) Target.color = _hover;
-        }
-
-        public void OnPointerExit(UnityEngine.EventSystems.PointerEventData eventData)
-        {
-            if (Target != null) Target.color = _normal;
-        }
-    }
-
     internal sealed class ChatWindow
     {
         private const int MaxTranscriptChars = 120000;
@@ -308,8 +261,6 @@ namespace IcarusII.UI
         private ScrollRect _chatIndexScroll;
         private Text _chatIndexTitle;
         private Text _chatIndexEmpty;
-        private RectTransform _chatIndexTooltip;
-        private Text _chatIndexTooltipText;
         private readonly List<TurnEntry> _turns = new List<TurnEntry>();
         private int _nextTurnId;
         private int _currentTurnId;
@@ -501,8 +452,6 @@ namespace IcarusII.UI
             _chatIndexScroll = null;
             _chatIndexTitle = null;
             _chatIndexEmpty = null;
-            _chatIndexTooltip = null;
-            _chatIndexTooltipText = null;
             _turns.Clear();
             _nextTurnId = 0;
             _currentTurnId = 0;
@@ -837,21 +786,8 @@ namespace IcarusII.UI
             if (closeButton != null)
             {
                 closeButton.onClick.AddListener(OnCloseButtonClicked);
-                var icon = closeButton.transform.Find("x-icon");
-                var iconGraphic = icon != null ? icon.GetComponent<Graphic>() : null;
-                if (iconGraphic != null)
-                {
-                    // 如果按钮上带着游戏自己的 UIButton（悬停/按下动效 + 音效），
-                    // 就别再加我们的轻量悬停，否则两边会抢同一个图标的颜色。
-                    if (closeButton.GetComponent("UIButton") == null)
-                    {
-                        closeButton.gameObject.AddComponent<CloseButtonHover>().Target = iconGraphic;
-                    }
-                }
-                else
-                {
-                    Plugin.Log.LogWarning("关闭按钮没有 x-icon，悬停反馈未接。");
-                }
+                if (closeButton.GetComponent("UIButton") == null)
+                    Plugin.Log.LogWarning("关闭按钮缺少原生 UIButton，悬停/音效不可用");
             }
             else
             {
@@ -1244,7 +1180,7 @@ namespace IcarusII.UI
 
             // 正文与状态栏的文字颜色（聊天内容配色，不是窗口外观）。
             // 用户气泡与 prefab 助手正文保留 prefab 颜色；只给系统行和代码兜底项上色。
-            var generalIcons = TryGetGeneralIconMapping();
+            var generalIcons = TryGetPreferredIconMapping();
             foreach (var item in _items)
             {
                 if (item.Label == null) continue;
@@ -1859,11 +1795,34 @@ namespace IcarusII.UI
             bodyText.supportRichText = true;
             bodyText.lineSpacing = 1f;
             bodyText.wideCharSpacing = 1f;
-            AssignIconMapping(bodyText, TryGetGeneralIconMapping());
+            AssignIconMapping(bodyText, TryGetPreferredIconMapping());
 
             var headerButton = headerRt.gameObject.AddComponent<Button>();
             headerButton.transition = Selectable.Transition.None;
             headerButton.targetGraphic = headerImg;
+
+            // 折叠 header 的动态效果和点击都走游戏原生 UIButton。
+            var nativeHeader = headerRt.gameObject.AddComponent<UIButton>();
+            nativeHeader.button = headerButton;
+            var headerNormal = headerImg.color;
+            var headerHover = new Color(
+                Mathf.Min(1f, headerNormal.r * 1.25f + 0.04f),
+                Mathf.Min(1f, headerNormal.g * 1.25f + 0.04f),
+                Mathf.Min(1f, headerNormal.b * 1.25f + 0.04f),
+                headerNormal.a);
+            nativeHeader.transitions = new[]
+            {
+                new UIButton.Transition
+                {
+                    target = headerImg, damp = 0.12f,
+                    normalColor = headerNormal,
+                    mouseoverColor = headerHover,
+                    pressedColor = new Color(headerHover.r * 0.9f, headerHover.g * 0.9f, headerHover.b * 0.9f, headerHover.a),
+                    disabledColor = headerNormal,
+                    mouseoverSize = 1f, pressedSize = 1f,
+                    highlightSizeMultiplier = 1f, highlightColorMultiplier = 1f, highlightAlphaMultiplier = 1f
+                }
+            };
 
             var block = new Block
             {
@@ -1875,7 +1834,7 @@ namespace IcarusII.UI
                 Body = bodyText,
                 Expanded = expanded,
             };
-            headerButton.onClick.AddListener(() => ToggleBlock(block));
+            nativeHeader.onClick += _ => ToggleBlock(block);
 
             // 先入 _items（TrimHistory 才能按条数裁），再套内容。
             AddBlockItem(block);
@@ -2740,12 +2699,6 @@ namespace IcarusII.UI
                 linkButton.enabled = false;
                 UnityEngine.Object.Destroy(linkButton);
             }
-            var delButton = delTf.GetComponent<Button>();
-            if (delButton != null)
-            {
-                delButton.enabled = false;
-                UnityEngine.Object.Destroy(delButton);
-            }
 
             var linkWidth = linkTf is RectTransform linkRect && linkRect.rect.width > 20f
                 ? linkRect.rect.width - 6f
@@ -2760,17 +2713,29 @@ namespace IcarusII.UI
             var hover = go.GetComponent<ChatIndexRowHover>();
             if (hover == null) hover = go.AddComponent<ChatIndexRowHover>();
             hover.DeleteButton = delTf.gameObject;
-            hover.DeleteArea = delTf as RectTransform;
             hover.HoverBackground = go.GetComponent<Graphic>();
             int linkId = entry.Id;
             int delId = entry.Id;
             hover.Clicked += () => FocusTurn(linkId);
-            hover.DeleteClicked += () => DeleteTurn(delId);
-            var deleteBg = delTf.Find("bg") != null
-                ? delTf.Find("bg").GetComponent<Graphic>()
-                : delTf.GetComponent<Graphic>();
-            hover.SetDeleteBackground(deleteBg);
-            hover.DeleteHoverChanged += OnIndexDeleteHoverChanged;
+
+            // 删除区域的 hover 颜色、提示、点击都由 prefab 上的原生 Button + UIButton 处理。
+            var nativeDelete = delTf.GetComponent<UIButton>();
+            if (nativeDelete != null)
+            {
+                nativeDelete.onClick += _ => DeleteTurn(delId);
+                var tips = nativeDelete.tips;
+                tips.tipTitle = Strings.Get("chat.index.delete.tip");
+                // 提示 prefab 来自游戏运行时配置；不要把外部 prefab 引用序列化进 bundle，
+                // 否则 bundle 载入时可能变成 null。
+                tips.simpleGeneralTipPrefab = Configs.builtin != null
+                    ? Configs.builtin.uiDashboardSimpleTipPrefab
+                    : null;
+                nativeDelete.tips = tips;
+            }
+            else
+            {
+                Plugin.Log.LogWarning("[UI] prefab 的 delete 缺少原生 UIButton，删除按钮不可用");
+            }
             entry.Row = go;
             entry.Link = label;
             entry.Hover = hover;
@@ -2914,7 +2879,6 @@ namespace IcarusII.UI
 
         private void ClearIndexRows()
         {
-            HideChatIndexTooltip();
             if (_chatIndexContent != null)
             {
                 for (int i = _chatIndexContent.childCount - 1; i >= 0; i--)
@@ -2946,64 +2910,6 @@ namespace IcarusII.UI
                     entry.Link.color = entry.Id == _focusedTurnId ? _textMain : _accent;
                 entry.Hover?.SetSelected(entry.Id == _focusedTurnId);
             }
-        }
-
-        /// <summary>删除图标的 hover 提示：红色 × + 一行小提示。</summary>
-        private void OnIndexDeleteHoverChanged(bool over, Vector2 screenPosition)
-        {
-            if (over)
-            {
-                ShowChatIndexTooltip(screenPosition, Strings.Get("chat.index.delete.tip"));
-            }
-            else
-            {
-                HideChatIndexTooltip();
-            }
-        }
-
-        private void EnsureChatIndexTooltip()
-        {
-            if (_chatIndexTooltip != null || _panel == null) return;
-
-            _chatIndexTooltip = _panel.Find("chat-index-tooltip") as RectTransform;
-            if (_chatIndexTooltip == null)
-            {
-                Plugin.Log.LogWarning("[UI] prefab 缺少 chat-index-tooltip，删除提示不可用");
-                return;
-            }
-
-            _chatIndexTooltipText = _chatIndexTooltip.Find("label") != null
-                ? _chatIndexTooltip.Find("label").GetComponent<Text>()
-                : _chatIndexTooltip.GetComponentInChildren<Text>(true);
-            _chatIndexTooltip.gameObject.SetActive(false);
-        }
-
-        private void ShowChatIndexTooltip(Vector2 screenPosition, string text)
-        {
-            EnsureChatIndexTooltip();
-            if (_chatIndexTooltip == null || _chatIndexTooltipText == null || _panel == null) return;
-
-            _chatIndexTooltipText.text = text ?? string.Empty;
-            var camera = _hostCanvas != null ? _hostCanvas.worldCamera : null;
-            Vector2 local;
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(_panel, screenPosition, camera, out local))
-                return;
-
-            var panelRect = _panel.rect;
-            var size = _chatIndexTooltip.rect.size;
-            if (size.x < 1f || size.y < 1f) size = new Vector2(86f, 24f);
-            var pos = local + new Vector2(12f, 18f);
-            pos.x = Mathf.Clamp(pos.x, panelRect.xMin + 4f, panelRect.xMax - size.x - 4f);
-            pos.y = Mathf.Clamp(pos.y, panelRect.yMin + 4f, panelRect.yMax - size.y - 4f);
-
-            _chatIndexTooltip.anchoredPosition = pos;
-            _chatIndexTooltip.gameObject.SetActive(true);
-            _chatIndexTooltip.SetAsLastSibling();
-        }
-
-        private void HideChatIndexTooltip()
-        {
-            if (_chatIndexTooltip != null) _chatIndexTooltip.gameObject.SetActive(false);
         }
 
         /// <summary>
@@ -3045,11 +2951,8 @@ namespace IcarusII.UI
                 // 不能依赖“输入框是否存在”这个无关条件。
                 label.supportRichText = true;
 
-                // 图标映射优先用游戏全局表（包含物品/建筑/科技/矿脉的 \tag; 短码），
-                // 这样 AI 结果里的 iconTag 才能真正画出来。输入框那份只是兜底。
-                AssignIconMapping(label, TryGetGeneralIconMapping());
-                if (label.iconMapping == null && _input != null && _input.textComponent != null)
-                    AssignIconMapping(label, _input.textComponent.iconMapping);
+                // 优先沿用输入框/原生 Text 的图标表；不完整时退回游戏的全局表。
+                AssignIconMapping(label, TryGetPreferredIconMapping());
             }
 
             _items.Add(new Item
@@ -3075,7 +2978,7 @@ namespace IcarusII.UI
             label.verticalOverflow = VerticalWrapMode.Overflow;
             label.supportRichText = true;
             label.raycastTarget = false;
-            AssignIconMapping(label, TryGetGeneralIconMapping());
+            AssignIconMapping(label, TryGetPreferredIconMapping());
             GameTextStyle.Apply(label);
             return rt.gameObject;
         }
@@ -3124,6 +3027,26 @@ namespace IcarusII.UI
             }
         }
 
+        /// <summary>
+        /// 原生 Text 自己的 iconMapping 优先；输入框那份通常就是游戏 TextShortcut 用的表。
+        /// 只有它缺失或条目明显少于全局表时，才退回 global（避免丢物品/建筑 tag）。
+        /// </summary>
+        private UnityEngine.UI.Youthcat.TextIconMapping TryGetPreferredIconMapping()
+        {
+            var general = TryGetGeneralIconMapping();
+            try
+            {
+                var inputMap = _input != null && _input.textComponent != null
+                    ? _input.textComponent.iconMapping
+                    : null;
+                if (inputMap != null && inputMap.countInUse > 0 &&
+                    (general == null || inputMap.countInUse >= general.countInUse))
+                    return inputMap;
+            }
+            catch { /* fall through */ }
+            return general;
+        }
+
         private static UnityEngine.UI.Youthcat.TextIconMapping _iconTagSource;
         private static HashSet<string> _iconTags;
 
@@ -3167,7 +3090,7 @@ namespace IcarusII.UI
         /// <summary>把已经创建的消息/折叠块都补一遍图标表。</summary>
         private void EnsureIconMappings()
         {
-            var general = TryGetGeneralIconMapping();
+            var general = TryGetPreferredIconMapping();
             if (general == null)
             {
                 _iconMapReady = false;

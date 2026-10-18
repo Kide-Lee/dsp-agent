@@ -63,7 +63,7 @@
 对应工具：
 
 - `IcarusIIChatIndexBuilder`：只在缺结构时补齐；已有节点不重排、不覆盖；
-- `IcarusIIPrefabLayoutFix`：只补 delete bg/tooltip，不改已有布局；
+- `IcarusIIPrefabLayoutFix`：只补 delete bg，不改已有布局；
 - `IcarusIIWindowPrefabBuilder.BuildForced()`：**会整窗重建**，只有用户明确要求或 prefab 丢失时才用；
 - `scripts/build-ui-bundle.sh --add-parts`：可加部件，默认只打包。
 

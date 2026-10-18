@@ -76,8 +76,7 @@ namespace IcarusII.EditorTools
                 if (template != null &&
                     (template.Find("link/label") == null ||
                      template.GetComponent<Image>() == null ||
-                     template.Find("link").GetComponent<Button>() != null ||
-                     template.Find("delete").GetComponent<Button>() != null))
+                     template.Find("link").GetComponent<Button>() != null))
                 {
                     // 旧版模板：重建为带行底色/遮罩/删除 hover 的新结构。
                     UnityEngine.Object.DestroyImmediate(template.gameObject);
