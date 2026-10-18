@@ -250,8 +250,9 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       name: 'game_get_entity',
       label: '建筑详情',
       description:
-        '按 entityId 读取单个建筑的实际情况：原型、配方、输入/输出与堵塞、功率、' +
-        '分拣器/传送带/仓储/物流塔配置、坐标与朝向。' +
+        '按 entityId 读取单个建筑的实际情况，尽量对齐游戏面板：原型、配方、输入/输出槽（数量/需求/增产）、' +
+        '功率与供电满足率、工作状态（缺料/没电/运行/待机）、分拣器目标、传送带线路容量/节点/货物数与区间、' +
+        '仓储容量、物流塔槽位（当前/在途/上限/供需模式）、无人机/运输船/翘曲器与充电状态。' +
         'id 来自 game_get_entities 或截图标注；id 会被回收，返回里的 stale=true 表示该 id 已被别的建筑占用。',
       promptSnippet: '按 id 读取单个建筑的配方、功率与连接配置',
       promptGuidelines: [

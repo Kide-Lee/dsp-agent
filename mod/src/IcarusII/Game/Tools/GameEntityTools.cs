@@ -237,6 +237,58 @@ namespace IcarusII.Game.Tools
                 detail.Set("extraCycleCount", assembler.extraCycleCount);
                 detail.Set("working", assembler.time > 0);
                 detail.Set("forceAccMode", assembler.forceAccMode);
+
+                var recipe = assembler.recipeId > 0 && LDB.recipes != null
+                    ? LDB.recipes.Select(assembler.recipeId) : null;
+                var inputs = JsonValue.NewArray();
+                var missing = false;
+                if (recipe != null && recipe.Items != null)
+                {
+                    for (int i = 0; i < recipe.Items.Length; i++)
+                    {
+                        var itemId = recipe.Items[i];
+                        if (itemId <= 0) continue;
+                        var row = JsonValue.NewObject();
+                        row.Set("itemId", itemId);
+                        row.Set("name", EntityToolUtil.ProtoName(itemId));
+                        row.Set("iconTag", GameToolFormat.ItemIconTag(itemId));
+                        int served = assembler.served != null && i < assembler.served.Length ? assembler.served[i] : 0;
+                        int needs = assembler.needs != null && i < assembler.needs.Length ? assembler.needs[i] : 0;
+                        int incServed = assembler.incServed != null && i < assembler.incServed.Length ? assembler.incServed[i] : 0;
+                        row.Set("count", served);
+                        row.Set("needed", needs);
+                        row.Set("incServed", incServed);
+                        if (served < needs) missing = true;
+                        inputs.Add(row);
+                    }
+                }
+                detail.Set("inputs", inputs);
+
+                var outputs = JsonValue.NewArray();
+                if (recipe != null && recipe.Results != null)
+                {
+                    for (int i = 0; i < recipe.Results.Length; i++)
+                    {
+                        var itemId = recipe.Results[i];
+                        if (itemId <= 0) continue;
+                        var row = JsonValue.NewObject();
+                        row.Set("itemId", itemId);
+                        row.Set("name", EntityToolUtil.ProtoName(itemId));
+                        row.Set("iconTag", GameToolFormat.ItemIconTag(itemId));
+                        row.Set("count", assembler.produced != null && i < assembler.produced.Length ? assembler.produced[i] : 0);
+                        outputs.Add(row);
+                    }
+                }
+                detail.Set("outputs", outputs);
+
+                var powerPct = NetworkSatisfactionPct(factory, ConsumerNetworkId(factory, entity));
+                detail.Set("powerSatisfactionPct", powerPct);
+                string status;
+                if (assembler.time > 0) status = "working";
+                else if (missing) status = "missing_input";
+                else if (powerPct >= 0 && powerPct < 99) status = "no_power";
+                else status = "idle";
+                detail.Set("status", status);
                 data.Set("assembler", detail);
             }
 
@@ -283,6 +335,29 @@ namespace IcarusII.Game.Tools
                 var detail = JsonValue.NewObject();
                 detail.Set("itemsPerSec", GameToolFormat.Round(belt.speed * 60.0 / CargoPath.kCargoLength, 2));
                 detail.Set("segLength", belt.segLength);
+                detail.Set("rangeFrom", belt.segIndex);
+                detail.Set("rangeTo", belt.segIndex + belt.segLength - 1);
+                detail.Set("nodeIndex", belt.segIndex + belt.segPivotOffset);
+                detail.Set("pathId", belt.segPathId);
+                var traffic = factory.cargoTraffic;
+                if (traffic != null && traffic.pathPool != null && belt.segPathId > 0 &&
+                    belt.segPathId < traffic.pathPool.Length && traffic.pathPool[belt.segPathId] != null)
+                {
+                    var path = traffic.pathPool[belt.segPathId];
+                    detail.Set("pathCapacity", path.cargoCapacity);
+                    detail.Set("pathNodeCount", path.belts != null ? path.belts.Count : 0);
+                    int cargoCount = 0;
+                    if (path.buffer != null)
+                    {
+                        for (int i = 0; i < path.pathLength; i++)
+                        {
+                            if (path.buffer[i] != CargoPath.kCargoHead) continue;
+                            cargoCount++;
+                            i += CargoPath.kCargoLength - 1;
+                        }
+                    }
+                    detail.Set("pathCargoCount", cargoCount);
+                }
                 detail.Set("outputId", belt.outputId);
                 detail.Set("backInputId", belt.backInputId);
                 detail.Set("leftInputId", belt.leftInputId);
@@ -295,7 +370,15 @@ namespace IcarusII.Game.Tools
                 entity.storageId < factory.factoryStorage.storagePool.Length)
             {
                 var storage = factory.factoryStorage.storagePool[entity.storageId];
-                data.Set("storage", StorageItems(storage, 12));
+                var storageDetail = JsonValue.NewObject();
+                storageDetail.Set("slots", storage.grids != null ? storage.grids.Length : 0);
+                storageDetail.Set("items", StorageItems(storage, 12));
+                int total = 0;
+                if (storage.grids != null)
+                    for (int i = 0; i < storage.grids.Length; i++)
+                        total += storage.grids[i].count;
+                storageDetail.Set("totalCount", total);
+                data.Set("storage", storageDetail);
             }
 
             if (entity.stationId > 0 && factory.transport != null &&
@@ -305,7 +388,20 @@ namespace IcarusII.Game.Tools
                 var station = factory.transport.stationPool[entity.stationId];
                 var detail = JsonValue.NewObject();
                 detail.Set("isCollector", station.isCollector);
+                detail.Set("isStellar", station.isStellar);
                 detail.Set("warperCount", station.warperCount);
+                detail.Set("warperMaxCount", station.warperMaxCount);
+                detail.Set("idleDroneCount", station.idleDroneCount);
+                detail.Set("workDroneCount", station.workDroneCount);
+                detail.Set("idleShipCount", station.idleShipCount);
+                detail.Set("workShipCount", station.workShipCount);
+                detail.Set("deliveryDrones", station.deliveryDrones);
+                detail.Set("deliveryShips", station.deliveryShips);
+                detail.Set("warpEnableDistAu", GameToolFormat.Round(station.warpEnableDist / GalaxyData.AU, 1));
+                detail.Set("energy", station.energy);
+                detail.Set("energyMax", station.energyMax);
+                detail.Set("chargeKw", GameToolFormat.Round(GameToolFormat.Kw(station.energyPerTick)));
+                detail.Set("charging", station.energy < station.energyMax);
                 detail.Set("storage", StationItems(station, 12));
                 data.Set("station", detail);
             }
@@ -353,25 +449,50 @@ namespace IcarusII.Game.Tools
             var items = JsonValue.NewArray();
             if (station == null || station.storage == null) return items;
 
-            var rows = new List<KeyValuePair<int, int>>();
+            var rows = new List<StationStore>();
             for (int i = 0; i < station.storage.Length; i++)
             {
                 var store = station.storage[i];
-                if (store.itemId <= 0 || store.count <= 0) continue;
-                rows.Add(new KeyValuePair<int, int>(store.itemId, store.count));
+                if (store.itemId <= 0) continue;
+                rows.Add(store);
             }
-            rows.Sort((a, b) => b.Value.CompareTo(a.Value));
+            rows.Sort((a, b) => b.count.CompareTo(a.count));
 
             for (int i = 0; i < rows.Count && i < max; i++)
             {
+                var store = rows[i];
                 var row = JsonValue.NewObject();
-                row.Set("itemId", rows[i].Key);
-                row.Set("name", EntityToolUtil.ProtoName(rows[i].Key));
-                row.Set("iconTag", GameToolFormat.ItemIconTag(rows[i].Key));
-                row.Set("count", rows[i].Value);
+                row.Set("itemId", store.itemId);
+                row.Set("name", EntityToolUtil.ProtoName(store.itemId));
+                row.Set("iconTag", GameToolFormat.ItemIconTag(store.itemId));
+                row.Set("count", store.count);
+                row.Set("inTransit", store.inc);
+                row.Set("max", store.max);
+                row.Set("localOrder", store.localOrder);
+                row.Set("remoteOrder", store.remoteOrder);
+                row.Set("localLogic", store.localLogic.ToString());
+                row.Set("remoteLogic", store.remoteLogic.ToString());
                 items.Add(row);
             }
             return items;
+        }
+
+        private static int ConsumerNetworkId(PlanetFactory factory, EntityData entity)
+        {
+            var system = factory != null ? factory.powerSystem : null;
+            if (system == null || system.consumerPool == null || entity.powerConId <= 0 ||
+                entity.powerConId >= system.consumerPool.Length) return 0;
+            return system.consumerPool[entity.powerConId].networkId;
+        }
+
+        private static double NetworkSatisfactionPct(PlanetFactory factory, int networkId)
+        {
+            var system = factory != null ? factory.powerSystem : null;
+            if (system == null || system.netPool == null || networkId <= 0 ||
+                networkId >= system.netPool.Length) return -1;
+            var net = system.netPool[networkId];
+            if (net == null || net.energyRequired <= 0) return 100;
+            return GameToolFormat.Round(net.energyServed * 100.0 / net.energyRequired, 1);
         }
 
         private static string BuildDisplay(JsonValue data)
