@@ -1288,7 +1288,7 @@ namespace IcarusII.UI
 
             // 正文与状态栏的文字颜色（聊天内容配色，不是窗口外观）。
             // 用户气泡与 prefab 助手正文保留 prefab 颜色；只给系统行和代码兜底项上色。
-            var generalIcons = TryGetChatIconMapping() ?? TryGetGeneralIconMapping();
+            var generalIcons = TryGetGeneralIconMapping();
             foreach (var item in _items)
             {
                 if (item.Label == null) continue;
@@ -1898,7 +1898,7 @@ namespace IcarusII.UI
             bodyText.supportRichText = true;
             bodyText.lineSpacing = 1f;
             bodyText.wideCharSpacing = 1f;
-            AssignIconMapping(bodyText, TryGetChatIconMapping() ?? TryGetGeneralIconMapping());
+            AssignIconMapping(bodyText, TryGetGeneralIconMapping());
 
             var headerButton = headerRt.gameObject.AddComponent<Button>();
             headerButton.transition = Selectable.Transition.None;
@@ -2700,6 +2700,36 @@ namespace IcarusII.UI
             }
         }
 
+        /// <summary>
+        /// 删除按钮的背景块：默认透明，鼠标进入 × 区域时整体变红；× 文字颜色不变。
+        /// 如果 prefab 的 delete 自带 Image/bg，就复用它；否则运行期补一块。
+        /// </summary>
+        private static Graphic EnsureDeleteBackground(Transform delete)
+        {
+            if (delete == null) return null;
+            var graphic = delete.GetComponent<Graphic>();
+            if (graphic != null) return graphic;
+
+            var bgTf = delete.Find("bg") as RectTransform;
+            var created = bgTf == null;
+            if (created)
+            {
+                bgTf = UiFactory.Node("bg", delete);
+                UiFactory.Stretch(bgTf);
+                bgTf.SetAsFirstSibling();
+            }
+
+            var image = bgTf.GetComponent<Image>();
+            if (image == null)
+            {
+                image = bgTf.gameObject.AddComponent<Image>();
+                image.color = Color.clear;
+                created = true;
+            }
+            if (created) image.raycastTarget = false;
+            return image;
+        }
+
         private void EnsureChatIndex()
         {
             if (_panel == null) return;
@@ -2929,10 +2959,7 @@ namespace IcarusII.UI
             int delId = entry.Id;
             hover.Clicked += () => FocusTurn(linkId);
             hover.DeleteClicked += () => DeleteTurn(delId);
-            var deleteIcon = delTf.Find("x") != null
-                ? delTf.Find("x").GetComponent<Graphic>()
-                : delTf.GetComponent<Graphic>();
-            hover.SetDeleteIcon(deleteIcon);
+            hover.SetDeleteBackground(EnsureDeleteBackground(delTf));
             hover.DeleteHoverChanged += OnIndexDeleteHoverChanged;
             entry.Row = go;
             entry.Link = label;
@@ -3002,7 +3029,7 @@ namespace IcarusII.UI
             int delId = entry.Id;
             hover.Clicked += () => FocusTurn(linkId);
             hover.DeleteClicked += () => DeleteTurn(delId);
-            hover.SetDeleteIcon(delText);
+            hover.SetDeleteBackground(delBg);
             hover.DeleteHoverChanged += OnIndexDeleteHoverChanged;
             entry.Row = row.gameObject;
             entry.Link = link;
@@ -3297,7 +3324,7 @@ namespace IcarusII.UI
 
                 // 图标映射优先用游戏全局表（包含物品/建筑/科技/矿脉的 \tag; 短码），
                 // 这样 AI 结果里的 iconTag 才能真正画出来。输入框那份只是兜底。
-                AssignIconMapping(label, TryGetChatIconMapping() ?? TryGetGeneralIconMapping());
+                AssignIconMapping(label, TryGetGeneralIconMapping());
                 if (label.iconMapping == null && _input != null && _input.textComponent != null)
                     AssignIconMapping(label, _input.textComponent.iconMapping);
             }
@@ -3325,7 +3352,7 @@ namespace IcarusII.UI
             label.verticalOverflow = VerticalWrapMode.Overflow;
             label.supportRichText = true;
             label.raycastTarget = false;
-            AssignIconMapping(label, TryGetChatIconMapping() ?? TryGetGeneralIconMapping());
+            AssignIconMapping(label, TryGetGeneralIconMapping());
             GameTextStyle.Apply(label);
             return rt.gameObject;
         }
@@ -3376,38 +3403,6 @@ namespace IcarusII.UI
 
         private static UnityEngine.UI.Youthcat.TextIconMapping _iconTagSource;
         private static HashSet<string> _iconTags;
-        private static UnityEngine.UI.Youthcat.TextIconMapping _chatIconMapping;
-        private static UnityEngine.UI.Youthcat.TextIconMapping _chatIconMappingSource;
-
-        /// <summary>
-        /// 聊天窗专用图标表：图标背景/描边由 TextGenerator 按 IconConfig.size 生成。
-        /// 原生大图标约 32px；聊天正文用 24px 时暗色底板的硬边会明显缩锯齿。
-        /// 这里复制全局表，只把 size 放大，不改 UV/outline。
-        /// </summary>
-        private static UnityEngine.UI.Youthcat.TextIconMapping TryGetChatIconMapping()
-        {
-            var source = TryGetGeneralIconMapping();
-            if (source == null || source.iconMappings == null) return null;
-            if (_chatIconMapping != null && ReferenceEquals(_chatIconMappingSource, source))
-                return _chatIconMapping;
-
-            var mappings = new UnityEngine.UI.Youthcat.TextIconMapping.IconConfig[source.iconMappings.Length];
-            for (int i = 0; i < source.iconMappings.Length; i++)
-            {
-                var entry = source.iconMappings[i];
-                if (entry == null) continue;
-                mappings[i] = new UnityEngine.UI.Youthcat.TextIconMapping.IconConfig(
-                    entry.name, entry.tag, entry.uvMin, entry.uvMax,
-                    new Vector2(32f, 32f), entry.outline);
-            }
-
-            var copy = ScriptableObject.CreateInstance<UnityEngine.UI.Youthcat.TextIconMapping>();
-            copy.iconMappings = mappings;
-            copy.Refresh();
-            _chatIconMapping = copy;
-            _chatIconMappingSource = source;
-            return copy;
-        }
 
         /// <summary>当前全局图标表里能真正渲染的 tag 集合；表没就绪时返回 null。</summary>
         private static HashSet<string> GetValidIconTags()
@@ -3455,7 +3450,7 @@ namespace IcarusII.UI
                 _iconMapReady = false;
                 return;
             }
-            var icons = TryGetChatIconMapping() ?? general;
+            var icons = general;
 
             var valid = GetValidIconTags();
             if (valid == null || valid.Count == 0)

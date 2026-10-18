@@ -15,11 +15,11 @@ namespace IcarusII.UI
     {
         public GameObject DeleteButton;
         public RectTransform DeleteArea;
-        public Graphic DeleteIcon;
+        public Graphic DeleteBackground;
         public Graphic HoverBackground;
         public Color HoverColor = new Color(0.35f, 0.75f, 1f, 0.10f);
         public Color SelectedColor = new Color(0.35f, 0.75f, 1f, 0.16f);
-        public Color WarningColor = new Color(1f, 0.30f, 0.25f, 1f);
+        public Color WarningColor = new Color(1f, 0.22f, 0.18f, 0.92f);
 
         public event Action Clicked;
         public event Action DeleteClicked;
@@ -29,15 +29,15 @@ namespace IcarusII.UI
         private bool _hovered;
         private bool _selected;
         private bool _deleteHovered;
-        private bool _deleteIconColorCaptured;
-        private Color _deleteIconNormalColor = Color.white;
+        private bool _deleteBackgroundCaptured;
+        private Color _deleteBackgroundNormalColor = Color.clear;
 
-        public void SetDeleteIcon(Graphic icon)
+        public void SetDeleteBackground(Graphic background)
         {
-            DeleteIcon = icon;
-            if (icon == null) return;
-            _deleteIconNormalColor = icon.color;
-            _deleteIconColorCaptured = true;
+            DeleteBackground = background;
+            if (background == null) return;
+            _deleteBackgroundNormalColor = background.color;
+            _deleteBackgroundCaptured = true;
         }
 
         public void SetSelected(bool selected)
@@ -97,20 +97,20 @@ namespace IcarusII.UI
 
         private void SetDeleteHover(bool over, Vector2 screenPosition)
         {
-            if (DeleteIcon != null)
+            if (DeleteBackground != null)
             {
                 if (over)
                 {
-                    if (!_deleteIconColorCaptured)
+                    if (!_deleteBackgroundCaptured)
                     {
-                        _deleteIconNormalColor = DeleteIcon.color;
-                        _deleteIconColorCaptured = true;
+                        _deleteBackgroundNormalColor = DeleteBackground.color;
+                        _deleteBackgroundCaptured = true;
                     }
-                    DeleteIcon.color = WarningColor;
+                    DeleteBackground.color = WarningColor;
                 }
-                else if (_deleteIconColorCaptured)
+                else if (_deleteBackgroundCaptured)
                 {
-                    DeleteIcon.color = _deleteIconNormalColor;
+                    DeleteBackground.color = _deleteBackgroundNormalColor;
                 }
             }
 
