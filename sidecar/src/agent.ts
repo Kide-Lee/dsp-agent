@@ -53,6 +53,8 @@ import { createKbTools } from './kb/tools.js';
 import type { ToolActivityPayload } from './protocol.js';
 import { parseSessionLines, removeTurnFromEntries, serializeSessionEntries } from './history.js';
 import { createScriptTool } from './tools/script.js';
+import { createWikiTools } from './wiki/tools.js';
+import { createBlueprintTools } from './blueprint/tools.js';
 import type { KnowledgeStore } from './kb/store.js';
 
 /** pi SDK 的完整类型（仅类型层面；运行时不静态引用）。 */
@@ -1244,6 +1246,8 @@ export class PiAgent implements AgentRunner {
       customTools: [
         ...this.host.tools(),
         ...(this.kb ? createKbTools(this.kb) : []),
+        ...createWikiTools(),
+        ...createBlueprintTools(),
         createScriptTool(this.host),
       ],
       // 替换 pi 默认的 coding agent system prompt 为游戏内助手人格。

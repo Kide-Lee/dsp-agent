@@ -316,7 +316,8 @@ public const int FEATURES_FOR_CUSTOM_MOD_ID_START = 100010000;   // 注释即"�
 | `kb_plan` 量化计算器（机器/电力/传送带） | ✅ | `sidecar/src/kb/knowledge.ts` 的 `plan()` + `kb/tools.ts`；测试 `test/kb-plan.mjs` |
 | `game_analyze_area` 产线分析（v1 装机口径） | ✅ | `GameEntityTools.cs`；范围=球形切分，不做拓扑 |
 | `run_script` 只读脚本层 | ✅ | QuickJS-WASM + `dsp.call` 复用工具注册表；测试 `test/script.mjs` |
-| wiki / 蓝图 | ⬜ 未开始 | 见 §6 排序 |
+| wiki（中英）/ 蓝图搜索 | ✅ | `sidecar/src/wiki/`、`sidecar/src/blueprint/`；本地模拟测试 |
+| 蓝图生成（模版）/ 粘贴 | ⬜ 未开始 | 依赖 codec + 写操作确认 |
 
 > 验证：`sidecar/test/tools-view.mjs`（36 项）+ `sidecar/test/kb-plan.mjs`（38 项）+ `sidecar/test/script.mjs`（19 项）+ 全套 sidecar 回归 + `ProtocolTests`（200 项断言）
 > 全部通过；`scripts/build-mod.sh` 0 warning / 0 error。

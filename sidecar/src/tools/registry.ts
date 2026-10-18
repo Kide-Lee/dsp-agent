@@ -10,6 +10,8 @@ import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { JsonObject, ToolResultPayload } from '../protocol.js';
 import { GameToolHost, registerGameToolsFactory, SCRIPT_TOOL_NAME } from './host.js';
+import { WIKI_TOOL_NAMES } from '../wiki/tools.js';
+import { BLUEPRINT_TOOL_NAMES } from '../blueprint/tools.js';
 import { KB_TOOL_NAMES } from '../kb/tools.js';
 
 export const CAPABILITY_GAME_READ = 'game.read.v1';
@@ -372,5 +374,5 @@ export function toolNamesForCapabilities(capabilities: readonly string[]): strin
     .filter(([, capability]) => capabilities.includes(capability))
     .map(([name]) => name);
   // 脚本工具是 sidecar 本地能力，始终注册（没有 game 工具时执行会明确报错）。
-  return [...game, ...KB_TOOL_NAMES, SCRIPT_TOOL_NAME];
+  return [...game, ...KB_TOOL_NAMES, ...WIKI_TOOL_NAMES, ...BLUEPRINT_TOOL_NAMES, SCRIPT_TOOL_NAME];
 }

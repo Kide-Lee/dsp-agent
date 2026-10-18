@@ -88,6 +88,8 @@
 
 | 工具 | 内容 |
 | --- | --- |
+| `wiki_search` / `wiki_page` | 搜索并读取中/英文 DSP Wiki，回答带来源链接 |
+| `blueprint_search` / `blueprint_info` | 在线检索社区蓝图仓库（CC BY-NC-SA 4.0，带署名），并做格式体检 |
 | `run_script` | 在 QuickJS-WASM 沙箱里跑只读脚本：`dsp.call` 同步调用 game_* 工具，可循环/筛选/求和；无 fs/net/process，调用与时长都有上限 |
 
 本地工具（`kb_*` / `run_script`）也会在聊天窗里显示工具卡（“量化计算”“知识库检索”“脚本”），

@@ -86,7 +86,7 @@ function testToolGating() {
   console.log('\n── 2. 能力按组广告工具 ──');
 
   const none = toolNamesForCapabilities([]);
-  check('没有能力时只有 kb_* 与脚本', none.every((n) => n.startsWith('kb_') || n === 'run_script'));
+  check('没有能力时只有 kb/wiki/blueprint/脚本', none.every((n) => n.startsWith('kb_') || n.startsWith('wiki_') || n.startsWith('blueprint_') || n === 'run_script'));
 
   const read = toolNamesForCapabilities(['game.read.v1']);
   check('game.read.v1 ⇒ 6 个旧工具', read.filter((n) => n.startsWith('game_')).length === 6);

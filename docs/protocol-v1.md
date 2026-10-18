@@ -614,6 +614,21 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
   结果作为 pi 的工具结果回填。
 - 知识库的数据来源与 schema 见 [docs/kb-v1.md](kb-v1.md)。
 
+### B.1.3 Wiki 与蓝图（M4g/M4h，sidecar 本地）
+
+| 模型名 | 说明 |
+| --- | --- |
+| `wiki_search` | 搜索中/英文 DSP Wiki（MediaWiki API），返回标题/摘要/链接 |
+| `wiki_page` | 读取 Wiki 页面纯文本（自动重定向，≤8000 字） |
+| `blueprint_search` | 在线搜索 DSPBluePrints/FactoryBluePrints 的 `.txt` 蓝图路径（不打包内容） |
+| `blueprint_info` | 读取蓝图并做格式体检（header/base64+gzip/md5），带来源与许可 |
+
+- 全部由 sidecar 直接访问外网；失败显式返回 `wiki_unavailable` / `blueprint_unavailable`，
+  不允许用模型记忆补内容。
+- 蓝图内容许可 **CC BY-NC-SA 4.0**：结果必须带 repository 与许可，回答需署名；
+  本仓库不缓存/分发蓝图内容。
+- Wiki 内容版权以各站点页面声明为准，回答需附 `url`。
+
 ### B.1.2 脚本工具（M4d，sidecar 本地）
 
 | 模型名 | 参数 | 说明 |

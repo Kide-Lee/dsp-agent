@@ -199,7 +199,7 @@ async function main() {
     },
   });
   const ready = await client.waitForType('ready');
-  check('ready.tools 含 11 个工具（6 game + 4 kb + 脚本）', (ready.payload?.tools ?? []).length === 11);
+  check('ready.tools 含 15 个工具（6 game + 4 kb + 2 wiki + 2 蓝图 + 脚本）', (ready.payload?.tools ?? []).length === 15);
 
   // 配置假上游。
   client.send({
