@@ -107,6 +107,7 @@ namespace IcarusII
                 _chat.KeySubmitted += OnKeySubmitted;
                 _chat.ThinkingLevelChanged += OnThinkingLevelChanged;
                 _chat.ModelSelectionChanged += OnModelSelectionChanged;
+                _chat.TurnDeleted += OnTurnDeleted;
                 // 注意：_client 尚未创建（它在后台的 PrepareSidecar 里才 new），
                 // 所以它的 ConfigChanged 必须在创建之后再订阅。
                 // 这里曾经写成 _client.ConfigChanged += ...，直接 NullReference，
@@ -343,6 +344,33 @@ namespace IcarusII
                     OnSaveBound(SaveBoundInfo.Parse(payload));
                     break;
 
+                case Protocol.ToolActivity:
+                {
+                    // 本地工具（kb_* / run_script）原本在聊天窗里完全不可见，
+                    // 玩家会误以为模型没用计算器。这里只补 UI 卡片，不参与执行。
+                    var act = ToolActivityInfo.Parse(payload);
+                    if (act != null && !string.IsNullOrEmpty(act.CallId))
+                    {
+                        var label = ToolLabel(act.Name);
+                        if (act.Phase == "start")
+                            _chat.BeginToolCard(act.CallId, label, act.Args);
+                        else
+                            _chat.FinishToolCard(act.CallId, label, act.Ok, act.Summary, act.Detail);
+                    }
+                    break;
+                }
+
+                case Protocol.HistoryDeleted:
+                {
+                    var info = HistoryDeletedInfo.Parse(payload);
+                    if (info != null && !info.Ok)
+                    {
+                        var reason = string.IsNullOrEmpty(info.Error) ? "未知错误" : info.Error;
+                        _chat.AppendSystem("删除未写入会话（" + reason + "）；重进存档可能仍会出现这条对话。");
+                    }
+                    break;
+                }
+
                 case Protocol.Stream:
                 {
                     var streamChannel = payload["channel"].AsString("text");
@@ -469,7 +497,11 @@ namespace IcarusII
             {
                 var summary = string.IsNullOrEmpty(outcome.Summary) ? "完成" : outcome.Summary;
                 if (_chat != null && _chat.Created)
+                {
                     _chat.FinishToolCard(outcome.CallId, label, true, summary, outcome.Summary);
+                    // 截图是本机产生的，不需要绕协议回来：直接把字节贴到工具卡上。
+                    AttachToolImage(outcome);
+                }
                 _chat?.SetStatus(Strings.Get("status.ready"), OkColor);
             }
             else
@@ -500,9 +532,36 @@ namespace IcarusII
                 outcome.Ok ? outcome.Data : JsonValue.Null,
                 outcome.ErrorCode,
                 outcome.ErrorMessage,
-                outcome.Meta);
+                outcome.Meta,
+                outcome.Ok ? outcome.Image : null);
             if (!sent)
                 Log.LogWarning($"[tool] tool_result 未能发出（连接未就绪）callId={outcome.CallId}");
+        }
+
+        /// <summary>工具结果带截图时贴到工具卡上（M4a）。</summary>
+        private void AttachToolImage(GameToolOutcome outcome)
+        {
+            var image = outcome.Image;
+            if (image == null || !image.IsObject) return;
+
+            var data = image["data"].AsString(null);
+            if (string.IsNullOrEmpty(data)) return;
+
+            // 协议上限是解码后 2 MiB；base64 再放宽一点，超过就明确记日志而不是静默失败。
+            if (data.Length > 4 * 1024 * 1024)
+            {
+                Log.LogWarning($"[chat] 截图过大，跳过显示（base64 {data.Length} 字符）");
+                return;
+            }
+
+            try
+            {
+                _chat.AttachToolImage(outcome.CallId, Convert.FromBase64String(data));
+            }
+            catch (FormatException ex)
+            {
+                Log.LogWarning($"[chat] 截图 base64 解码失败：{ex.Message}");
+            }
         }
 
         private static string ToolLabel(string name)
@@ -514,7 +573,18 @@ namespace IcarusII
                 case "game_get_planet": return "行星状态";
                 case "game_get_power": return "电力状态";
                 case "game_get_research": return "研究状态";
-                case "game_get_production": return "产线状态";
+                case "game_get_production": return "实际产出";
+                case "game_get_entity": return "建筑详情";
+                case "game_get_entities": return "建筑列表";
+                case "game_get_progress": return "进度阶段";
+                case "game_capture_view": return "截图";
+                case "game_analyze_area": return "产线分析";
+                // sidecar 本地工具（tool_activity 卡片用）
+                case "kb_search": return "知识库检索";
+                case "kb_get": return "知识库查询";
+                case "kb_recipe_tree": return "配方树";
+                case "kb_plan": return "量化计算";
+                case "run_script": return "脚本";
                 case "game_export_prototypes": return "建立知识库";
                 default: return string.IsNullOrEmpty(name) ? "工具" : name;
             }
@@ -628,6 +698,23 @@ namespace IcarusII
         /// 2. 连接就绪就发 config.set，让 sidecar 落盘并重建 pi session；
         /// 3. 连接没就绪就记 dirty，等 ready 后补发。
         /// </summary>
+        /// <summary>
+        /// 玩家删除了一个问答回合：转给 sidecar 删会话文件（协议 A.7）。
+        /// UI 已经先删掉了；这里失败只提示，不把行加回来（避免闪烁）。
+        /// </summary>
+        private void OnTurnDeleted(string text, long timestampMs)
+        {
+            if (string.IsNullOrEmpty(text) || _client == null) return;
+            var saveKey = GameRefs.CurrentSaveKey();
+            var id = _client.SendHistoryDelete(saveKey, text, timestampMs);
+            if (id == null)
+            {
+                _chat.AppendSystem("删除未同步到会话（连接未就绪）；重进存档可能仍会出现这条对话。");
+                return;
+            }
+            Log.LogInfo($"[索引] 已请求 sidecar 删除回合：{id}");
+        }
+
         private void OnThinkingLevelChanged(string level)
         {
             if (!PluginConfig.IsValidThinkingLevel(level)) return;
@@ -807,7 +894,7 @@ namespace IcarusII
                     foreach (var message in info.History)
                     {
                         if (message == null || string.IsNullOrEmpty(message.Text)) continue;
-                        if (message.Role == "user") _chat.AppendUser(message.Text);
+                        if (message.Role == "user") _chat.AppendUser(message.Text, message.Timestamp);
                         else _chat.AppendLine(Strings.Get("agent"), message.Text);
                     }
                 }

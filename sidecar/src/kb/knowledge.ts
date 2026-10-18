@@ -23,6 +23,9 @@ import {
   type KbVein,
   type KbText,
   type KbTextKind,
+  type PlanOptions,
+  type PlanRecipeRow,
+  type PlanResult,
   type RecipeTreeNode,
   type RecipeTreeResult,
 } from './types.js';
@@ -570,6 +573,219 @@ export class KnowledgeBase {
       cycles: [...cycles].map((itemId) => ({ itemId, item: nameOf(itemId) })),
       depthLimited,
       notes,
+    };
+  }
+
+  // ---------------------------------------------------------------- 产线规划
+
+  /**
+   * 找出能承接该配方类型的机器原型，按装配速度升序（base → mk2 → mk3）。
+   *
+   * 依据是 `PrefabDesc.assemblerRecipeType`：它才是游戏判断"这台机器能做什么"的字段。
+   * 离线 KB 没有 prefabDesc，所以这里可能返回空数组——调用方必须降级而不是瞎猜。
+   */
+  private buildingsForRecipe(recipe: KbRecipe): KbItem[] {
+    const type = recipe.type;
+    if (typeof type !== 'number') return [];
+    const out: KbItem[] = [];
+    for (const item of this.items.values()) {
+      const building = item.building;
+      if (!building || building.assemblerRecipeType === undefined) continue;
+      if (building.assemblerRecipeType !== type) continue;
+      if (!building.assemblerSpeed || building.assemblerSpeed <= 0) continue;
+      out.push(item);
+    }
+    out.sort((a, b) => (a.building?.assemblerSpeed ?? 0) - (b.building?.assemblerSpeed ?? 0));
+    return out;
+  }
+
+  /**
+   * 产线规划：给定目标物品的每分钟产量，算机器数 / 电力 / 传送带 / 原料。
+   *
+   * 与 `kb_recipe_tree` 的分工：
+   *  - 配方树负责"原料总量与副产物抵扣"（已实现且测试充分）；
+   *  - 这里负责"要建多少台什么机器、耗多少电、要几条带"。
+   *
+   * 刻意不建模：增产剂、矿脉产率、堆叠与建筑叠加——这些需要运行时参数，
+   * 先留成 `assumptions` 里的显式声明，避免给出看似精确的错数。
+   */
+  plan(ref: string | number, options: PlanOptions): PlanResult {
+    const item = this.resolveItem(ref);
+    if (!item) throw new Error(`找不到物品：${String(ref)}`);
+
+    const rate = Number(options.rate);
+    if (!(rate > 0)) throw new Error('rate（目标物品的每分钟产量）必须大于 0');
+
+    const depth = Math.max(1, Math.min(16, Math.floor(options.depth ?? 8)));
+    const tier = options.buildingTier ?? 'base';
+    const beltItemsPerSec =
+      typeof options.beltSpeed === 'number' && options.beltSpeed > 0 ? options.beltSpeed : 6;
+
+    const rootRecipe =
+      options.recipeId !== undefined ? this.recipes.get(options.recipeId) : undefined;
+    if (options.recipeId !== undefined && !rootRecipe) {
+      throw new Error(`找不到配方：${options.recipeId}`);
+    }
+
+    // 原料/副产物直接用配方树的结果，保证两个工具永远说同一套话。
+    const tree = this.recipeTree(item.id, {
+      rate,
+      depth,
+      ...(options.recipeId !== undefined ? { recipeId: options.recipeId } : {}),
+    });
+
+    const forcedBinding = rootRecipe
+      ? (() => {
+          const index = rootRecipe.outputs.findIndex((output) => output.id === item.id);
+          if (index < 0) return null;
+          const output = rootRecipe.outputs[index];
+          return output
+            ? { recipe: rootRecipe, outputIndex: index, outputCount: output.count }
+            : null;
+        })()
+      : null;
+
+    const aggregates = new Map<number, { recipe: KbRecipe; craftsPerMin: number }>();
+    const warnings: string[] = [];
+    let depthCut = false;
+
+    const expand = (
+      itemId: number,
+      itemRate: number,
+      remaining: number,
+      path: number[],
+      isRoot: boolean,
+    ): void => {
+      if (!(itemRate > 0)) return;
+      if (path.includes(itemId)) return;
+
+      const binding = isRoot && forcedBinding ? forcedBinding : this.mainRecipeFor(itemId);
+      if (!binding) return;
+
+      const craftsPerMin = itemRate / Math.max(1, binding.outputCount);
+      const previous = aggregates.get(binding.recipe.id);
+      if (previous) previous.craftsPerMin += craftsPerMin;
+      else aggregates.set(binding.recipe.id, { recipe: binding.recipe, craftsPerMin });
+
+      if (remaining <= 0) {
+        depthCut = true;
+        return;
+      }
+      for (const input of binding.recipe.inputs) {
+        expand(input.id, craftsPerMin * input.count, remaining - 1, [...path, itemId], false);
+      }
+    };
+
+    expand(item.id, rate, depth, [], true);
+
+    const chooseBuilding = (recipe: KbRecipe): { chosen?: KbItem; speed: number } => {
+      if (options.buildingId !== undefined) {
+        const forced = this.items.get(options.buildingId);
+        const speed = forced?.building?.assemblerSpeed;
+        if (!forced || !speed || speed <= 0) {
+          warnings.push(`指定的建筑 ${options.buildingId} 没有装配速度，按 1x 计算`);
+          return { speed: 1 };
+        }
+        return { chosen: forced, speed: speed / 10000 };
+      }
+
+      const candidates = this.buildingsForRecipe(recipe);
+      const index = tier === 'mk3' ? 2 : tier === 'mk2' ? 1 : 0;
+      const chosen = candidates[Math.min(index, candidates.length - 1)];
+      const speed = chosen?.building?.assemblerSpeed;
+      if (!chosen || !speed || speed <= 0) return { speed: 1 };
+      return { chosen, speed: speed / 10000 };
+    };
+
+    const rows: PlanRecipeRow[] = [];
+    let totalPowerKw = 0;
+    let maxSingleInputPerMin = 0;
+    let maxBelts = 0;
+    const seenWarnings = new Set<string>();
+    const warn = (message: string): void => {
+      if (seenWarnings.has(message)) return;
+      seenWarnings.add(message);
+      warnings.push(message);
+    };
+
+    for (const aggregate of aggregates.values()) {
+      const { recipe, craftsPerMin } = aggregate;
+      if (!(craftsPerMin > 0)) continue;
+
+      const { chosen, speed } = chooseBuilding(recipe);
+      if (!chosen && options.buildingId === undefined) {
+        warn(`配方「${recipe.name}」找不到对应机器（离线知识库缺少建筑参数），按 1x 计算`);
+      }
+
+      // 机器数 = 每分钟制作次数 × 每件耗时 ÷ 60 ÷ 速度倍率。
+      const exactCount = (craftsPerMin * recipe.timeSeconds) / 60 / speed;
+      const buildingCount = Math.max(1, Math.ceil(exactCount - 1e-9));
+
+      const perBuildingKw = chosen?.building?.workEnergyPerTick
+        ? (chosen.building.workEnergyPerTick * 60) / 1000
+        : 0;
+      const powerKw = round4(perBuildingKw * buildingCount);
+      totalPowerKw += powerKw;
+
+      const inputsPerMin = recipe.inputs.map((input) => ({
+        itemId: input.id,
+        item: this.items.get(input.id)?.name ?? `#${input.id}`,
+        amount: round4(input.count * craftsPerMin),
+      }));
+
+      let beltsPerInput = 0;
+      for (const input of inputsPerMin) {
+        if (input.amount > maxSingleInputPerMin) maxSingleInputPerMin = input.amount;
+        beltsPerInput = Math.max(
+          beltsPerInput,
+          Math.ceil(input.amount / (beltItemsPerSec * 60) - 1e-9),
+        );
+      }
+      if (beltsPerInput > maxBelts) maxBelts = beltsPerInput;
+
+      rows.push({
+        recipeId: recipe.id,
+        recipeName: recipe.name,
+        ...(typeof recipe.type === 'number' ? { recipeType: recipe.type } : {}),
+        ...(chosen ? { buildingId: chosen.id, buildingName: chosen.name } : {}),
+        buildingCount,
+        exactCount: round4(exactCount),
+        speedMultiplier: round4(speed),
+        craftsPerMin: round4(craftsPerMin),
+        timeSeconds: recipe.timeSeconds,
+        powerKw,
+        inputsPerMin,
+        beltsPerInput,
+      });
+    }
+
+    rows.sort((a, b) => b.craftsPerMin - a.craftsPerMin);
+
+    if (depthCut) warn('达到深度上限，未继续展开的项按原料处理（可用 depth 放宽）');
+
+    const assumptions = [
+      '机器数向上取整；exactCount 是未取整值，用来看余量。',
+      `单条传送带按 ${beltItemsPerSec} 个/秒折算；实际带数取决于布线。`,
+      '电力只算工作功率（workEnergyPerTick × 60 ÷ 1000），不含待机、电网损耗与建筑自耗。',
+      '未建模增产剂、矿脉产率、建筑堆叠；原料是"到厂需求"，不是"矿脉开采需求"。',
+    ];
+
+    return {
+      item: { id: item.id, name: item.name },
+      ratePerMin: round4(rate),
+      recipes: rows,
+      totalPowerKw: round4(totalPowerKw),
+      belts: {
+        itemsPerSec: beltItemsPerSec,
+        maxSingleInputPerMin: round4(maxSingleInputPerMin),
+        maxBelts,
+      },
+      raw: tree.raw,
+      byproducts: tree.byproducts,
+      cycles: tree.cycles,
+      depthLimited: tree.depthLimited || depthCut,
+      assumptions,
+      warnings,
     };
   }
 

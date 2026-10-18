@@ -52,6 +52,17 @@ namespace IcarusII.Common.Protocol
         /// <summary>sidecar → mod：绑定结果。</summary>
         public const string SaveBound = "save.bound";
 
+        // ---- M4e 增量：删除对话回合（协议附录 A.7）----
+
+        /// <summary>mod → sidecar：删除一个问答回合。</summary>
+        public const string HistoryDelete = "history.delete";
+
+        /// <summary>sidecar → mod：删除结果。</summary>
+        public const string HistoryDeleted = "history.deleted";
+
+        /// <summary>sidecar → mod：本地工具的可视化事件（附录 A.8，仅 UI）。</summary>
+        public const string ToolActivity = "tool_activity";
+
         /// <summary>error.payload.code 的 M1 新增取值。</summary>
         public const string CodeInvalidKey = "invalid_key";
         public const string CodeUpstreamError = "upstream_error";
@@ -69,6 +80,18 @@ namespace IcarusII.Common.Protocol
 
         /// <summary>mod 声明的只读游戏工具能力。</summary>
         public const string CapabilityGameRead = "game.read.v1";
+
+        /// <summary>mod 声明的建筑查询能力（game_get_entity / game_get_entities）。</summary>
+        public const string CapabilityGameEntity = "game.entity.v1";
+
+        /// <summary>mod 声明的进度查询能力（game_get_progress）。</summary>
+        public const string CapabilityGameProgress = "game.progress.v1";
+
+        /// <summary>mod 声明的截图能力（game_capture_view）。</summary>
+        public const string CapabilityGameView = "game.view.v1";
+
+        /// <summary>mod 声明的区域分析能力（game_analyze_area）。</summary>
+        public const string CapabilityGameAnalyze = "game.analyze.v1";
 
         /// <summary>tool_result.error.code 的 M2 取值。</summary>
         public const string CodeToolNotFound = "tool_not_found";
@@ -189,11 +212,24 @@ namespace IcarusII.Common.Protocol
         }
 
         /// <summary>
+        /// 构造 `history.delete` 载荷（附录 A.7）。`timestampMs` 来自历史回放；
+        /// 没有时传 0，sidecar 会退化成"最后一条同文本的用户消息"。
+        /// </summary>
+        public static JsonValue BuildHistoryDelete(string saveKey, string text, long timestampMs)
+        {
+            var p = JsonValue.NewObject();
+            if (!string.IsNullOrEmpty(saveKey)) p.Set("saveKey", saveKey);
+            p.Set("text", text ?? string.Empty);
+            if (timestampMs > 0) p.Set("timestamp", timestampMs);
+            return p;
+        }
+
+        /// <summary>
         /// 构造 tool_result 载荷（协议附录 B）。`error` 与 `meta` 始终写出，
         /// 便于 sidecar 端做统一解析，避免"字段缺失"与"空值"两种形态。
         /// </summary>
         public static JsonValue BuildToolResult(string callId, bool ok, JsonValue data,
-            string errorCode, string errorMessage, JsonValue meta)
+            string errorCode, string errorMessage, JsonValue meta, JsonValue image = null)
         {
             var p = JsonValue.NewObject();
             if (!string.IsNullOrEmpty(callId)) p.Set("callId", callId);
@@ -211,6 +247,9 @@ namespace IcarusII.Common.Protocol
                 error.Set("message", errorMessage ?? string.Empty);
                 p.Set("error", error);
             }
+
+            // 附件只在成功时出现；失败结果带图会让模型对"成功了什么"产生错觉。
+            if (ok && image != null && !image.IsNull) p.Set("image", image);
 
             p.Set("meta", meta ?? JsonValue.NewObject());
             return p;
@@ -230,6 +269,54 @@ namespace IcarusII.Common.Protocol
     }
 
     /// <summary>存档绑定结果里用于回放的一条历史消息（M2.7）。</summary>
+    /// <summary>`tool_activity` 的解析结果（附录 A.8）。字段缺失一律容忍。</summary>
+    public sealed class ToolActivityInfo
+    {
+        public string CallId { get; private set; }
+        public string Phase { get; private set; }
+        public string Name { get; private set; }
+        public string Args { get; private set; }
+        public bool Ok { get; private set; }
+        public string Summary { get; private set; }
+        public string Detail { get; private set; }
+
+        public static ToolActivityInfo Parse(JsonValue payload)
+        {
+            var r = new ToolActivityInfo();
+            if (payload == null || payload.IsNull) return r;
+            r.CallId = payload["callId"].AsString(null);
+            r.Phase = payload["phase"].AsString("end");
+            r.Name = payload["name"].AsString(string.Empty);
+            r.Args = payload["args"].AsString(null);
+            r.Ok = payload["ok"].AsBool(false);
+            r.Summary = payload["summary"].AsString(null);
+            r.Detail = payload["detail"].AsString(null);
+            return r;
+        }
+    }
+
+    /// <summary>`history.deleted` 的解析结果（附录 A.7）。</summary>
+    public sealed class HistoryDeletedInfo
+    {
+        public string SaveKey { get; private set; }
+        public string Text { get; private set; }
+        public bool Ok { get; private set; }
+        public int Removed { get; private set; }
+        public string Error { get; private set; }
+
+        public static HistoryDeletedInfo Parse(JsonValue payload)
+        {
+            var r = new HistoryDeletedInfo();
+            if (payload == null || payload.IsNull) return r;
+            r.SaveKey = payload["saveKey"].AsString(null);
+            r.Text = payload["text"].AsString(string.Empty);
+            r.Ok = payload["ok"].AsBool(false);
+            r.Removed = payload["removed"].AsInt(0);
+            r.Error = payload["error"].AsString(null);
+            return r;
+        }
+    }
+
     public sealed class HistoryMessageInfo
     {
         public string Role { get; set; }

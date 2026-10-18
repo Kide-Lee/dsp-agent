@@ -15,7 +15,7 @@
  * 「未配置 key」的启动路径都不会加载 pi、不会联网。
  */
 
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   AgentSession,
@@ -26,7 +26,13 @@ import type {
   ResourceLoader,
 } from '@earendil-works/pi-coding-agent';
 import type { Api, Model } from '@earendil-works/pi-ai';
-import { type ConfigStore, maskSecret, providerDisplayName, redactSecrets } from './config.js';
+import {
+  defaultModelInput,
+  type ConfigStore,
+  maskSecret,
+  providerDisplayName,
+  redactSecrets,
+} from './config.js';
 import { ICARUS_II_PERSONA_NAME, ICARUS_II_SYSTEM_PROMPT } from './persona.js';
 import { errorFields, type Logger, type LogFields, log as rootLog } from './log.js';
 import type {
@@ -44,6 +50,9 @@ import type {
 } from './protocol.js';
 import type { GameToolHost } from './tools/host.js';
 import { createKbTools } from './kb/tools.js';
+import type { ToolActivityPayload } from './protocol.js';
+import { parseSessionLines, removeTurnFromEntries, serializeSessionEntries } from './history.js';
+import { createScriptTool } from './tools/script.js';
 import type { KnowledgeStore } from './kb/store.js';
 
 /** pi SDK 的完整类型（仅类型层面；运行时不静态引用）。 */
@@ -76,6 +85,8 @@ export interface AgentEmitter {
     args: JsonObject,
     options: { timeoutMs: number; signal?: AbortSignal },
   ): Promise<ToolResultPayload>;
+  /** 本地工具（kb_* / run_script）的 UI 事件；协议附录 A.8。 */
+  toolActivity?(payload: ToolActivityPayload): void;
 }
 
 export interface AgentRunner {
@@ -94,6 +105,15 @@ export interface AgentRunner {
    * 只读会话文件，不建模型会话、不联网、不改变当前 saveKey。
    */
   getHistory?(saveKey: string | null): Promise<HistoryMessage[]>;
+  /**
+   * 删除某个存档里的一个问答回合（M4e）。成功表示会话文件已被改写、
+   * 内存会话已丢弃；失败用 `error` 说明原因（busy / turn_not_found / ...）。
+   */
+  deleteHistory?(
+    saveKey: string | null,
+    text: string,
+    timestamp?: number,
+  ): Promise<{ ok: boolean; removed: number; error?: string }>;
   /**
    * 拉取某个供应商的可用模型列表（M3）。
    * 已知供应商走 pi 目录；显式给了 baseUrl 的走 OpenAI 兼容 `/models`。
@@ -341,6 +361,25 @@ function safeErrorFields(err: unknown, apiKey: string | null): LogFields {
 }
 
 /** 取出助手消息里的纯文本（不流式时的兜底来源）。 */
+function clipText(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}…`;
+}
+
+function toolResultText(result: unknown): string {
+  if (!result || typeof result !== 'object') return typeof result === 'string' ? result : '';
+  const content = (result as { content?: unknown }).content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    const b = block as { type?: unknown; text?: unknown };
+    if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text);
+  }
+  return parts.join('\n');
+}
+
 function assistantText(message: { content?: unknown }): string {
   const content = message.content;
   if (!Array.isArray(content)) return '';
@@ -696,6 +735,75 @@ export class PiAgent implements AgentRunner {
     return messages;
   }
 
+  /**
+   * 删除某个存档里的一个问答回合（M4e）。
+   *
+   * 只有删掉会话文件才算"真删"：`save.bound.history` 是从文件重放的。
+   * 成功后丢弃内存会话，下一次 prompt 从改写后的文件重建上下文。
+   */
+  async deleteHistory(
+    saveKey: string | null,
+    text: string,
+    timestamp?: number,
+  ): Promise<{ ok: boolean; removed: number; error?: string }> {
+    if (!saveKey) return { ok: false, removed: 0, error: 'no_save' };
+    if (this.active) return { ok: false, removed: 0, error: 'busy' };
+
+    const dir = join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey));
+    if (!existsSync(dir)) return { ok: false, removed: 0, error: 'turn_not_found' };
+
+    const files = readdirSync(dir).filter((name) => name.endsWith('.jsonl'));
+    if (files.length === 0) return { ok: false, removed: 0, error: 'turn_not_found' };
+
+    // 取最近写入的会话文件（与 continueRecent 的选择一致）。
+    let newest = files[0] as string;
+    let newestMs = -1;
+    for (const name of files) {
+      try {
+        const ms = statSync(join(dir, name)).mtimeMs;
+        if (ms > newestMs) {
+          newestMs = ms;
+          newest = name;
+        }
+      } catch {
+        // 单个文件读不到就跳过。
+      }
+    }
+
+    const file = join(dir, newest);
+    let raw: string;
+    try {
+      raw = readFileSync(file, 'utf8');
+    } catch {
+      return { ok: false, removed: 0, error: 'io_error' };
+    }
+
+    const entries = parseSessionLines(raw);
+    if (!entries) return { ok: false, removed: 0, error: 'unsupported_session' };
+
+    const { outcome, entries: next } = removeTurnFromEntries(entries, text, timestamp);
+    if (!outcome.ok || !next) return outcome;
+
+    const tmp = `${file}.tmp-${process.pid}`;
+    try {
+      writeFileSync(tmp, serializeSessionEntries(next), { encoding: 'utf8', mode: 0o600 });
+      renameSync(tmp, file);
+    } catch (err) {
+      try {
+        rmSync(tmp, { force: true });
+      } catch {
+        // ignore
+      }
+      this.logger.warn('删除对话回合并写会话文件失败', errorFields(err));
+      return { ok: false, removed: 0, error: 'io_error' };
+    }
+
+    // 上下文必须重建，否则被删的回合还在内存会话里继续发给模型。
+    if (this.saveKey === saveKey) this.teardown();
+    this.logger.info('已删除对话回合', { saveKey, removed: outcome.removed, file: newest });
+    return outcome;
+  }
+
   dispose(): void {
     this.teardown();
   }
@@ -855,11 +963,21 @@ export class PiAgent implements AgentRunner {
   ): Model<Api> | undefined {
     const exact = runtime.getModel(provider, modelId);
     const template = exact ?? runtime.getModels(provider)[0];
+
+    // 配置里的 `input` 是对目录的覆盖：pi 目录可能滞后（模型已支持读图但标成 text）。
+    // 不覆盖的话，provider 适配层会按 `model.input.includes("image")` 把截图丢掉。
+    const configured = this.store
+      .get()
+      .providers[provider]?.models.find((entry) => entry.id === modelId);
+    // 老配置里没有 `input`，用内置默认值兜底，否则升级后截图会被静默丢弃。
+    const configuredInput = configured?.input ?? defaultModelInput(provider, modelId);
+
     if (template) {
       const model = {
         ...template,
         id: modelId,
         name: displayName || exact?.name || modelId,
+        ...(configuredInput ? { input: [...configuredInput] } : {}),
       } as Model<Api>;
       return baseUrl ? { ...model, baseUrl } : model;
     }
@@ -874,7 +992,7 @@ export class PiAgent implements AgentRunner {
       provider,
       baseUrl,
       reasoning: false,
-      input: ['text'],
+      input: configuredInput ? [...configuredInput] : ['text'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 128000,
       maxTokens: 8192,
@@ -893,7 +1011,7 @@ export class PiAgent implements AgentRunner {
           api: 'openai-completions',
           baseUrl,
           reasoning: false,
-          input: ['text'],
+          input: configuredInput ? [...configuredInput] : ['text'],
           cost: custom.cost,
           contextWindow: custom.contextWindow,
           maxTokens: custom.maxTokens,
@@ -1123,7 +1241,11 @@ export class PiAgent implements AgentRunner {
       thinkingLevel: thinkingLevel as NonNullable<CreateAgentSessionOptions['thinkingLevel']>,
       // 关闭全部内置工具，只注册按当前 mod 能力生成的游戏工具。
       noTools: 'builtin',
-      customTools: [...this.host.tools(), ...(this.kb ? createKbTools(this.kb) : [])],
+      customTools: [
+        ...this.host.tools(),
+        ...(this.kb ? createKbTools(this.kb) : []),
+        createScriptTool(this.host),
+      ],
       // 替换 pi 默认的 coding agent system prompt 为游戏内助手人格。
       resourceLoader,
     };
@@ -1163,6 +1285,11 @@ export class PiAgent implements AgentRunner {
   }
 
   // ---------------------------------------------------------------- 事件映射
+
+  /** 工具名是否由 mod 执行（那几个已经由 mod 自己出卡片，不能重复）。 */
+  private isHostTool(name: string): boolean {
+    return this.host.tools().some((tool) => tool.name === name);
+  }
 
   private handleEvent(event: AgentSessionEvent): void {
     const run = this.active;
@@ -1217,14 +1344,35 @@ export class PiAgent implements AgentRunner {
         return;
       }
 
-      case 'tool_execution_start':
+      case 'tool_execution_start': {
         run.emit.status('tools', event.toolName);
+        if (!this.isHostTool(event.toolName)) {
+          run.emit.toolActivity?.({
+            callId: `local:${event.toolCallId}`,
+            phase: 'start',
+            name: event.toolName,
+            args: clipText(JSON.stringify(event.args ?? {}), 300),
+          });
+        }
         return;
+      }
 
-      case 'tool_execution_end':
+      case 'tool_execution_end': {
         // 工具结束后模型还要继续生成；回到 thinking，避免状态栏停在“工具”。
         run.emit.status('thinking');
+        if (!this.isHostTool(event.toolName)) {
+          const text = toolResultText(event.result);
+          run.emit.toolActivity?.({
+            callId: `local:${event.toolCallId}`,
+            phase: 'end',
+            name: event.toolName,
+            ok: !event.isError,
+            summary: clipText(text.replace(/\s+/g, ' ').trim(), 160),
+            detail: clipText(text, 4000),
+          });
+        }
         return;
+      }
 
       case 'auto_retry_start':
         run.emit.status('retrying', `第 ${event.attempt}/${event.maxAttempts} 次重试`);

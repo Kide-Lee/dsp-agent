@@ -474,6 +474,77 @@ mod                                   sidecar
    真正的绑定靠随后的 `save.bind`。
 5. 重复绑定同一个 `saveKey` 必须**幂等**（不重建、不丢历史）。
 
+### A.7 `history.delete` / `history.deleted` — 删除一个问答回合（M4e）
+
+聊天窗的「删除」不能只删 UI：`save.bound.history` 是 sidecar 从会话文件重放的，
+只删窗口的话，重进存档又会出现。因此删除必须落到 sidecar 的会话文件上。
+
+#### `history.delete`（mod → sidecar）
+
+```jsonc
+{
+  "v": 1, "id": "m-51", "type": "history.delete",
+  "payload": {
+    "saveKey": "3f2a91c4d8e05b17",
+    "text": "上次的问题",
+    "timestamp": 1760000000000
+  }
+}
+```
+
+- `text`：该回合的**用户消息原文**（必填，用于定位）。
+- `timestamp`：可选。历史回放里带回来的毫秒时间戳；有它时优先按时间戳匹配，
+  没有时才退化为「最后一条同文本的用户消息」。
+
+#### `history.deleted`（sidecar → mod）
+
+```jsonc
+{
+  "v": 1, "id": "s-52", "type": "history.deleted",
+  "replyTo": "m-51",
+  "payload": {
+    "saveKey": "3f2a91c4d8e05b17",
+    "text": "上次的问题",
+    "ok": true,
+    "removed": 2,
+    "error": null
+  }
+}
+```
+
+- 成功时 `removed` 是删掉的会话条目数（通常 user + assistant，可能含工具消息）。
+- 失败时 `ok=false`，`error` 为 `busy`（正在回答）、`no_save`、`turn_not_found`、
+  `unsupported_session`（会话含压缩/分支，拒绝改写）、`io_error` 之一。
+- 成功后 sidecar 会**丢弃当前内存会话**，下一次 `prompt` 从改写后的文件重建上下文，
+  因此被删回合不会继续进入模型上下文。
+- 实现是线性会话重写：保留条目按原顺序重新串成 `parentId` 链；
+  含 `compaction` / `branch_summary` 的会话拒绝删除（避免破坏上下文树）。
+
+### A.8 `tool_activity` — sidecar 本地工具的可视化（M4f）
+
+`kb_*` 与 `run_script` 在 sidecar 内执行，不经过 `tool_call`，因此默认在聊天窗里
+**看不到任何卡片**——玩家会误以为模型没有用计算器。这条消息只用于 UI 展示，
+不参与工具执行，也不改变模型上下文。
+
+```jsonc
+{
+  "v": 1, "id": "s-70", "type": "tool_activity",
+  "payload": {
+    "callId": "kb_plan-3f9a",
+    "phase": "start",           // start | end
+    "name": "kb_plan",
+    "args": "{\"item\":\"宇宙矩阵\",\"rate\":20}",
+    "ok": true,                 // 仅 phase=end
+    "summary": "宇宙矩阵 20/min 机器：…",
+    "detail": "…"               // 可展开正文，服务端截断
+  }
+}
+```
+
+- 同一次工具调用 `callId` 相同；mod 用它在 `start` 建卡、`end` 原地更新。
+- mod 必须容忍：只收到 `end`（补建卡）、`name` 未知（显示原名）、字段缺失。
+- 只对**模型可见**的本地工具发送；知识库导出等 internal 调用不发。
+
 ---
 
 ## 附录 B：只读游戏工具（M2）与知识库工具（M3）
@@ -486,6 +557,11 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 
 模型可见的工具名使用下划线（OpenAI 兼容端点会把非 `[a-zA-Z0-9_-]` 替换成 `_`）：
 
+工具按**能力**分组：mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告哪一组。
+老版本 mod 只声明 `game.read.v1` 时，看不到后来新增的工具（避免 `tool_not_found`）。
+
+**`game.read.v1`（M2）**
+
 | 协议/模型名 | 说明 |
 | --- | --- |
 | `game_get_overview` | 存档、时间、当前星球/星系、玩家坐标 |
@@ -495,6 +571,34 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 | `game_get_research` | 当前研究、进度、队列 |
 | `game_get_production` | 按物品聚合的产量/消耗/库存 |
 
+**`game.entity.v1`（M4a）**
+
+| 协议/模型名 | 说明 |
+| --- | --- |
+| `game_get_entity` | 单个建筑详情：原型、配方、产物/消耗、功率、分拣器/传送带/仓储/物流塔、坐标与朝向 |
+| `game_get_entities` | 行星内建筑分页列表；可按 `protoId` / `protoName` / `recipeId` / 区域过滤 |
+
+**`game.analyze.v1`（M4c）**
+
+| 协议/模型名 | 说明 |
+| --- | --- |
+| `game_analyze_area` | 按空间范围聚合产线：建筑/配方计数、装机产能、耗电、物流设施、涉及电网 |
+
+**`game.progress.v1`（M4a）**
+
+| 协议/模型名 | 说明 |
+| --- | --- |
+| `game_get_progress` | 玩家进度：派生阶段、已解锁科技、里程碑、教程、研究队列 |
+
+**`game.view.v1`（M4a）**
+
+| 协议/模型名 | 说明 |
+| --- | --- |
+| `game_capture_view` | 截取当前画面（JPEG，可带可见实体的屏幕坐标），图片走 `tool_result.image` |
+
+> `game_capture_view` 只截**游戏层**：`GameCamera.CaptureScreenshot` 把 `cullingMask` 设为
+> `gameLayerMask`，UGUI 不进画面，因此不需要额外的"隐藏界面"开关。
+
 ### B.1.1 M3 知识库工具（sidecar 本地）
 
 | 模型名 | 说明 |
@@ -502,12 +606,28 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 | `kb_search` | 在物品/配方/科技/建筑/矿脉/提示/教程/里程碑/指引/术语中搜索 |
 | `kb_get` | 按 kind + id/名称/SID 精确读取一条 |
 | `kb_recipe_tree` | 递归展开主配方，计算直接输入、原料总量、副产物 |
+| `kb_plan` | 按目标产量计算机器数、电力、传送带；原料复用配方树（M4b） |
 
-- 这三个工具**始终注册**；知识库尚未建立时执行返回 `kb_unavailable`，
+- 这几个工具**始终注册**；知识库尚未建立时执行返回 `kb_unavailable`，
   不会让模型“看不到工具”而凭记忆编造。
 - 它们不出现在 `tool_call` 帧里（sidecar 本地执行），因此游戏内不会出现对应的工具卡；
   结果作为 pi 的工具结果回填。
 - 知识库的数据来源与 schema 见 [docs/kb-v1.md](kb-v1.md)。
+
+### B.1.2 脚本工具（M4d，sidecar 本地）
+
+| 模型名 | 参数 | 说明 |
+| --- | --- | --- |
+| `run_script` | `code`, `timeoutMs?`, `maxCalls?` | 在 QuickJS-WASM 沙箱里执行只读脚本；`dsp.call(name, args)` **同步**调用已注册的 `game_*` 工具 |
+
+- 沙箱里没有 `process` / `require` / `fetch` / 文件系统；能力面只有注入的 `dsp.call`。
+- `dsp.call` 走同一个 `GameToolHost`，白名单来自当前连接的 `host.tools()`，
+  因此自动继承 risk / 路由 / 超时；v1 只允许只读工具。
+- 预算：`maxCalls` ≤ 50、`timeoutMs` ≤ 10s、返回 ≤ 6KB；超时由 QuickJS 中断处理器打断。
+- **协议层没有新帧**：脚本完全在 sidecar 内执行，`dsp.call` 复用既有的 `tool_call`/`tool_result`，
+  因此游戏内仍会出现这些调用的工具卡（`internal=false`）。
+- 实现细节：同步变体 + "挂起 → 宿主执行 → 重放"（memo 已完成的调用），
+  所以脚本必须可重放，不要用 `Date.now` / `Math.random`。
 
 工具结果中的物品/建筑/科技可带 `iconTag`（游戏图标短码，不含反斜杠与分号）；
 模型在正文里写成 `\tag;`。聊天窗必须使用 `Configs.builtin.generalIconMapping` 才能渲染这些短码。
@@ -547,6 +667,7 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
     "callId": "call_7",
     "ok": true,
     "data": { "demandKw": 1234.5, "display": "需求 1.23 MW · 满足 92%" },
+    "image": null,
     "error": null,
     "meta": {
       "tool": "game_get_power",
@@ -568,6 +689,26 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
   `timeout`、`busy`、`internal`、`cancelled`。
 - 断线、换档、退游戏时 sidecar 立即以 `tool_unavailable` / `not_in_game` 结束 pending 调用，
   不等待 mod 回复。
+
+#### `image`（可选，M4a）
+
+只由 `game_capture_view` 产生。字段：
+
+```jsonc
+"image": {
+  "mimeType": "image/jpeg",
+  "data": "<base64，不含前缀>",
+  "width": 1280,
+  "height": 720
+}
+```
+
+- 只在 `ok=true` 时出现；`data` 解码后 ≤ **2 MiB**，整帧仍受 §1 的 8 MiB 限制。
+- **图片不进 `data`**：`data` 保持纯 JSON，sidecar 把 `image` 转成 pi 的 `ImageContent`，
+  由 provider 适配层决定怎么发（`openai-completions` 会补一条带 `image_url` 的 `user` 消息）。
+- 模型 `input` 不含 `image` 时，sidecar 丢弃图片并在文本里注明「已截图，但当前模型不支持看图」，
+  不让结果凭空消失。
+- 编码约定：JPEG quality 80、长边 ≤ 1280；`width`/`height` 是实际像素。
 
 ### B.4 单位约定（M2 定案）
 

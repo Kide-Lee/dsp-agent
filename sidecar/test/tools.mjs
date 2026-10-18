@@ -74,7 +74,7 @@ async function waitFor(predicate, timeoutMs = 1500, label = 'condition') {
   return false;
 }
 
-function makeAgent(host, callOptions = {}) {
+function makeAgent(host, callOptions = {}, opts = {}) {
   const state = { result: null, calls: 0 };
   const agent = {
     info: { provider: 'test', model: 'test', available: true },
@@ -83,6 +83,7 @@ function makeAgent(host, callOptions = {}) {
     },
     async run(_text, promptId, emit) {
       state.calls += 1;
+      if (opts.activity) emit.toolActivity?.(opts.activity);
       host.bind(emit);
       try {
         state.result = await emit.callTool(
@@ -96,15 +97,19 @@ function makeAgent(host, callOptions = {}) {
       emit.message(state.result.ok ? 'ok' : `fail:${state.result.error?.code}`, promptId, true);
     },
     onConfigChanged() {},
+    async deleteHistory(saveKey, text, timestamp) {
+      state.deleted = { saveKey, text, timestamp };
+      return { ok: true, removed: 2 };
+    },
     dispose() {},
   };
   return { agent, state };
 }
 
-function makeSession({ callOptions } = {}) {
+function makeSession({ callOptions, activity } = {}) {
   const socket = new FakeSocket();
   const host = new GameToolHost();
-  const { agent, state } = makeAgent(host, callOptions);
+  const { agent, state } = makeAgent(host, callOptions, { activity });
   const session = new Session(socket, {
     token: 'test-token',
     serverVersion: 'test',
@@ -123,15 +128,15 @@ async function run() {
     const ready = socket.frames.find((f) => f.type === 'ready');
     check('收到 ready', !!ready);
     const tools = ready?.payload?.tools ?? [];
-    check('六个只读工具 + 三个 kb 工具都已声明', tools.length === 9, JSON.stringify(tools));
+    check('六个只读工具 + 四个 kb 工具 + 脚本已声明', tools.length === 11, JSON.stringify(tools));
     check('包含 game_get_production', tools.includes('game_get_production'));
-    check('包含 kb_search / kb_get / kb_recipe_tree', ['kb_search', 'kb_get', 'kb_recipe_tree'].every((name) => tools.includes(name)));
+    check('包含 kb_search / kb_get / kb_recipe_tree / kb_plan', ['kb_search', 'kb_get', 'kb_recipe_tree', 'kb_plan'].every((name) => tools.includes(name)));
 
     const empty = makeSession();
     empty.session.handleFrame(Buffer.from(JSON.stringify(hello([]))), false);
     const emptyReady = empty.socket.frames.find((f) => f.type === 'ready');
     const emptyTools = emptyReady?.payload?.tools ?? [];
-    check('无 game 能力时仍声明 kb 工具（sidecar 本地）', emptyTools.length === 3 && emptyTools.every((name) => name.startsWith('kb_')));
+    check('无 game 能力时仍声明 kb 工具与脚本（sidecar 本地）', emptyTools.length === 5 && emptyTools.every((name) => name.startsWith('kb_') || name === 'run_script'));
   }
 
   console.log('── 2. tool_call → tool_result 往返 ──');
@@ -225,6 +230,73 @@ async function run() {
     const gotMessage = await waitFor(() => socket.frames.some((f) => f.type === 'message'));
     check('非法结果被转为错误而非异常', gotMessage);
     check('错误码是 bad_request', state.result?.error?.code === 'bad_request', state.result?.error?.code);
+  }
+
+  console.log('── 6. history.delete（附录 A.7） ──');
+  {
+    const { socket, session, state } = makeSession();
+    session.handleFrame(Buffer.from(JSON.stringify(hello())), false);
+    session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-60',
+          type: 'save.bind',
+          payload: { saveKey: 'save-a', saveName: 'A' },
+        }),
+      ),
+      false,
+    );
+    session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-61',
+          type: 'history.delete',
+          payload: { text: '被删的问题', timestamp: 1760000000000 },
+        }),
+      ),
+      false,
+    );
+    const gotDeleted = await waitFor(() => socket.frames.some((f) => f.type === 'history.deleted'));
+    const deleted = socket.frames.find((f) => f.type === 'history.deleted');
+    check('收到 history.deleted', gotDeleted);
+    check('replyTo 指向请求', deleted?.replyTo === 'm-61');
+    check('ok=true', deleted?.payload?.ok === true);
+    check('removed 透传', deleted?.payload?.removed === 2);
+    check('saveKey 回落到当前绑定', deleted?.payload?.saveKey === 'save-a');
+    check(
+      'agent 收到文本与时间戳',
+      state.deleted?.text === '被删的问题' && state.deleted?.timestamp === 1760000000000,
+    );
+
+    const bad = makeSession();
+    bad.session.handleFrame(Buffer.from(JSON.stringify(hello())), false);
+    bad.session.handleFrame(
+      Buffer.from(JSON.stringify({ v: 1, id: 'm-62', type: 'history.delete', payload: {} })),
+      false,
+    );
+    const gotBad = await waitFor(() => bad.socket.frames.some((f) => f.type === 'history.deleted'));
+    const badReply = bad.socket.frames.find((f) => f.type === 'history.deleted');
+    check('缺 text 报 bad_request', gotBad && badReply?.payload?.ok === false && badReply?.payload?.error === 'bad_request');
+  }
+
+  console.log('── 7. tool_activity（附录 A.8） ──');
+  {
+    const activity = { callId: 'local:x1', phase: 'start', name: 'kb_plan', args: '{"rate":20}' };
+    const { socket, session } = makeSession({ activity });
+    session.handleFrame(Buffer.from(JSON.stringify(hello())), false);
+    session.handleFrame(
+      Buffer.from(JSON.stringify({ v: 1, id: 'm-70', type: 'prompt', payload: { text: '规划' } })),
+      false,
+    );
+    const got = await waitFor(() => socket.frames.some((f) => f.type === 'tool_activity'));
+    check('收到 tool_activity', got);
+    const frame = socket.frames.find((f) => f.type === 'tool_activity');
+    check('callId 不变', frame?.payload?.callId === 'local:x1');
+    check('phase 透传', frame?.payload?.phase === 'start');
+    check('name 透传', frame?.payload?.name === 'kb_plan');
+    check('args 透传', frame?.payload?.args === '{"rate":20}');
   }
 
   console.log();

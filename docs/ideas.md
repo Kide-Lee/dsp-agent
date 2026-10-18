@@ -281,3 +281,271 @@ public const int FEATURES_FOR_CUSTOM_MOD_ID_START = 100010000;   // 注释即"�
 | 指令方式 | 聊天自然语言（复用现有窗口），暂不做专用指令面板 |
 | 存档持久化 | 视为**独立立项**——游戏实体必须能被存/读档，工作量大且不可省 |
 | 第二台机甲能否被摧毁 | 待定；倾向"可被摧毁但有回收机制"，需在 spike 后讨论 |
+
+---
+
+## 工具面扩展评估（第二轮修订）
+
+> 基线：能核实的都用**本地游戏源码**核对公开 API（`dsp-game/Assets/Scripts/`，附 `文件:行号`）；
+> 外部仓库只做了检索（本机 DNS 受限，无法直接抓取），标「待验证」。
+> **本轮按用户确认重写，并作废上一版「默认模型没有视觉」的结论（那是错的）。**
+
+### 0. 本轮确认的前提
+
+| # | 确认项 | 对方案的影响 |
+| --- | --- | --- |
+| 1 | DeepSeek V4 Flash **能读图**；pi 的旧目录把它标成 text-only | 截图可直连主模型，**不需要**另接 VLM 旁路 |
+| 2 | 截图**给 AI 看**，也**显示在对话串里给玩家看** | 协议要带图 + 聊天窗要有图片卡片 |
+| 3 | 蓝图仓库**在线按需**：[DSPBluePrints/FactoryBluePrints](https://github.com/DSPBluePrints/FactoryBluePrints)，**CC BY-NC-SA 4.0** | 不随包分发；每次结果带署名/许可/链接 |
+| 4 | 计算器已有大量成熟实现 | 不再自研公式，改为**集成 + 对拍** |
+| 5 | 蓝图生成**接受模板**；已有多种实现 | v1 模板化，参考现成生成器 |
+| 6 | Wiki 中英文都要 | 双站点、双缓存、双清洗 |
+| 7 | 脚本**必要**，且未来要暴露读写 API 做自动化 | 脚本不是"计算器的附属"，要独立设计能力层 |
+
+### 0.1 实现进度（M4a）
+
+| 项 | 状态 | 落点 |
+| --- | --- | --- |
+| 模型 `input` 覆盖（打开读图） | ✅ | `ModelEntry.input` / `DEFAULT_DEEPSEEK_MODELS` / `resolveModel` |
+| 协议 `tool_result.image` | ✅ | `docs/protocol-v1.md` B.3、两侧类型、`sidecar/test/tools-view.mjs` |
+| 能力分组（`game.entity/progress/view.v1`） | ✅ | 协议 B.1、`registry.ts` 的 `TOOL_CAPABILITY`、mod `hello.capabilities` |
+| `game_get_entity` / `game_get_entities` | ✅ | `mod/src/IcarusII/Game/Tools/GameEntityTools.cs` |
+| `game_get_progress` | ✅ | 同上 |
+| `game_capture_view`（JPEG + 可见实体投影） | ✅ | 同上（`GameCamera.CaptureScreenshot` → JPEG q80） |
+| 聊天窗图片卡片 | ✅（数据驱动节点，不改 prefab） | `ChatWindow.AttachToolImage` + `UI/ToolImageSprite.cs` |
+| `kb_plan` 量化计算器（机器/电力/传送带） | ✅ | `sidecar/src/kb/knowledge.ts` 的 `plan()` + `kb/tools.ts`；测试 `test/kb-plan.mjs` |
+| `game_analyze_area` 产线分析（v1 装机口径） | ✅ | `GameEntityTools.cs`；范围=球形切分，不做拓扑 |
+| `run_script` 只读脚本层 | ✅ | QuickJS-WASM + `dsp.call` 复用工具注册表；测试 `test/script.mjs` |
+| wiki / 蓝图 | ⬜ 未开始 | 见 §6 排序 |
+
+> 验证：`sidecar/test/tools-view.mjs`（36 项）+ `sidecar/test/kb-plan.mjs`（38 项）+ `sidecar/test/script.mjs`（19 项）+ 全套 sidecar 回归 + `ProtocolTests`（200 项断言）
+> 全部通过；`scripts/build-mod.sh` 0 warning / 0 error。
+> 实机验收仍需进游戏确认截图内容与 UI。
+
+### 1. 修正：视觉链路本来就是通的，卡在我们自己的元数据
+
+上一版说「模型看不见图」是错的。真实链路：
+
+1. `ToolResultMessage.content` **允许** `ImageContent`（`pi-ai/dist/types.d.ts:293-297`）。
+2. `openai-completions` 转换器会把工具结果里的图片抽出来，**先发 `role:"tool"` 文本，
+   再补一条 `user` + `image_url`**（`pi-ai/dist/api/openai-completions.js:942-1000`）。
+3. 唯一闸门是 `model.input.includes("image")`（同文件 `:972`）。
+
+而我们的元数据把它关掉了：
+
+- pi 的 DeepSeek 目录写的是 `"input":["text"]`（`pi-ai/dist/providers/data/deepseek.json`）；
+- 自定义 OpenAI 兼容端点被硬编码成 `input: ['text']`（`sidecar/src/agent.ts:877,896`）；
+- `ModelEntry` 只有 `{id, name}`，没有把 `input` 暴露给配置（`sidecar/src/config.ts:53-56`）。
+
+⇒ **改 4 处即可打通**：
+
+| # | 改动 | 位置 |
+| --- | --- | --- |
+| 1 | `ModelEntry` 增加可选 `input`，`resolveModel` 用它覆盖目录默认值 | `config.ts` / `agent.ts` |
+| 2 | DeepSeek 两个模型设 `input: ['text','image']`；自定义端点默认 text、可显式开启 | `config.ts:53-56` |
+| 3 | 工具结果从「字符串」改为 `content: [{type:'text'},{type:'image'}]` | `tools/registry.ts` 的 `formatToolResult` |
+| 4 | 协议 `tool_result.data` 允许携带图片（或独立 `attachments[]`） | `docs/protocol-v1.md` 附录 B.3 |
+
+剩下的才是真工作量：
+
+- **图片体积**：`MAX_FRAME_BYTES = 8 MB`（`protocol.ts:19`）够用，但游戏画面噪声大，PNG 常 >2 MB。
+  用 **JPEG q80、长边 ≤1280**（约 150–250 KB），别用 PNG。
+- **聊天窗图片卡片**：工具卡里要能显示图（缩略图 + 点击放大 + 等比）。
+  这属于**静态 UI，必须进 prefab**（AGENTS.md §2.2），不能用运行期改 `RectTransform` 打补丁。
+- **上下文成本**：一张图约 1–2k token，且会长期留在历史里。默认应「缩略图进卡片、原图按需展开」，
+  并在设置里给「截图是否进模型上下文」开关。
+
+结论：截图从「要不要做」变成「图片卡片怎么进 prefab + 协议字段怎么定」。
+
+### 2. 9 项修订结论
+
+| # | 候选 | 修订后判断 | 关键变化 | 粗估 |
+| --- | --- | --- | --- | --- |
+| 1 | Wiki（中英） | ✅ 可行 | 双站点 + 双缓存；数值仍以 KB 为准 | 3–5 人日 |
+| 2 | 量化计算器 | ✅ 集成优先 | 不重写公式，做「数据源 + 对拍」 | 2–4 人日 |
+| 3 | 蓝图搜索下载 | ✅ 可行 | 在线按需 + 许可合规 | 2–4 人日 |
+| 4 | 蓝图生成 | ✅ 模板 v1 | 参考现成生成器，价值在**合法性校验** | 5–8 人日 |
+| 5 | 产线分析 | ✅ 可行 | 需要 `game_get_entities` 原语 | 6–10 人日 |
+| 6 | 截图 | ✅ **链路已通** | 改元数据 + 协议 + 图片卡片 | 4–6 人日 |
+| 7 | 建筑信息 | ✅ 可行 | ID 回收需陈旧检测 | 1–2 人日 |
+| 8 | 脚本 | ✅ 必要，独立设计 | QuickJS 沙箱 + 能力 API | 5–8 人日 |
+| 9 | 指引阶段 | ✅ 可行 | 「阶段」需定义 | 1–2 人日 |
+
+#### 1. Wiki（中英双站）
+
+- 站点：BWiki（`wiki.biligame.com/dsp`）+ 英文（`dsp-wiki.com` 或 Fandom，**待验证**哪个 API 稳定）。
+- 仍是「最小 MediaWiki 客户端 + 固定 host 白名单」，不做通用 HTTP 工具（`design.md:857`）。
+- 中英各一套清洗规则与缓存键（`lang + pageid + revid`）；中文按字符、英文按词做搜索。
+- 铁律不变：**数字用 KB，wiki 只补攻略/术语/布局经验**；冲突时以本体为准并说明。
+- 许可：BWiki 内容多为 CC BY-NC-SA，**只做在线读取 + 署名**，不镜像进包。
+
+#### 2. 量化计算器（集成，不自研）
+
+- 已有实现：[AimsCloudDrive/DSP](https://github.com/AimsCloudDrive/DSP)（量化计算器）、
+  [izu-san/dsp-calc-tool](https://github.com/izu-san/dsp-calc-tool)（**待验证**功能覆盖）。
+- 我方增量不是公式，而是：①数据换成本体运行时导出（版本永远对）②把结果做成
+  `kb_plan(...)` 的结构化输出 ③用现成实现做**对拍测试**（同输入比数值）。
+- 必须覆盖：机器数、电力、传送带/分拣器、原料 `/min`、副产物、增产剂模式、矿脉产率。
+- 如果某个实现的公式经对拍确认无误，优先移植其**测试向量**而不是代码，避免许可纠缠。
+
+#### 3. 蓝图搜索（在线按需 + 许可合规）
+
+- 关键技巧：header 在 base64 **之前**，对文件发 `Range: bytes=0-8191` 就能拿到
+  标题/作者/版本/描述，不必下全文；建筑数用自研 codec 算。
+- 元数据索引**本地生成、不随包分发**；全文按需下载，缓存 `%APPDATA%/icarus-ii/blueprints/`。
+- 每次结果必须带：`author`、`sourcePath`、仓库链接、`CC BY-NC-SA 4.0`。
+- 风险：GitHub API 未认证 60 次/小时；仓库体积不宜整仓镜像；蓝图可能来自不兼容版本。
+
+#### 4. 蓝图生成（模板 v1）
+
+- 已有实现可参考：[bWFuanVzYWth/dspbptk](https://github.com/bWFuanVzYWth/dspbptk)（蓝图工具箱/编解码）、
+  [Cosmin1490/DysonSphereProgram-BlueprintGenerator](https://github.com/Cosmin1490/DysonSphereProgram-BlueprintGenerator)（**待验证**）。
+- 我方定位：**格式与合法性**。`BlueprintData.CreateNew(string)` 能直接解析
+  （`BlueprintData.cs:114`），粘贴合法性由游戏 `CheckBuildConditions()` 判定
+  （`BuildTool_BlueprintPaste.cs:1751`），复制有公开入口 `UseToPasteNow()`（`BuildTool_BlueprintCopy.cs:461`）。
+- v1：先在游戏内采集「金块」模板 → 参数替换（数量/配方/输入输出方向）→ 生成 → 游戏内校验。
+- 合法性：拒绝重叠/穿模/跨带"仙术拼接"；footprint 取 `ItemProto.prefabDesc`；粘贴前预览占地与建筑数。
+- **不要承诺**「自然语言一键出任意布局」——那是布局求解器，不是模板工具。
+
+#### 5. 产线分析
+
+- 数据源不变（`EntityData`、`PowerSystem.netPool`、`ProductStat`、`assemblerPool`/`beltPool` 等）。
+- 拆两层：`game_get_entities`（分页原语）+ `game_analyze_area`（聚合语义）。
+- 三种范围：框选/选中、连通分量、整星球；`ProductStat` 有 6 档时间粒度
+  （`ProductionStatistics.cs:23-33`），结果必须声明用了哪档。
+- 万级实体要复用现有分帧采集 + 聚合 + 分页。
+
+#### 6. 截图（链路已通，见 §1）
+
+- 形态：`game_capture_view(region?, entities?, annotate?)` → JPEG + 图例。
+- 标注建议：世界空间临时 `TextMesh` 标签（编号 → 实体 id），渲染后立即销毁；
+  图例给 `{label, entityId}`，让标注成为**可回指坐标**，模型不必靠 OCR。
+- 玩家侧：图片卡片 + 点击放大 + 「这张图对应哪些实体」。
+- 仍建议保留**文本栅格图**作为补充（同一份快照的另一投影）：
+  对"布局对不对"这类问题，字符网格比像素更省 token、更确定；但不是必需项。
+
+#### 7. 建筑信息
+
+- `game_get_entity(planetId, entityId)`：proto/配方/产物统计/功率/分拣器/传送带/仓储/塔/坐标/电网。
+- 陈旧检测：返回 `simpleHash + protoId + pos`；调用方可传 `expectProtoId`，
+  不匹配返回 `stale_entity`（ID 回收见 `PlanetFactory.cs:495-496,1708`）。
+
+#### 8. 脚本（见 §4 专节）
+
+- 结论：要做，而且要做成**能力层**，不是"计算器附属"。
+
+#### 9. 指引阶段
+
+- `techStates`（`GameHistoryData.cs:12`）、`tutorialUnlocked`（`:11`）、
+  `MilestoneData.unlockTick`（`Scenario/Milestone/Data/MilestoneData.cs:4-6`）、研究队列、`GameDesc`。
+- 「阶段」是派生概念：定义 8 级阶梯并给出判定依据，让模型能解释。
+- 默认只报「当前阶段 + 下一阶段必要条件」，不剧透后续科技细节。
+
+### 3. 蓝图许可（CC BY-NC-SA 4.0）的落地规则
+
+| 事项 | 规则 |
+| --- | --- |
+| 随包分发 | **不分发**仓库任何内容（否则整包要变 CC BY-NC-SA，与 MIT 冲突） |
+| 运行时取用 | 允许；本地缓存；保留 `author`/`desc`/`sourcePath` |
+| 索引 | 本地生成，不随包；若必须分发，按 CC BY-NC-SA 并署名 |
+| 展示 | 工具结果与聊天卡片都要显示「作者 + 仓库链接 + 许可证」 |
+| 改编 | 从仓库蓝图改出来的，仍受 SA 约束；纯模板生成的归我们 |
+| 文档 | 新增 `docs/blueprint-v1.md`，把上述规则与格式、codec、校验器写在一起 |
+
+### 4. 脚本层设计（独立立项）
+
+**目标**：不只是算数，而是「批量取数 → 条件判断 → 循环 → 调用工具」的自动化。
+
+**形态**：`run_script(code, {timeoutMs, maxCalls})`，只读 v1。
+
+```js
+// 脚本内可用：纯 JS + dsp.call
+const f = dsp.call('game_get_entities', { planetId: dsp.planet(), limit: 500 });
+const asm = f.rows.filter(e => e.recipeId === 42);
+let power = 0;
+for (const e of asm) power += dsp.call('game_get_entity', { id: e.id }).powerKw;
+return { count: asm.length, powerKw: power };
+```
+
+**沙箱**：QuickJS-WASM（`quickjs-emscripten` 的 singlefile 变体，WASM 内联 base64，可进 SEA）。
+
+- 不用 `node:vm`：它不是安全边界（`constructor.constructor` 可逃逸）。
+- 不用 Node 权限模型：Node 的 permission 不拦网络。
+- QuickJS 与宿主零共享，只暴露注入的 `dsp` 对象。
+
+**能力 API 与工具体系的关系（重要）**
+
+- **一个注册表，两个前端**：脚本的 `dsp.call(name, args)` 与模型看到的 tool 调用走同一份
+  schema、risk、超时、路由。不要写两套实现。
+- **能力面 ≠ 工具面**：有些能力适合脚本、不适合作为模型工具（如 `entity_at(x,y)`、
+  `belt_path(from,to)`）。它们只注入脚本，不广告给模型——正好解决
+  `reference-implementations.md` §5「不要几十个细碎工具」的顾虑。
+- **写操作**：v1 只读；v2 允许写，但脚本只能产生 **intent**，由 sidecar 汇总成一次
+  dry-run 预览 + 一次确认，绝不逐个自动执行。确认令牌沿用现有机制。
+
+**预算**：`maxCalls`（默认 30）、CPU 5s、返回 ≤64 KB、禁止无限循环（超时杀）。
+
+**为什么值得独立做**：脚本能把「10 次工具调用 + 模型推理」压成 1 次调用，
+既省 token 又省延迟；而且将来「自动化」（定时巡检、条件触发）必须有它。
+
+**新增依赖的成本**：sidecar 体积 +1.5–3 MB（WASM base64）；要记进 `THIRD-PARTY.md`。
+
+**实现状态（M4d，已落地）**：[sidecar/src/tools/script.ts](../sidecar/src/tools/script.ts)。
+
+打包问题的解法：用 **`@jitl/quickjs-singlefile-cjs-release-sync`**——
+WASM 以 base64 内联在 JS 里，esbuild → SEA 单文件链路可以直接带走，不需要额外文件。
+
+实现上改用**同步变体 + 重放**，而不是 Asyncify：
+
+- Asyncify 的异步宿主函数在 `await` 之后创建句柄会踩 WASM 内存（实测 `memory access out of bounds`）；
+- 同步变体更小更快；`dsp.call` 因此是**同步**的，对本地数据查询够用；
+- 真正的异步（`host.call`）用「`dsp.call` 抛挂起标记 → 宿主执行 → 从头重放并命中 memo」实现；
+- 代价：脚本必须可重放（不要用 `Date.now` / `Math.random`），调用上限 50 次。
+
+安全边界写进了 `AGENTS.md` §2.4 的「脚本沙箱」：只注入 `dsp.call`，没有 `process`/`require`/`fetch`；
+白名单来自 `host.tools()`，因此权限/路由/超时与模型工具完全一致。
+
+### 5. 补充工具（修订）
+
+| 工具 | 为什么需要 | risk |
+| --- | --- | --- |
+| `game_capture_view` | 截图（给模型 + 给玩家） | 0 |
+| `game_get_entities` | 5/7 的分页原语 | 0 |
+| `game_get_entity` | 7 的单体读取 | 0 |
+| `game_get_alerts` | 断电/缺料/堵塞/袭击 | 0 |
+| `game_get_logistics` | `design.md:8.1` 已列未实现 | 0 |
+| `game_get_storage` | 库存 ≠ 产能 | 0 |
+| `game_get_selection` | 消除「指定范围」歧义 | 0 |
+| `blueprint_fetch` / `blueprint_validate` | 3/4 的取用与安全闸门 | 0 |
+| `game_diff` | 验证改动有没有变好 | 0 |
+| `kb_tech_path` | 「下一步研究什么」 | 0 |
+| `run_script` | 见 §4 | 0（v1 只读） |
+
+### 6. 建议排序
+
+| 批次 | 内容 | 理由 |
+| --- | --- | --- |
+| **P0** | 视觉链路（元数据 + 协议 + 图片卡片）→ `game_capture_view` | 用户明确要；打通后 4/5 都能复用 |
+| **P1** | 7 建筑信息 → 9 指引阶段 → 2 计算器 | 薄封装先落地；计算器价值最高 |
+| **P2** | 5 产线分析 → 8 脚本层（只读） | 脚本要有稳定 JSON 面才有意义 |
+| **P3** | 1 Wiki（中英）→ 3 蓝图搜索 | 外部依赖，放后面 |
+| **P4** | 4 蓝图生成 v1（模板） | 依赖 codec + 校验器 |
+| **P5** | 脚本写操作 / 自动化触发 / 文本栅格图 | 按需 |
+
+### 7. 要改的文档
+
+- `design.md`：§8.1 删除「不做截图」，改写为 `game_capture_view`；§9.1 隐私行补
+  「截图会进入模型上下文」；§19 决策表第 4 行改判；§8.1 工具表补新工具。
+- `docs/protocol-v1.md`：附录 B.3 增加图片附件字段；B.1 增加新工具名与 risk。
+- `docs/kb-v1.md`：补全 `building` 字段（算电力/速度必需）与时间粒度口径。
+- 新增 `docs/blueprint-v1.md`：格式、TS codec、校验规则、许可与缓存。
+- `THIRD-PARTY.md`：加 CC BY-NC-SA 4.0（若分发任何仓库内容——建议不分发）；
+  若引入 QuickJS，加其 MIT 许可。
+- `AGENTS.md` §2.4：补「脚本沙箱」边界（能力白名单、预算、写操作只能产生 intent）。
+
+### 8. 剩余待确认
+
+1. **图片默认是否进上下文**？每张约 1–2k token 且长期留存；建议默认「缩略图进卡片、原图按需」。
+2. **脚本 v1 是否允许写**？建议 v1 只读，v2 走 intent + 一次性确认。
+3. **蓝图索引**：确认「本地生成、不随包」这条底线。
+4. **计算器**：是移植某个实现的公式，还是直接调用它的库？（后者要评估其许可证）

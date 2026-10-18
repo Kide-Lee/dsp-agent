@@ -40,6 +40,7 @@ import {
   type ConfigUpdatePayload,
   type ConfigView,
   type ModelEntry,
+  type ModelInputModality,
   type ProviderPatch,
   type ProviderView,
   type ThinkingLevelName,
@@ -49,11 +50,30 @@ import {
 export const DEFAULT_PROVIDER = 'deepseek';
 export const DEFAULT_MODEL = 'deepseek-v4-flash';
 
-/** 首次启动时给 DeepSeek 预置的模型（与 pi 目录一致）。 */
+/**
+ * 首次启动时给 DeepSeek 预置的模型。
+ *
+ * `input` 是对 pi 目录的**覆盖**：目录里 DeepSeek 仍被标成只收文本，
+ * 但实际模型能读图。不写这一行，pi 的 provider 适配层会把工具结果里的截图丢掉
+ * （判据是 `model.input.includes("image")`）。
+ */
 export const DEFAULT_DEEPSEEK_MODELS: readonly ModelEntry[] = [
-  { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
-  { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
+  { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', input: ['text', 'image'] },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', input: ['text', 'image'] },
 ];
+
+/**
+ * 老配置文件的读时兜底：`input` 是后加的字段，已有 `config.json` 里没有它。
+ * 不兜底的话，升级后截图会被静默丢弃，而玩家看不出原因。
+ */
+export function defaultModelInput(
+  provider: string,
+  modelId: string,
+): ModelInputModality[] | null {
+  if (provider !== DEFAULT_PROVIDER) return null;
+  const preset = DEFAULT_DEEPSEEK_MODELS.find((entry) => entry.id === modelId);
+  return preset?.input ? [...preset.input] : null;
+}
 
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   deepseek: 'DeepSeek',
@@ -163,6 +183,18 @@ function isSafeId(id: string): boolean {
   return id.length > 0 && id !== '__proto__' && id !== 'constructor' && id !== 'prototype';
 }
 
+/** 归一化 `input` 模态列表；非法取值返回 null（表示"沿用目录默认"）。 */
+function normalizeModelInput(raw: unknown): ModelInputModality[] | null {
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: ModelInputModality[] = [];
+  for (const item of raw) {
+    if (item !== 'text' && item !== 'image') return null;
+    if (!out.includes(item)) out.push(item);
+  }
+  return out;
+}
+
 /** 归一化模型列表：去空、去重（后出现的覆盖名字），name 缺省用 id。 */
 function normalizeModels(raw: unknown): ModelEntry[] | null {
   if (!Array.isArray(raw)) return null;
@@ -178,6 +210,8 @@ function normalizeModels(raw: unknown): ModelEntry[] | null {
       id,
       name: typeof name === 'string' && name.length > 0 ? name : id,
     };
+    const input = normalizeModelInput(item['input']);
+    if (input) entry.input = input;
     if (seen.has(id)) {
       const index = models.findIndex((m) => m.id === id);
       models[index] = entry;

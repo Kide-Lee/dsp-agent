@@ -431,6 +431,46 @@ namespace IcarusII.Tests
             Eq("null 载荷的安全默认", 0, noBound.MessageCount);
             Check("null 载荷的 SaveKey 为空", string.IsNullOrEmpty(noBound.SaveKey));
 
+            // ---- 附录 A.7：删除对话回合 ----
+            Eq("history.delete 类型名", "history.delete", Protocol.HistoryDelete);
+            Eq("history.deleted 类型名", "history.deleted", Protocol.HistoryDeleted);
+
+            var del = Protocol.BuildHistoryDelete("3f2a", "上次的问题", 1760000000000L);
+            Eq("history.delete saveKey", "3f2a", del["saveKey"].AsString());
+            Eq("history.delete text", "上次的问题", del["text"].AsString());
+            Eq("history.delete timestamp", 1760000000000L, del["timestamp"].AsLong());
+
+            var delNoTs = Protocol.BuildHistoryDelete(null, "x", 0);
+            Check("无时间戳时不写 timestamp", !delNoTs.Has("timestamp"));
+            Check("无 saveKey 时不写 saveKey", !delNoTs.Has("saveKey"));
+
+            var deletedOk = HistoryDeletedInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"3f2a\",\"text\":\"上次的问题\",\"ok\":true,\"removed\":2,\"error\":null}"));
+            Check("history.deleted ok", deletedOk.Ok);
+            Eq("history.deleted removed", 2, deletedOk.Removed);
+            Check("history.deleted error 为 null", string.IsNullOrEmpty(deletedOk.Error));
+
+            var deletedFail = HistoryDeletedInfo.Parse(JsonValue.Parse(
+                "{\"ok\":false,\"removed\":0,\"error\":\"busy\"}"));
+            Check("history.deleted 失败", !deletedFail.Ok);
+            Eq("history.deleted 失败原因", "busy", deletedFail.Error);
+            Eq("history.deleted 缺字段安全默认", 0, HistoryDeletedInfo.Parse(null).Removed);
+
+            // ---- 附录 A.8：本地工具可视化 ----
+            Eq("tool_activity 类型名", "tool_activity", Protocol.ToolActivity);
+            var act = ToolActivityInfo.Parse(JsonValue.Parse(
+                "{\"callId\":\"local:abc\",\"phase\":\"end\",\"name\":\"kb_plan\","
+                + "\"ok\":true,\"summary\":\"宇宙矩阵 20/min\",\"detail\":\"…\"}"));
+            Eq("tool_activity callId", "local:abc", act.CallId);
+            Eq("tool_activity phase", "end", act.Phase);
+            Eq("tool_activity name", "kb_plan", act.Name);
+            Check("tool_activity ok", act.Ok);
+            Eq("tool_activity summary", "宇宙矩阵 20/min", act.Summary);
+            var actStart = ToolActivityInfo.Parse(JsonValue.Parse(
+                "{\"callId\":\"l1\",\"phase\":\"start\",\"name\":\"kb_search\",\"args\":\"{}\"}"));
+            Eq("tool_activity start 无 ok 时为 false", false, actStart.Ok);
+            Eq("tool_activity phase 缺省为 end", "end", ToolActivityInfo.Parse(JsonValue.Parse("{}")).Phase);
+
             // 前向兼容：config.state 未来新增字段不应影响解析
             var futureCfg = ConfigState.Parse(JsonValue.Parse("{\"state\":\"ready\",\"futureField\":42}"));
             Check("config.state 未知字段被容忍", futureCfg.IsReady);
@@ -477,6 +517,26 @@ namespace IcarusII.Tests
             Eq("error.code", "timeout", errResult["error"]["code"].AsString());
             Eq("error.message", "超时", errResult["error"]["message"].AsString());
             Check("meta 缺省时仍为对象", errResult["meta"].IsObject);
+
+            // ---- 附录 B.3：image 附件（M4a）----
+            var image = JsonValue.NewObject();
+            image.Set("mimeType", "image/jpeg");
+            image.Set("data", "AAAA");
+            image.Set("width", 1280);
+            image.Set("height", 720);
+            var withImage = Protocol.BuildToolResult("call_3", true,
+                JsonValue.Parse("{\"display\":\"已截图\"}"), null, null, meta, image);
+            Eq("image.mimeType 透传", "image/jpeg", withImage["image"]["mimeType"].AsString());
+            Eq("image.width 透传", 1280L, withImage["image"]["width"].AsLong());
+            Check("image 不混进 data", !withImage["data"].Has("image"));
+
+            var failedWithImage = Protocol.BuildToolResult("call_4", false, JsonValue.Null,
+                Protocol.CodeTimeout, "超时", meta, image);
+            Check("ok=false 时不写 image", !failedWithImage.Has("image"));
+
+            var noImage = Protocol.BuildToolResult("call_5", true,
+                JsonValue.Parse("{\"display\":\"ok\"}"), null, null, meta);
+            Check("没有 image 时不写字段", !noImage.Has("image"));
 
             // 空载荷/空对象不能抛
             Check("null 载荷不抛", ToolCallInfo.Parse(null, null) == null);

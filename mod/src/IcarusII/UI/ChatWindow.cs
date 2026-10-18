@@ -156,6 +156,8 @@ namespace IcarusII.UI
         {
             public int Id;
             public string Text;
+            /// <summary>历史回放带来的用户消息时间戳（毫秒）；当场提问为 0。</summary>
+            public long Timestamp;
             public GameObject UserGo;
             public GameObject Row;
             public Text Link;
@@ -243,6 +245,10 @@ namespace IcarusII.UI
 
             /// <summary>展开后显示的原始正文（未做富文本消毒，切换折叠时复用）。</summary>
             public string RawBody;
+
+            /// <summary>工具块可选的截图节点（只有 game_capture_view 会填）。</summary>
+            public RectTransform ImageRt;
+            public ToolImageSprite ImageOwner;
         }
 
         /// <summary>正在流式输出的那条消息（下标指向 _items）；-1 表示没有。</summary>
@@ -1527,15 +1533,22 @@ namespace IcarusII.UI
             _awaitingResponse = false;
         }
 
+        /// <summary>
+        /// 玩家删除了一个问答回合。参数是用户消息原文与历史时间戳（0 = 本回合新提问）。
+        /// 窗口只负责 UI；真正删除会话条目由 Plugin 转给 sidecar（协议 A.7）。
+        /// </summary>
+        public event Action<string, long> TurnDeleted;
+
         /// <summary>追加一条用户消息（渲染成气泡，样式来自 prefab 的 example-user-*）。</summary>
-        public void AppendUser(string text)
+        /// <param name="timestampMs">历史回放时带上的时间戳；当场提问传 0。</param>
+        public void AppendUser(string text, long timestampMs = 0)
         {
             if (text == null) return;
 
             _currentTurnId = ++_nextTurnId;
             _awaitingResponse = true;
             AddMessage(LineKind.User, text);
-            AddTurn(_currentTurnId, text);
+            AddTurn(_currentTurnId, text, timestampMs);
         }
 
         /// <summary>追加一行系统提示（灰色）。</summary>
@@ -1617,6 +1630,80 @@ namespace IcarusII.UI
                 expanded: !ok,   // 失败时自动展开，让玩家直接看到原因
                 titleColor: ok ? _textDim : WarnColor);   // 成功与「思考」块同色；失败才用警示色
             _dirty = true;
+        }
+
+        /// <summary>
+        /// 给已存在的工具块挂一张截图（M4a 的 `game_capture_view`）。
+        ///
+        /// 这是**数据驱动内容**（和消息、工具块同类），不是静态布局：节点在这里创建，
+        /// 尺寸由 LayoutElement 决定，prefab 不需要新增结构。
+        /// 图片是原生纹理，所有权交给 <see cref="ToolImageSprite"/>，随节点销毁释放。
+        /// </summary>
+        public void AttachToolImage(string callId, byte[] imageBytes)
+        {
+            if (string.IsNullOrEmpty(callId) || imageBytes == null || imageBytes.Length == 0) return;
+            if (_content == null) return;
+
+            Block block;
+            if (!_toolBlocks.TryGetValue(callId, out block) || block.Go == null) return;
+
+            Texture2D texture = null;
+            Sprite sprite = null;
+            try
+            {
+                texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (!texture.LoadImage(imageBytes))
+                {
+                    UnityEngine.Object.Destroy(texture);
+                    return;
+                }
+
+                sprite = Sprite.Create(texture,
+                    new Rect(0f, 0f, texture.width, texture.height),
+                    new Vector2(0.5f, 0.5f), 100f);
+
+                if (block.ImageRt == null)
+                {
+                    var rt = UiFactory.Node("tool-image", block.Go.transform);
+                    var layout = rt.gameObject.AddComponent<LayoutElement>();
+                    layout.minHeight = 120f;
+                    layout.preferredHeight = 220f;
+                    layout.flexibleHeight = 0f;
+
+                    var graphic = rt.gameObject.AddComponent<Image>();
+                    graphic.preserveAspect = true;
+                    graphic.raycastTarget = false;
+
+                    block.ImageRt = rt;
+                    block.ImageOwner = rt.gameObject.AddComponent<ToolImageSprite>();
+                }
+
+                // 先让 owner 接管（它会释放上一张），再挂到 Image 上。
+                var owner = block.ImageOwner;
+                if (owner == null)
+                {
+                    owner = block.ImageRt.gameObject.AddComponent<ToolImageSprite>();
+                    block.ImageOwner = owner;
+                }
+                owner.Adopt(texture, sprite);
+
+                var target = block.ImageRt.GetComponent<Image>();
+                if (target != null) target.sprite = sprite;
+
+                texture = null;
+                sprite = null;
+
+                // 截图是玩家主动要看的：直接展开，避免"结果被折叠起来看不见"。
+                SetBlock(block, block.Title.text, block.Summary.text, block.RawBody,
+                    expanded: true, titleColor: block.Title.color);
+                ScrollToBottom();
+            }
+            catch (Exception ex)
+            {
+                if (sprite != null) UnityEngine.Object.Destroy(sprite);
+                if (texture != null) UnityEngine.Object.Destroy(texture);
+                UnityEngine.Debug.LogWarning("[chat] 截图显示失败：" + ex.Message);
+            }
         }
 
         // ---------------------------------------------------------------- 思考块
@@ -1864,6 +1951,10 @@ namespace IcarusII.UI
             block.RawBody = body ?? string.Empty;
             block.Body.text = SanitizeRichText(block.RawBody);
             block.Body.gameObject.SetActive(expanded && !string.IsNullOrEmpty(block.RawBody));
+
+            // 截图只在展开时显示：收起态是一行摘要，塞一张 220px 的图会把聊天串撑乱。
+            if (block.ImageRt != null)
+                block.ImageRt.gameObject.SetActive(expanded);
 
             block.Expanded = expanded;
             block.Chevron.text = ChevronFor(expanded);
@@ -2633,10 +2724,16 @@ namespace IcarusII.UI
             RebuildIndexRows();
         }
 
-        private void AddTurn(int turnId, string text)
+        private void AddTurn(int turnId, string text, long timestampMs = 0)
         {
             var userGo = _lines.Count > 0 ? _lines[_lines.Count - 1].Go : null;
-            var entry = new TurnEntry { Id = turnId, Text = text ?? string.Empty, UserGo = userGo };
+            var entry = new TurnEntry
+            {
+                Id = turnId,
+                Text = text ?? string.Empty,
+                Timestamp = timestampMs,
+                UserGo = userGo,
+            };
             _turns.Add(entry);
             if (_chatIndexContent != null) CreateIndexRow(entry);
             RefreshIndexEmpty();
@@ -2856,7 +2953,17 @@ namespace IcarusII.UI
             RefreshIndexSelection();
             RefreshIndexEmpty();
             _dirty = true;
-            Plugin.Log.LogInfo($"[索引] 已从窗口删除回合 {turnId}（模型上下文未改）");
+            Plugin.Log.LogInfo($"[索引] 已从窗口删除回合 {turnId}");
+
+            // UI 删掉还不够：save.bound 会从会话文件重放，必须让 sidecar 也删。
+            try
+            {
+                TurnDeleted?.Invoke(entry.Text, entry.Timestamp);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[索引] 通知 sidecar 删除回合失败：{ex.Message}");
+            }
         }
 
         private void ForgetBlock(Block block)

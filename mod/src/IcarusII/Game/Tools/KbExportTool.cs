@@ -189,6 +189,8 @@ namespace IcarusII.Game.Tools
                 {
                     var building = JsonValue.NewObject();
                     building.Set("assemblerSpeed", desc.assemblerSpeed);
+                    // kb_plan 用它把配方映射到机器；没有这个字段就只能按 1x 估算。
+                    building.Set("assemblerRecipeType", (int)desc.assemblerRecipeType);
                     building.Set("workEnergyPerTick", desc.workEnergyPerTick);
                     building.Set("minerPeriod", desc.minerPeriod);
                     building.Set("beltSpeed", desc.beltSpeed);

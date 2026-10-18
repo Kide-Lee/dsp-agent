@@ -1,0 +1,1167 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using IcarusII.Common.Json;
+using IcarusII.Game;
+using UnityEngine;
+
+namespace IcarusII.Game.Tools
+{
+    /// <summary>
+    /// 建筑与进度查询（协议附录 B 的 `game.entity.v1` / `game.progress.v1`）。
+    ///
+    /// 两个共同的设计约束：
+    /// 1. **实体 id 会被回收**（`PlanetFactory.entityRecycle`）：`entityPool[id].id != id`
+    ///    就说明这个 id 已经指向别的建筑或已空，必须报 `stale` 而不是返回错数据；
+    /// 2. 只读公开字段，不做 Harmony 补丁；所有访问都做空值与越界保护，
+    ///    远程行星（factory 未加载）返回 `available=false` 而不是异常。
+    /// </summary>
+    internal static class EntityToolUtil
+    {
+        public static PlanetFactory ResolveFactory(JsonValue args, out PlanetData planet)
+        {
+            planet = GameToolFormat.ResolvePlanet(args);
+            return planet != null ? planet.factory : null;
+        }
+
+        public static bool HasEntity(PlanetFactory factory, int entityId)
+        {
+            return factory != null
+                && factory.entityPool != null
+                && entityId > 0
+                && entityId < factory.entityCursor
+                && entityId < factory.entityPool.Length;
+        }
+
+        /// <summary>按组件索引判断建筑类别；顺序决定"一个实体带多种组件"时优先报哪个。</summary>
+        public static string Category(EntityData e)
+        {
+            if (e.assemblerId > 0) return "assembler";
+            if (e.minerId > 0) return "miner";
+            if (e.inserterId > 0) return "inserter";
+            if (e.beltId > 0) return "belt";
+            if (e.stationId > 0) return "station";
+            if (e.labId > 0) return "lab";
+            if (e.fractionatorId > 0) return "fractionator";
+            if (e.ejectorId > 0) return "ejector";
+            if (e.siloId > 0) return "silo";
+            if (e.spraycoaterId > 0) return "spray_coater";
+            if (e.storageId > 0) return "storage";
+            if (e.tankId > 0) return "tank";
+            if (e.powerGenId > 0) return "power_generator";
+            if (e.powerNodeId > 0) return "power_node";
+            if (e.powerAccId > 0) return "power_accumulator";
+            if (e.powerExcId > 0) return "power_exchanger";
+            if (e.turretId > 0) return "turret";
+            return "other";
+        }
+
+        public static string ProtoName(int protoId)
+        {
+            try
+            {
+                var proto = LDB.items != null ? LDB.items.Select(protoId) : null;
+                if (proto != null && !string.IsNullOrEmpty(proto.name)) return proto.name;
+            }
+            catch { /* LDB 尚未加载 */ }
+            return GameToolFormat.ItemName(protoId);
+        }
+
+        public static string RecipeName(int recipeId)
+        {
+            if (recipeId <= 0) return string.Empty;
+            try
+            {
+                var proto = LDB.recipes != null ? LDB.recipes.Select(recipeId) : null;
+                if (proto != null && !string.IsNullOrEmpty(proto.name)) return proto.name;
+            }
+            catch { /* ignore */ }
+            return "#" + recipeId.ToString(CultureInfo.InvariantCulture);
+        }
+
+        public static double RecipeSeconds(int recipeId)
+        {
+            if (recipeId <= 0) return 0;
+            try
+            {
+                var proto = LDB.recipes != null ? LDB.recipes.Select(recipeId) : null;
+                if (proto != null && proto.TimeSpend > 0) return proto.TimeSpend / 60.0;
+            }
+            catch { /* ignore */ }
+            return 0;
+        }
+
+        /// <summary>建筑功率：耗电与发电都按 kW 输出（与 M2 单位约定一致）。</summary>
+        public static JsonValue PowerOf(PlanetFactory factory, EntityData entity)
+        {
+            var power = JsonValue.NewObject();
+            var system = factory != null ? factory.powerSystem : null;
+            if (system == null) return power;
+
+            if (entity.powerConId > 0 && system.consumerPool != null &&
+                entity.powerConId < system.consumerPool.Length)
+            {
+                var consumer = system.consumerPool[entity.powerConId];
+                power.Set("consumerId", entity.powerConId);
+                power.Set("networkId", consumer.networkId);
+                power.Set("requiredKw", GameToolFormat.Round(GameToolFormat.Kw(consumer.requiredEnergy)));
+                power.Set("workKw", GameToolFormat.Round(GameToolFormat.Kw(consumer.workEnergyPerTick)));
+                power.Set("idleKw", GameToolFormat.Round(GameToolFormat.Kw(consumer.idleEnergyPerTick)));
+            }
+
+            if (entity.powerGenId > 0 && system.genPool != null &&
+                entity.powerGenId < system.genPool.Length)
+            {
+                var gen = system.genPool[entity.powerGenId];
+                power.Set("networkId", gen.networkId);
+                power.Set("genKw", GameToolFormat.Round(GameToolFormat.Kw(gen.genEnergyPerTick)));
+                power.Set("fuelKw", GameToolFormat.Round(GameToolFormat.Kw(gen.useFuelPerTick)));
+                power.Set("photovoltaic", gen.photovoltaic);
+                power.Set("wind", gen.wind);
+                power.Set("geothermal", gen.geothermal);
+            }
+
+            if (entity.powerAccId > 0 && system.accPool != null &&
+                entity.powerAccId < system.accPool.Length)
+            {
+                var acc = system.accPool[entity.powerAccId];
+                power.Set("networkId", acc.networkId);
+            }
+
+            if (entity.powerNodeId > 0 && system.nodePool != null &&
+                entity.powerNodeId < system.nodePool.Length)
+            {
+                power.Set("networkId", system.nodePool[entity.powerNodeId].networkId);
+            }
+
+            return power;
+        }
+
+        public static JsonValue Vec3(Vector3 value)
+        {
+            return GameToolFormat.Vec3(value);
+        }
+    }
+
+    // ---------------------------------------------------------------- 单体建筑
+
+    internal sealed class EntityTool : IGameToolHandler
+    {
+        public string Name => "game_get_entity";
+        public int TimeoutMs => 6000;
+
+        public IGameToolJob Start(JsonValue args)
+        {
+            var planet = GameToolFormat.ResolvePlanet(args);
+            if (planet == null) throw new ArgumentException("找不到行星");
+
+            var entityId = args["entityId"].AsInt(0);
+            if (entityId <= 0) throw new ArgumentException("entityId 必须是正整数");
+
+            var expectProtoId = args["expectProtoId"].AsInt(0);
+            return new OneShotJob(() => Build(planet, entityId, expectProtoId));
+        }
+
+        private static GameToolJobResult Build(PlanetData planet, int entityId, int expectProtoId)
+        {
+            var data = JsonValue.NewObject();
+            data.Set("planetId", planet.id);
+            data.Set("entityId", entityId);
+
+            var factory = planet.factory;
+            if (factory == null || factory.entityPool == null)
+            {
+                data.Set("available", false);
+                data.Set("reason", "factory_not_loaded");
+                data.Set("display", "该行星的工厂尚未加载（远程行星只能看矿脉）");
+                return new GameToolJobResult { Data = data };
+            }
+
+            if (!EntityToolUtil.HasEntity(factory, entityId))
+            {
+                data.Set("available", false);
+                data.Set("reason", "not_found");
+                data.Set("display", "没有这个 id 的建筑");
+                return new GameToolJobResult { Data = data };
+            }
+
+            var entity = factory.entityPool[entityId];
+            if (entity.id != entityId || entity.protoId <= 0)
+            {
+                data.Set("available", false);
+                data.Set("reason", "empty_slot");
+                data.Set("display", "该 id 目前没有建筑（可能已被拆除）");
+                return new GameToolJobResult { Data = data };
+            }
+
+            data.Set("available", true);
+            data.Set("protoId", entity.protoId);
+            data.Set("protoName", EntityToolUtil.ProtoName(entity.protoId));
+            data.Set("iconTag", GameToolFormat.ItemIconTag(entity.protoId));
+            data.Set("category", EntityToolUtil.Category(entity));
+            data.Set("pos", EntityToolUtil.Vec3(entity.pos));
+            data.Set("yaw", GameToolFormat.Round(entity.rot.eulerAngles.y, 1));
+            data.Set("power", EntityToolUtil.PowerOf(factory, entity));
+
+            // 回收检测：调用方带了期望原型时，不匹配就必须显式告知，避免模型拿错数据。
+            if (expectProtoId > 0 && expectProtoId != entity.protoId)
+            {
+                data.Set("stale", true);
+                data.Set("expectProtoId", expectProtoId);
+            }
+
+            AppendCategoryDetail(data, factory, entity);
+            data.Set("display", BuildDisplay(data));
+            return new GameToolJobResult { Data = data };
+        }
+
+        private static void AppendCategoryDetail(JsonValue data, PlanetFactory factory, EntityData entity)
+        {
+            var system = factory.factorySystem;
+
+            if (entity.assemblerId > 0 && system != null && system.assemblerPool != null &&
+                entity.assemblerId < system.assemblerPool.Length)
+            {
+                var assembler = system.assemblerPool[entity.assemblerId];
+                var detail = JsonValue.NewObject();
+                detail.Set("recipeId", assembler.recipeId);
+                detail.Set("recipeName", EntityToolUtil.RecipeName(assembler.recipeId));
+                detail.Set("recipeSeconds", EntityToolUtil.RecipeSeconds(assembler.recipeId));
+                // assembler.speed 是 10000 为 1x 的内联比例。
+                detail.Set("speedMultiplier", GameToolFormat.Round(assembler.speed / 10000.0, 2));
+                var seconds = EntityToolUtil.RecipeSeconds(assembler.recipeId);
+                detail.Set("craftsPerMin", seconds > 0
+                    ? GameToolFormat.Round(3600.0 / seconds * (assembler.speed / 10000.0), 2)
+                    : 0);
+                detail.Set("cycleCount", assembler.cycleCount);
+                detail.Set("extraCycleCount", assembler.extraCycleCount);
+                detail.Set("working", assembler.time > 0);
+                detail.Set("forceAccMode", assembler.forceAccMode);
+                data.Set("assembler", detail);
+            }
+
+            if (entity.minerId > 0 && system != null && system.minerPool != null &&
+                entity.minerId < system.minerPool.Length)
+            {
+                var miner = system.minerPool[entity.minerId];
+                var detail = JsonValue.NewObject();
+                detail.Set("productId", miner.productId);
+                detail.Set("productName", EntityToolUtil.ProtoName(miner.productId));
+                detail.Set("productCount", miner.productCount);
+                detail.Set("period", miner.period);
+                detail.Set("orePerMin", miner.period > 0
+                    ? GameToolFormat.Round(miner.productCount * 3600.0 / miner.period, 1)
+                    : 0);
+                detail.Set("veinCount", miner.veinCount);
+                detail.Set("totalVeinAmount", miner.totalVeinAmount);
+                detail.Set("workstate", miner.workstate.ToString());
+                data.Set("miner", detail);
+            }
+
+            if (entity.inserterId > 0 && system != null && system.inserterPool != null &&
+                entity.inserterId < system.inserterPool.Length)
+            {
+                var inserter = system.inserterPool[entity.inserterId];
+                var detail = JsonValue.NewObject();
+                detail.Set("grade", (int)inserter.grade);
+                detail.Set("bidirectional", inserter.bidirectional);
+                detail.Set("stage", inserter.stage.ToString());
+                detail.Set("filterItemId", inserter.filter);
+                detail.Set("filterItemName", inserter.filter > 0 ? EntityToolUtil.ProtoName(inserter.filter) : string.Empty);
+                detail.Set("pickTarget", inserter.pickTarget);
+                detail.Set("insertTarget", inserter.insertTarget);
+                detail.Set("pickTargetName", TargetName(factory, inserter.pickTarget));
+                detail.Set("insertTargetName", TargetName(factory, inserter.insertTarget));
+                data.Set("inserter", detail);
+            }
+
+            if (entity.beltId > 0 && factory.cargoTraffic != null &&
+                factory.cargoTraffic.beltPool != null &&
+                entity.beltId < factory.cargoTraffic.beltPool.Length)
+            {
+                var belt = factory.cargoTraffic.beltPool[entity.beltId];
+                var detail = JsonValue.NewObject();
+                detail.Set("itemsPerSec", GameToolFormat.Round(belt.speed * 60.0 / CargoPath.kCargoLength, 2));
+                detail.Set("segLength", belt.segLength);
+                detail.Set("outputId", belt.outputId);
+                detail.Set("backInputId", belt.backInputId);
+                detail.Set("leftInputId", belt.leftInputId);
+                detail.Set("rightInputId", belt.rightInputId);
+                data.Set("belt", detail);
+            }
+
+            if (entity.storageId > 0 && factory.factoryStorage != null &&
+                factory.factoryStorage.storagePool != null &&
+                entity.storageId < factory.factoryStorage.storagePool.Length)
+            {
+                var storage = factory.factoryStorage.storagePool[entity.storageId];
+                data.Set("storage", StorageItems(storage, 12));
+            }
+
+            if (entity.stationId > 0 && factory.transport != null &&
+                factory.transport.stationPool != null &&
+                entity.stationId < factory.transport.stationPool.Length)
+            {
+                var station = factory.transport.stationPool[entity.stationId];
+                var detail = JsonValue.NewObject();
+                detail.Set("isCollector", station.isCollector);
+                detail.Set("warperCount", station.warperCount);
+                detail.Set("storage", StationItems(station, 12));
+                data.Set("station", detail);
+            }
+        }
+
+        private static string TargetName(PlanetFactory factory, int entityId)
+        {
+            if (!EntityToolUtil.HasEntity(factory, entityId)) return string.Empty;
+            var target = factory.entityPool[entityId];
+            if (target.id != entityId || target.protoId <= 0) return string.Empty;
+            return EntityToolUtil.ProtoName(target.protoId);
+        }
+
+        private static JsonValue StorageItems(StorageComponent storage, int max)
+        {
+            var items = JsonValue.NewArray();
+            if (storage == null || storage.grids == null) return items;
+
+            var counts = new Dictionary<int, int>();
+            for (int i = 0; i < storage.grids.Length; i++)
+            {
+                var grid = storage.grids[i];
+                if (grid.itemId <= 0 || grid.count <= 0) continue;
+                int current;
+                counts.TryGetValue(grid.itemId, out current);
+                counts[grid.itemId] = current + grid.count;
+            }
+
+            var rows = new List<KeyValuePair<int, int>>(counts);
+            rows.Sort((a, b) => b.Value.CompareTo(a.Value));
+            for (int i = 0; i < rows.Count && i < max; i++)
+            {
+                var row = JsonValue.NewObject();
+                row.Set("itemId", rows[i].Key);
+                row.Set("name", EntityToolUtil.ProtoName(rows[i].Key));
+                row.Set("iconTag", GameToolFormat.ItemIconTag(rows[i].Key));
+                row.Set("count", rows[i].Value);
+                items.Add(row);
+            }
+            return items;
+        }
+
+        private static JsonValue StationItems(StationComponent station, int max)
+        {
+            var items = JsonValue.NewArray();
+            if (station == null || station.storage == null) return items;
+
+            var rows = new List<KeyValuePair<int, int>>();
+            for (int i = 0; i < station.storage.Length; i++)
+            {
+                var store = station.storage[i];
+                if (store.itemId <= 0 || store.count <= 0) continue;
+                rows.Add(new KeyValuePair<int, int>(store.itemId, store.count));
+            }
+            rows.Sort((a, b) => b.Value.CompareTo(a.Value));
+
+            for (int i = 0; i < rows.Count && i < max; i++)
+            {
+                var row = JsonValue.NewObject();
+                row.Set("itemId", rows[i].Key);
+                row.Set("name", EntityToolUtil.ProtoName(rows[i].Key));
+                row.Set("iconTag", GameToolFormat.ItemIconTag(rows[i].Key));
+                row.Set("count", rows[i].Value);
+                items.Add(row);
+            }
+            return items;
+        }
+
+        private static string BuildDisplay(JsonValue data)
+        {
+            var name = data["protoName"].AsString("建筑");
+            var category = data["category"].AsString("other");
+            var text = name + "（id " + data["entityId"].AsInt(0) + "，" + category + "）";
+
+            var assembler = data["assembler"];
+            if (assembler != null && assembler.IsObject)
+            {
+                var recipe = assembler["recipeName"].AsString("");
+                if (!string.IsNullOrEmpty(recipe)) text += " · 配方 " + recipe;
+            }
+
+            var power = data["power"];
+            if (power != null && power.IsObject)
+            {
+                var required = power["requiredKw"].AsDouble(0);
+                if (required > 0) text += " · 需电 " + GameToolFormat.PowerDisplay(required);
+            }
+
+            if (data["stale"].AsBool(false)) text += " · ⚠ id 已回收";
+            return text;
+        }
+    }
+
+    // ---------------------------------------------------------------- 建筑列表
+
+    internal sealed class EntitiesTool : IGameToolHandler
+    {
+        public string Name => "game_get_entities";
+        public int TimeoutMs => 10000;
+
+        private const int MaxLimit = 200;
+
+        public IGameToolJob Start(JsonValue args)
+        {
+            var planet = GameToolFormat.ResolvePlanet(args);
+            if (planet == null) throw new ArgumentException("找不到行星");
+
+            var offset = Math.Max(0, args["offset"].AsInt(0));
+            var limit = args["limit"].AsInt(25);
+            if (limit <= 0) limit = 25;
+            if (limit > MaxLimit) limit = MaxLimit;
+
+            var protoId = args["protoId"].AsInt(0);
+            var recipeId = args["recipeId"].AsInt(0);
+            var protoName = args["protoName"].AsString("");
+            if (protoName != null) protoName = protoName.Trim();
+
+            return new OneShotJob(() => Build(planet, offset, limit, protoId, recipeId, protoName));
+        }
+
+        private static GameToolJobResult Build(PlanetData planet, int offset, int limit,
+            int protoId, int recipeId, string protoName)
+        {
+            var data = JsonValue.NewObject();
+            data.Set("planetId", planet.id);
+
+            var factory = planet.factory;
+            if (factory == null || factory.entityPool == null)
+            {
+                data.Set("available", false);
+                data.Set("rows", JsonValue.NewArray());
+                data.Set("total", 0);
+                data.Set("display", "该行星的工厂尚未加载");
+                return new GameToolJobResult { Data = data };
+            }
+
+            var system = factory.factorySystem;
+            var matches = new List<int>();
+            var upper = Math.Min(factory.entityCursor, factory.entityPool.Length);
+
+            for (int id = 1; id < upper; id++)
+            {
+                var entity = factory.entityPool[id];
+                if (entity.id != id || entity.protoId <= 0) continue;
+                if (protoId > 0 && entity.protoId != protoId) continue;
+
+                if (!string.IsNullOrEmpty(protoName))
+                {
+                    var name = EntityToolUtil.ProtoName(entity.protoId);
+                    if (name.IndexOf(protoName, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                }
+
+                if (recipeId > 0)
+                {
+                    if (entity.assemblerId <= 0 || system == null || system.assemblerPool == null ||
+                        entity.assemblerId >= system.assemblerPool.Length) continue;
+                    if (system.assemblerPool[entity.assemblerId].recipeId != recipeId) continue;
+                }
+
+                matches.Add(id);
+            }
+
+            var total = matches.Count;
+            var end = Math.Min(total, offset + limit);
+            var rows = JsonValue.NewArray();
+
+            for (int i = offset; i < end; i++)
+            {
+                var id = matches[i];
+                var entity = factory.entityPool[id];
+                var row = JsonValue.NewObject();
+                row.Set("id", id);
+                row.Set("protoId", entity.protoId);
+                row.Set("protoName", EntityToolUtil.ProtoName(entity.protoId));
+                row.Set("iconTag", GameToolFormat.ItemIconTag(entity.protoId));
+                row.Set("category", EntityToolUtil.Category(entity));
+                row.Set("pos", EntityToolUtil.Vec3(entity.pos));
+                row.Set("yaw", GameToolFormat.Round(entity.rot.eulerAngles.y, 1));
+
+                if (entity.assemblerId > 0 && system != null && system.assemblerPool != null &&
+                    entity.assemblerId < system.assemblerPool.Length)
+                {
+                    var recipe = system.assemblerPool[entity.assemblerId].recipeId;
+                    row.Set("recipeId", recipe);
+                    row.Set("recipeName", EntityToolUtil.RecipeName(recipe));
+                }
+                rows.Add(row);
+            }
+
+            data.Set("available", true);
+            data.Set("rows", rows);
+            data.Set("total", total);
+            data.Set("offset", offset);
+            data.Set("limit", limit);
+            data.Set("hasMore", end < total);
+            data.Set("display", "匹配 " + total + " 个建筑，本页 " + rows.Count + " 个"
+                + (end < total ? "（还有更多，用 offset=" + end + " 继续）" : ""));
+
+            return new GameToolJobResult
+            {
+                Data = data,
+                Truncated = end < total,
+                NextOffset = end < total ? end : -1,
+            };
+        }
+    }
+
+    // ---------------------------------------------------------------- 进度阶段
+
+    internal sealed class ProgressTool : IGameToolHandler
+    {
+        public string Name => "game_get_progress";
+        public int TimeoutMs => 6000;
+
+        public IGameToolJob Start(JsonValue args)
+        {
+            return new OneShotJob(Build);
+        }
+
+        private static GameToolJobResult Build()
+        {
+            var data = JsonValue.NewObject();
+            var gameData = GameMain.data;
+            var history = gameData != null ? gameData.history : null;
+
+            if (history == null)
+            {
+                data.Set("display", "进度数据尚未就绪");
+                return new GameToolJobResult { Data = data };
+            }
+
+            var flags = JsonValue.NewObject();
+            flags.Set("logisticsSystem", SafeFlag(() => history.logisticsSystemUnlocked));
+            flags.Set("intraplanetaryStation", SafeFlag(() => history.intraplanetaryStationUnlocked));
+            flags.Set("interstellarStation", SafeFlag(() => history.interstellarStationUnlocked));
+            flags.Set("dispenser", SafeFlag(() => history.dispenserUnlocked));
+            flags.Set("foundation", SafeFlag(() => history.foundationUnlocked));
+            flags.Set("marker", SafeFlag(() => history.markerUnlocked));
+            flags.Set("dysonSphereSystem", SafeFlag(() => history.dysonSphereSystemUnlocked));
+            flags.Set("ultraPhoton", SafeFlag(() => history.ultraPhotonUnlocked));
+            flags.Set("verticalConstruct", SafeFlag(() => history.verticalConstructUnlocked));
+            flags.Set("combatDrone", SafeFlag(() => history.combatDroneUnlocked));
+            flags.Set("combatShip", SafeFlag(() => history.combatShipUnlocked));
+            data.Set("signals", flags);
+
+            data.Set("stage", DeriveStage(flags));
+            data.Set("stageNote", "阶段是按上面的信号派生的；回答时请说明依据，不要把阶段当官方设定");
+
+            data.Set("unlockedTechs", CountUnlocked(history));
+            data.Set("tutorials", history.tutorialUnlocked != null ? history.tutorialUnlocked.Count : 0);
+            data.Set("currentTechId", history.currentTech);
+            data.Set("currentTechName", GameToolFormat.TechName(history.currentTech));
+            data.Set("techSpeed", history.techSpeed);
+
+            var queue = JsonValue.NewArray();
+            if (history.techQueue != null)
+            {
+                for (int i = 0; i < history.techQueue.Length && i < 8; i++)
+                {
+                    var id = history.techQueue[i];
+                    if (id <= 0) continue;
+                    var row = JsonValue.NewObject();
+                    row.Set("id", id);
+                    row.Set("name", GameToolFormat.TechName(id));
+                    row.Set("iconTag", GameToolFormat.TechIconTag(id));
+                    queue.Add(row);
+                }
+            }
+            data.Set("queue", queue);
+
+            AppendMilestones(data, gameData);
+
+            var stage = data["stage"].AsString("early");
+            data.Set("display", "阶段 " + StageLabel(stage)
+                + " · 已解锁科技 " + data["unlockedTechs"].AsInt(0)
+                + " · 教程 " + data["tutorials"].AsInt(0)
+                + " · 里程碑 " + data["milestoneCount"].AsInt(0));
+
+            return new GameToolJobResult { Data = data };
+        }
+
+        private static bool SafeFlag(Func<bool> read)
+        {
+            try { return read(); }
+            catch { return false; }
+        }
+
+        private static string DeriveStage(JsonValue flags)
+        {
+            if (flags["dysonSphereSystem"].AsBool(false)) return "dyson_sphere";
+            if (flags["interstellarStation"].AsBool(false)) return "interstellar";
+            if (flags["logisticsSystem"].AsBool(false)) return "planetary_logistics";
+            return "early";
+        }
+
+        private static string StageLabel(string stage)
+        {
+            switch (stage)
+            {
+                case "dyson_sphere": return "戴森球";
+                case "interstellar": return "星际物流";
+                case "planetary_logistics": return "行星内物流";
+                default: return "前期";
+            }
+        }
+
+        private static int CountUnlocked(GameHistoryData history)
+        {
+            if (history.techStates == null) return 0;
+            var count = 0;
+            foreach (var pair in history.techStates)
+                if (pair.Value.unlocked) count++;
+            return count;
+        }
+
+        private static void AppendMilestones(JsonValue data, GameData gameData)
+        {
+            var list = new List<KeyValuePair<long, int>>();
+            try
+            {
+                var system = gameData != null ? gameData.milestoneSystem : null;
+                var datas = system != null ? system.milestoneDatas : null;
+                if (datas != null)
+                {
+                    foreach (var pair in datas)
+                    {
+                        if (pair.Value == null || pair.Value.unlockTick <= 0) continue;
+                        list.Add(new KeyValuePair<long, int>(pair.Value.unlockTick, pair.Key));
+                    }
+                }
+            }
+            catch { /* ignore */ }
+
+            list.Sort((a, b) => b.Key.CompareTo(a.Key));
+
+            var recent = JsonValue.NewArray();
+            for (int i = 0; i < list.Count && i < 5; i++)
+            {
+                var row = JsonValue.NewObject();
+                row.Set("id", list[i].Value);
+                row.Set("name", MilestoneName(list[i].Value));
+                row.Set("unlockTick", list[i].Key);
+                recent.Add(row);
+            }
+
+            data.Set("milestoneCount", list.Count);
+            data.Set("recentMilestones", recent);
+        }
+
+        private static string MilestoneName(int id)
+        {
+            try
+            {
+                var proto = LDB.milestones != null ? LDB.milestones.Select(id) : null;
+                if (proto != null && !string.IsNullOrEmpty(proto.name)) return proto.name;
+            }
+            catch { /* ignore */ }
+            return "#" + id.ToString(CultureInfo.InvariantCulture);
+        }
+    }
+
+    // ---------------------------------------------------------------- 截图
+
+    internal sealed class CaptureViewTool : IGameToolHandler
+    {
+        public string Name => "game_capture_view";
+        public int TimeoutMs => 15000;
+
+        private const int MaxWidth = 1600;
+        private const int MaxHeight = 900;
+        private const int JpegQuality = 80;
+        private const int MaxImageBytes = 2 * 1024 * 1024;
+        private const int MaxVisibleEntities = 60;
+
+        public IGameToolJob Start(JsonValue args)
+        {
+            var width = args["width"].AsInt(1280);
+            var height = args["height"].AsInt(720);
+            if (width <= 0) width = 1280;
+            if (height <= 0) height = 720;
+            width = Math.Min(width, MaxWidth);
+            height = Math.Min(height, MaxHeight);
+            var includeEntities = args["includeEntities"].AsBool(true);
+
+            return new OneShotJob(() => Build(width, height, includeEntities));
+        }
+
+        private static GameToolJobResult Build(int width, int height, bool includeEntities)
+        {
+            var data = JsonValue.NewObject();
+            data.Set("width", width);
+            data.Set("height", height);
+
+            var gameData = GameMain.data;
+            if (gameData == null)
+            {
+                data.Set("available", false);
+                data.Set("display", "游戏尚未就绪");
+                return new GameToolJobResult { Data = data };
+            }
+
+            // 复用游戏自己的截图路径：它把 cullingMask 设成 gameLayerMask（UI 不进画面），
+            // 并把 PNG 字节放进 GameMain.data.screenShot。这里只做 PNG→JPEG 的压缩。
+            try
+            {
+                GameCamera.CaptureScreenshot(width, height);
+            }
+            catch (Exception ex)
+            {
+                data.Set("available", false);
+                data.Set("reason", "capture_failed");
+                data.Set("display", "截图失败：" + ex.Message);
+                return new GameToolJobResult { Data = data };
+            }
+
+            var png = gameData.screenShot;
+            if (png == null || png.Length == 0)
+            {
+                data.Set("available", false);
+                data.Set("reason", "empty_frame");
+                data.Set("display", "没有取到画面（可能正在加载）");
+                return new GameToolJobResult { Data = data };
+            }
+
+            byte[] jpeg;
+            int outWidth;
+            int outHeight;
+            if (!TryEncodeJpeg(png, width, height, out jpeg, out outWidth, out outHeight))
+            {
+                data.Set("available", false);
+                data.Set("reason", "encode_failed");
+                data.Set("display", "画面编码失败");
+                return new GameToolJobResult { Data = data };
+            }
+
+            if (jpeg.Length > MaxImageBytes)
+            {
+                data.Set("available", false);
+                data.Set("reason", "image_too_large");
+                data.Set("bytes", jpeg.Length);
+                data.Set("display", "截图过大（" + (jpeg.Length / 1024) + " KiB），请降低分辨率");
+                return new GameToolJobResult { Data = data };
+            }
+
+            var image = JsonValue.NewObject();
+            image.Set("mimeType", "image/jpeg");
+            image.Set("data", Convert.ToBase64String(jpeg));
+            image.Set("width", outWidth);
+            image.Set("height", outHeight);
+
+            data.Set("available", true);
+            data.Set("bytes", jpeg.Length);
+            data.Set("camera", CameraInfo());
+            if (includeEntities) data.Set("visibleEntities", VisibleEntities(gameData, outWidth, outHeight));
+
+            data.Set("display", "已截图 " + outWidth + "×" + outHeight + "（"
+                + (jpeg.Length / 1024) + " KiB）");
+
+            return new GameToolJobResult { Data = data, Image = image };
+        }
+
+        private static bool TryEncodeJpeg(byte[] png, int expectedWidth, int expectedHeight,
+            out byte[] jpeg, out int width, out int height)
+        {
+            jpeg = null;
+            width = expectedWidth;
+            height = expectedHeight;
+
+            Texture2D texture = null;
+            try
+            {
+                texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (!texture.LoadImage(png)) return false;
+                width = texture.width;
+                height = texture.height;
+                jpeg = texture.EncodeToJPG(JpegQuality);
+                return jpeg != null && jpeg.Length > 0;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                if (texture != null) UnityEngine.Object.Destroy(texture);
+            }
+        }
+
+        private static JsonValue CameraInfo()
+        {
+            var info = JsonValue.NewObject();
+            try
+            {
+                var camera = GameCamera.main;
+                if (camera == null) return info;
+                var position = camera.transform.position;
+                info.Set("position", EntityToolUtil.Vec3(position));
+                info.Set("forward", EntityToolUtil.Vec3(camera.transform.forward));
+                info.Set("fov", GameToolFormat.Round(camera.fieldOfView, 1));
+            }
+            catch { /* ignore */ }
+            return info;
+        }
+
+        /// <summary>
+        /// 可见建筑投影：给模型"图上这个点对应哪个 id"的对应关系。
+        /// 只投影屏幕内的建筑，按到相机的距离排序，最多 60 个。
+        /// </summary>
+        private static JsonValue VisibleEntities(GameData gameData, int width, int height)
+        {
+            var rows = JsonValue.NewArray();
+            var camera = GameCamera.main;
+            var planet = gameData.localPlanet;
+            if (camera == null || planet == null || planet.factory == null) return rows;
+
+            var factory = planet.factory;
+            if (factory.entityPool == null) return rows;
+
+            var origin = camera.transform.position;
+            var candidates = new List<KeyValuePair<float, int>>();
+
+            var upper = Math.Min(factory.entityCursor, factory.entityPool.Length);
+            for (int id = 1; id < upper; id++)
+            {
+                var entity = factory.entityPool[id];
+                if (entity.id != id || entity.protoId <= 0) continue;
+
+                // 用视口坐标而不是屏幕坐标：截图的 RenderTexture 尺寸与窗口像素尺寸可能不同，
+                // viewport 归一化后乘截图宽高，才能和图片像素对齐。
+                var viewport = camera.WorldToViewportPoint(entity.pos);
+                if (viewport.z <= 0) continue;
+                if (viewport.x < 0 || viewport.x > 1) continue;
+                if (viewport.y < 0 || viewport.y > 1) continue;
+
+                var distance = Vector3.Distance(origin, entity.pos);
+                candidates.Add(new KeyValuePair<float, int>(distance, id));
+            }
+
+            candidates.Sort((a, b) => a.Key.CompareTo(b.Key));
+
+            for (int i = 0; i < candidates.Count && i < MaxVisibleEntities; i++)
+            {
+                var id = candidates[i].Value;
+                var entity = factory.entityPool[id];
+                var viewport = camera.WorldToViewportPoint(entity.pos);
+                var row = JsonValue.NewObject();
+                row.Set("id", id);
+                row.Set("protoId", entity.protoId);
+                row.Set("protoName", EntityToolUtil.ProtoName(entity.protoId));
+                row.Set("category", EntityToolUtil.Category(entity));
+                // 图片坐标以左上角为原点。
+                row.Set("x", GameToolFormat.Round(viewport.x * width, 0));
+                row.Set("y", GameToolFormat.Round((1f - viewport.y) * height, 0));
+                row.Set("distance", GameToolFormat.Round(candidates[i].Key, 1));
+                rows.Add(row);
+            }
+
+            return rows;
+        }
+    }
+
+    // ---------------------------------------------------------------- 区域产线分析
+
+    /// <summary>
+    /// 按空间范围聚合产线：机器数、装机产能、功率、物流设施数量、涉及电网。
+    ///
+    /// 刻意只回答**装机口径**（速度×配方），不猜实际产出：实际产出要看
+    /// `game_get_production` 的统计。两者混在一起最容易给出"看起来对但错"的数。
+    /// 范围是行星局部 XZ 平面上的球形切分，靠近极点会与游戏网格有偏差。
+    /// </summary>
+    internal sealed class AnalyzeAreaTool : IGameToolHandler
+    {
+        public string Name => "game_analyze_area";
+        public int TimeoutMs => 15000;
+
+        private const double DefaultRadius = 60;
+        private const double MinRadius = 5;
+        private const double MaxRadius = 500;
+
+        private sealed class RecipeAgg
+        {
+            public int Count;
+            public double CraftsPerMin;
+            public double PowerKw;
+        }
+
+        public IGameToolJob Start(JsonValue args)
+        {
+            var planet = GameToolFormat.ResolvePlanet(args);
+            if (planet == null) throw new ArgumentException("找不到行星");
+
+            var all = args["all"].AsBool(false);
+            var radius = args["radius"].AsDouble(DefaultRadius);
+            if (radius < MinRadius) radius = MinRadius;
+            if (radius > MaxRadius) radius = MaxRadius;
+
+            var seed = args["entityId"].AsInt(0);
+            var includeEntities = args["includeEntities"].AsBool(false);
+            var limit = args["limit"].AsInt(40);
+            if (limit <= 0) limit = 40;
+            if (limit > 100) limit = 100;
+
+            var centerArg = args["center"];
+            return new OneShotJob(() => Build(planet, all, radius, seed, centerArg,
+                includeEntities, limit));
+        }
+
+        private static GameToolJobResult Build(PlanetData planet, bool all, double radius,
+            int seed, JsonValue centerArg, bool includeEntities, int limit)
+        {
+            var data = JsonValue.NewObject();
+            data.Set("planetId", planet.id);
+
+            var factory = planet.factory;
+            if (factory == null || factory.entityPool == null)
+            {
+                data.Set("available", false);
+                data.Set("display", "该行星的工厂尚未加载");
+                return new GameToolJobResult { Data = data };
+            }
+
+            var center = ResolveCenter(factory, seed, centerArg, out var centerSource);
+            var area = JsonValue.NewObject();
+            area.Set("mode", all ? "planet" : "sphere");
+            area.Set("center", EntityToolUtil.Vec3(center));
+            area.Set("centerSource", centerSource);
+            if (!all) area.Set("radius", GameToolFormat.Round(radius, 1));
+            data.Set("area", area);
+
+            var byRecipe = new Dictionary<int, RecipeAgg>();
+            var categories = new Dictionary<string, int>(StringComparer.Ordinal);
+            var networks = new HashSet<int>();
+            var listed = JsonValue.NewArray();
+            var radiusSquared = radius * radius;
+
+            long powerPerTick = 0;
+            int buildings = 0;
+            int listedCount = 0;
+            int belts = 0;
+            int inserters = 0;
+            int stations = 0;
+            int storages = 0;
+            int powerConsumers = 0;
+
+            var upper = Math.Min(factory.entityCursor, factory.entityPool.Length);
+            for (int id = 1; id < upper; id++)
+            {
+                var entity = factory.entityPool[id];
+                if (entity.id != id || entity.protoId <= 0) continue;
+
+                if (!all)
+                {
+                    var dx = entity.pos.x - center.x;
+                    var dz = entity.pos.z - center.z;
+                    if (dx * dx + dz * dz > radiusSquared) continue;
+                }
+
+                buildings++;
+                var category = EntityToolUtil.Category(entity);
+                int categoryCount;
+                categories.TryGetValue(category, out categoryCount);
+                categories[category] = categoryCount + 1;
+
+                if (entity.beltId > 0) belts++;
+                if (entity.inserterId > 0) inserters++;
+                if (entity.stationId > 0) stations++;
+                if (entity.storageId > 0) storages++;
+
+                // 功率：用 consumer.requiredEnergy（每 tick），和 game_get_power 同口径。
+                var system = factory.powerSystem;
+                if (entity.powerConId > 0 && system != null && system.consumerPool != null &&
+                    entity.powerConId < system.consumerPool.Length)
+                {
+                    var consumer = system.consumerPool[entity.powerConId];
+                    var required = consumer.requiredEnergy;
+                    if (required > 0) powerPerTick += required;
+                    if (consumer.networkId > 0) networks.Add(consumer.networkId);
+                    powerConsumers++;
+                }
+                if (entity.powerGenId > 0 && system != null && system.genPool != null &&
+                    entity.powerGenId < system.genPool.Length)
+                {
+                    var gen = system.genPool[entity.powerGenId];
+                    if (gen.networkId > 0) networks.Add(gen.networkId);
+                }
+
+                if (entity.assemblerId > 0 && factory.factorySystem != null &&
+                    factory.factorySystem.assemblerPool != null &&
+                    entity.assemblerId < factory.factorySystem.assemblerPool.Length)
+                {
+                    var assembler = factory.factorySystem.assemblerPool[entity.assemblerId];
+                    if (assembler.recipeId > 0)
+                    {
+                        RecipeAgg agg;
+                        if (!byRecipe.TryGetValue(assembler.recipeId, out agg))
+                        {
+                            agg = new RecipeAgg();
+                            byRecipe[assembler.recipeId] = agg;
+                        }
+                        agg.Count++;
+                        var seconds = EntityToolUtil.RecipeSeconds(assembler.recipeId);
+                        if (seconds > 0)
+                            agg.CraftsPerMin += 60.0 / seconds * (assembler.speed / 10000.0);
+
+                        if (entity.powerConId > 0 && system != null && system.consumerPool != null &&
+                            entity.powerConId < system.consumerPool.Length)
+                        {
+                            agg.PowerKw += GameToolFormat.Kw(
+                                system.consumerPool[entity.powerConId].requiredEnergy);
+                        }
+                    }
+                }
+
+                if (includeEntities && listedCount < limit)
+                {
+                    var row = JsonValue.NewObject();
+                    row.Set("id", id);
+                    row.Set("protoId", entity.protoId);
+                    row.Set("protoName", EntityToolUtil.ProtoName(entity.protoId));
+                    row.Set("category", category);
+                    row.Set("pos", EntityToolUtil.Vec3(entity.pos));
+                    if (entity.assemblerId > 0 && factory.factorySystem != null &&
+                        factory.factorySystem.assemblerPool != null &&
+                        entity.assemblerId < factory.factorySystem.assemblerPool.Length)
+                    {
+                        var recipeId = factory.factorySystem.assemblerPool[entity.assemblerId].recipeId;
+                        if (recipeId > 0)
+                        {
+                            row.Set("recipeId", recipeId);
+                            row.Set("recipeName", EntityToolUtil.RecipeName(recipeId));
+                        }
+                    }
+                    listed.Add(row);
+                    listedCount++;
+                }
+            }
+
+            // 配方聚合排序：机器多的在前。
+            var recipeRows = new List<KeyValuePair<int, RecipeAgg>>(byRecipe);
+            recipeRows.Sort((a, b) => b.Value.Count.CompareTo(a.Value.Count));
+
+            var recipes = JsonValue.NewArray();
+            foreach (var pair in recipeRows)
+            {
+                var row = JsonValue.NewObject();
+                row.Set("recipeId", pair.Key);
+                row.Set("recipeName", EntityToolUtil.RecipeName(pair.Key));
+                row.Set("buildings", pair.Value.Count);
+                row.Set("installedCraftsPerMin", GameToolFormat.Round(pair.Value.CraftsPerMin, 2));
+                row.Set("powerKw", GameToolFormat.Round(pair.Value.PowerKw));
+                recipes.Add(row);
+            }
+            data.Set("byRecipe", recipes);
+
+            var categoryObj = JsonValue.NewObject();
+            var categoryKeys = new List<string>(categories.Keys);
+            categoryKeys.Sort(StringComparer.Ordinal);
+            foreach (var key in categoryKeys) categoryObj.Set(key, categories[key]);
+            data.Set("categories", categoryObj);
+
+            var totals = JsonValue.NewObject();
+            totals.Set("buildings", buildings);
+            totals.Set("powerConsumers", powerConsumers);
+            totals.Set("powerKw", GameToolFormat.Round(GameToolFormat.Kw(powerPerTick)));
+            totals.Set("belts", belts);
+            totals.Set("inserters", inserters);
+            totals.Set("stations", stations);
+            totals.Set("storages", storages);
+            data.Set("totals", totals);
+
+            data.Set("powerNetworks", BuildNetworks(factory, networks));
+            if (includeEntities) data.Set("entities", listed);
+
+            data.Set("available", true);
+            data.Set("assumptions", Assumptions(all));
+            data.Set("display",
+                (all ? "整星球" : "半径 " + GameToolFormat.Round(radius, 0) + "m")
+                + " · 建筑 " + buildings
+                + " · 装机功率 " + GameToolFormat.PowerDisplay(GameToolFormat.Kw(powerPerTick))
+                + " · 配方 " + recipeRows.Count + " 种");
+
+            return new GameToolJobResult { Data = data };
+        }
+
+        private static Vector3 ResolveCenter(PlanetFactory factory, int seed, JsonValue centerArg,
+            out string source)
+        {
+            if (EntityToolUtil.HasEntity(factory, seed))
+            {
+                var entity = factory.entityPool[seed];
+                if (entity.id == seed && entity.protoId > 0)
+                {
+                    source = "entity";
+                    return entity.pos;
+                }
+            }
+
+            if (centerArg != null && centerArg.IsObject)
+            {
+                source = "explicit";
+                return new Vector3(
+                    (float)centerArg["x"].AsDouble(0),
+                    (float)centerArg["y"].AsDouble(0),
+                    (float)centerArg["z"].AsDouble(0));
+            }
+
+            var player = GameMain.data != null ? GameMain.data.mainPlayer : null;
+            if (player != null)
+            {
+                source = "player";
+                return player.position;
+            }
+
+            source = "origin";
+            return Vector3.zero;
+        }
+
+        private static JsonValue BuildNetworks(PlanetFactory factory, HashSet<int> ids)
+        {
+            var rows = JsonValue.NewArray();
+            var system = factory != null ? factory.powerSystem : null;
+            if (system == null || system.netPool == null) return rows;
+
+            var sorted = new List<int>(ids);
+            sorted.Sort();
+            foreach (var networkId in sorted)
+            {
+                if (networkId <= 0 || networkId >= system.netPool.Length) continue;
+                var network = system.netPool[networkId];
+                if (network == null) continue;
+
+                var row = JsonValue.NewObject();
+                var required = GameToolFormat.Kw(network.energyRequired);
+                var served = GameToolFormat.Kw(network.energyServed);
+                row.Set("id", networkId);
+                row.Set("requiredKw", GameToolFormat.Round(required));
+                row.Set("servedKw", GameToolFormat.Round(served));
+                row.Set("capacityKw", GameToolFormat.Round(GameToolFormat.Kw(network.energyCapacity)));
+                row.Set("storedKwh", GameToolFormat.Round(GameToolFormat.Kwh(network.energyStored)));
+                row.Set("satisfactionPct", required > 0
+                    ? GameToolFormat.Round(served * 100.0 / required)
+                    : 100);
+                rows.Add(row);
+            }
+            return rows;
+        }
+
+        private static JsonValue Assumptions(bool all)
+        {
+            var list = JsonValue.NewArray();
+            if (!all)
+                list.Add("范围是行星局部 XZ 平面上的球形切分，靠近极点会与游戏网格有偏差。");
+            list.Add("installedCraftsPerMin 是装机产能（速度 × 配方），不是实际产出；实际产出看 game_get_production。");
+            list.Add("powerKw 是范围内耗电建筑的 requiredEnergy 汇总，可能与电网面板略有差异。");
+            list.Add("只统计装配类机器；熔炉/化工厂等同属 assemblerPool，按各自配方类型统计。");
+            return list;
+        }
+    }
+}

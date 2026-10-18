@@ -9,6 +9,7 @@
 | [Node.js](https://nodejs.org/) | sidecar 运行时 | MIT | 以 SEA（Single Executable Application）形式**内嵌**进 `icarus-ii-sidecar.exe` |
 | [ws](https://github.com/websockets/ws) | sidecar 的 WebSocket 服务端 | MIT | 打包进 sidecar |
 | [typebox](https://github.com/sinclairzx81/typebox) | 工具参数 JSON Schema（M2 起） | MIT | 打包进 sidecar |
+| [QuickJS](https://github.com/quickjs-ng/quickjs) / [quickjs-emscripten](https://github.com/justjake/quickjs-emscripten) | `run_script` 的脚本沙箱（M4d） | MIT | 打包进 sidecar；WASM 以 base64 内联（`@jitl/quickjs-singlefile-cjs-release-sync`），不额外落文件 |
 | [Unity Skills](https://github.com/Unity-Technologies/skills) — `ui-ugui` | Agent Skill：Unity uGUI / Canvas / RectTransform / Layout Group 开发规范 | Unity Companion License | 内容收录于 `.dsh/skills/ui-ugui/`，仅用于开发期辅助，不进入发布产物 |
 
 ## 关于 BepInEx

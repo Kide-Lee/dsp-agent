@@ -9,10 +9,14 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { JsonObject, ToolResultPayload } from '../protocol.js';
-import { GameToolHost, registerGameToolsFactory } from './host.js';
+import { GameToolHost, registerGameToolsFactory, SCRIPT_TOOL_NAME } from './host.js';
 import { KB_TOOL_NAMES } from '../kb/tools.js';
 
 export const CAPABILITY_GAME_READ = 'game.read.v1';
+export const CAPABILITY_GAME_ENTITY = 'game.entity.v1';
+export const CAPABILITY_GAME_PROGRESS = 'game.progress.v1';
+export const CAPABILITY_GAME_VIEW = 'game.view.v1';
+export const CAPABILITY_GAME_ANALYZE = 'game.analyze.v1';
 
 export const GAME_TOOL_NAMES = [
   'game_get_overview',
@@ -23,9 +27,33 @@ export const GAME_TOOL_NAMES = [
   'game_get_production',
 ] as const;
 
+export const ENTITY_TOOL_NAMES = ['game_get_entity', 'game_get_entities'] as const;
+export const PROGRESS_TOOL_NAMES = ['game_get_progress'] as const;
+export const VIEW_TOOL_NAMES = ['game_capture_view'] as const;
+
+/** 工具名 → 所需能力。新增工具必须在这里登记，否则不会被广告。 */
+const TOOL_CAPABILITY: Record<string, string> = {
+  game_get_overview: CAPABILITY_GAME_READ,
+  game_get_player: CAPABILITY_GAME_READ,
+  game_get_planet: CAPABILITY_GAME_READ,
+  game_get_power: CAPABILITY_GAME_READ,
+  game_get_research: CAPABILITY_GAME_READ,
+  game_get_production: CAPABILITY_GAME_READ,
+  game_get_entity: CAPABILITY_GAME_ENTITY,
+  game_get_entities: CAPABILITY_GAME_ENTITY,
+  game_get_progress: CAPABILITY_GAME_PROGRESS,
+  game_capture_view: CAPABILITY_GAME_VIEW,
+  game_analyze_area: CAPABILITY_GAME_ANALYZE,
+};
+
 const MAX_RESULT_CHARS = 9000;
 
 type ToolArgs = JsonObject;
+
+/** pi 的工具结果内容块：既有文本也有图片（协议附录 B.3 的 `image`）。 */
+type ToolContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; mimeType: string; data: string };
 
 function isObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -61,6 +89,22 @@ function formatToolResult(result: ToolResultPayload): string {
   return text;
 }
 
+/**
+ * 把一次工具结果转成 pi 的内容块。
+ *
+ * 图片单独成块，不混进文本：pi 的 provider 适配层会把它转成真正的图像输入
+ * （`openai-completions` 会补一条带 `image_url` 的 user 消息）。模型不支持看图时
+ * 那个适配层会丢弃图片，文本里的 `截图` 提示仍然保留。
+ */
+function buildToolContent(result: ToolResultPayload): ToolContentBlock[] {
+  const content: ToolContentBlock[] = [{ type: 'text', text: formatToolResult(result) }];
+  const image = result.ok ? result.image : null;
+  if (image && image.data.length > 0) {
+    content.push({ type: 'image', mimeType: image.mimeType, data: image.data });
+  }
+  return content;
+}
+
 function gameTool(
   host: GameToolHost,
   spec: {
@@ -87,7 +131,7 @@ function gameTool(
         signal,
       });
       return {
-        content: [{ type: 'text', text: formatToolResult(result) }],
+        content: buildToolContent(result),
         details: result,
       };
     },
@@ -95,15 +139,13 @@ function gameTool(
 }
 
 export function createGameTools(host: GameToolHost): ToolDefinition[] {
-  if (!host.has(CAPABILITY_GAME_READ)) return [];
-
   const planetArg = Type.Optional(
     Type.Integer({ description: '行星 id；省略时使用当前所在行星' }),
   );
   const offsetArg = Type.Optional(Type.Integer({ description: '分页偏移，默认 0' }));
   const limitArg = Type.Optional(Type.Integer({ description: '返回条数上限，默认 25' }));
 
-  return [
+  const tools: ToolDefinition[] = [
     gameTool(host, {
       name: 'game_get_overview',
       label: '存档概览',
@@ -180,7 +222,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
     }),
     gameTool(host, {
       name: 'game_get_production',
-      label: '产线状态',
+      label: '实际产出',
       description:
         '读取指定行星（省略则为当前行星）按物品聚合的产量/消耗/库存（每分钟口径），' +
         '按净产出从低到高排序，并给出库存还能撑几分钟。玩家问“我缺什么”时调用它，' +
@@ -188,6 +230,8 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       promptSnippet: '读取产线净产出、消耗、库存与缺料分钟数',
       promptGuidelines: [
         'Use game_get_production 当玩家问“我缺什么”、某条产线为什么停、库存还能撑多久时。',
+        'basis=stats 是实际统计；basis=installed 表示 1 分钟桶为空，items 是按装配机算的装机产能（statsEmpty=true）。',
+        'statsEmpty=true 时不要下“没有产线”的结论；设备在别处或需要空间明细时改调 game_analyze_area。',
       ],
       parameters: Type.Object({
         planetId: planetArg,
@@ -199,7 +243,124 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       }),
       timeoutMs: 12000,
     }),
+    gameTool(host, {
+      name: 'game_get_entity',
+      label: '建筑详情',
+      description:
+        '按 entityId 读取单个建筑的实际情况：原型、配方、输入/输出与堵塞、功率、' +
+        '分拣器/传送带/仓储/物流塔配置、坐标与朝向。' +
+        'id 来自 game_get_entities 或截图标注；id 会被回收，返回里的 stale=true 表示该 id 已被别的建筑占用。',
+      promptSnippet: '按 id 读取单个建筑的配方、功率与连接配置',
+      promptGuidelines: [
+        'Use game_get_entity 当玩家问某一栋建筑为什么不动、配方是什么、插了什么、有没有电时。',
+        '如果返回 stale=true，不要使用这条数据：id 已被回收，重新用 game_get_entities 定位。',
+      ],
+      parameters: Type.Object({
+        planetId: planetArg,
+        entityId: Type.Integer({ description: '建筑 id（PlanetFactory.entityPool 的下标）' }),
+        expectProtoId: Type.Optional(
+          Type.Integer({ description: '期望的原型 id；不匹配时返回 stale=true' }),
+        ),
+      }),
+      timeoutMs: 6000,
+    }),
+    gameTool(host, {
+      name: 'game_get_entities',
+      label: '建筑列表',
+      description:
+        '分页列出指定行星（省略则为当前行星）的建筑：id、原型、配方、坐标、朝向。' +
+        '可按原型 id/名称、配方 id 过滤；配合 game_get_entity 查看单体细节。' +
+        '大星球请用 offset/limit 分页，不要一次拉全量。',
+      promptSnippet: '分页列出建筑，可按原型或配方过滤',
+      promptGuidelines: [
+        'Use game_get_entities 当需要“这片区域有哪些建筑”“某个配方有多少台机器”时。',
+      ],
+      parameters: Type.Object({
+        planetId: planetArg,
+        protoId: Type.Optional(Type.Integer({ description: '按建筑原型 id 过滤' })),
+        protoName: Type.Optional(
+          Type.String({ description: '按建筑原型名称子串过滤，例如“组装机”' }),
+        ),
+        recipeId: Type.Optional(Type.Integer({ description: '按配方 id 过滤' })),
+        offset: offsetArg,
+        limit: limitArg,
+      }),
+      timeoutMs: 10000,
+    }),
+    gameTool(host, {
+      name: 'game_get_progress',
+      label: '进度阶段',
+      description:
+        '读取玩家进度：派生阶段（电磁/炼油/钛/星际物流/翘曲/戴森球…）及判定依据、' +
+        '已解锁科技数、里程碑、教程、当前研究与队列。' +
+        '玩家问“我下一步该干什么”“我在什么阶段”时先调用它。',
+      promptSnippet: '读取玩家阶段、已解锁科技、里程碑与研究队列',
+      promptGuidelines: [
+        'Use game_get_progress 当玩家询问当前进度、下一步该做什么、阶段目标时。',
+        '回答“下一步”时只给当前阶段与下一阶段的必要条件，不要剧透更后面的科技细节。',
+      ],
+      parameters: Type.Object({}),
+      timeoutMs: 6000,
+    }),
+    gameTool(host, {
+      name: 'game_capture_view',
+      label: '截图',
+      description:
+        '截取当前游戏画面（不含 UI），以 JPEG 返回图片本身，并附带可见建筑的屏幕坐标。' +
+        '玩家问“这里摆得对不对”“你看一眼”时调用。' +
+        '截图只反映当前镜头；需要看别处时先用 game_focus_camera（尚未实现）或让玩家转视角。',
+      promptSnippet: '截取当前画面并返回图片与可见实体坐标',
+      promptGuidelines: [
+        'Use game_capture_view 当玩家让你看画面、问布局/摆放/接线是否正确时。',
+        '拿到图片后先描述你看到的，再结合 game_get_entity / game_get_entities 的数值下结论；不要只凭像素猜配方。',
+      ],
+      parameters: Type.Object({
+        width: Type.Optional(Type.Integer({ description: '像素宽，默认 1280，上限 1600' })),
+        height: Type.Optional(Type.Integer({ description: '像素高，默认 720，上限 900' })),
+        includeEntities: Type.Optional(
+          Type.Boolean({ description: '是否附带可见建筑的屏幕坐标，默认 true' }),
+        ),
+      }),
+      timeoutMs: 15000,
+    }),
+    gameTool(host, {
+      name: 'game_analyze_area',
+      label: '产线分析',
+      description:
+        '按空间范围聚合产线：各类建筑数量、各配方的机器数与装机产能、耗电、传送带/分拣器/物流塔数量、' +
+        '涉及电网的供需。用于回答“这片区域是什么产线、规模多大、吃多少电”。' +
+        '只给装机口径；实际产出请再用 game_get_production。',
+      promptSnippet: '按范围聚合建筑、配方、装机产能与电力',
+      promptGuidelines: [
+        'Use game_analyze_area 当玩家问“这片产线是干什么的/多大/耗多少电”时。',
+        'game_get_production 返回 statsEmpty=true 或 items 为空时，用它看装机产能（可 all=true 扫整颗星球）。',
+        '结果里 byRecipe 是“机器数 × 配方速度”，不要把它说成实际产出。',
+        '结果是装机产能，不是实际产出；回答实际产量要结合 game_get_production。',
+        '范围默认以玩家为中心 60m；可用 entityId 指定中心，或用 all 分析整星球。',
+      ],
+      parameters: Type.Object({
+        planetId: planetArg,
+        entityId: Type.Optional(Type.Integer({ description: '以该建筑为圆心' })),
+        radius: Type.Optional(Type.Number({ description: '半径（米），默认 60，范围 5–500' })),
+        center: Type.Optional(
+          Type.Object({
+            x: Type.Number(),
+            y: Type.Optional(Type.Number()),
+            z: Type.Number(),
+          }),
+        ),
+        all: Type.Optional(Type.Boolean({ description: '分析整颗星球，忽略 radius/center' })),
+        includeEntities: Type.Optional(Type.Boolean({ description: '是否列出范围内建筑，默认 false' })),
+        limit: Type.Optional(Type.Integer({ description: '列出的建筑上限，默认 40，最大 100' })),
+      }),
+      timeoutMs: 15000,
+    }),
   ];
+
+  return tools.filter((tool) => {
+    const capability = TOOL_CAPABILITY[tool.name];
+    return capability !== undefined && host.has(capability);
+  });
 }
 
 registerGameToolsFactory(createGameTools);
@@ -207,6 +368,9 @@ registerGameToolsFactory(createGameTools);
 /** `ready.payload.tools` 用：按能力返回本次连接实际可用的工具名。 */
 export function toolNamesForCapabilities(capabilities: readonly string[]): string[] {
   // kb_* 是 sidecar 本地工具，不依赖 mod 能力；始终列出，未建立时返回 kb_unavailable。
-  const game = capabilities.includes(CAPABILITY_GAME_READ) ? [...GAME_TOOL_NAMES] : [];
-  return [...game, ...KB_TOOL_NAMES];
+  const game = Object.entries(TOOL_CAPABILITY)
+    .filter(([, capability]) => capabilities.includes(capability))
+    .map(([name]) => name);
+  // 脚本工具是 sidecar 本地能力，始终注册（没有 game 工具时执行会明确报错）。
+  return [...game, ...KB_TOOL_NAMES, SCRIPT_TOOL_NAME];
 }

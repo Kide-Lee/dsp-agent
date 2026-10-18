@@ -2,7 +2,7 @@
  * M3 知识库工具（sidecar 本地执行，不经过 mod）。
  *
  * 工具名用下划线，和 M2 的 game_* 一致：
- *   kb_search / kb_get / kb_recipe_tree
+ *   kb_search / kb_get / kb_recipe_tree / kb_plan
  *
  * 知识库未建立时仍然注册，execute 返回 kb_unavailable：
  * 这样模型不会“看不到工具就编造”，玩家也能得到明确原因。
@@ -15,7 +15,7 @@ import type { KnowledgeStore } from './store.js';
 import { KB_KINDS } from './knowledge.js';
 import type { KbKind } from './types.js';
 
-export const KB_TOOL_NAMES = ['kb_search', 'kb_get', 'kb_recipe_tree'] as const;
+export const KB_TOOL_NAMES = ['kb_search', 'kb_get', 'kb_recipe_tree', 'kb_plan'] as const;
 
 const MAX_RESULT_CHARS = 9000;
 
@@ -238,5 +238,98 @@ export function createKbTools(store: KnowledgeStore): ToolDefinition[] {
     },
   };
 
-  return [search, get, recipeTree];
+  const plan: ToolDefinition = {
+    name: 'kb_plan',
+    label: '产线规划',
+    description:
+      '给定目标物品的每分钟产量，算出要建多少台什么机器、总功率、每条输入要几条传送带，' +
+      '并复用 kb_recipe_tree 给出原料与副产物。' +
+      '玩家问“我要建多少台机器”“这条线要多少电”“需要几条带”时用它。',
+    promptSnippet: '按目标产量计算机器数、电力、传送带与原料',
+    promptGuidelines: [
+      'Use kb_plan 当玩家问某条产线要多少机器、多少电、几条传送带时。',
+      '玩家问“怎么把 X 做到 N/min / 怎么规划 / 要准备什么”时，第一步就调 kb_plan，不要先查现状再心算。',
+      'rate 是目标物品的每分钟产量，必填；机器数已向上取整（exactCount 是未取整值）。',
+      '结果里的 assumptions 必须转述给玩家：未建模增产剂、矿脉产率与建筑堆叠。',
+    ],
+    parameters: Type.Object({
+      item: Type.String({ description: '目标物品名称、id 或 SID' }),
+      rate: Type.Number({ exclusiveMinimum: 0, description: '目标每分钟产量' }),
+      depth: Type.Optional(Type.Integer({ minimum: 1, maximum: 16, description: '递归深度，默认 8' })),
+      recipeId: Type.Optional(Type.Integer({ description: '可选：指定根配方 id' })),
+      buildingTier: Type.Optional(
+        Type.String({ description: '机器档位：base（默认，最低速）/ mk2 / mk3' }),
+      ),
+      buildingId: Type.Optional(Type.Integer({ description: '可选：直接指定机器原型 id' })),
+      beltSpeed: Type.Optional(
+        Type.Number({ exclusiveMinimum: 0, description: '单条带吞吐（个/秒），默认 6（Mk.I）' }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      const kb = store.snapshot;
+      if (!kb) return unavailable();
+      const args = (params ?? {}) as JsonObject;
+      const item = typeof args['item'] === 'string' ? args['item'] : '';
+      if (!item.trim()) {
+        return {
+          content: [{ type: 'text', text: '[bad_request] item 不能为空' }],
+          details: { ok: false, error: { code: 'bad_request', message: 'item 不能为空' } },
+        };
+      }
+      const rate = args['rate'];
+      if (typeof rate !== 'number' || !(rate > 0)) {
+        return {
+          content: [{ type: 'text', text: '[bad_request] rate（每分钟产量）必须大于 0' }],
+          details: { ok: false, error: { code: 'bad_request', message: 'rate 必须大于 0' } },
+        };
+      }
+
+      const tierRaw = args['buildingTier'];
+      const buildingTier =
+        tierRaw === 'mk2' || tierRaw === 'mk3' || tierRaw === 'base' ? tierRaw : undefined;
+
+      try {
+        const result = kb.plan(item, {
+          rate,
+          depth: typeof args['depth'] === 'number' ? args['depth'] : undefined,
+          recipeId: typeof args['recipeId'] === 'number' ? args['recipeId'] : undefined,
+          ...(buildingTier ? { buildingTier } : {}),
+          buildingId: typeof args['buildingId'] === 'number' ? args['buildingId'] : undefined,
+          beltSpeed: typeof args['beltSpeed'] === 'number' ? args['beltSpeed'] : undefined,
+        });
+
+        const machines = result.recipes
+          .map((row) =>
+            row.buildingName
+              ? `${row.buildingName} ×${row.buildingCount}（${row.recipeName}）`
+              : `${row.recipeName} ×${row.buildingCount} 台`,
+          )
+          .join('、');
+        const summary = [
+          `${result.item.name} ${result.ratePerMin}/min`,
+          machines ? `机器：${machines}` : '机器：无需机器（直接是原料）',
+          `总功率：${result.totalPowerKw.toFixed(1)} kW`,
+          `最大单路输入：${result.belts.maxSingleInputPerMin.toFixed(1)}/min` +
+            `（${result.belts.itemsPerSec}/s 的带 → ${result.belts.maxBelts} 条）`,
+          ...result.assumptions.map((line) => `· ${line}`),
+          ...result.warnings.map((line) => `⚠ ${line}`),
+        ]
+          .filter((line) => line.length > 0)
+          .join('\n');
+
+        return {
+          content: [{ type: 'text', text: clip(`${summary}\n\n${json(result)}`) }],
+          details: { ok: true, data: result },
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text', text: `[bad_request] ${message}` }],
+          details: { ok: false, error: { code: 'bad_request', message } },
+        };
+      }
+    },
+  };
+
+  return [search, get, recipeTree, plan];
 }

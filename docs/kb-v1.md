@@ -19,7 +19,7 @@ Wiki/Tutorial/*-<lang>.txt   ──game_export_text─────────�
                                                           └─ kb_recipe_tree
                                                           │
                                                      %APPDATA%/icarus-ii/kb/
-                                                     ldb-v1-<ver>-<locale>.json
+                                                     ldb-v1-r2-<ver>-<locale>.json
 ```
 
 - 触发时机：`save.bind`（进入存档）后。缓存命中则直接加载；缺失/版本变化才导出。
@@ -55,8 +55,11 @@ Wiki/Tutorial/*-<lang>.txt   ──game_export_text─────────�
 
 `building` 来自 `ItemProto.prefabDesc`（运行时才有）：
 
-`assemblerSpeed`, `workEnergyPerTick`, `minerPeriod`, `beltSpeed`,
+`assemblerSpeed`, `assemblerRecipeType`, `workEnergyPerTick`, `minerPeriod`, `beltSpeed`,
 `storageCol`, `storageRow`, `stationMaxEnergyAcc`, `isCollectStation`。
+
+> `assemblerRecipeType` 是 `PrefabDesc` 的配方类型枚举值，`kb_plan` 靠它把配方映射到机器；
+> 缺了它就只能按 1x 估算。
 
 > 注意：`prefabDesc` **不在 LDB 的 asset 里**，离线提取拿不到；需要机器数/建筑能耗时
 > 必须用运行时导出。
@@ -124,7 +127,9 @@ Wiki/Tutorial/*-<lang>.txt   ──game_export_text─────────�
 
 ## 4. 缓存与版本
 
-- 路径：`%APPDATA%/icarus-ii/kb/ldb-v1-<gameVersion>-<locale>.json`
+- 路径：`%APPDATA%/icarus-ii/kb/ldb-v1-r2-<gameVersion>-<locale>.json`
+- `r2` 是缓存修订号：M4b 新增 `building.assemblerRecipeType` 后，老缓存缺字段会让
+  `kb_plan` 退化成 1x 估算，因此换文件名强制重导（schema 仍是 v1）。
   （Proton：`steamapps/compatdata/1366540/pfx/drive_c/users/<user>/AppData/Roaming/icarus-ii/kb/`）。
 - 键：`gameVersion + locale`；游戏更新或切换语言后重新导出。
 - 写入：临时文件 + rename；权限 `0600`。
@@ -155,7 +160,22 @@ Wiki/Tutorial/*-<lang>.txt   ──game_export_text─────────�
 - 循环：路径里出现过的物品按原料处理，`cycles[]` 列出。
 - 副产物：与同名原料**抵扣**；仍有剩余才进 `byproducts[]`。
 - 返回 `tree`（直接输入）、`raw`（原料汇总）、`byproducts`、`cycles`、`notes`。
-- 注意：机器数/建筑能耗需要 `building` 字段（运行时导出），M3 先不自动算。
+- 注意：机器数/建筑能耗需要 `building` 字段（运行时导出）；M3 的配方树只算物料，
+  M4b 起改用 `kb_plan` 算机器与电力。
+
+### `kb_plan(item, rate, depth?, recipeId?, buildingTier?, buildingId?, beltSpeed?)`
+
+- `rate` **必填**：目标物品每分钟产量。
+- 机器数：`craftsPerMin × timeSeconds ÷ 60 ÷ speed`，再**向上取整**；
+  `exactCount` 保留未取整值，供回答"余量多少"。
+- 机器选择：按 `recipe.type` 匹配 `building.assemblerRecipeType`，按 `assemblerSpeed` 升序
+  取档（`base` / `mk2` / `mk3`）；`buildingId` 可直接指定。
+- 电力：`buildingCount × workEnergyPerTick × 60 ÷ 1000`（kW），不含待机与电网损耗。
+- 传送带：每条输入流按 `beltSpeed`（默认 6 个/秒）折算，取最大路数。
+- 原料/副产物：直接复用 `kb_recipe_tree` 的结果（同一套抵扣规则）。
+- **不建模**（写在 `assumptions` 里，必须转述给玩家）：增产剂、矿脉产率、建筑堆叠。
+- 离线 KB 没有 `prefabDesc` ⇒ 没有 `building`，机器数按 1x 估算并给出 warning；
+  只有运行时导出才能给出正确的机器数与功率。
 
 ## 6. 离线生成（开发/测试）
 

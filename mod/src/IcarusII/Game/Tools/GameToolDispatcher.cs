@@ -23,6 +23,8 @@ namespace IcarusII.Game.Tools
         public JsonValue Meta;
         public string Summary;
         public long ElapsedMs;
+        /// <summary>可选附件（协议附录 B.3 `image`）；只有截图类工具会填。</summary>
+        public JsonValue Image;
     }
 
     /// <summary>
@@ -39,6 +41,8 @@ namespace IcarusII.Game.Tools
         public JsonValue Data;
         public bool Truncated;
         public int NextOffset = -1;
+        /// <summary>可选附件（协议附录 B.3 `image`）。只有截图类工具会填。</summary>
+        public JsonValue Image;
     }
 
     internal interface IGameToolHandler
@@ -102,6 +106,11 @@ namespace IcarusII.Game.Tools
             Register(new ProductionTool());
             Register(new ExportPrototypesTool());
             Register(new ExportTextTool());
+            Register(new EntityTool());
+            Register(new EntitiesTool());
+            Register(new ProgressTool());
+            Register(new CaptureViewTool());
+            Register(new AnalyzeAreaTool());
         }
 
         private void Register(IGameToolHandler handler)
@@ -314,6 +323,7 @@ namespace IcarusII.Game.Tools
                 Data = data,
                 Meta = meta,
                 Summary = summary,
+                Image = result?.Image,
                 ElapsedMs = elapsedMs,
             };
         }

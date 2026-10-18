@@ -37,7 +37,7 @@ async function runTool(tools, name, params) {
 
 try {
   console.log('── 1. 工具名与协议 ──');
-  check('kb 工具数 3', KB_TOOL_NAMES.length === 3);
+  check('kb 工具数 4', KB_TOOL_NAMES.length === 4);
   const noGame = toolNamesForCapabilities([]);
   check('无 game 能力仍列出 kb_search', noGame.includes('kb_search'));
   check('无 game 能力不列出 game_get_overview', !noGame.includes('game_get_overview'));
@@ -55,9 +55,11 @@ try {
   check('kb_search 返回 kb_unavailable', empty.content[0].text.includes('[kb_unavailable]'));
   check('kb_get 返回 kb_unavailable', (await runTool(emptyTools, 'kb_get', { kind: 'item', idOrName: '1101' })).content[0].text.includes('[kb_unavailable]'));
   check('kb_recipe_tree 返回 kb_unavailable', (await runTool(emptyTools, 'kb_recipe_tree', { item: '磁线圈' })).content[0].text.includes('[kb_unavailable]'));
+  check('kb_plan 返回 kb_unavailable', (await runTool(emptyTools, 'kb_plan', { item: '磁线圈', rate: 60 })).content[0].text.includes('[kb_unavailable]'));
 
   console.log('── 3. 导出编排（多分块 + internal） ──');
   const store = new KnowledgeStore(join(temp, 'kb'));
+  check('缓存文件名带修订号 r2', store.fileFor('test-1.0', 'zh-CN').includes('-r2-'), store.fileFor('test-1.0', 'zh-CN'));
   const manager = new KnowledgeManager({ store, chunkSize: 2, timeoutMs: 1000 });
   const calls = [];
   const callOptions = [];
@@ -117,7 +119,7 @@ try {
 
   console.log('── 4. kb 工具可用 ──');
   const tools = createKbTools(store);
-  check('工具数 3', tools.length === 3);
+  check('工具数 4', tools.length === 4);
   const search = await runTool(tools, 'kb_search', { query: '磁线圈' });
   check('kb_search 命中物品', search.content[0].text.includes('item#1201'));
   check('kb_search 命中配方', search.content[0].text.includes('recipe#3'));

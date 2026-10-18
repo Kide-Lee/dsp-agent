@@ -27,7 +27,7 @@
 7. **玩家侧零附加依赖**：sidecar 打成自包含单文件可执行（已在本机跑通全链路：pi + 全部依赖 → 7.1MB 单 JS → 107MB Windows exe / 132MB Linux 二进制，零原生模块）。玩家只需装 BepInEx；sidecar 由插件自动拉起（§7.1.1、§2.2）。
 8. **Windows 优先**：mod 目标平台为 Windows，主要产物是 `icarus-ii-sidecar.exe`；它同时覆盖原生 Windows 与 Proton（PE 可在 Wine 内直接 `Process.Start`）。全部状态路径按 Windows 语义落在 `%APPDATA%\icarus-ii\`（§2.4）。
 
-**已确认的产品决策**（详见 §19）：默认模型 **DeepSeek**（`deepseek-v4-flash`，M1 实测修正见 §7.2）；凭证完全自持、**不复用**其他工具；热键**只有 `R`**；**不做**截图工具；**不做**写前自动存档；**接受**发布包体积增大、sidecar 全部内置。
+**已确认的产品决策**（详见 §19）：默认模型 **DeepSeek**（`deepseek-v4-flash`，M1 实测修正见 §7.2）；凭证完全自持、**不复用**其他工具；热键**只有 `R`**；**支持**截图（M4a，决策已改判，见 §8.1）；**不做**写前自动存档；**接受**发布包体积增大、sidecar 全部内置。
 
 ---
 
@@ -866,6 +866,7 @@ function gameTool<T>(spec: {
 **(d) 配方计算**
 
 - `kb_recipe_tree(item, amount|rate, depth)`：在 sidecar 内基于 LDB 做递归展开与原料汇总（纯计算，不调模型），把"算数"从模型手里拿走。
+- `kb_plan(item, rate)`：在同一套数据上算机器数/电力/传送带；原料仍走配方树，保证两个工具口径一致。
 - 主配方选择与 `ItemProto.FindRecipes` 一致；副产物按同名原料抵扣，剩余单列；循环/深度上限都会在 `notes` 里说明。
 
 ### 7.5 会话与持久化
@@ -903,7 +904,7 @@ function gameTool<T>(spec: {
 数据纪律（重要）：
 - 任何配方、数值、科技前置关系，必须来自 kb_* 工具（游戏本体数据），不得凭记忆编造。
 - 工具未返回的信息，明确说"我没有这项数据"，不要猜测。
-- 数值计算（如"造 100 个量子芯片需要多少铁"）必须调用 kb_recipe_tree，不要自己心算。
+- 数值计算必须调用 kb_* 工具，不要自己心算：原料/kb_recipe_tree，机器数/电力/kb_plan。
 
 行动纪律（重要）：
 - 你可以调用 game.* 的写操作工具，但每一次写操作都会弹出确认框交由玩家决定。
@@ -944,9 +945,30 @@ function gameTool<T>(spec: {
 | `game.query_tech` | `nameOrId` | 科技（前置、消耗、解锁内容） | `LDB.techs` |
 | `game.export_prototypes` | `sets[]`, `chunk` | 分块导出原型数据（供 KB 建库） | `LDB.*` |
 
-> **截图工具已排除**（用户确认不做）：不提供 `game.get_screenshot`，AI 无法看到玩家画面。
-> 影响：涉及空间布局的问题（"这个产线摆得对不对"）只能靠数值描述，不能靠视觉。
-> 注：pi 自带的图像处理（photon WASM）仍会被打进 sidecar 包，但不会被触发（见 §7.1.1），不影响体积决策。
+**M4a 已实现的三组能力**（协议附录 B.1，按能力单独广告，老 mod 不受影响）：
+
+| 工具 | 能力 | 参数 | 返回 | 对应游戏 API |
+| --- | --- | --- | --- | --- |
+| `game_get_entity` | `game.entity.v1` | `planetId?`, `entityId`, `expectProtoId?` | 单建筑：原型、配方、功率、分拣器/传送带/仓储/物流塔、坐标、`stale` | `PlanetFactory.entityPool` + `factorySystem` / `cargoTraffic` / `transport` |
+| `game_get_entities` | `game.entity.v1` | `planetId?`, `protoId?`, `protoName?`, `recipeId?`, `offset/limit` | 建筑分页列表 | 同上 |
+| `game_get_progress` | `game.progress.v1` | — | 派生阶段 + 判定信号、已解锁科技、里程碑、教程、研究队列 | `GameHistoryData`、`GameMain.data.milestoneSystem` |
+| `game_capture_view` | `game.view.v1` | `width?`, `height?`, `includeEntities?` | JPEG 图片 + 可见实体屏幕坐标 | `GameCamera.CaptureScreenshot` |
+| `game_analyze_area` | `game.analyze.v1` | `planetId?`, `entityId?`, `radius?`, `center?`, `all?` | 范围聚合：建筑/配方计数、装机产能、耗电、物流设施、电网 | `PlanetFactory` + `PowerSystem` |
+
+> **截图（M4a 起支持）**：`game_capture_view` 复用 `GameCamera.CaptureScreenshot`——
+> 它把 `cullingMask` 设成 `gameLayerMask`，UGUI 不进画面，所以不需要"隐藏界面"开关；
+> PNG 字节在 `GameMain.data.screenShot`，mod 侧转 JPEG（q80，长边 ≤1280）后按协议
+> `tool_result.image` 回传。图片既不混进 `data`，也不落盘。
+>
+> 模型侧：`ModelEntry.input` 覆盖 pi 目录的模态（目录仍把 DeepSeek 标成只收文本）。
+> 不覆盖时 pi 的 `openai-completions` 适配层会按 `model.input.includes("image")`
+> 静默丢弃截图；覆盖后它会补一条带 `image_url` 的 user 消息。
+>
+> **聊天窗展示**：截图由本机产生，不走协议回传——`Plugin` 直接把 `GameToolOutcome.Image`
+> 的字节交给 `ChatWindow.AttachToolImage`，在工具块里挂一个 220px 高的 `Image`
+> 并自动展开。纹理/精灵的所有权交给节点上的 `ToolImageSprite`，随节点销毁释放
+> （`TrimHistory` / `ClearTranscript` / `RemoveBlock` 三条路径都覆盖）。
+> 这是数据驱动内容，不改 prefab 静态布局。
 
 ### 8.2 知识工具（risk 0，sidecar 本地）
 
@@ -955,6 +977,12 @@ function gameTool<T>(spec: {
 | `kb_search` | `query`, `kinds?`, `limit?` | 搜索（物品/配方/科技/建筑/提示/教程/里程碑/指引/术语） |
 | `kb_get` | `kind`, `idOrName` | 精确取一条（含 M3b 文本类） |
 | `kb_recipe_tree` | `item`, `amount?`, `rate?`, `depth?`, `recipeId?` | 递归配方展开 + 原料汇总（纯计算，副产物抵扣） |
+| `kb_plan` | `item`, `rate`, `depth?`, `recipeId?`, `buildingTier?`, `buildingId?`, `beltSpeed?` | 产线规划：机器数/电力/传送带 + 复用配方树的原料（M4b） |
+| `run_script` | `code`, `timeoutMs?`, `maxCalls?` | 只读脚本：QuickJS 沙箱 + `dsp.call` 复用同一工具注册表（M4d） |
+
+> 本地工具（`kb_*` / `run_script`）不经过 `tool_call`，默认在聊天窗里不可见；
+> sidecar 通过 `tool_activity`（协议 A.8）补发 start/end，mod 用同一套工具卡渲染。
+> 这样玩家能看到“量化计算”“知识库检索”“脚本”确实被执行，而不是只看到游戏工具。
 | `kb_compare` | `items[]` | 多物品对比（M3 后置；需要运行时 `building` 参数） |
 | `wiki_search` | `query`, `lang?`, `limit?` | MediaWiki 搜索（M3.5 可选；外部不可信数据） |
 | `wiki_page` | `title`/`pageId`, `lang?`, `section?` | 拉取页面正文（M3.5 可选） |
@@ -995,7 +1023,7 @@ function gameTool<T>(spec: {
 | 模型误判导致破坏性操作 | 存档损坏、产线被拆 | L2 强制确认 + 影响面预览 + 撤销栈；**无自动存档兜底**（用户关闭），因此"不可撤销的 L2 工具默认不实现"是硬约束 |
 | API Key 泄露 | 经济损失 | Key 只在 sidecar；mod 配置不含 Key；支持环境变量注入 |
 | 本地端口被其他进程接入 | 伪造工具调用 | 绑定 `127.0.0.1`；连接时握手校验 `instanceToken`（sidecar 启动时生成，写入 `runtime.json`，仅本机可读） |
-| 存档信息外泄 | 隐私 | 默认不发送存档名/账号名；不做截图；明确文档说明哪些数据会离开本机 |
+| 存档信息外泄 | 隐私 | 默认不发送存档名/账号名；**截图会进入模型上下文**（可能含画面里的存档名、布局、聊天），只在玩家显式要求或调用 `game_capture_view` 时产生；不落盘；明确文档说明哪些数据会离开本机 |
 | 游戏崩溃 | 玩家损失 | 所有网络/异常路径与游戏主循环隔离；写操作在主线程但做前置状态检查 |
 
 ### 9.2 工具权限模型
@@ -1190,6 +1218,10 @@ icarus-ii/
 | **M2 懂现状** | `game_get_overview/player/planet/power/research/production` + 分帧采集框架 + 工具链路（协议、ToolHost、执行器、卡片） | 问"我现在缺什么"能定位到具体物品/电力缺口，数值与游戏面板一致 |
 | **M2.6 配置完善** | 多供应商/多模型设置页、模型目录、Key 检测、自定义 OpenAI 兼容端点 | 可在多个供应商/模型间切换；Key 不落聊天记录、不出站 |
 | **M3 有知识** | 运行时 LDB 导出 + 本地索引 + `kb_search`/`kb_get`/`kb_recipe_tree` + 提示/教程/里程碑/指引/术语（M3b） | 配方/科技数值与游戏一致；能正确算原料总量（副产物抵扣）；提示/教程可检索 |
+| **M4a 能看** | `game.entity.v1` / `game.progress.v1` / `game.view.v1`：建筑详情、建筑列表、进度阶段、截图（JPEG 进模型上下文）；协议 `tool_result.image`；模型 `input` 覆盖 | 截图不含 UI 且模型能描述画面；建筑字段与游戏面板一致；id 回收返回 `stale`；见 [docs/m4a-verification.md](docs/m4a-verification.md) |
+| **M4b 能算** | `kb_plan`：按目标产量计算机器数/电力/传送带；KB 增加 `building.assemblerRecipeType`，缓存换 `r2` 强制重导 | 机器数与游戏面板一致（base/mk2 档位）；缺建筑参数时降级为 1x 并 warning；见 [docs/m4b-verification.md](docs/m4b-verification.md) |
+| **M4c 能析** | `game_analyze_area`：范围聚合建筑/配方/装机产能/耗电/物流设施/电网 | 与目测数量一致；装机口径与实际产出分开陈述 |
+| **M4d 能编** | `run_script`：QuickJS-WASM 只读沙箱 + `dsp.call` 复用同一工具注册表；单文件内联 WASM | 脚本可批量取数并聚合；越权工具/超时/无宿主全局都有测试；SEA 打包后仍可运行 |
 | **M4 能动手** | 确认 UI + 令牌门禁 + `focus_camera`/`place_marker`/`open_panel`/`set_research` + 撤销 | 拒绝确认时无任何副作用（重点测试） |
 | **M5 完善** | 错误处理全覆盖、i18n 结构、**打包流水线（cjs bundle + SEA 注入 + 双平台产物）+ 体积优化评估**、README/安装文档、性能调优 | 冷启动 < 2s；连续对话 30 轮无卡顿与内存增长；发布包在干净机器上零附加依赖可用 |
 | **M6 扩展**（可选） | 更多 L2 工具（配方/物流/蓝图）、`DshAcpRuntime`、Web 配置页 | — |
@@ -1388,7 +1420,7 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 | 1 | **默认模型 = DeepSeek**，默认取 `deepseek-v4-flash`（M1 实测修正：pi 内置目录中不存在 `deepseek-chat`） | §7.2、§13 |
 | 2 | **不复用任何既有登录**；sidecar 自持凭证。**mod 目标平台是 Windows** ⇒ 全部路径按 Windows 语义（`%APPDATA%\icarus-ii\`），Windows 产物为首要构建目标 | §2.4、§2.3.3、§7.2、§7.5 |
 | 3 | **不需要第二个热键**，只有 `R`（+ `Esc` 关闭） | §6.2、§6.7 |
-| 4 | **不做截图工具**（AI 看不到玩家画面） | §8.1、§9.1、§15 |
+| 4 | ~~不做截图工具~~ → **M4a 改判：做截图**（`game_capture_view`，给模型看也给玩家看）。依据：pi 的 `openai-completions` 适配层本就把工具结果图片转成 user 图像消息，唯一闸门是 `model.input`；用 `ModelEntry.input` 覆盖即可，不需要 VLM 旁路 | §8.1、§9.1、§15 |
 | 5 | **不做写前自动存档** | §3.5、§6.5、§6.7、§9.1、§16 R7 |
 | 6 | **接受发布包变大**，`icarus-ii-sidecar.exe` 直接内置 | §2.2、§12、§16 R9 |
 

@@ -11,6 +11,9 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { JsonObject, ToolResultPayload } from '../protocol.js';
 
+/** 只读脚本工具名（sidecar 本地执行）。 */
+export const SCRIPT_TOOL_NAME = 'run_script';
+
 export interface ToolCallOptions {
   timeoutMs: number;
   signal?: AbortSignal;

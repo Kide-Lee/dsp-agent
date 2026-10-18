@@ -878,6 +878,19 @@ namespace IcarusII.Game.Tools
                 }
             }
 
+            // 统计的 1 分钟桶为空时（刚读档/暂停），用装配机的装机产能兜底，
+            // 至少让模型能回答“这条线理论上做多少”，而不是一句“暂无产线统计”。
+            bool installedFallback = false;
+            if (entries.Count == 0 && filterLower == null)
+            {
+                var installed = BuildInstalledEntries(factory);
+                if (installed.Count > 0)
+                {
+                    entries.AddRange(installed);
+                    installedFallback = true;
+                }
+            }
+
             entries.Sort((a, b) =>
             {
                 var byNet = a.Net.CompareTo(b.Net);
@@ -926,18 +939,32 @@ namespace IcarusII.Game.Tools
             data.Set("nextOffset", offset + returned < total ? offset + returned : -1);
             data.Set("powerSatisfactionPct", GameToolFormat.Round(GameToolFormat.PowerSatisfactionPct(factory), 1));
 
+            // 统计为空不等于没有产线：刚读档/暂停时累计值可能全是 0。
+            // 给出建筑数并指引 player 去看装机产能，避免模型据此下"没有产线"的结论。
+            int buildingCount = CountBuildings(factory);
+            data.Set("buildingCount", buildingCount);
+            data.Set("statsEmpty", installedFallback || entries.Count == 0);
+            data.Set("basis", installedFallback ? "installed" : entries.Count > 0 ? "stats" : "none");
+
             string display;
             if (entries.Count > 0)
             {
                 var first = entries[0];
-                display = "缺料 " + shortageCount.ToString(CultureInfo.InvariantCulture) + " 种"
+                display = (installedFallback ? "装机估算" : "缺料 " + shortageCount.ToString(CultureInfo.InvariantCulture) + " 种")
                     + " · 首项 " + first.Name + " " + first.Net.ToString(CultureInfo.InvariantCulture) + "/min"
                     + " · 电力满足 " + GameToolFormat.Round(GameToolFormat.PowerSatisfactionPct(factory), 0)
                         .ToString("0", CultureInfo.InvariantCulture) + "%";
+                if (installedFallback) data.Set("hint", "统计 1 分钟桶为空，以上是按装配机与配方算的装机产能，不是实际产出。");
             }
             else
             {
-                display = "暂无产线统计";
+                data.Set("hint",
+                    "产线统计暂无数据（刚读档或游戏暂停时常见）。这不等于没有产线；"
+                    + "用 game_analyze_area 查看该区域的装机产能与配方。");
+                display = buildingCount > 0
+                    ? "统计暂无数据 · 建筑 " + buildingCount.ToString(CultureInfo.InvariantCulture)
+                        + " 座 · 用 game_analyze_area 看装机产能"
+                    : "统计暂无数据";
             }
             data.Set("display", display);
 
@@ -947,6 +974,85 @@ namespace IcarusII.Game.Tools
                 Truncated = offset + returned < total,
                 NextOffset = offset + returned < total ? offset + returned : -1,
             };
+        }
+
+        /// <summary>
+        /// 统计为空时的兜底：按装配机 × 配方速度估算每分钟产出/消耗。
+        /// 只统计 assemblerPool（装配机/熔炉/化工厂等都在这里），不含采矿与物流。
+        /// </summary>
+        private static List<ProdEntry> BuildInstalledEntries(PlanetFactory factory)
+        {
+            var entries = new List<ProdEntry>();
+            var system = factory != null ? factory.factorySystem : null;
+            if (system == null || system.assemblerPool == null || LDB.recipes == null) return entries;
+
+            var produced = new Dictionary<int, double>();
+            var consumed = new Dictionary<int, double>();
+            var upper = Math.Min(factory.entityCursor, factory.entityPool.Length);
+            for (int id = 1; id < upper; id++)
+            {
+                var entity = factory.entityPool[id];
+                if (entity.id != id || entity.assemblerId <= 0) continue;
+                if (entity.assemblerId >= system.assemblerPool.Length) continue;
+
+                var assembler = system.assemblerPool[entity.assemblerId];
+                if (assembler.recipeId <= 0) continue;
+                var recipe = LDB.recipes.Select(assembler.recipeId);
+                if (recipe == null || recipe.TimeSpend <= 0) continue;
+
+                double craftsPerMin = 60.0 / (recipe.TimeSpend / 60.0) * (assembler.speed / 10000.0);
+                AddAmounts(produced, recipe.Results, recipe.ResultCounts, craftsPerMin);
+                AddAmounts(consumed, recipe.Items, recipe.ItemCounts, craftsPerMin);
+            }
+
+            var ids = new HashSet<int>();
+            foreach (var key in produced.Keys) ids.Add(key);
+            foreach (var key in consumed.Keys) ids.Add(key);
+
+            foreach (var itemId in ids)
+            {
+                double p, c;
+                produced.TryGetValue(itemId, out p);
+                consumed.TryGetValue(itemId, out c);
+                if (p <= 0 && c <= 0) continue;
+
+                entries.Add(new ProdEntry
+                {
+                    Id = itemId,
+                    Name = GameToolFormat.ItemName(itemId),
+                    Produced = (long)Math.Round(p),
+                    Consumed = (long)Math.Round(c),
+                    Stored = 0,
+                });
+            }
+            return entries;
+        }
+
+        private static void AddAmounts(Dictionary<int, double> target, int[] ids, int[] counts, double craftsPerMin)
+        {
+            if (ids == null || counts == null) return;
+            var length = Math.Min(ids.Length, counts.Length);
+            for (int i = 0; i < length; i++)
+            {
+                var itemId = ids[i];
+                if (itemId <= 0 || counts[i] <= 0) continue;
+                double current;
+                target.TryGetValue(itemId, out current);
+                target[itemId] = current + counts[i] * craftsPerMin;
+            }
+        }
+
+        /// <summary>统计为空时的兜底：至少告诉模型这颗星球有多少建筑。</summary>
+        private static int CountBuildings(PlanetFactory factory)
+        {
+            if (factory == null || factory.entityPool == null) return 0;
+            var upper = Math.Min(factory.entityCursor, factory.entityPool.Length);
+            int count = 0;
+            for (int id = 1; id < upper; id++)
+            {
+                if (factory.entityPool[id].id == id && factory.entityPool[id].protoId > 0) count++;
+            }
+            return count;
         }
 
         private sealed class ProdEntry

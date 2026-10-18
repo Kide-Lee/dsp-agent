@@ -26,6 +26,7 @@ import {
   buildConfigStatePayload,
   buildEnvelope,
   buildErrorPayload,
+  buildHistoryDeletedPayload,
   buildMessagePayload,
   buildModelCatalogPayload,
   buildProviderTestPayload,
@@ -33,11 +34,13 @@ import {
   buildSaveBoundPayload,
   buildStatusPayload,
   buildStreamPayload,
+  buildToolActivityPayload,
   buildToolCallPayload,
   errorRetryable,
   parseConfigSetPayload,
   parseFrame,
   parseHelloPayload,
+  parseHistoryDeletePayload,
   parseModelCatalogPayload,
   parsePromptPayload,
   parseProviderTestPayload,
@@ -126,6 +129,8 @@ export class Session {
 
   private _state: SessionState = 'awaiting_hello';
   private helloPayload: ReturnType<typeof parseHelloPayload> = null;
+  /** 当前绑定的存档；history.delete 省略 saveKey 时用它兜底。 */
+  private boundSaveKey: string | null = null;
   private helloRejected = false;
   private helloTimer: NodeJS.Timeout | null = null;
 
@@ -272,6 +277,9 @@ export class Session {
       case MessageType.SaveBind:
         void this.handleSaveBind(env);
         return;
+      case MessageType.HistoryDelete:
+        void this.handleHistoryDelete(env);
+        return;
       case MessageType.ToolResult:
         this.handleToolResult(env);
         return;
@@ -327,6 +335,7 @@ export class Session {
     // 握手通过。
     this.clearHelloTimer();
     this.helloPayload = payload;
+    this.boundSaveKey = payload.saveKey ?? null;
     this._state = 'ready';
     this.logger.info('握手完成', {
       modVersion: payload.modVersion,
@@ -606,6 +615,7 @@ export class Session {
     } catch (err) {
       this.logger.warn('切换存档会话失败', errorFields(err));
     }
+    this.boundSaveKey = bind.saveKey;
 
     // 先在服务端读历史，再把 save.bound 发给 mod；mod 用它回放上一次对话。
     // 读文件是纯本地操作，不建模型会话、不联网；失败时按“无历史”处理。
@@ -638,6 +648,69 @@ export class Session {
     );
 
     if (bind.saveKey) this.ensureKnowledge();
+  }
+
+  /**
+   * 删除一个问答回合（附录 A.7）。
+   *
+   * 删除必须落到会话文件上，否则 `save.bound.history` 会把它又带回聊天窗。
+   * agent 在成功后丢弃内存会话，下一次 prompt 从改写后的文件重建上下文。
+   */
+  private async handleHistoryDelete(env: import('./protocol.js').ParsedEnvelope): Promise<void> {
+    const payload = parseHistoryDeletePayload(env.payload ?? {});
+    if (!payload) {
+      this.sendEnvelope(
+        buildEnvelope({
+          type: MessageType.HistoryDeleted,
+          replyTo: env.id ?? null,
+          payload: buildHistoryDeletedPayload({
+            saveKey: this.boundSaveKey,
+            text: '',
+            ok: false,
+            removed: 0,
+            error: 'bad_request',
+          }),
+        }),
+      );
+      return;
+    }
+
+    const saveKey = payload.saveKey ?? this.boundSaveKey;
+    let result: { ok: boolean; removed: number; error?: string } = {
+      ok: false,
+      removed: 0,
+      error: 'agent_unavailable',
+    };
+
+    if (this.options.agent.deleteHistory) {
+      try {
+        result = await this.options.agent.deleteHistory(saveKey, payload.text, payload.timestamp);
+      } catch (err) {
+        this.logger.warn('删除对话回合失败', errorFields(err));
+        result = { ok: false, removed: 0, error: 'io_error' };
+      }
+    }
+
+    this.logger.info('处理 history.delete', {
+      saveKey,
+      ok: result.ok,
+      removed: result.removed,
+      error: result.error ?? null,
+    });
+
+    this.sendEnvelope(
+      buildEnvelope({
+        type: MessageType.HistoryDeleted,
+        replyTo: env.id ?? null,
+        payload: buildHistoryDeletedPayload({
+          saveKey,
+          text: payload.text,
+          ok: result.ok,
+          removed: result.removed,
+          error: result.error ?? null,
+        }),
+      }),
+    );
   }
 
   private handlePrompt(env: import('./protocol.js').ParsedEnvelope): void {
@@ -874,6 +947,15 @@ export class Session {
 
       callTool(name, args, options) {
         return session.callTool(name, args, options);
+      },
+
+      toolActivity(payload) {
+        session.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.ToolActivity,
+            payload: buildToolActivityPayload(payload),
+          }),
+        );
       },
     };
   }

@@ -24,7 +24,7 @@
 
 - [ ] 进入存档后日志出现 `开始导出知识库` → `知识库已建立`
 - [ ] `ready.tools` / 日志含 `kb_search`、`kb_get`、`kb_recipe_tree`
-- [ ] 缓存文件存在：`%APPDATA%/icarus-ii/kb/ldb-v1-<版本>-<语言>.json`
+- [ ] 缓存文件存在：`%APPDATA%/icarus-ii/kb/ldb-v1-r2-<版本>-<语言>.json`
 - [ ] 二次进入同存档只看到 `知识库缓存已加载`，不重复导出
 - [ ] 换语言/更新游戏后自动重建
 - [ ] 首次导出 < 2s，窗口不卡顿（分帧）

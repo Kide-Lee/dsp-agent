@@ -46,6 +46,11 @@ export const MessageType = {
   Error: 'error',
   ConfigState: 'config.state',
   SaveBound: 'save.bound',
+  // M4e：删除一个问答回合（附录 A.7）
+  HistoryDelete: 'history.delete',
+  HistoryDeleted: 'history.deleted',
+  // M4f：sidecar 本地工具的 UI 事件（附录 A.8）
+  ToolActivity: 'tool_activity',
   // M3：拉取供应商的可用模型目录 / 检测 Key
   ModelCatalog: 'model.catalog',
   ProviderTest: 'provider.test',
@@ -139,6 +144,18 @@ export interface ToolErrorPayload {
   retryable: boolean;
 }
 
+/** `tool_result.image`（mod → sidecar，M4a）：截图等二进制附件。 */
+export interface ToolImagePayload {
+  mimeType: string;
+  /** base64，不含 data URL 前缀。 */
+  data: string;
+  width: number;
+  height: number;
+}
+
+/** 图片 base64 上限（协议附录 B.3：解码后 ≤ 2 MiB）。 */
+export const MAX_TOOL_IMAGE_BYTES = 2 * 1024 * 1024;
+
 /**
  * `tool_result` 的负载（mod → sidecar）。
  * `data` 只要求是合法 JSON；具体形状由各工具自己的 schema 约束。
@@ -148,6 +165,8 @@ export interface ToolResultPayload {
   data: unknown;
   error: ToolErrorPayload | null;
   meta: JsonObject;
+  /** 可选附件；只在 ok=true 时有效。 */
+  image?: ToolImagePayload | null;
 }
 
 // ---------------------------------------------------------------- 基础取值
@@ -390,6 +409,73 @@ export function buildSaveBoundPayload(args: {
   };
 }
 
+// ---------------------------------------------------------------- 删除回合（附录 A.7）
+
+export interface HistoryDeletePayload {
+  saveKey: string | null;
+  text: string;
+  timestamp?: number;
+}
+
+/** 解析 `history.delete`：`text` 必填；`saveKey` 可为 null（由当前绑定兜底）。 */
+export function parseHistoryDeletePayload(payload: JsonObject): HistoryDeletePayload | null {
+  const text = payload['text'];
+  if (typeof text !== 'string' || text.trim().length === 0) return null;
+
+  const key = payload['saveKey'];
+  if (key !== undefined && key !== null && typeof key !== 'string') return null;
+
+  const rawTs = payload['timestamp'];
+  if (rawTs !== undefined && rawTs !== null && typeof rawTs !== 'number') return null;
+
+  return {
+    saveKey: typeof key === 'string' && key.length > 0 ? key : null,
+    text,
+    ...(typeof rawTs === 'number' && Number.isFinite(rawTs) ? { timestamp: rawTs } : {}),
+  };
+}
+
+export function buildHistoryDeletedPayload(args: {
+  saveKey: string | null;
+  text: string;
+  ok: boolean;
+  removed: number;
+  error?: string | null;
+}): JsonObject {
+  return {
+    saveKey: args.saveKey,
+    text: args.text,
+    ok: args.ok,
+    removed: args.removed,
+    error: args.error ?? null,
+  };
+}
+
+// ---------------------------------------------------------------- 本地工具活动（附录 A.8）
+
+export interface ToolActivityPayload {
+  callId: string;
+  phase: 'start' | 'end';
+  name: string;
+  args?: string;
+  ok?: boolean;
+  summary?: string;
+  detail?: string;
+}
+
+export function buildToolActivityPayload(args: ToolActivityPayload): JsonObject {
+  const payload: JsonObject = {
+    callId: args.callId,
+    phase: args.phase,
+    name: args.name,
+  };
+  if (args.args !== undefined) payload['args'] = args.args;
+  if (args.ok !== undefined) payload['ok'] = args.ok;
+  if (args.summary !== undefined) payload['summary'] = args.summary;
+  if (args.detail !== undefined) payload['detail'] = args.detail;
+  return payload;
+}
+
 // ---------------------------------------------------------------- 配置（附录 A）
 
 /**
@@ -416,7 +502,17 @@ export type ConfigStateValue = 'ready' | 'missing_key' | 'invalid_key' | 'unreac
 export interface ModelEntry {
   id: string;
   name: string;
+  /**
+   * 该模型能接受的输入模态。缺省时用 pi 目录里的取值。
+   *
+   * 目录数据可能滞后（例如 DeepSeek 已支持图片但目录仍写 `text`），
+   * 因此允许在这里覆盖；写 `['text','image']` 后 pi 才会把工具结果里的
+   * 图片转成真正的图像输入。
+   */
+  input?: ModelInputModality[];
 }
+
+export type ModelInputModality = 'text' | 'image';
 
 /** 一个供应商的只读视图；`hasKey` 只表示是否配置过，绝不回传 key。 */
 export interface ProviderView {
@@ -797,8 +893,49 @@ export function parseToolResultPayload(payload: JsonObject): ToolResultPayload |
   const rawMeta = payload['meta'];
   const meta: JsonObject = isPlainObject(rawMeta) ? rawMeta : {};
 
-  return { ok, data, error, meta };
+  // 附件只在成功时保留：失败结果带图会让模型对"成功了什么"产生错觉。
+  const image = ok ? parseToolImage(payload['image']) : null;
+  if (image === INVALID_IMAGE) return null;
+
+  return image ? { ok, data, error, meta, image } : { ok, data, error, meta };
 }
+
+const INVALID_IMAGE = Symbol('invalid-image');
+
+/**
+ * 解析可选的 `image` 附件。
+ *
+ * - 缺省/null ⇒ 没有图片；
+ * - 形状或大小不合法 ⇒ INVALID_IMAGE（协议违例，由调用方判 null）；
+ * - 只在 ok=true 时才保留（失败结果不该带图）。
+ */
+function parseToolImage(raw: unknown): ToolImagePayload | null | typeof INVALID_IMAGE {
+  if (raw === undefined || raw === null) return null;
+  if (!isPlainObject(raw)) return INVALID_IMAGE;
+
+  const mimeType = raw['mimeType'];
+  const data = raw['data'];
+  const width = raw['width'];
+  const height = raw['height'];
+  if (typeof mimeType !== 'string' || mimeType.length === 0) return INVALID_IMAGE;
+  if (typeof data !== 'string' || data.length === 0) return INVALID_IMAGE;
+  if (typeof width !== 'number' || !Number.isFinite(width) || width <= 0) return INVALID_IMAGE;
+  if (typeof height !== 'number' || !Number.isFinite(height) || height <= 0) return INVALID_IMAGE;
+
+  // base64 的字符数上限：4/3 × 字节数（向上取整），再加 padding 余量。
+  const maxChars = Math.ceil((MAX_TOOL_IMAGE_BYTES * 4) / 3) + 4;
+  if (data.length > maxChars) return INVALID_IMAGE;
+  if (!BASE64_PATTERN.test(data)) return INVALID_IMAGE;
+
+  return {
+    mimeType,
+    data,
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+}
+
+const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
 
 export function buildStreamPayload(channel: StreamChannel, delta: string): JsonObject {
   return { channel, delta };

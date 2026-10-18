@@ -234,17 +234,34 @@ namespace IcarusII.Common.Transport
         }
 
         /// <summary>
+        /// 请求删除一个问答回合（协议附录 A.7）。返回 envelope id；连接未就绪时返回 null。
+        /// </summary>
+        public string SendHistoryDelete(string saveKey, string text, long timestampMs)
+        {
+            if (_state != ConnectionState.Ready || string.IsNullOrEmpty(text)) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.HistoryDelete,
+                Protocol.Protocol.BuildHistoryDelete(saveKey, text, timestampMs),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
+        /// <summary>
         /// 回传一次 tool_result（协议附录 B）。`replyTo` 是 sidecar 发来的 callId。
         /// 连接未就绪时返回 false；调用方无需重试（sidecar 侧会超时）。
         /// </summary>
         public bool SendToolResult(string callId, bool ok, JsonValue data,
-            string errorCode, string errorMessage, JsonValue meta)
+            string errorCode, string errorMessage, JsonValue meta, JsonValue image = null)
         {
             if (_state != ConnectionState.Ready || string.IsNullOrEmpty(callId)) return false;
 
             var env = Protocol.Protocol.Envelope(
                 Protocol.Protocol.ToolResult,
-                Protocol.Protocol.BuildToolResult(callId, ok, data, errorCode, errorMessage, meta),
+                Protocol.Protocol.BuildToolResult(callId, ok, data, errorCode, errorMessage, meta, image),
                 NextId(), callId);
 
             _sendQueue.Enqueue(env);

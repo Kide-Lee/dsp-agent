@@ -119,7 +119,7 @@ try {
   const ready = socket.frames.find((frame) => frame.type === 'ready');
   check('收到 ready', Boolean(ready));
   const tools = ready?.payload?.tools ?? [];
-  check('ready.tools 含 kb 工具', ['kb_search', 'kb_get', 'kb_recipe_tree'].every((name) => tools.includes(name)));
+  check('ready.tools 含 kb 工具', ['kb_search', 'kb_get', 'kb_recipe_tree', 'kb_plan'].every((name) => tools.includes(name)));
   check('无 game 能力时不广告 game_*', !tools.some((name) => name.startsWith('game_')));
 
   session.handleFrame(

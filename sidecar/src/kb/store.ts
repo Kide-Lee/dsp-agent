@@ -1,7 +1,11 @@
 /**
  * 知识库落盘/内存状态（M3）。
  *
- * 缓存路径：`<dataDir>/kb/ldb-v1-<gameVersion>-<locale>.json`。
+ * 缓存路径：`<dataDir>/kb/ldb-v1-r2-<gameVersion>-<locale>.json`。
+ *
+ * `r2` 是**缓存修订号**，不是 schema 版本：M4b 给 items 增加了
+ * `building.assemblerRecipeType`，schema 仍兼容 v1。老缓存没有这个字段，
+ * 会让 `kb_plan` 退化成 1x 估算，所以换文件名强制重导一次，而不是悄悄降级。
  * 写入用临时文件 + rename，避免导出中断留下半个 JSON。
  */
 
@@ -9,6 +13,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { join } from 'node:path';
 import { KnowledgeBase, parseKbData } from './knowledge.js';
 import { KB_SCHEMA_VERSION, type KbData } from './types.js';
+
+/** 缓存修订号：数据结构之外的"内容口径"变化时 +1。 */
+export const KB_CACHE_REVISION = 2;
 
 export type KnowledgeState = 'empty' | 'loading' | 'ready' | 'error';
 
@@ -79,7 +86,11 @@ export class KnowledgeStore {
   }
 
   fileFor(gameVersion: string, locale: string): string {
-    return join(this.dataDir, 'kb', `ldb-v${KB_SCHEMA_VERSION}-${safePart(gameVersion)}-${safePart(locale)}.json`);
+    return join(
+      this.dataDir,
+      'kb',
+      `ldb-v${KB_SCHEMA_VERSION}-r${KB_CACHE_REVISION}-${safePart(gameVersion)}-${safePart(locale)}.json`,
+    );
   }
 
   /** 尝试从磁盘恢复；版本/语言不匹配或文件损坏时返回 null。 */

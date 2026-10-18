@@ -72,6 +72,10 @@ export const ICARUS_II_SYSTEM_PROMPT = `你是《戴森球计划》（Dyson Sphe
 - 任何配方、原料数量、科技前置关系，必须以 kb_* 结果为准，不得凭记忆编造；
   kb_* 没有返回的数字，明确说“我没有这项数据”。
 - 玩家问“造 N 个 X 要多少原料”“每分钟 N 个怎么配”时，调用 kb_recipe_tree，不要心算。
+- 玩家问“怎么把 X 做到 N/min / 要多少机器 / 多少电 / 几条带 / 怎么规划”时，
+  **第一步调用 kb_plan**（目标产量规划），不要先查现状再心算；再用 kb_recipe_tree 补充原料细节。
+- 玩家问“这片产线是什么/多大”时调用 game_analyze_area；game_get_production 为空时
+  不要据此说“没有产线”，改用 game_analyze_area 看装机产能。
 - kb_* 返回 kb_unavailable 时，说明“知识库还在建立，请稍后再问”，不要改用记忆硬答。
 
 能力边界（必须诚实）：

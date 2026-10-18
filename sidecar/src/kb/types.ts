@@ -38,6 +38,11 @@ export interface KbCount {
 /** 建筑参数。只有运行期导出才有：prefabDesc 不在 LDB 的 asset 里。 */
 export interface KbBuilding {
   assemblerSpeed?: number;
+  /**
+   * 该建筑能承接的配方类型（`PrefabDesc.assemblerRecipeType`）。
+   * `kb_plan` 用它把配方映射到机器；离线导出没有这个字段。
+   */
+  assemblerRecipeType?: number;
   workEnergyPerTick?: number;
   minerPeriod?: number;
   beltSpeed?: number;
@@ -212,4 +217,54 @@ export interface RecipeTreeResult {
   cycles: { itemId: number; item: string }[];
   depthLimited: boolean;
   notes: string[];
+}
+
+// ---------------------------------------------------------------- 产线规划（M4b）
+
+export interface PlanOptions {
+  /** 目标物品的每分钟产量。 */
+  rate: number;
+  /** 展开深度；与 kb_recipe_tree 同一口径。 */
+  depth?: number;
+  /** 强制根配方（用于同物品多配方的情况）。 */
+  recipeId?: number;
+  /** 机器档位：base = 最低速，mk2/mk3 = 依次更快。 */
+  buildingTier?: 'base' | 'mk2' | 'mk3';
+  /** 直接指定机器原型 id；给了就不再按 recipe.type 找。 */
+  buildingId?: number;
+  /** 单条传送带吞吐（物品/秒），默认 6（Mk.I）。 */
+  beltSpeed?: number;
+}
+
+/** 一台机器的功率单位是 kW；`workEnergyPerTick` 是每 tick 工作功率。 */
+export interface PlanRecipeRow {
+  recipeId: number;
+  recipeName: string;
+  recipeType?: number;
+  buildingId?: number;
+  buildingName?: string;
+  /** 向上取整后的机器数（实际要建的）。 */
+  buildingCount: number;
+  /** 未取整的机器数（用于看余量）。 */
+  exactCount: number;
+  speedMultiplier: number;
+  craftsPerMin: number;
+  timeSeconds: number;
+  powerKw: number;
+  inputsPerMin: { itemId: number; item: string; amount: number }[];
+  beltsPerInput: number;
+}
+
+export interface PlanResult {
+  item: { id: number; name: string };
+  ratePerMin: number;
+  recipes: PlanRecipeRow[];
+  totalPowerKw: number;
+  belts: { itemsPerSec: number; maxSingleInputPerMin: number; maxBelts: number };
+  raw: { itemId: number; item: string; amount: number }[];
+  byproducts: { itemId: number; item: string; amount: number }[];
+  cycles: { itemId: number; item: string }[];
+  depthLimited: boolean;
+  assumptions: string[];
+  warnings: string[];
 }
