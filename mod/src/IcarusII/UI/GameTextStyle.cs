@@ -21,12 +21,17 @@ namespace IcarusII.UI
     {
         private const string MaterialPath = "UI/Materials/widget-text-alpha-5x";
         private const string ThickMaterialPath = "UI/Materials/widget-text-alpha-5x-thick";
+        // 原生图文混排（物品描述/科技解锁）用的材质：_Sharp = 0，着色器会把它夹到 0.4，
+        // 图标 alpha 边缘会被明显柔化。聊天正文之前用的是 _Sharp = 1 的正文材质，
+        // 图标边缘因此显得硬、锯齿明显。
+        private const string IconMaterialPath = "UI/Materials/widget-text-default-icon-set";
         private const string BundledMaterial = "widget-text-alpha-5x";
         private const string BundledThickMaterial = "widget-text-alpha-5x-thick";
 
         private static readonly Dictionary<string, Material> Cache = new Dictionary<string, Material>();
         private static Material _softNormal;
         private static Material _softThick;
+        private static Material _iconBase;
         private static bool _missingLogged;
 
         /// <summary>常规正文/标签材质（`_Sharp = 0.93`）。</summary>
@@ -40,10 +45,28 @@ namespace IcarusII.UI
         /// 游戏原生 UI 用 5x + 锐化来保证可读性，但长时间看大段白字时泛光偏大；
         /// 2x 亮度 + 更硬的 alpha 边缘在深色面板上足够清晰，也不容易糊成一团。
         /// </summary>
-        public static Material SoftMaterial => Soften(Material, ref _softNormal, 2.0f, 1.0f);
+        public static Material SoftMaterial =>
+            Soften(IconBaseMaterial ?? Material, ref _softNormal, 2.0f, 0.4f);
 
         /// <summary>输入框的柔化版本；比正文略厚，保留原生输入框观感。</summary>
-        public static Material SoftThickMaterial => Soften(ThickMaterial, ref _softThick, 2.0f, 0.75f);
+        public static Material SoftThickMaterial =>
+            Soften(IconBaseMaterial ?? ThickMaterial, ref _softThick, 2.0f, 0.5f);
+
+        /// <summary>
+        /// 原生图文材质。它的图标分支带 `_Sharp=0`（shader 内钳到 0.4），
+        /// 图标边缘比正文材质的 `_Sharp=1` 柔和得多；聊天窗直接借用这份材质再压亮度。
+        /// </summary>
+        private static Material IconBaseMaterial
+        {
+            get
+            {
+                if (_iconBase != null) return _iconBase;
+                var material = Resources.Load<Material>(IconMaterialPath);
+                if (Usable(material)) _iconBase = material;
+                else _iconBase = Material;
+                return _iconBase;
+            }
+        }
 
         private static Material Resolve(string bundledName, string resourcesPath)
         {
@@ -125,8 +148,13 @@ namespace IcarusII.UI
         /// <summary>复制一份材质并压低亮度；不修改游戏共享材质。</summary>
         private static Material Soften(Material source, ref Material cache, float multiplier, float sharp)
         {
-            if (cache != null) return cache;
-            if (source == null) return null;
+            if (cache != null && source != null &&
+                cache.shader == source.shader &&
+                cache.name == source.name + "-icarus-soft")
+            {
+                return cache;
+            }
+            if (source == null) return cache;
             try
             {
                 var material = new Material(source);
