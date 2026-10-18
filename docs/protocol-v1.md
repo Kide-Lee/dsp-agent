@@ -201,13 +201,50 @@ mod                                   sidecar
     "provider": "deepseek",
     "model": "deepseek-v4-flash",
     "apiKey": "sk-...",
-    "baseUrl": null
+    "baseUrl": null,
+    "thinkingLevel": "high"
   }
 }
 ```
 
 - 所有字段**均可选**，只更新给出的字段；未给出的保持不变。
 - `apiKey` 只在此方向传输一次；sidecar 持久化后**永不回传**。
+- `thinkingLevel` 取值 `off | minimal | low | medium | high | xhigh | max`，与 pi 的
+  `ThinkingLevel` 一致。DeepSeek 的 `thinkingLevelMap` 只映射 `high` / `max`，
+  其余档位由 pi clamp；`off` 表示**不请求思考**，默认 `high`（开启）。
+  非法取值 ⇒ `error{code:"bad_request"}`，不落盘。
+- 改档位会让 sidecar 丢弃当前 pi session，在**下一次** prompt 生效；
+  会话文件仍在，历史不会丢。
+
+**M2.6 多供应商扩展**（与上面的老字段可同时出现）：
+
+```json
+{
+  "providerConfig": {
+    "openai": {
+      "apiKey": "sk-...",
+      "baseUrl": null,
+      "models": [
+        { "id": "gpt-4o", "name": "GPT-4o" },
+        { "id": "gpt-4o-mini", "name": "GPT-4o mini" }
+      ]
+    }
+  },
+  "removeProviders": ["my-old-proxy"],
+  "activeProvider": "openai",
+  "activeModel": "gpt-4o"
+}
+```
+
+- `providerConfig` 的键是 provider id；每个字段都可选：
+  - `models`：**整份替换**该供应商的模型列表；至少要有 `id`，`name` 缺省用 `id`。
+  - `apiKey`：只在此方向出现；`""` 表示清除，省略表示保持不变。
+  - `baseUrl`：`null` 清除覆盖，省略保持不变。
+- `removeProviders` 删除供应商（同时删除其 key）。
+- `activeProvider` / `activeModel` 切换当前模型；未指定模型时用该供应商的第一个。
+- 老的 `provider/model/apiKey/baseUrl` 仍然有效，只作用于**当前**供应商。
+- **`apiKey` 永远不会出现在 `config.state` / `ready` / 日志里**；界面只能看到
+  `hasKey`，编辑时输入新 key 覆盖旧值。
 
 #### `config.state`（sidecar → mod）
 
@@ -218,7 +255,22 @@ mod                                   sidecar
     "state": "ready",
     "provider": "deepseek",
     "model": "deepseek-v4-flash",
-    "message": null
+    "thinkingLevel": "high",
+    "message": null,
+    "providers": [
+      {
+        "id": "deepseek",
+        "name": "DeepSeek",
+        "hasKey": true,
+        "baseUrl": null,
+        "models": [
+          { "id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash" },
+          { "id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro" }
+        ],
+        "isActive": true
+      }
+    ],
+    "active": { "provider": "deepseek", "model": "deepseek-v4-flash" }
   }
 }
 ```
@@ -233,6 +285,69 @@ mod                                   sidecar
 | `unreachable` | 无法连通上游 | 提示网络问题，可重试 |
 
 **`config.state` 的任何字段都不得包含 `apiKey`。**
+`thinkingLevel` 是新增字段；老服务端不返回时 mod 应保持本地配置值。
+`providers` / `active` 是 M2.6 新增字段；老服务端不返回时 mod 回退到
+`provider` + `model`，并把它合成一条供应商显示。
+
+#### `model.catalog`（mod → sidecar → mod）
+
+设置页的「获取可用模型」按钮使用。请求：
+
+```json
+{ "v": 1, "id": "m-12", "type": "model.catalog",
+  "payload": { "provider": "deepseek", "baseUrl": null, "apiKey": null } }
+```
+
+- `provider` 必填；`baseUrl` / `apiKey` 可选，**草稿值优先**，用于在保存前探测。
+- `apiKey` 只用于本次请求，sidecar 不回传、不落盘、不写日志。
+
+响应（`replyTo` = 请求 id）：
+
+```json
+{ "v": 1, "id": "s-12", "type": "model.catalog", "replyTo": "m-12",
+  "payload": {
+    "provider": "deepseek",
+    "source": "catalog",
+    "models": [
+      { "id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash" },
+      { "id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro" }
+    ]
+  } }
+```
+
+- `source`：`catalog`（pi 内置目录）或 `openai-compatible`（`GET {baseUrl}/models`）。
+- 失败时 `models: []`，`payload.error` 是人类可读的错误（不含 key）。
+- 显式给了 `baseUrl` 时只问端点，不会拿官方目录冒充端点模型。
+
+#### `provider.test`（mod → sidecar → mod）
+
+设置页的「检测」按钮使用，只做轻量的 `GET /models` 探测，不发聊天请求、不产生 token 费用。
+
+请求：
+
+```json
+{ "v": 1, "id": "m-13", "type": "provider.test",
+  "payload": { "provider": "deepseek", "baseUrl": null, "apiKey": null } }
+```
+
+响应（`replyTo` = 请求 id）：
+
+```json
+{ "v": 1, "id": "s-13", "type": "provider.test", "replyTo": "m-13",
+  "payload": {
+    "provider": "deepseek",
+    "ok": true,
+    "status": 200,
+    "latencyMs": 123,
+    "message": "Key 可用",
+    "source": "http"
+  } }
+```
+
+- `apiKey` 只用于本次探测，sidecar 不回传、不落盘、不写日志。
+- 401/403 → `ok:false, status:401/403, message:"API Key 被拒绝（HTTP …）"`。
+- 未知供应商需要先填 `baseUrl`；已知供应商会用 pi 目录里该模型自己的 API 地址。
+- Anthropic 用 `x-api-key` + `/v1/models`；Google 用 `?key=`；其余按 OpenAI 兼容 Bearer。
 
 ### A.2 `ready` 新增可选字段
 
@@ -279,11 +394,12 @@ mod                                   sidecar
 
 以下几条都是**读类型定义看不出来、只有实跑才会暴露**的行为，写在这里避免重复踩：
 
-1. **必须显式关掉思考档位。** pi 的 `thinkingLevel` 默认是 `medium`，
+1. **默认档位必须显式写 `high`。** pi 的 `thinkingLevel` 默认是 `medium`，
    而 DeepSeek 的 `thinkingLevelMap` 把 `minimal`/`low`/`medium` 全设为 `null`，
    clamp 逻辑会**向后找**到 `high` —— 于是"什么都没配"反而变成
    `thinking:{type:"enabled"}` + `reasoning_effort:"high"`，既变慢又变贵。
-   M1 必须显式传 `thinkingLevel: "off"`。
+   M1 起 sidecar 默认显式传 `thinkingLevel: "high"`（默认开启思考）；
+   玩家可在聊天窗右下角的「思考」下拉框里选 `off` 关闭或 `max` 提高（见 A.1）。
 
 2. **凭证注入不能走 `ModelRuntime.create({ apiKey })`** —— 该选项不存在。
    带 `apiKey` 的类型是 `ModelRuntimeAuthOverrides`，只被 `getAuth()` 接受；
@@ -350,3 +466,125 @@ mod                                   sidecar
    实际几乎总是 `null`：mod 在插件加载时就连接，那时还在主菜单，
    真正的绑定靠随后的 `save.bind`。
 5. 重复绑定同一个 `saveKey` 必须**幂等**（不重建、不丢历史）。
+
+---
+
+## 附录 B：只读游戏工具（M2）与知识库工具（M3）
+
+M2 新增 `game.read.v1` 能力。mod 在 `hello.capabilities` 中声明该能力后，
+sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.tools` **只含 M3 的
+`kb_*` 本地工具**（它们不依赖 mod 能力）。
+
+### B.1 工具名
+
+模型可见的工具名使用下划线（OpenAI 兼容端点会把非 `[a-zA-Z0-9_-]` 替换成 `_`）：
+
+| 协议/模型名 | 说明 |
+| --- | --- |
+| `game_get_overview` | 存档、时间、当前星球/星系、玩家坐标 |
+| `game_get_player` | 机甲能量/护盾、背包 |
+| `game_get_planet` | 行星矿脉汇总、建筑计数 |
+| `game_get_power` | 电网需求/供给/容量/储能 |
+| `game_get_research` | 当前研究、进度、队列 |
+| `game_get_production` | 按物品聚合的产量/消耗/库存 |
+
+### B.1.1 M3 知识库工具（sidecar 本地）
+
+| 模型名 | 说明 |
+| --- | --- |
+| `kb_search` | 在物品/配方/科技/建筑/矿脉/提示/教程/里程碑/指引/术语中搜索 |
+| `kb_get` | 按 kind + id/名称/SID 精确读取一条 |
+| `kb_recipe_tree` | 递归展开主配方，计算直接输入、原料总量、副产物 |
+
+- 这三个工具**始终注册**；知识库尚未建立时执行返回 `kb_unavailable`，
+  不会让模型“看不到工具”而凭记忆编造。
+- 它们不出现在 `tool_call` 帧里（sidecar 本地执行），因此游戏内不会出现对应的工具卡；
+  结果作为 pi 的工具结果回填。
+- 知识库的数据来源与 schema 见 [docs/kb-v1.md](kb-v1.md)。
+
+工具结果中的物品/建筑/科技可带 `iconTag`（游戏图标短码，不含反斜杠与分号）；
+模型在正文里写成 `\tag;`。聊天窗必须使用 `Configs.builtin.generalIconMapping` 才能渲染这些短码。
+
+> 游戏自带的 UGUI 改版没有实现 `<b>`；`IcarusII` 在写入 `Text` 前会把 `<b>...</b>` 转成受支持的亮白 `<color=...>...</color>`。
+
+### B.2 `tool_call`（sidecar → mod）
+
+```jsonc
+{
+  "v": 1, "id": "s-31", "type": "tool_call",
+  "payload": {
+    "callId": "call_7",
+    "name": "game_get_power",
+    "args": { "planetId": 3 },
+    "risk": 0,
+    "timeoutMs": 8000,
+    "internal": false
+  }
+}
+```
+
+- `callId` 由 sidecar 生成，单连接内唯一；mod 必须在 `tool_result.replyTo` 原样回传。
+- `internal` 可选，缺省 `false`。为 `true` 时表示 sidecar 内部调用（M3 知识库导出）：
+  mod 应正常执行并回 `tool_result`，但**不要**显示工具卡、不要改状态栏。
+- `timeoutMs` 由 sidecar 钳制在 500–30000ms；超时后 sidecar 不再接受该 `callId` 的结果。
+- M2 的 `risk` 恒为 0；写工具（M4）才使用 1/2。
+- 同一连接同一时刻最多一个 `game.*` 调用（sidecar 串行化）。
+
+### B.3 `tool_result`（mod → sidecar）
+
+```jsonc
+{
+  "v": 1, "id": "m-41", "type": "tool_result",
+  "replyTo": "call_7",
+  "payload": {
+    "callId": "call_7",
+    "ok": true,
+    "data": { "demandKw": 1234.5, "display": "需求 1.23 MW · 满足 92%" },
+    "error": null,
+    "meta": {
+      "tool": "game_get_power",
+      "gameTick": 123456,
+      "saveKey": "3f2a91c4d8e05b17",
+      "tickAtStart": 123450,
+      "tickAtEnd": 123456,
+      "elapsedMs": 18,
+      "truncated": false
+    }
+  }
+}
+```
+
+- `ok=false` 时 `data` 为 `null`，`error` 为 `{code, message}`。
+- `meta` 必带 `gameTick`、`saveKey`、`tickAtStart`、`tickAtEnd`；列表截断时带
+  `truncated:true` 与 `nextOffset`。
+- 错误码：`tool_not_found`、`tool_unavailable`、`not_in_game`、`invalid_args`、
+  `timeout`、`busy`、`internal`、`cancelled`。
+- 断线、换档、退游戏时 sidecar 立即以 `tool_unavailable` / `not_in_game` 结束 pending 调用，
+  不等待 mod 回复。
+
+### B.4 单位约定（M2 定案）
+
+| 量 | 单位 |
+| --- | --- |
+| 电力 | `kW`（`PowerNetwork` 每 tick 值 × 60 ÷ 1000） |
+| 储能 | `kWh`（J ÷ 3.6e6） |
+| 产线 | `/min`（`ProductStat.total[1]`） |
+| 时间 | 秒 |
+| 比例 | 0–100 |
+
+每个数值字段带单位后缀；关键结果另附 `display` 字符串，供模型直接引用。
+
+### B.5 内部导出工具（M3，模型不可见）
+
+这两个工具只由 sidecar 在 `save.bind` 后调用（`internal: true`），用于建立本地知识库；
+不注册给模型。
+
+| 工具 | 参数 | 返回 |
+| --- | --- | --- |
+| `game_export_prototypes` | `set`（items/recipes/techs/models/veins/signals）、`offset`、`limit`、`locale?` | `{schemaVersion, gameVersion, locale, set, offset, limit, total, done, rows[]}` |
+| `game_export_text` | `offset`、`limit` | `{schemaVersion, gameVersion, locale, offset, limit, total, done, rows[]}` |
+
+- 按 `offset/limit` 分块；`done=true` 表示该集合已到末尾。
+- mod 侧按主线程预算分帧序列化；sidecar 串行调用，缓存到 `%APPDATA%/icarus-ii/kb/`。
+- `game_export_text` 失败时 sidecar 保留结构化知识库（M3a），只记录 warn；
+  `game_export_prototypes` 失败则知识库整体不可用，`kb_*` 返回 `kb_unavailable`。

@@ -799,7 +799,7 @@ import {
 | --- | --- | --- |
 | `game.*` 读 | mod | 是（WS `tool_call`） |
 | `game.*` 写 | mod | 是 + 确认门禁 |
-| `kb.*` / `wiki.*` | sidecar | 否 |
+| `kb_*`（及后续 `wiki_*`） | sidecar | 否 |
 
 **通用桥接工具工厂**：
 
@@ -814,36 +814,59 @@ function gameTool<T>(spec: {
 
 **结果裁剪**：统一在 sidecar 侧做（mod 只提供上限内数据）。策略：JSON→紧凑文本；表格类按行截断并附"还有 N 条，可用 offset 继续"；超限时优先保留聚合值。
 
+#### 7.3.1 工具路由与单位约定（M2 定案）
+
+- **路由**：sidecar 进程内只有一个 `PiAgent`。工具执行由 `ToolHost` 路由到**发起本轮 prompt 的 mod 连接**（每轮 `bind(session)`），不假设"全局只有一个连接"。断线、换档或能力变化时，所有 pending 调用立即以 `tool_unavailable` / `not_in_game` 失败，并重建 pi 会话。
+- **注册**：工具按 `hello.capabilities` 的交集注册（M2 为 `game.read.v1`）；未声明能力不注册，`ready.payload.tools` 报告实际列表。能力变化后必须重建 pi 会话，避免模型看到不存在的工具。
+- **串行**：所有 `game.*` 工具 `executionMode: "sequential"`，且在主线程采集；同一连接同一时刻最多一个工具调用。
+- **命名**：模型可见名用下划线（`game_get_overview` 等）。OpenAI 兼容端点会把非 `[a-zA-Z0-9_-]` 字符替换成 `_`，用点号会导致模型看到的工具名与回传的 `tool_call.name` 不一致。本文中的 `game.*` 仅指语义分组，协议以附录 B.1 为准。
+- **单位**：电力 **kW**（`PowerNetwork` 的每 tick 值 × 60 ÷ 1000）、储能 **kWh**、产线 **/min**、时间 **s**、比例 **%**。换算在 mod 侧完成（只有 mod 知道 tick 语义），sidecar 只负责取整/格式化。每个数值字段带单位后缀，并附 `display` 字符串（如 `"1.23 MW"`），避免模型自行换算。
+- **快照**：`tool_result.meta` 必带 `gameTick`、`saveKey`、`tickAtStart/tickAtEnd`；跨帧采集如实标注。
+
 ### 7.4 知识层
 
-三类知识源，全部**按需**：
+四类知识源，全部**按需**：
 
 **(a) LDB 导出库（离线、权威）**
 
-- 首次运行（或游戏版本变化时）触发一次导出：mod 侧工具 `game.export_prototypes` 把 `LDB` 的关键原型集序列化为 NDJSON/JSON，经 WS 分块传给 sidecar，写入 `kb/ldb-<gameVersion>.json`。
-- sidecar 建立 **SQLite FTS5** 索引（`kb/ldb.sqlite`），支持中英文名与别名检索。
-- 覆盖：`items`(ItemProtoSet)、`recipes`、`techs`、`models`(建筑)、`signals`、`veins`、`themes`、`milestones`、`goals`。
-- 导出体积控制：只导出"AI 有用"的字段（id、名称（多语言）、描述、配方输入输出与耗时、科技前置与消耗、建筑参数），跳过模型/贴图/GUID 等。目标 < 8MB。
+- 首次运行（或游戏版本变化时）触发一次导出：mod 侧工具 `game_export_prototypes` 把 `LDB` 的关键原型集序列化为 JSON，经 WS 分块传给 sidecar，写入 `kb/ldb-v1-<gameVersion>-<locale>.json`。
+- sidecar 建立**内存索引**（名称/ID/SID/描述子串；数据 <1MB、查询 <20ms）。SQLite FTS5 留作
+  wiki/大量文本接入后的备选；M3 不引入 DB 生命周期。
+- 覆盖：`items`(ItemProtoSet)、`recipes`、`techs`、`models`(建筑)、`signals`、`veins`、`milestones`、`goals`。
+- 导出体积控制：只导出"AI 有用"的字段（id、名称（当前语言）、描述、配方输入输出与耗时、科技前置与消耗、建筑参数），跳过模型/贴图/GUID 等。实测全量 JSON ~750KB。
+- 缓存：`%APPDATA%/icarus-ii/kb/ldb-v1-<gameVersion>-<locale>.json`；版本/语言变化才重建。
+- **建筑参数（`assemblerSpeed`/`workEnergyPerTick`/`minerPeriod`）在 `ItemProto.prefabDesc` 里，
+  不在 LDB 的 asset 中**，只能运行时导出。
+
+**(a2) 游戏文本与指引（M3b）**
+
+- 顾问字幕（`Locale/<lcid>/base.txt` 的 `顾问字幕*`）、里程碑、成就、控制提示；
+- 指引条目（`prototype.txt` 的 `指引*`）；
+- 教程正文（`Wiki/Tutorial/tutorial-*-<lang>.txt`，**不在 Locale**）；
+- 术语表（`dictionary.txt`）。
+- 统一清洗：去富文本/图标短码、`$LKEY_n;` → `[按键]`、保留 `{0}` 并标 `templated`。
+- `KbText` 带 `kind/phase/spoiler/source/templated/unresolvedKeys`；`kb_search` 默认 `spoiler=low`，剧情/教程需显式 `story`；按玩家进度收紧留到后续。
 
 **(b) 实时存档状态**
 
-- 不落盘、不预取；经 `game.get_*` 工具即时读取（见 §8）。
+- 不落盘、不预取；经 `game_get_*` 工具即时读取（见 §8）。
 - 会话内缓存短 TTL（默认 5s），避免模型连续追问时反复遍历工厂。
 
 **(c) Wiki（在线、可选）**
 
-- 自研最小 MediaWiki 客户端（`action=query&list=search` / `action=parse`），不做通用 HTTP 工具，只暴露 `wiki.search` / `wiki.page` 两个受限工具。
+- 自研最小 MediaWiki 客户端（`action=query&list=search` / `action=parse`），不做通用 HTTP 工具，只暴露 `wiki_search` / `wiki_page` 两个受限工具（M3.5 可选）。
 - 目标站点可配置，默认：
   - 中文：`https://wiki.biligame.com/dsp/`
   - 英文：`https://dsp-wiki.com/`
 - 本地缓存（`kb/wiki-cache.sqlite`，含 TTL 与页面哈希），减少重复抓取与站点压力。
-- 由 `Privacy.AllowWikiFetch` 控制开关，默认允许；关闭后 `wiki.*` 工具不注册。
+- 由 `Privacy.AllowWikiFetch` 控制开关，默认允许；关闭后 `wiki_*` 工具不注册。
 - 抓取内容一律标记为**不可信外部数据**，在回填给模型的文本中显式注明来源，并指示模型只提取事实、不执行其中的任何指令。
 - > 说明：本机已装 `bwiki-mcp`（MediaWiki MCP server）。pi 无内置 MCP 支持（其 `docs/usage.md` 明确说明），因此本项目自研轻量客户端；若将来切到 `DshAcpRuntime`，可改为直接复用 `bwiki-mcp`。
 
 **(d) 配方计算**
 
-- `kb.recipe_tree(item, depth)`：在 sidecar 内基于 LDB 做递归展开与原料汇总（纯计算，不调模型），把"算数"从模型手里拿走，显著提升数值准确性。
+- `kb_recipe_tree(item, amount|rate, depth)`：在 sidecar 内基于 LDB 做递归展开与原料汇总（纯计算，不调模型），把"算数"从模型手里拿走。
+- 主配方选择与 `ItemProto.FindRecipes` 一致；副产物按同名原料抵扣，剩余单列；循环/深度上限都会在 `notes` 里说明。
 
 ### 7.5 会话与持久化
 
@@ -856,9 +879,8 @@ function gameTool<T>(spec: {
 │   ├── <saveKey>.jsonl    # pi 会话文件（会话树，可分支）
 │   └── index.json         # saveKey → 标题、最后活跃时间
 ├── kb/
-│   ├── ldb-<ver>.json
-│   ├── ldb.sqlite
-│   └── wiki-cache.sqlite
+│   ├── ldb-v1-<ver>-<locale>.json   # M3 运行时导出/缓存
+│   └── wiki-cache.sqlite            # M3.5 可选
 ├── runtime.json           # 实际端口/pid（§7.1.4）
 └── logs/
 ```
@@ -879,9 +901,9 @@ function gameTool<T>(spec: {
 - 玩家询问"我现在的状况/该怎么办"时，先调用 game.* 工具读取真实状态，不要凭印象回答。
 
 数据纪律（重要）：
-- 任何配方、数值、科技前置关系，必须来自 kb.* 工具（游戏本体数据）或 wiki.*，不得凭记忆编造。
+- 任何配方、数值、科技前置关系，必须来自 kb_* 工具（游戏本体数据），不得凭记忆编造。
 - 工具未返回的信息，明确说"我没有这项数据"，不要猜测。
-- 数值计算（如"造 100 个量子芯片需要多少铁"）必须调用 kb.recipe_tree，不要自己心算。
+- 数值计算（如"造 100 个量子芯片需要多少铁"）必须调用 kb_recipe_tree，不要自己心算。
 
 行动纪律（重要）：
 - 你可以调用 game.* 的写操作工具，但每一次写操作都会弹出确认框交由玩家决定。
@@ -892,7 +914,7 @@ function gameTool<T>(spec: {
 表达：
 - 中文回答，简洁，面向正在玩游戏的玩家（他只有半屏注意力）。
 - 优先给结论与可执行步骤，其次才是原理。
-- 涉及游戏内术语时使用游戏官方译名（可通过 kb.* 查询确认）。
+- 涉及游戏内术语时使用游戏官方译名（可通过 kb_* 查询确认）。
 ```
 
 `DefaultResourceLoader({ systemPromptOverride })` 注入；玩家可通过 `SystemPromptFile` 覆盖。
@@ -930,12 +952,12 @@ function gameTool<T>(spec: {
 
 | 工具 | 参数 | 说明 |
 | --- | --- | --- |
-| `kb.search` | `query`, `kinds?`, `limit?` | FTS 检索（物品/配方/科技/建筑） |
-| `kb.get` | `kind`, `idOrName` | 精确取一条 |
-| `kb.recipe_tree` | `item`, `depth?`, `rate?` | 递归配方展开 + 原料汇总（纯计算） |
-| `kb.compare` | `items[]` | 多物品对比（能耗、占地、产能） |
-| `wiki.search` | `query`, `lang?`, `limit?` | MediaWiki 搜索（外部不可信数据） |
-| `wiki.page` | `title`/`pageId`, `lang?`, `section?` | 拉取页面正文（截断） |
+| `kb_search` | `query`, `kinds?`, `limit?` | 搜索（物品/配方/科技/建筑/提示/教程/里程碑/指引/术语） |
+| `kb_get` | `kind`, `idOrName` | 精确取一条（含 M3b 文本类） |
+| `kb_recipe_tree` | `item`, `amount?`, `rate?`, `depth?`, `recipeId?` | 递归配方展开 + 原料汇总（纯计算，副产物抵扣） |
+| `kb_compare` | `items[]` | 多物品对比（M3 后置；需要运行时 `building` 参数） |
+| `wiki_search` | `query`, `lang?`, `limit?` | MediaWiki 搜索（M3.5 可选；外部不可信数据） |
+| `wiki_page` | `title`/`pageId`, `lang?`, `section?` | 拉取页面正文（M3.5 可选） |
 
 ### 8.3 游戏写工具（risk 1/2，由 mod 执行）
 
@@ -1165,8 +1187,9 @@ icarus-ii/
 | --- | --- | --- |
 | **M0 骨架** | BepInEx 插件加载、`R` 键开关一个空窗口（含建造工具避让）、WS 握手与 echo、`ManualBehaviour` 生命周期接入、**打通 sidecar 打包链路并验证 `spawnExe` 自动拉起（含 Wine 内冒烟测试）**、**验证 Proton `AppDefaults` DLL 覆盖可让 BepInEx 免启动项生效** | 游戏内按键出现窗口；建造模式下按 `R` 只旋转建筑；日志显示 sidecar 已连接且无需预装 Node；确认无需改 Steam 启动项 |
 | **M1 能聊** | sidecar + pi 集成、DeepSeek 默认配置、**首次配置面板（含工具调用自检）**、流式显示、系统提示词、中文字体正确、会话持久化 | 干净环境粘贴 API Key 后能流式回答；工具调用自检通过；重启游戏后历史还在 |
-| **M2 懂现状** | `game.get_overview/player/planet/power/research` + 分帧采集框架 | 问"我现在缺什么"能给出与游戏一致的数据 |
-| **M3 有知识** | LDB 导出 + FTS 索引 + `kb.*` + `wiki.*` + `kb.recipe_tree` | 配方/科技数值与游戏一致；能正确算原料总量 |
+| **M2 懂现状** | `game_get_overview/player/planet/power/research/production` + 分帧采集框架 + 工具链路（协议、ToolHost、执行器、卡片） | 问"我现在缺什么"能定位到具体物品/电力缺口，数值与游戏面板一致 |
+| **M2.6 配置完善** | 多供应商/多模型设置页、模型目录、Key 检测、自定义 OpenAI 兼容端点 | 可在多个供应商/模型间切换；Key 不落聊天记录、不出站 |
+| **M3 有知识** | 运行时 LDB 导出 + 本地索引 + `kb_search`/`kb_get`/`kb_recipe_tree` + 提示/教程/里程碑/指引/术语（M3b） | 配方/科技数值与游戏一致；能正确算原料总量（副产物抵扣）；提示/教程可检索 |
 | **M4 能动手** | 确认 UI + 令牌门禁 + `focus_camera`/`place_marker`/`open_panel`/`set_research` + 撤销 | 拒绝确认时无任何副作用（重点测试） |
 | **M5 完善** | 错误处理全覆盖、i18n 结构、**打包流水线（cjs bundle + SEA 注入 + 双平台产物）+ 体积优化评估**、README/安装文档、性能调优 | 冷启动 < 2s；连续对话 30 轮无卡顿与内存增长；发布包在干净机器上零附加依赖可用 |
 | **M6 扩展**（可选） | 更多 L2 工具（配方/物流/蓝图）、`DshAcpRuntime`、Web 配置页 | — |
@@ -1182,7 +1205,7 @@ icarus-ii/
 | R3 | **游戏更新导致 API 失效** | 高 | 只依赖已核实的公开类型/成员；避免 Harmony 补丁；版本不匹配时降级为只读并提示 |
 | R4 | **pi SDK 版本演进** | 中 | 锁定 `0.82.1`；`AgentRuntime` 抽象隔离，必要时可切 dsh ACP |
 | R5 | **大存档状态采集体积** | 中 | 强制聚合 + 分页 + 结果上限；sidecar 统一裁剪；FTS/缓存 |
-| R6 | **LDB 导出体积与时间** | 低 | 只导出必要字段，分块传输，版本变化才重导出 |
+| R6 | **LDB 导出体积与时间** | 低 | **已实现**：只导出必要字段、分帧/分块、按 `gameVersion+locale` 缓存；全量 ~750KB，实测离线生成/索引通过 |
 | R7 | **L2 写操作的真实撤销能力** | 高 | **因关闭了写前自动存档，此风险上升**：逐个工具确认撤销语义，无法撤销的工具一律不实现；每个 L2 确认卡必须显式标注"可撤销/不可撤销" |
 | R8 | **中文 IME 在 `UISmartInputField` 上的实测表现** | 中 | M1 首要验证项；不行则回退自建 InputField |
 | R9 | **发布包体积（~107MB exe）** | 低 | **已决定内置**（用户确认）。仅当未来要上 Thunderstore 时需再看其体积限制；降低体积的备选是 Bun/Deno compile（§7.1.1） |
