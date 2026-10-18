@@ -30,6 +30,4 @@ __pycache__/
 # 系统
 .DS_Store
 Thumbs.db
-
-# 游戏工程（含游戏本体源码/美术资源，6.7GB）——仅作本地只读参考，绝不入库
 dsp-game/
