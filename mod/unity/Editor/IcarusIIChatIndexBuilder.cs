@@ -58,9 +58,12 @@ namespace IcarusII.EditorTools
                 var material = titleText != null ? titleText.material : null;
 
                 var bg = index.GetComponent<Image>();
-                if (bg == null) bg = index.gameObject.AddComponent<Image>();
-                bg.color = PanelBg;
-                bg.raycastTarget = false;
+                if (bg == null)
+                {
+                    bg = index.gameObject.AddComponent<Image>();
+                    bg.color = PanelBg;
+                    bg.raycastTarget = false;
+                }
 
                 var oldHeader = index.Find(HeaderName);
                 if (oldHeader != null) UnityEngine.Object.DestroyImmediate(oldHeader.gameObject);
@@ -154,33 +157,19 @@ namespace IcarusII.EditorTools
                         template = BuildRowTemplate(content, font, material);
                 }
 
+                // 已有 empty 时不要覆盖用户排好的位置/字号/颜色。
                 var empty = index.Find(EmptyName) as RectTransform;
-                if (empty == null) empty = NewRect(EmptyName, index);
-                empty.anchorMin = Vector2.zero;
-                empty.anchorMax = Vector2.one;
-                empty.offsetMin = new Vector2(4f, 4f);
-                empty.offsetMax = new Vector2(-4f, -4f);
-                var emptyText = empty.GetComponent<Text>();
-                if (emptyText == null) emptyText = empty.gameObject.AddComponent<Text>();
-                Style(emptyText, font, material, 12, Dim, TextAnchor.MiddleCenter);
-                emptyText.text = "暂无提问";
-                emptyText.raycastTarget = false;
-
-                var finalScroll = index.Find(ScrollName) as RectTransform;
-                if (finalScroll != null)
+                if (empty == null)
                 {
-                    finalScroll.offsetMin = new Vector2(4f, 4f);
-                    finalScroll.offsetMax = new Vector2(-4f, -4f);
-                    var finalViewport = finalScroll.Find(ViewportName) as RectTransform;
-                    if (finalViewport != null) finalViewport.sizeDelta = new Vector2(-9f, 0f);
-                    var finalScrollRect = finalScroll.GetComponent<ScrollRect>();
-                    if (finalScrollRect != null) EnsureScrollbar(finalScroll, finalScrollRect);
-                }
-                var finalEmpty = index.Find(EmptyName) as RectTransform;
-                if (finalEmpty != null)
-                {
-                    finalEmpty.offsetMin = new Vector2(4f, 4f);
-                    finalEmpty.offsetMax = new Vector2(-4f, -4f);
+                    empty = NewRect(EmptyName, index);
+                    empty.anchorMin = Vector2.zero;
+                    empty.anchorMax = Vector2.one;
+                    empty.offsetMin = new Vector2(4f, 4f);
+                    empty.offsetMax = new Vector2(-4f, -4f);
+                    var emptyText = empty.gameObject.AddComponent<Text>();
+                    Style(emptyText, font, material, 12, Dim, TextAnchor.MiddleCenter);
+                    emptyText.text = "暂无提问";
+                    emptyText.raycastTarget = false;
                 }
 
                 var uiLayer = index.gameObject.layer == 0 ? 5 : index.gameObject.layer;

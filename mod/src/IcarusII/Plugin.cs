@@ -162,6 +162,13 @@ namespace IcarusII
             EnsureUi();
             if (!_uiInitialized) return;
 
+            // 回到开始菜单/载入中：强制关窗，R 也不应把窗口留在主菜单上。
+            if (!GameRefs.IsInGame)
+            {
+                if (_chat.IsOpen) _chat.SetOpen(false);
+                return;
+            }
+
             _chat.Tick();
             TryApplyGameStyle();
 
@@ -518,6 +525,8 @@ namespace IcarusII
         private void EnsureUi()
         {
             if (_uiInitialized) return;
+            // 开始菜单/载入中不建窗，避免主菜单看到上一局残留或误触打开。
+            if (!GameRefs.IsInGame) return;
 
             var root = GameRefs.UiRoot;
             if (root == null) return;

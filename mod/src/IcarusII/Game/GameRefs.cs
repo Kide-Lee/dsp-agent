@@ -48,6 +48,25 @@ namespace IcarusII.Game
             }
         }
 
+        /// <summary>
+        /// 是否真的在游戏内（已进入存档、玩家对象存在）。
+        /// 主菜单 isRunning=false、载入中 mainPlayer=null，因此这个组合
+        /// 既挡住开始菜单，也挡住载入过程中的误开窗。
+        /// </summary>
+        public static bool IsInGame
+        {
+            get
+            {
+                try
+                {
+                    return GameMain.isRunning
+                        && !GameMain.isLoading
+                        && GameMain.mainPlayer != null;
+                }
+                catch { return false; }
+            }
+        }
+
         /// <summary>玩家当前是否在某个文本输入框中输入（游戏自身的标记）。</summary>
         public static bool TextInputActive => VFInput.inputing;
 

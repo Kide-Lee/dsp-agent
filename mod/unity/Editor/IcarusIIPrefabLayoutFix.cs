@@ -5,14 +5,9 @@ using UnityEngine.UI;
 namespace IcarusII.EditorTools
 {
     /// <summary>
-    /// 把聊天窗里原先由运行期补丁完成的布局固化到 prefab：
-    ///  - output 底边贴 input 顶边（2px）；
-    ///  - 正文滚动条向内收 8px；
-    ///  - input 的 viewport/content 改成拉伸，避免每帧校正高度；
-    ///  - delete 下补一个透明背景块，供 hover 染红；
-    ///  - chat-index-tooltip 补进 prefab，运行期只负责显示/移动。
-    ///
-    /// 只改这些节点，不重建用户排好的其它 UI；幂等，可重复执行。
+    /// 只做 prefab 的**加法**：缺 delete 背景块就补一块，缺 tooltip 就补一块。
+    /// 不覆盖用户已经在 prefab 里排好的窗口、正文、滚动条、索引行布局。
+    /// 幂等，可重复执行。
     /// </summary>
     public static class IcarusIIPrefabLayoutFix
     {
@@ -31,8 +26,7 @@ namespace IcarusII.EditorTools
 
             try
             {
-                FixOutputAndInput(root.transform);
-                FixChatIndex(root.transform);
+                EnsureChatIndexAdditions(root.transform);
                 EnsureTooltip(root.transform);
                 PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
                 AssetDatabase.Refresh();
@@ -45,97 +39,15 @@ namespace IcarusII.EditorTools
             }
         }
 
-        private static void FixOutputAndInput(Transform root)
-        {
-            var input = root.Find("input") as RectTransform;
-            var output = root.Find("output") as RectTransform;
-            if (input == null || output == null) return;
-
-            var inputHeight = input.rect.height > 1f ? input.rect.height : input.sizeDelta.y;
-            var inputTop = input.anchoredPosition.y + Mathf.Abs(inputHeight);
-            var min = output.offsetMin;
-            min.y = inputTop + 2f;
-            output.offsetMin = min;
-
-            var outputScroll = output.Find("scroll-view") as RectTransform;
-            var outputViewport = outputScroll != null ? outputScroll.Find("viewport") as RectTransform : null;
-            if (outputViewport != null)
-            {
-                // 正文 viewport 也必须是正常拉伸矩形。
-                // 滚动条宽 6px、右边缘内收 8px；viewport 再留 4px 间隙，避免文字压在滚动条下。
-                outputViewport.anchorMin = Vector2.zero;
-                outputViewport.anchorMax = Vector2.one;
-                outputViewport.pivot = new Vector2(0.5f, 0.5f);
-                outputViewport.offsetMin = Vector2.zero;
-                outputViewport.offsetMax = new Vector2(-18f, 0f);
-            }
-
-            var scrollbar = output.Find("scroll-view/Scrollbar Vertical") as RectTransform;
-            if (scrollbar != null)
-            {
-                var pos = scrollbar.anchoredPosition;
-                pos.x = -8f;
-                scrollbar.anchoredPosition = pos;
-            }
-
-            var inputScroll = input.Find("editor/scroll-view") as RectTransform;
-            var viewport = inputScroll != null ? inputScroll.Find("viewport") as RectTransform : null;
-            if (viewport != null)
-            {
-                viewport.anchorMin = Vector2.zero;
-                viewport.anchorMax = Vector2.one;
-                viewport.pivot = new Vector2(0.5f, 0.5f);
-                viewport.offsetMin = Vector2.zero;
-                viewport.offsetMax = Vector2.zero;
-            }
-
-            var content = viewport != null ? viewport.Find("content") as RectTransform : null;
-            if (content != null)
-            {
-                content.anchorMin = Vector2.zero;
-                content.anchorMax = Vector2.one;
-                content.pivot = new Vector2(0.5f, 0.5f);
-                content.offsetMin = Vector2.zero;
-                content.offsetMax = Vector2.zero;
-            }
-        }
-
-        private static void FixChatIndex(Transform root)
+        private static void EnsureChatIndexAdditions(Transform root)
         {
             var index = root.Find("chat-index");
             var scroll = index != null ? index.Find("chat-index-scroll") : null;
             var viewport = scroll != null ? scroll.Find("viewport") : null;
             var content = viewport != null ? viewport.Find("content") : null;
-            var row = content != null ? content.Find("turn-row-template") as RectTransform : null;
-            if (row == null) return;
-
-            // 行必须横向铺满 content；否则无滚动条时 hover 底色右边会缺一截。
-            row.anchorMin = new Vector2(0f, 1f);
-            row.anchorMax = new Vector2(1f, 1f);
-            row.pivot = new Vector2(0.5f, 1f);
-            row.anchoredPosition = new Vector2(0f, -2f);
-            row.sizeDelta = new Vector2(0f, 24f);
-
-            // 链接右边界给删除区留 34px：24px 删除区 + 10px 间隙。
-            var link = row.Find("link") as RectTransform;
-            if (link != null)
-            {
-                link.anchorMin = Vector2.zero;
-                link.anchorMax = Vector2.one;
-                link.offsetMin = new Vector2(8f, 0f);
-                link.offsetMax = new Vector2(-34f, 0f);
-            }
-
-            var delete = row.Find("delete") as RectTransform;
-            if (delete != null)
-            {
-                delete.anchorMin = new Vector2(1f, 0f);
-                delete.anchorMax = new Vector2(1f, 1f);
-                delete.pivot = new Vector2(1f, 0.5f);
-                delete.sizeDelta = new Vector2(24f, 0f);
-                delete.anchoredPosition = new Vector2(-2f, 0f);
-                EnsureDeleteBackground(delete);
-            }
+            var delete = content != null ? content.Find("turn-row-template/delete") as RectTransform : null;
+            if (delete == null) return;
+            EnsureDeleteBackground(delete);
         }
 
         private static void EnsureDeleteBackground(RectTransform delete)

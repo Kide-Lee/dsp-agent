@@ -55,8 +55,8 @@ namespace IcarusII.Input
             if (!UnityEngine.Input.GetKeyDown(Key)) return false;
             KeyPressedThisFrame = true;
 
-            // 2) 必须在游戏内
-            if (!GameRefs.IsRunning) { reason = "游戏未处于运行状态"; return false; }
+            // 2) 必须真的进入存档：开始菜单、载入中都不要开窗
+            if (!GameRefs.IsInGame) { reason = "不在游戏内（开始菜单/载入中）"; return false; }
 
             // 3) 焦点在聊天输入框上 → 让位给文字输入
             if (inputFocused) { reason = "聊天输入框已聚焦（R 作为文字输入）"; return false; }
@@ -67,7 +67,6 @@ namespace IcarusII.Input
             if (windowOpen) return true;
 
             // 以下只作用于"打开"路径
-            if (GameRefs.IsLoading) { reason = "游戏正在加载"; return false; }
             if (GameRefs.TextInputActive) { reason = "游戏文本输入中"; return false; }
             if (GameRefs.FullscreenGui) { reason = "处于全屏界面"; return false; }
 

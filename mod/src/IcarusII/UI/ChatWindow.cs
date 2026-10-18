@@ -6,6 +6,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using IcarusII.Common.Protocol;
 using IcarusII.Config;
+using IcarusII.Game;
 using IcarusII.I18n;
 
 namespace IcarusII.UI
@@ -1285,6 +1286,11 @@ namespace IcarusII.UI
         public void SetOpen(bool open)
         {
             if (_root == null) return;
+            if (open && !GameRefs.IsInGame)
+            {
+                Plugin.Log.LogInfo("[UI] 不在游戏内，拒绝打开聊天窗");
+                return;
+            }
 
             IsOpen = open;
             _root.SetActive(open);

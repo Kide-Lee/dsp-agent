@@ -58,20 +58,12 @@
 - 宿主 Canvas 的分辨率缩放/渲染层适配；
 - 用户配置的窗口位置/尺寸。
 
-当前 ChatWindow 的固定布局约束（改布局必须同时改 prefab 和对应构建器）：
-
-- `output` 底边 = `input` 顶边 + 2px；
-- 正文 `output/scroll-view/viewport` 右侧留 18px（滚动条右侧内收 8px，再留 4px 文字间隙），`Scrollbar Vertical` 向内收 8px；
-- 正文/索引滚动条宽度 6px；
-- `input/editor/scroll-view/viewport` 与 `content` 拉伸，靠 prefab 维持高度；
-- `turn-row-template/delete/bg` 是删除按钮背景；hover 只染红背景，**不改 `x` 文字颜色**；
-- `chat-index-tooltip` 是 prefab 节点，默认 inactive，文本固定为“删除”；
-- 索引行来自 `chat-index-scroll/viewport/content/turn-row-template`，行必须横向铺满 content；链接右边界留 34px 给删除区，不要退回运行期手搭。
+布局以 prefab 为唯一来源：构建器只允许做缺失节点的**加法**，不得覆盖用户已经调好的 RectTransform、尺寸或样式；运行期只查找/绑定节点。
 
 对应工具：
 
-- `IcarusIIChatIndexBuilder`：只补齐/刷新 chat-index 结构，不重建整窗；
-- `IcarusIIPrefabLayoutFix`：把 output/input/滚动条/delete bg/tooltip 的固定值写入 prefab；
+- `IcarusIIChatIndexBuilder`：只在缺结构时补齐；已有节点不重排、不覆盖；
+- `IcarusIIPrefabLayoutFix`：只补 delete bg/tooltip，不改已有布局；
 - `IcarusIIWindowPrefabBuilder.BuildForced()`：**会整窗重建**，只有用户明确要求或 prefab 丢失时才用；
 - `scripts/build-ui-bundle.sh --add-parts`：可加部件，默认只打包。
 
@@ -249,18 +241,15 @@ scripts/package.sh
 - **PrefabStage.AutoSave 与批处理同时写 prefab** 会让 AssetDatabase 丢 import，出现 `Prefab not found`。不要在 Unity 打开 prefab 时跑批处理；不要手动删正在运行编辑器的 `UnityLockfile`。
 - Unity batch 在 sandbox 下没有 `/dev/dri` 会 graphics 初始化失败，需要 GPU/full access。
 - 只改 DLL 不会更新 prefab；只重打 bundle 不会更新 DLL。按改动类型分别更新。
-- 正文/索引滚动条宽度、viewport 右侧留白、input content 拉伸都在 prefab；不要再写运行期 `InsetBodyScrollbar` 之类的补丁。
-- 删除按钮：`x` 颜色保持不变，hover 染的是 `delete/bg`；提示文本是“删除”。
 - 图标/文字材质是游戏定制资源；需要柔化时优先复用原生 `widget-text-default-icon-set` / `GameTextStyle`，不要随意改全局材质。
-- `RectMask2D` + 省略号处理索引文本溢出；不要让文本压到删除区或滚动条。
-- 输入框 content 高度由 prefab 的拉伸 anchors 维持，不要再每帧写 `sizeDelta`。
+- `RectMask2D` + 省略号处理文本溢出，避免压到按钮/滚动条。
 
 ### 6.3 UI 验收
 
 - 1080p 和至少一个非 1080p 分辨率下窗口不越界、不重叠。
-- 正文滚动条在面板内侧，宽度与索引/输入滚动条一致。
-- 索引行 hover 才显示删除；删除背景变红、`x` 不变色；tooltip 显示“删除”。
-- 长文本 ellipsis + 硬裁剪；不遮删除按钮/滚动条。
+- 滚动条不与正文重叠，宽度与其它滚动区一致。
+- 索引行 hover/删除/提示交互正常。
+- 长文本 ellipsis + 硬裁剪，不遮按钮/滚动条。
 - 思考块/工具块折叠、流式追加、历史回放正常。
 
 ---
