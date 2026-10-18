@@ -25,6 +25,8 @@ namespace IcarusII.UI
         private const string BundledThickMaterial = "widget-text-alpha-5x-thick";
 
         private static readonly Dictionary<string, Material> Cache = new Dictionary<string, Material>();
+        private static Material _softNormal;
+        private static Material _softThick;
         private static bool _missingLogged;
 
         /// <summary>常规正文/标签材质（`_Sharp = 0.93`）。</summary>
@@ -32,6 +34,16 @@ namespace IcarusII.UI
 
         /// <summary>输入框文字材质（`_Sharp = 0.5`，比常规稍厚，和原生输入框一致）。</summary>
         public static Material ThickMaterial => Resolve(BundledThickMaterial, ThickMaterialPath);
+
+        /// <summary>
+        /// 聊天窗正文材质：在游戏材质基础上降低 5x HDR 亮度，减少字周围的泛光。
+        /// 游戏原生 UI 用 5x + 锐化来保证可读性，但长时间看大段白字时泛光偏大；
+        /// 2x 亮度 + 更硬的 alpha 边缘在深色面板上足够清晰，也不容易糊成一团。
+        /// </summary>
+        public static Material SoftMaterial => Soften(Material, ref _softNormal, 2.0f, 1.0f);
+
+        /// <summary>输入框的柔化版本；比正文略厚，保留原生输入框观感。</summary>
+        public static Material SoftThickMaterial => Soften(ThickMaterial, ref _softThick, 2.0f, 0.75f);
 
         private static Material Resolve(string bundledName, string resourcesPath)
         {
@@ -95,14 +107,40 @@ namespace IcarusII.UI
         }
 
         /// <summary>
-        /// 给新建的 Text 套上游戏文字材质。
+        /// 给新建的 Text 套上柔化后的游戏文字材质。
         /// <paramref name="thick"/>=true 用输入框那份稍厚的材质。
         /// </summary>
         public static void Apply(Text text, bool thick = false)
         {
             if (text == null) return;
-            var material = thick ? ThickMaterial : Material;
+            var material = thick ? SoftThickMaterial : SoftMaterial;
             if (material != null) text.material = material;
+
+            // DSP 定制 Text 还有一层八方向描边；聊天窗统一关掉，避免字周围一圈光晕。
+            // （prefab 里多数是 0，但运行期新建/复用的 Text 不保证。）
+            text.outlineOpacities0 = Vector4.zero;
+            text.outlineOpacities1 = Vector4.zero;
+        }
+
+        /// <summary>复制一份材质并压低亮度；不修改游戏共享材质。</summary>
+        private static Material Soften(Material source, ref Material cache, float multiplier, float sharp)
+        {
+            if (cache != null) return cache;
+            if (source == null) return null;
+            try
+            {
+                var material = new Material(source);
+                material.name = source.name + "-icarus-soft";
+                if (material.HasProperty("_Multiplier")) material.SetFloat("_Multiplier", multiplier);
+                if (material.HasProperty("_Sharp")) material.SetFloat("_Sharp", sharp);
+                cache = material;
+                return material;
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogWarning($"[UI] 复制文字材质失败，退回原材质：{ex.Message}");
+                return source;
+            }
         }
     }
 }
