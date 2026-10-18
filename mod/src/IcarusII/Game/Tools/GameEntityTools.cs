@@ -588,6 +588,14 @@ namespace IcarusII.Game.Tools
             {
                 AddComponent(components, "speaker", e.speakerId, digital.speakerPool);
             }
+            var defense = factory.defenseSystem;
+            if (defense != null)
+            {
+                AddComponent(components, "turret", e.turretId, defense.turrets != null ? defense.turrets.buffer : null);
+                AddComponent(components, "beacon", e.beaconId, defense.beacons != null ? defense.beacons.buffer : null);
+                AddComponent(components, "field_generator", e.fieldGenId, defense.fieldGenerators != null ? defense.fieldGenerators.buffer : null);
+                AddComponent(components, "battle_base", e.battleBaseId, defense.battleBases != null ? defense.battleBases.buffer : null);
+            }
             if (components.Count > 0) data.Set("components", components);
         }
 
@@ -1635,6 +1643,128 @@ namespace IcarusII.Game.Tools
                 case '=': return "传送带";
                 default: return "其它";
             }
+        }
+    }
+
+    // ---------------------------------------------------------------- 存为蓝图
+
+    /// <summary>
+    /// 把指定的一批建筑存成蓝图文件。
+    ///
+    /// 不手写二进制格式：直接复用游戏的 `BlueprintUtils.GenerateBlueprintData`
+    /// 与 `BlueprintData.SaveBlueprintData`，因此产物与游戏内复制出来的完全同源，
+    /// 不会因为格式猜错而粘不出来。
+    /// </summary>
+    internal sealed class CopyBlueprintTool : IGameToolHandler
+    {
+        public string Name => "game_copy_blueprint";
+        public int TimeoutMs => 20000;
+
+        public IGameToolJob Start(JsonValue args)
+        {
+            var planet = GameToolFormat.ResolvePlanet(args);
+            if (planet == null) throw new ArgumentException("找不到行星");
+            return new OneShotJob(() => Build(planet, args));
+        }
+
+        private static GameToolJobResult Build(PlanetData planet, JsonValue args)
+        {
+            var data = JsonValue.NewObject();
+            var factory = planet.factory;
+            if (factory == null || factory.entityPool == null)
+            {
+                data.Set("saved", false);
+                data.Set("error", "factory_not_loaded");
+                return new GameToolJobResult { Data = data };
+            }
+
+            var idArray = args["entityIds"];
+            var ids = new List<int>();
+            if (idArray != null && idArray.IsArray)
+            {
+                for (int i = 0; i < idArray.Count && ids.Count < 500; i++)
+                {
+                    var id = idArray[i].AsInt(0);
+                    if (id > 0 && EntityToolUtil.HasEntity(factory, id)) ids.Add(id);
+                }
+            }
+            if (ids.Count == 0)
+            {
+                data.Set("saved", false);
+                data.Set("error", "no_entities");
+                data.Set("display", "没有可存的建筑；先用 game_analyze_area / game_get_entities 取 id");
+                return new GameToolJobResult { Data = data };
+            }
+
+            var aux = planet.aux;
+            if (aux == null)
+            {
+                data.Set("saved", false);
+                data.Set("error", "aux_not_ready");
+                return new GameToolJobResult { Data = data };
+            }
+
+            var bp = BlueprintData.CreateNew();
+            BlueprintUtils.GenerateBlueprintData(bp, planet, aux, ids.ToArray(), ids.Count, 0f, null, false);
+            if (BlueprintData.IsNullOrEmpty(bp))
+            {
+                data.Set("saved", false);
+                data.Set("error", "empty_blueprint");
+                return new GameToolJobResult { Data = data };
+            }
+
+            var requested = args["name"].AsString(null);
+            var baseName = Sanitize(requested);
+            if (string.IsNullOrEmpty(baseName)) baseName = "IcarusII-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            var dir = GameConfig.blueprintFolder;
+            var fileName = baseName + ".txt";
+            var path = dir + fileName;
+            for (int i = 2; i < 50 && System.IO.File.Exists(path); i++)
+            {
+                fileName = baseName + " (" + i.ToString(CultureInfo.InvariantCulture) + ").txt";
+                path = dir + fileName;
+            }
+
+            Exception error;
+            if (!bp.SaveBlueprintData(path, out error))
+            {
+                data.Set("saved", false);
+                data.Set("error", error != null ? error.Message : "save_failed");
+                return new GameToolJobResult { Data = data };
+            }
+
+            data.Set("saved", true);
+            data.Set("path", path);
+            data.Set("fileName", fileName);
+            data.Set("buildings", bp.buildings != null ? bp.buildings.Length : 0);
+            data.Set("areas", bp.areas != null ? bp.areas.Length : 0);
+            data.Set("display", "已存蓝图 " + fileName + " · 建筑 " + (bp.buildings != null ? bp.buildings.Length : 0)
+                + " · 打开蓝图界面即可看到");
+            return new GameToolJobResult { Data = data };
+        }
+
+        private static string Sanitize(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return null;
+            var chars = new char[raw.Length];
+            int n = 0;
+            foreach (var ch in raw)
+            {
+                if (char.IsControl(ch)) continue;
+                switch (ch)
+                {
+                    case '<': case '>': case ':': case '"':
+                    case '/': case '\\': case '|': case '?': case '*':
+                        chars[n++] = ' ';
+                        break;
+                    default:
+                        chars[n++] = ch;
+                        break;
+                }
+            }
+            var text = new string(chars, 0, n).Trim().Trim('.');
+            if (text.Length > 80) text = text.Substring(0, 80).Trim();
+            return text;
         }
     }
 }

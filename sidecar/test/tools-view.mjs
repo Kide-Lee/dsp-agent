@@ -114,10 +114,11 @@ function testToolGating() {
     'game.view.v1',
     'game.analyze.v1',
   ]);
-  check('全能力 ⇒ 12 个 game 工具', all.filter((n) => n.startsWith('game_')).length === 12);
+  check('全能力 ⇒ 13 个 game 工具', all.filter((n) => n.startsWith('game_')).length === 13);
   check('全能力仍带 kb_*', all.some((n) => n.startsWith('kb_')));
   check('全能力仍带 run_script', all.includes('run_script'));
   check('全能力包含布局图', all.includes('game_render_layout'));
+  check('全能力包含存为蓝图', all.includes('game_copy_blueprint'));
 }
 
 // ---------------------------------------------------------------- 3. 内容块

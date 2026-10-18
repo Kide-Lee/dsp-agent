@@ -47,6 +47,7 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_capture_view: CAPABILITY_GAME_VIEW,
   game_analyze_area: CAPABILITY_GAME_ANALYZE,
   game_render_layout: CAPABILITY_GAME_ENTITY,
+  game_copy_blueprint: CAPABILITY_GAME_ENTITY,
 };
 
 const MAX_RESULT_CHARS = 9000;
@@ -345,6 +346,25 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         cellSize: Type.Optional(Type.Number({ description: '每格米数，默认按半径自动（约 2–8m）' })),
       }),
       timeoutMs: 10000,
+    }),
+    gameTool(host, {
+      name: 'game_copy_blueprint',
+      label: '存为蓝图',
+      description:
+        '把指定的一批建筑（entityIds）存成游戏蓝图文件，复用游戏自己的复制逻辑，产物与游戏内复制同源。' +
+        '保存到游戏蓝图目录，打开蓝图界面即可看到；只写蓝图文件，不改游戏状态。',
+      promptSnippet: '把一批建筑存成蓝图文件',
+      promptGuidelines: [
+        'Use game_copy_blueprint 当玩家说“把这片产线存成蓝图”时；id 来自 game_analyze_area / game_get_entities。',
+        '一次最多 500 个；工具只保存文件，不建造、不粘贴，也不需要确认令牌。',
+        '保存后告诉玩家文件名与位置；重名会自动加 (2)/(3)。',
+      ],
+      parameters: Type.Object({
+        planetId: planetArg,
+        entityIds: Type.Array(Type.Integer({ minimum: 1 }), { description: '要包含的建筑 id' }),
+        name: Type.Optional(Type.String({ description: '蓝图文件名（不含 .txt），默认 IcarusII-时间戳' })),
+      }),
+      timeoutMs: 20000,
     }),
     gameTool(host, {
       name: 'game_analyze_area',

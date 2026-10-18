@@ -112,6 +112,7 @@ namespace IcarusII.Game.Tools
             Register(new CaptureViewTool());
             Register(new AnalyzeAreaTool());
             Register(new RenderLayoutTool());
+            Register(new CopyBlueprintTool());
         }
 
         private void Register(IGameToolHandler handler)

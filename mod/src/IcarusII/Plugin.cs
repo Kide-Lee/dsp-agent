@@ -580,6 +580,7 @@ namespace IcarusII
                 case "game_capture_view": return "截图";
                 case "game_analyze_area": return "产线分析";
                 case "game_render_layout": return "布局图";
+                case "game_copy_blueprint": return "存为蓝图";
                 // sidecar 本地工具（tool_activity 卡片用）
                 case "kb_search": return "知识库检索";
                 case "kb_get": return "知识库查询";
