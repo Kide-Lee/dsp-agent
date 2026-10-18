@@ -302,6 +302,7 @@ namespace IcarusII.UI
         // ---- chat-index：左侧提问索引 ----
         private RectTransform _chatIndex;
         private RectTransform _chatIndexContent;
+        private RectTransform _chatIndexTemplate;
         private ScrollRect _chatIndexScroll;
         private Text _chatIndexTitle;
         private Text _chatIndexEmpty;
@@ -508,6 +509,7 @@ namespace IcarusII.UI
             _assistantTemplate = null;
             _chatIndex = null;
             _chatIndexContent = null;
+            _chatIndexTemplate = null;
             _chatIndexScroll = null;
             _chatIndexTitle = null;
             _chatIndexEmpty = null;
@@ -2695,82 +2697,135 @@ namespace IcarusII.UI
                 bg.raycastTarget = false;
             }
 
-            if (_chatIndexContent != null) return;
+            if (_chatIndexTitle == null)
+            {
+                var header = _chatIndex.Find("chat-index-header") as RectTransform;
+                if (header == null)
+                {
+                    header = UiFactory.Node("chat-index-header", _chatIndex);
+                    header.anchorMin = new Vector2(0f, 1f);
+                    header.anchorMax = new Vector2(1f, 1f);
+                    header.pivot = new Vector2(0.5f, 1f);
+                    header.anchoredPosition = Vector2.zero;
+                    header.sizeDelta = new Vector2(0f, 22f);
+                }
+                _chatIndexTitle = header.GetComponent<Text>();
+                if (_chatIndexTitle == null)
+                {
+                    _chatIndexTitle = UiFactory.AddLabel(header, _bodyFont, Mathf.Max(10, _fontSize - 2),
+                        _accent, TextAnchor.MiddleLeft);
+                }
+                _chatIndexTitle.text = Strings.Get("chat.index.title");
+                _chatIndexTitle.horizontalOverflow = HorizontalWrapMode.Overflow;
+                _chatIndexTitle.raycastTarget = false;
+            }
 
-            var header = UiFactory.Node("chat-index-header", _chatIndex);
-            header.anchorMin = new Vector2(0f, 1f);
-            header.anchorMax = new Vector2(1f, 1f);
-            header.pivot = new Vector2(0.5f, 1f);
-            header.anchoredPosition = Vector2.zero;
-            header.sizeDelta = new Vector2(0f, 22f);
+            if (_chatIndexScroll == null)
+            {
+                var scrollRt = _chatIndex.Find("chat-index-scroll") as RectTransform;
+                if (scrollRt == null)
+                {
+                    scrollRt = UiFactory.Node("chat-index-scroll", _chatIndex);
+                    scrollRt.anchorMin = Vector2.zero;
+                    scrollRt.anchorMax = Vector2.one;
+                    scrollRt.pivot = new Vector2(0.5f, 0.5f);
+                    scrollRt.offsetMin = new Vector2(4f, 4f);
+                    scrollRt.offsetMax = new Vector2(-4f, -22f);
+                }
 
-            _chatIndexTitle = UiFactory.AddLabel(header, _bodyFont, Mathf.Max(10, _fontSize - 2),
-                _accent, TextAnchor.MiddleLeft);
-            _chatIndexTitle.text = Strings.Get("chat.index.title");
-            _chatIndexTitle.horizontalOverflow = HorizontalWrapMode.Overflow;
-            _chatIndexTitle.raycastTarget = false;
+                // 透明 Image：给 ScrollRect 一个可接收滚轮/拖拽的 raycast 目标。
+                var hit = scrollRt.GetComponent<Image>();
+                if (hit == null)
+                {
+                    hit = scrollRt.gameObject.AddComponent<Image>();
+                    hit.color = new Color(0f, 0f, 0f, 0f);
+                    hit.raycastTarget = true;
+                }
 
-            var scrollRt = UiFactory.Node("chat-index-scroll", _chatIndex);
-            scrollRt.anchorMin = Vector2.zero;
-            scrollRt.anchorMax = Vector2.one;
-            scrollRt.pivot = new Vector2(0.5f, 0.5f);
-            scrollRt.offsetMin = new Vector2(4f, 4f);
-            scrollRt.offsetMax = new Vector2(-4f, -22f);
+                var viewport = scrollRt.Find("viewport") as RectTransform;
+                if (viewport == null)
+                {
+                    viewport = UiFactory.Node("viewport", scrollRt);
+                    UiFactory.Stretch(viewport);
+                }
+                if (viewport.GetComponent<RectMask2D>() == null)
+                    viewport.gameObject.AddComponent<RectMask2D>();
 
-            // 透明 Image：给 ScrollRect 一个可接收滚轮/拖拽的 raycast 目标。
-            var hit = scrollRt.gameObject.AddComponent<Image>();
-            hit.color = new Color(0f, 0f, 0f, 0f);
-            hit.raycastTarget = true;
+                var content = viewport.Find("content") as RectTransform;
+                if (content == null)
+                {
+                    content = UiFactory.Node("content", viewport);
+                    content.anchorMin = new Vector2(0f, 1f);
+                    content.anchorMax = new Vector2(1f, 1f);
+                    content.pivot = new Vector2(0.5f, 1f);
+                    content.anchoredPosition = Vector2.zero;
+                    content.sizeDelta = Vector2.zero;
+                }
 
-            var viewport = UiFactory.Node("viewport", scrollRt);
-            UiFactory.Stretch(viewport);
-            viewport.gameObject.AddComponent<RectMask2D>();
+                var vlg = content.GetComponent<VerticalLayoutGroup>();
+                if (vlg == null) vlg = content.gameObject.AddComponent<VerticalLayoutGroup>();
+                vlg.padding = new RectOffset(2, 2, 2, 2);
+                vlg.spacing = 2f;
+                vlg.childControlWidth = true;
+                vlg.childControlHeight = true;
+                vlg.childForceExpandWidth = true;
+                vlg.childForceExpandHeight = false;
+                vlg.childAlignment = TextAnchor.UpperLeft;
 
-            var content = UiFactory.Node("content", viewport);
-            content.anchorMin = new Vector2(0f, 1f);
-            content.anchorMax = new Vector2(1f, 1f);
-            content.pivot = new Vector2(0.5f, 1f);
-            content.anchoredPosition = Vector2.zero;
-            content.sizeDelta = Vector2.zero;
+                var fitter = content.GetComponent<ContentSizeFitter>();
+                if (fitter == null) fitter = content.gameObject.AddComponent<ContentSizeFitter>();
+                fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+                fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            var vlg = content.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(2, 2, 2, 2);
-            vlg.spacing = 2f;
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
-            vlg.childAlignment = TextAnchor.UpperLeft;
+                var scroll = scrollRt.GetComponent<ScrollRect>();
+                if (scroll == null) scroll = scrollRt.gameObject.AddComponent<ScrollRect>();
+                scroll.viewport = viewport;
+                scroll.content = content;
+                scroll.horizontal = false;
+                scroll.vertical = true;
+                scroll.movementType = ScrollRect.MovementType.Clamped;
+                scroll.elasticity = 0.08f;
+                scroll.inertia = true;
+                scroll.decelerationRate = 0.135f;
+                scroll.scrollSensitivity = 24f;
 
-            var fitter = content.gameObject.AddComponent<ContentSizeFitter>();
-            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
-            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+                _chatIndexScroll = scroll;
+                _chatIndexContent = content;
+            }
 
-            _chatIndexScroll = scrollRt.gameObject.AddComponent<ScrollRect>();
-            _chatIndexScroll.viewport = viewport;
-            _chatIndexScroll.content = content;
-            _chatIndexScroll.horizontal = false;
-            _chatIndexScroll.vertical = true;
-            _chatIndexScroll.movementType = ScrollRect.MovementType.Clamped;
-            _chatIndexScroll.elasticity = 0.08f;
-            _chatIndexScroll.inertia = true;
-            _chatIndexScroll.decelerationRate = 0.135f;
-            _chatIndexScroll.scrollSensitivity = 24f;
-            _chatIndexContent = content;
+            if (_chatIndexContent == null) return;
 
-            var emptyRt = UiFactory.Node("chat-index-empty", _chatIndex);
-            emptyRt.anchorMin = Vector2.zero;
-            emptyRt.anchorMax = Vector2.one;
-            emptyRt.offsetMin = new Vector2(4f, 4f);
-            emptyRt.offsetMax = new Vector2(-4f, -22f);
-            _chatIndexEmpty = UiFactory.AddLabel(emptyRt, _bodyFont, Mathf.Max(10, _fontSize - 2),
-                _textDim, TextAnchor.MiddleCenter);
-            _chatIndexEmpty.text = Strings.Get("chat.index.empty");
-            _chatIndexEmpty.raycastTarget = false;
+            if (_chatIndexTemplate == null)
+            {
+                _chatIndexTemplate = _chatIndexContent.Find("turn-row-template") as RectTransform;
+                if (_chatIndexTemplate != null) _chatIndexTemplate.gameObject.SetActive(false);
+            }
 
-            RebuildIndexRows();
+            if (_chatIndexEmpty == null)
+            {
+                var emptyRt = _chatIndex.Find("chat-index-empty") as RectTransform;
+                if (emptyRt == null)
+                {
+                    emptyRt = UiFactory.Node("chat-index-empty", _chatIndex);
+                    emptyRt.anchorMin = Vector2.zero;
+                    emptyRt.anchorMax = Vector2.one;
+                    emptyRt.offsetMin = new Vector2(4f, 4f);
+                    emptyRt.offsetMax = new Vector2(-4f, -22f);
+                }
+                _chatIndexEmpty = emptyRt.GetComponent<Text>();
+                if (_chatIndexEmpty == null)
+                {
+                    _chatIndexEmpty = UiFactory.AddLabel(emptyRt, _bodyFont, Mathf.Max(10, _fontSize - 2),
+                        _textDim, TextAnchor.MiddleCenter);
+                }
+                _chatIndexEmpty.text = Strings.Get("chat.index.empty");
+                _chatIndexEmpty.raycastTarget = false;
+            }
+
             if (_hostCanvas != null)
                 SetLayerRecursively(_chatIndex, _hostCanvas.gameObject.layer);
+
+            RebuildIndexRows();
         }
 
         private void AddTurn(int turnId, string text)
@@ -2802,6 +2857,61 @@ namespace IcarusII.UI
         }
 
         private void CreateIndexRow(TurnEntry entry)
+        {
+            if (entry == null || _chatIndexContent == null || entry.Row != null) return;
+            if (_chatIndexTemplate != null)
+            {
+                CreateIndexRowFromTemplate(entry);
+                return;
+            }
+            CreateIndexRowFallback(entry);
+        }
+
+        /// <summary>克隆 prefab 里的 turn-row-template；链接/删除按钮都在 prefab 里定义。</summary>
+        private void CreateIndexRowFromTemplate(TurnEntry entry)
+        {
+            var go = UnityEngine.Object.Instantiate(_chatIndexTemplate.gameObject, _chatIndexContent, false);
+            go.name = "turn-" + entry.Id;
+            go.SetActive(true);
+
+            var linkTf = go.transform.Find("link");
+            var link = linkTf != null ? linkTf.GetComponent<Text>() : null;
+            var linkButton = linkTf != null ? linkTf.GetComponent<Button>() : null;
+            var delTf = go.transform.Find("delete");
+            var delButton = delTf != null ? delTf.GetComponent<Button>() : null;
+
+            if (link == null || linkButton == null || delButton == null)
+            {
+                // prefab 结构不完整：退回运行期构建，不让索引整块消失。
+                UnityEngine.Object.Destroy(go);
+                CreateIndexRowFallback(entry);
+                return;
+            }
+
+            link.text = IndexLabel(entry.Text);
+            link.supportRichText = false;
+            link.horizontalOverflow = HorizontalWrapMode.Overflow;
+            link.verticalOverflow = VerticalWrapMode.Truncate;
+            link.wideCharSpacing = 1f;
+            link.raycastTarget = true;
+            linkButton.targetGraphic = link;
+            linkButton.onClick.RemoveAllListeners();
+            int linkId = entry.Id;
+            linkButton.onClick.AddListener(() => FocusTurn(linkId));
+
+            delButton.onClick.RemoveAllListeners();
+            int delId = entry.Id;
+            delButton.onClick.AddListener(() => DeleteTurn(delId));
+
+            entry.Row = go;
+            entry.Link = link;
+            if (_hostCanvas != null)
+                SetLayerRecursively(go.transform, _hostCanvas.gameObject.layer);
+            RefreshIndexSelection();
+            RefreshIndexEmpty();
+        }
+
+        private void CreateIndexRowFallback(TurnEntry entry)
         {
             if (entry == null || _chatIndexContent == null || entry.Row != null) return;
 
@@ -2999,7 +3109,12 @@ namespace IcarusII.UI
             if (_chatIndexContent != null)
             {
                 for (int i = _chatIndexContent.childCount - 1; i >= 0; i--)
-                    UnityEngine.Object.Destroy(_chatIndexContent.GetChild(i).gameObject);
+                {
+                    var child = _chatIndexContent.GetChild(i);
+                    if (_chatIndexTemplate != null && child == _chatIndexTemplate) continue;
+                    if (child.name == "turn-row-template") continue;
+                    UnityEngine.Object.Destroy(child.gameObject);
+                }
             }
             foreach (var entry in _turns)
             {

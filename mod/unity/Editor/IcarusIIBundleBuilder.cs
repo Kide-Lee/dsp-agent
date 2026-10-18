@@ -91,6 +91,11 @@ namespace IcarusII.EditorTools
                             "如果你要的是从头生成，用 IcarusIIWindowPrefabBuilder.BuildForced()。");
             }
 
+            if (!IcarusIIChatIndexBuilder.Ensure(PrefabPath))
+            {
+                return Fail("chat-index prefab 结构构建失败：" + PrefabPath);
+            }
+
             Directory.CreateDirectory(OutputDir);
 
             var build = new AssetBundleBuild
