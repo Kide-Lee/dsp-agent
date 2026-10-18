@@ -53,6 +53,28 @@ namespace IcarusII.Game
         /// 主菜单 isRunning=false、载入中 mainPlayer=null，因此这个组合
         /// 既挡住开始菜单，也挡住载入过程中的误开窗。
         /// </summary>
+        /// <summary>
+        /// 主菜单的“演示场景”也会让 isRunning=true、mainPlayer 非空。
+        /// 必须额外看 DSPGame.IsMenuDemo / GameMain.instance.isMenuDemo，
+        /// 否则主菜单按 R 仍然能开窗。
+        /// </summary>
+        public static bool IsMenuDemo
+        {
+            get
+            {
+                try
+                {
+                    if (DSPGame.IsMenuDemo) return true;
+                    if (GameMain.instance != null && GameMain.instance.isMenuDemo) return true;
+                    // 双重保险：主菜单 UI 本身就是 active。
+                    return UIRoot.instance != null
+                        && UIRoot.instance.uiMainMenu != null
+                        && UIRoot.instance.uiMainMenu.active;
+                }
+                catch { return true; }
+            }
+        }
+
         public static bool IsInGame
         {
             get
@@ -61,7 +83,8 @@ namespace IcarusII.Game
                 {
                     return GameMain.isRunning
                         && !GameMain.isLoading
-                        && GameMain.mainPlayer != null;
+                        && GameMain.mainPlayer != null
+                        && !IsMenuDemo;
                 }
                 catch { return false; }
             }
