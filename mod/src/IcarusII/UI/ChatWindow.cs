@@ -178,6 +178,12 @@ namespace IcarusII.UI
         {
             public LineKind Kind;
             public string Text;
+            /// <summary>所属的一问一答（0 = 系统/欢迎语，不进索引）。</summary>
+            public int TurnId;
+            /// <summary>这条消息对应的可见对象（普通消息或工具/思考块）。</summary>
+            public GameObject Go;
+            /// <summary>工具/思考块（删除整轮时一起移除）；普通消息为 null。</summary>
+            public Block Block;
         }
 
         private struct Item
@@ -185,8 +191,20 @@ namespace IcarusII.UI
             public GameObject Go;
             public Text Label;
             public LineKind Kind;
+            /// <summary>所属的一问一答（0 = 系统/欢迎语）。</summary>
+            public int TurnId;
             /// <summary>来自 prefab 示例模板（保留它烘焙的字体/颜色），而不是代码兜底构建。</summary>
             public bool FromPrefab;
+        }
+
+        /// <summary>chat-index 里的一条：一个用户提问 + 它的回答。</summary>
+        private sealed class TurnEntry
+        {
+            public int Id;
+            public string Text;
+            public GameObject UserGo;
+            public GameObject Row;
+            public Text Link;
         }
 
         private readonly List<Line> _lines = new List<Line>();
@@ -280,6 +298,18 @@ namespace IcarusII.UI
         // prefab 里的 example-* 示例就是消息模板：样式只在 prefab 定义一次，运行期克隆。
         private RectTransform _userTemplate;
         private RectTransform _assistantTemplate;
+
+        // ---- chat-index：左侧提问索引 ----
+        private RectTransform _chatIndex;
+        private RectTransform _chatIndexContent;
+        private ScrollRect _chatIndexScroll;
+        private Text _chatIndexTitle;
+        private Text _chatIndexEmpty;
+        private readonly List<TurnEntry> _turns = new List<TurnEntry>();
+        private int _nextTurnId;
+        private int _currentTurnId;
+        private int _focusedTurnId;
+        private bool _awaitingResponse;
 
         /// <summary>正文字体：输入框与聊天正文都用它。</summary>
         private Font _bodyFont;
@@ -476,6 +506,15 @@ namespace IcarusII.UI
             _streamItem = -1;
             _userTemplate = null;
             _assistantTemplate = null;
+            _chatIndex = null;
+            _chatIndexContent = null;
+            _chatIndexScroll = null;
+            _chatIndexTitle = null;
+            _chatIndexEmpty = null;
+            _turns.Clear();
+            _nextTurnId = 0;
+            _currentTurnId = 0;
+            _focusedTurnId = 0;
             _bodyFont = null;
             _authoredPlaceholder = null;
             _dirty = false;
@@ -531,6 +570,7 @@ namespace IcarusII.UI
             }
 
             ApplyHostScaleAndLayer();
+            EnsureChatIndex();
             ApplySoftTextMaterials();
 
             // 窗口可能是在收到 save.bound/欢迎语之后才第一次打开的：
@@ -1252,6 +1292,9 @@ namespace IcarusII.UI
                 AssignIconMapping(item.Label, generalIcons);
             }
             if (_statusText != null) _statusText.color = _textDim;
+            if (_chatIndexTitle != null) _chatIndexTitle.color = _accent;
+            if (_chatIndexEmpty != null) _chatIndexEmpty.color = _textDim;
+            RefreshIndexSelection();
 
             if (_fromPrefab)
             {
@@ -1576,13 +1619,18 @@ namespace IcarusII.UI
                 : $"<color=#{ColorUtility.ToHtmlStringRGB(_accent)}>{Escape(speaker)}</color>  ";
 
             AddMessage(LineKind.Assistant, prefix + text);
+            _awaitingResponse = false;
         }
 
         /// <summary>追加一条用户消息（渲染成气泡，样式来自 prefab 的 example-user-*）。</summary>
         public void AppendUser(string text)
         {
             if (text == null) return;
+
+            _currentTurnId = ++_nextTurnId;
+            _awaitingResponse = true;
             AddMessage(LineKind.User, text);
+            AddTurn(_currentTurnId, text);
         }
 
         /// <summary>追加一行系统提示（灰色）。</summary>
@@ -1590,6 +1638,8 @@ namespace IcarusII.UI
         {
             if (text == null) return;
             AddMessage(LineKind.System, text);
+            // 错误/提示类系统消息意味着本轮已经收尾；允许索引删除已完成的回合。
+            _awaitingResponse = false;
         }
 
         /// <summary>
@@ -1626,7 +1676,14 @@ namespace IcarusII.UI
             block.Args = argsText;
             block.ToolName = name;
             _toolBlocks[callId] = block;
-            _lines.Add(new Line { Kind = LineKind.System, Text = block.Title.text + " " + block.Summary.text });
+            _lines.Add(new Line
+            {
+                Kind = LineKind.System,
+                Text = block.Title.text + " " + block.Summary.text,
+                TurnId = _currentTurnId,
+                Go = block.Go,
+                Block = block,
+            });
             TrimHistory();
             ScrollToBottom();
         }
@@ -1729,7 +1786,14 @@ namespace IcarusII.UI
 
             SetBlock(block, Strings.Get("thinking.title"), Summarize(text, 48), text,
                 expanded: false, titleColor: _textDim);
-            _lines.Add(new Line { Kind = LineKind.System, Text = Strings.Get("thinking.title") + " " + block.Summary.text });
+            _lines.Add(new Line
+            {
+                Kind = LineKind.System,
+                Text = Strings.Get("thinking.title") + " " + block.Summary.text,
+                TurnId = _currentTurnId,
+                Go = block.Go,
+                Block = block,
+            });
             TrimHistory();
             _dirty = true;
         }
@@ -2500,10 +2564,17 @@ namespace IcarusII.UI
                 var text = _stream.ToString();
                 var item = _items[_streamItem];
                 if (item.Label != null) item.Label.text = SanitizeRichText(text);
-                _lines.Add(new Line { Kind = LineKind.Assistant, Text = text });
+                _lines.Add(new Line
+                {
+                    Kind = LineKind.Assistant,
+                    Text = text,
+                    TurnId = _currentTurnId,
+                    Go = item.Go,
+                });
             }
             _streamItem = -1;
             _stream.Length = 0;
+            _awaitingResponse = false;
             TrimHistory();
             _dirty = true;
         }
@@ -2513,9 +2584,14 @@ namespace IcarusII.UI
 
         public void ClearTranscript()
         {
+            var destroyed = new HashSet<GameObject>();
+            foreach (var line in _lines)
+            {
+                if (line.Go != null && destroyed.Add(line.Go)) UnityEngine.Object.Destroy(line.Go);
+            }
             foreach (var item in _items)
             {
-                if (item.Go != null) UnityEngine.Object.Destroy(item.Go);
+                if (item.Go != null && destroyed.Add(item.Go)) UnityEngine.Object.Destroy(item.Go);
             }
             _items.Clear();
             _toolBlocks.Clear();
@@ -2524,27 +2600,39 @@ namespace IcarusII.UI
             _lines.Clear();
             _stream.Length = 0;
             _streamItem = -1;
+            _turns.Clear();
+            _currentTurnId = 0;
+            _nextTurnId = 0;
+            _focusedTurnId = 0;
+            _awaitingResponse = false;
+            ClearIndexRows();
+            RefreshIndexEmpty();
             _dirty = true;
         }
 
         private void AddMessage(LineKind kind, string text)
         {
+            var line = new Line { Kind = kind, Text = text, TurnId = _currentTurnId };
+
             // 窗口还没 Create 时只记逻辑行；Create 末尾用 RebuildTranscript 补建。
             // 否则会在 Canvas 之外建出一堆孤儿 Text，打开窗口后历史反而看不见。
             if (_content == null)
             {
-                _lines.Add(new Line { Kind = kind, Text = text });
+                _lines.Add(line);
                 TrimHistory();
                 _dirty = true;
                 return;
             }
 
             var index = CreateItem(kind);
-            if (index >= 0 && index < _items.Count && _items[index].Label != null)
-                _items[index].Label.text = SanitizeRichText(text);
+            if (index >= 0 && index < _items.Count)
+            {
+                line.Go = _items[index].Go;
+                if (_items[index].Label != null) _items[index].Label.text = SanitizeRichText(text);
+                FitBubbleWidth(_items[index].Go, text);
+            }
 
-            _lines.Add(new Line { Kind = kind, Text = text });
-            if (index >= 0 && index < _items.Count) FitBubbleWidth(_items[index].Go, text);
+            _lines.Add(line);
             TrimHistory();
             _dirty = true;
         }
@@ -2554,18 +2642,385 @@ namespace IcarusII.UI
         {
             if (_content == null || _lines.Count == 0) return;
 
-            foreach (var line in _lines)
+            for (int i = 0; i < _lines.Count; i++)
             {
+                var line = _lines[i];
+                _currentTurnId = line.TurnId;
                 var index = CreateItem(line.Kind);
                 if (index < 0 || index >= _items.Count) continue;
                 var item = _items[index];
+                line.Go = item.Go;
+                _lines[i] = line;
                 if (item.Label != null) item.Label.text = SanitizeRichText(line.Text);
                 FitBubbleWidth(item.Go, line.Text);
+                if (line.Kind == LineKind.User && line.TurnId > 0)
+                    UpdateTurnUserGo(line.TurnId, line.Go);
             }
 
+            if (_lines.Count > 0) _currentTurnId = _lines[_lines.Count - 1].TurnId;
             TrimHistory();
             _dirty = true;
             ScrollToBottom();
+        }
+
+        // ---------------------------------------------------------------- 提问索引（chat-index）
+
+        /// <summary>
+        /// 找到/补建左侧 chat-index，并在里面建一个可滚动的提问列表。
+        /// 用户只在 prefab 里摆了容器；列表内容全部由运行期按聊天记录生成。
+        /// </summary>
+        private void EnsureChatIndex()
+        {
+            if (_panel == null) return;
+
+            if (_chatIndex == null)
+            {
+                _chatIndex = _panel.Find("chat-index") as RectTransform;
+                if (_chatIndex == null)
+                {
+                    _chatIndex = UiFactory.Node("chat-index", _panel);
+                    _chatIndex.anchorMin = new Vector2(0f, 0f);
+                    _chatIndex.anchorMax = new Vector2(0f, 1f);
+                    _chatIndex.pivot = new Vector2(0f, 0.5f);
+                    _chatIndex.anchoredPosition = new Vector2(40f, -4f);
+                    _chatIndex.sizeDelta = new Vector2(250f, -88f);
+                    Plugin.Log.LogInfo("[UI] prefab 没有 chat-index，按默认位置补建");
+                }
+            }
+
+            if (_chatIndex.GetComponent<Image>() == null)
+            {
+                var bg = _chatIndex.gameObject.AddComponent<Image>();
+                bg.color = new Color(0.02f, 0.045f, 0.07f, 0.55f);
+                bg.raycastTarget = false;
+            }
+
+            if (_chatIndexContent != null) return;
+
+            var header = UiFactory.Node("chat-index-header", _chatIndex);
+            header.anchorMin = new Vector2(0f, 1f);
+            header.anchorMax = new Vector2(1f, 1f);
+            header.pivot = new Vector2(0.5f, 1f);
+            header.anchoredPosition = Vector2.zero;
+            header.sizeDelta = new Vector2(0f, 22f);
+
+            _chatIndexTitle = UiFactory.AddLabel(header, _bodyFont, Mathf.Max(10, _fontSize - 2),
+                _accent, TextAnchor.MiddleLeft);
+            _chatIndexTitle.text = Strings.Get("chat.index.title");
+            _chatIndexTitle.horizontalOverflow = HorizontalWrapMode.Overflow;
+            _chatIndexTitle.raycastTarget = false;
+
+            var scrollRt = UiFactory.Node("chat-index-scroll", _chatIndex);
+            scrollRt.anchorMin = Vector2.zero;
+            scrollRt.anchorMax = Vector2.one;
+            scrollRt.pivot = new Vector2(0.5f, 0.5f);
+            scrollRt.offsetMin = new Vector2(4f, 4f);
+            scrollRt.offsetMax = new Vector2(-4f, -22f);
+
+            // 透明 Image：给 ScrollRect 一个可接收滚轮/拖拽的 raycast 目标。
+            var hit = scrollRt.gameObject.AddComponent<Image>();
+            hit.color = new Color(0f, 0f, 0f, 0f);
+            hit.raycastTarget = true;
+
+            var viewport = UiFactory.Node("viewport", scrollRt);
+            UiFactory.Stretch(viewport);
+            viewport.gameObject.AddComponent<RectMask2D>();
+
+            var content = UiFactory.Node("content", viewport);
+            content.anchorMin = new Vector2(0f, 1f);
+            content.anchorMax = new Vector2(1f, 1f);
+            content.pivot = new Vector2(0.5f, 1f);
+            content.anchoredPosition = Vector2.zero;
+            content.sizeDelta = Vector2.zero;
+
+            var vlg = content.gameObject.AddComponent<VerticalLayoutGroup>();
+            vlg.padding = new RectOffset(2, 2, 2, 2);
+            vlg.spacing = 2f;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            vlg.childAlignment = TextAnchor.UpperLeft;
+
+            var fitter = content.gameObject.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            _chatIndexScroll = scrollRt.gameObject.AddComponent<ScrollRect>();
+            _chatIndexScroll.viewport = viewport;
+            _chatIndexScroll.content = content;
+            _chatIndexScroll.horizontal = false;
+            _chatIndexScroll.vertical = true;
+            _chatIndexScroll.movementType = ScrollRect.MovementType.Clamped;
+            _chatIndexScroll.elasticity = 0.08f;
+            _chatIndexScroll.inertia = true;
+            _chatIndexScroll.decelerationRate = 0.135f;
+            _chatIndexScroll.scrollSensitivity = 24f;
+            _chatIndexContent = content;
+
+            var emptyRt = UiFactory.Node("chat-index-empty", _chatIndex);
+            emptyRt.anchorMin = Vector2.zero;
+            emptyRt.anchorMax = Vector2.one;
+            emptyRt.offsetMin = new Vector2(4f, 4f);
+            emptyRt.offsetMax = new Vector2(-4f, -22f);
+            _chatIndexEmpty = UiFactory.AddLabel(emptyRt, _bodyFont, Mathf.Max(10, _fontSize - 2),
+                _textDim, TextAnchor.MiddleCenter);
+            _chatIndexEmpty.text = Strings.Get("chat.index.empty");
+            _chatIndexEmpty.raycastTarget = false;
+
+            RebuildIndexRows();
+            if (_hostCanvas != null)
+                SetLayerRecursively(_chatIndex, _hostCanvas.gameObject.layer);
+        }
+
+        private void AddTurn(int turnId, string text)
+        {
+            var userGo = _lines.Count > 0 ? _lines[_lines.Count - 1].Go : null;
+            var entry = new TurnEntry { Id = turnId, Text = text ?? string.Empty, UserGo = userGo };
+            _turns.Add(entry);
+            if (_chatIndexContent != null) CreateIndexRow(entry);
+            RefreshIndexEmpty();
+        }
+
+        private void UpdateTurnUserGo(int turnId, GameObject go)
+        {
+            for (int i = 0; i < _turns.Count; i++)
+            {
+                if (_turns[i].Id != turnId) continue;
+                _turns[i].UserGo = go;
+                return;
+            }
+        }
+
+        private void RebuildIndexRows()
+        {
+            if (_chatIndexContent == null) return;
+            ClearIndexRows();
+            foreach (var entry in _turns) CreateIndexRow(entry);
+            RefreshIndexSelection();
+            RefreshIndexEmpty();
+        }
+
+        private void CreateIndexRow(TurnEntry entry)
+        {
+            if (entry == null || _chatIndexContent == null || entry.Row != null) return;
+
+            var row = UiFactory.Node("turn-" + entry.Id, _chatIndexContent);
+            var le = row.gameObject.AddComponent<LayoutElement>();
+            le.minHeight = 24f;
+            le.preferredHeight = 24f;
+
+            var linkRt = UiFactory.Node("link", row);
+            linkRt.anchorMin = Vector2.zero;
+            linkRt.anchorMax = Vector2.one;
+            linkRt.offsetMin = new Vector2(4f, 0f);
+            linkRt.offsetMax = new Vector2(-24f, 0f);
+
+            var link = UiFactory.AddLabel(linkRt, _bodyFont, Mathf.Max(10, _fontSize - 2),
+                _accent, TextAnchor.MiddleLeft);
+            link.text = IndexLabel(entry.Text);
+            link.supportRichText = false;
+            link.horizontalOverflow = HorizontalWrapMode.Overflow;
+            link.verticalOverflow = VerticalWrapMode.Truncate;
+            link.wideCharSpacing = 1f;
+            link.raycastTarget = true;
+
+            var linkButton = linkRt.gameObject.AddComponent<Button>();
+            linkButton.targetGraphic = link;
+            linkButton.transition = Selectable.Transition.ColorTint;
+            linkButton.colors = IndexButtonColors();
+            linkButton.navigation = new Navigation { mode = Navigation.Mode.None };
+            int linkId = entry.Id;
+            linkButton.onClick.AddListener(() => FocusTurn(linkId));
+
+            var delRt = UiFactory.Node("delete", row);
+            delRt.anchorMin = new Vector2(1f, 0.5f);
+            delRt.anchorMax = new Vector2(1f, 0.5f);
+            delRt.pivot = new Vector2(1f, 0.5f);
+            delRt.sizeDelta = new Vector2(20f, 20f);
+            delRt.anchoredPosition = new Vector2(-2f, 0f);
+
+            var delBg = delRt.gameObject.AddComponent<Image>();
+            delBg.color = new Color(1f, 1f, 1f, 0.01f);
+            delBg.raycastTarget = true;
+
+            var delText = UiFactory.AddLabel(delRt, _bodyFont, Mathf.Max(12, _fontSize),
+                _textDim, TextAnchor.MiddleCenter);
+            delText.text = "×";
+            delText.raycastTarget = false;
+
+            var delButton = delRt.gameObject.AddComponent<Button>();
+            delButton.targetGraphic = delBg;
+            delButton.transition = Selectable.Transition.ColorTint;
+            delButton.colors = IndexButtonColors();
+            delButton.navigation = new Navigation { mode = Navigation.Mode.None };
+            int delId = entry.Id;
+            delButton.onClick.AddListener(() => DeleteTurn(delId));
+
+            entry.Row = row.gameObject;
+            entry.Link = link;
+            if (_hostCanvas != null)
+                SetLayerRecursively(row, _hostCanvas.gameObject.layer);
+            RefreshIndexSelection();
+            RefreshIndexEmpty();
+        }
+
+        private static ColorBlock IndexButtonColors()
+        {
+            var colors = ColorBlock.defaultColorBlock;
+            colors.normalColor = Color.white;
+            colors.highlightedColor = new Color(0.75f, 0.92f, 1f, 1f);
+            colors.pressedColor = new Color(0.6f, 0.8f, 0.9f, 1f);
+            colors.selectedColor = Color.white;
+            colors.fadeDuration = 0.08f;
+            return colors;
+        }
+
+        private string IndexLabel(string text)
+        {
+            var s = (text ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (s.Length > 80) s = s.Substring(0, 80);
+
+            const string prefix = "• ";
+            var fontSize = Mathf.Max(10, _fontSize - 2);
+            const float maxWidth = 210f;
+            if (EstimateTextWidth(prefix + s, fontSize) <= maxWidth) return prefix + s;
+
+            while (s.Length > 0 && EstimateTextWidth(prefix + s + "…", fontSize) > maxWidth)
+                s = s.Substring(0, s.Length - 1);
+            return prefix + s + "…";
+        }
+
+        private void FocusTurn(int turnId)
+        {
+            TurnEntry entry = null;
+            foreach (var candidate in _turns)
+            {
+                if (candidate.Id == turnId) { entry = candidate; break; }
+            }
+            if (entry == null) return;
+
+            _focusedTurnId = turnId;
+            RefreshIndexSelection();
+
+            var go = entry.UserGo;
+            if (go == null)
+            {
+                for (int i = 0; i < _lines.Count; i++)
+                {
+                    if (_lines[i].Kind == LineKind.User && _lines[i].TurnId == turnId)
+                    {
+                        go = _lines[i].Go;
+                        entry.UserGo = go;
+                        break;
+                    }
+                }
+            }
+            if (go == null || _scroll == null || _content == null) return;
+
+            Canvas.ForceUpdateCanvases();
+            LayoutRebuilder.ForceRebuildLayoutImmediate(_content);
+
+            var itemRt = go.GetComponent<RectTransform>();
+            var viewportRt = _scroll.viewport;
+            if (itemRt == null || viewportRt == null) return;
+
+            var viewportHeight = viewportRt.rect.height;
+            var contentHeight = _content.rect.height;
+            var max = Mathf.Max(1f, contentHeight - viewportHeight);
+            var itemTop = -itemRt.anchoredPosition.y;
+            _scroll.verticalNormalizedPosition = Mathf.Clamp01(1f - (itemTop - viewportHeight * 0.5f) / max);
+        }
+
+        private void DeleteTurn(int turnId)
+        {
+            // 模型还在回答/思考时不要删，避免流式消息落到已删除的回合。
+            if (_streamItem >= 0 || _awaitingResponse || _thinking != null) return;
+
+            TurnEntry entry = null;
+            for (int i = 0; i < _turns.Count; i++)
+            {
+                if (_turns[i].Id == turnId) { entry = _turns[i]; break; }
+            }
+            if (entry == null) return;
+
+            var destroyed = new HashSet<GameObject>();
+            for (int i = _lines.Count - 1; i >= 0; i--)
+            {
+                var line = _lines[i];
+                if (line.TurnId != turnId) continue;
+                if (line.Block != null) ForgetBlock(line.Block);
+                if (line.Go != null && destroyed.Add(line.Go))
+                    UnityEngine.Object.Destroy(line.Go);
+                _lines.RemoveAt(i);
+            }
+
+            for (int i = _items.Count - 1; i >= 0; i--)
+            {
+                if (_items[i].TurnId != turnId) continue;
+                var go = _items[i].Go;
+                if (go != null && destroyed.Add(go)) UnityEngine.Object.Destroy(go);
+                _items.RemoveAt(i);
+                if (_streamItem > i) _streamItem--;
+            }
+
+            if (entry.Row != null) UnityEngine.Object.Destroy(entry.Row);
+            _turns.Remove(entry);
+            if (_focusedTurnId == turnId) _focusedTurnId = 0;
+            if (_currentTurnId == turnId)
+                _currentTurnId = _lines.Count > 0 ? _lines[_lines.Count - 1].TurnId : 0;
+
+            RefreshIndexSelection();
+            RefreshIndexEmpty();
+            _dirty = true;
+            Plugin.Log.LogInfo($"[索引] 已从窗口删除回合 {turnId}（模型上下文未改）");
+        }
+
+        private void ForgetBlock(Block block)
+        {
+            if (block == null) return;
+            if (_thinking == block)
+            {
+                _thinking = null;
+                _thinkingText.Length = 0;
+            }
+            string key = null;
+            foreach (var pair in _toolBlocks)
+            {
+                if (pair.Value != block) continue;
+                key = pair.Key;
+                break;
+            }
+            if (key != null) _toolBlocks.Remove(key);
+        }
+
+        private void ClearIndexRows()
+        {
+            if (_chatIndexContent != null)
+            {
+                for (int i = _chatIndexContent.childCount - 1; i >= 0; i--)
+                    UnityEngine.Object.Destroy(_chatIndexContent.GetChild(i).gameObject);
+            }
+            foreach (var entry in _turns)
+            {
+                entry.Row = null;
+                entry.Link = null;
+            }
+        }
+
+        private void RefreshIndexEmpty()
+        {
+            if (_chatIndexEmpty == null) return;
+            _chatIndexEmpty.gameObject.SetActive(_turns.Count == 0);
+        }
+
+        private void RefreshIndexSelection()
+        {
+            foreach (var entry in _turns)
+            {
+                if (entry.Link == null) continue;
+                entry.Link.color = entry.Id == _focusedTurnId ? _textMain : _accent;
+            }
         }
 
         /// <summary>
@@ -2614,7 +3069,14 @@ namespace IcarusII.UI
                     AssignIconMapping(label, _input.textComponent.iconMapping);
             }
 
-            _items.Add(new Item { Go = go, Label = label, Kind = kind, FromPrefab = fromPrefab });
+            _items.Add(new Item
+            {
+                Go = go,
+                Label = label,
+                Kind = kind,
+                TurnId = _currentTurnId,
+                FromPrefab = fromPrefab,
+            });
             return _items.Count - 1;
         }
 
@@ -2961,11 +3423,10 @@ namespace IcarusII.UI
 
         private void TrimHistory()
         {
-            // 流式输出期间 _items 比 _lines 多一条，先不裁，避免下标错位
+            // 流式输出期间 _items 比 _lines 多一条，先不裁，避免下标错位。
             while (_streamItem < 0 && _lines.Count > _maxLines)
             {
-                _lines.RemoveAt(0);
-                DestroyOldestItem();
+                RemoveOldestLine();
             }
 
             var total = 0;
@@ -2973,18 +3434,58 @@ namespace IcarusII.UI
             while (_streamItem < 0 && total > MaxTranscriptChars && _lines.Count > 0)
             {
                 total -= _lines[0].Text != null ? _lines[0].Text.Length : 0;
-                _lines.RemoveAt(0);
-                DestroyOldestItem();
+                RemoveOldestLine();
             }
+
+            PruneIndexTurns();
         }
 
-        private void DestroyOldestItem()
+        /// <summary>聊天记录裁剪后，把整轮都已消失的索引项一起移除。</summary>
+        private void PruneIndexTurns()
         {
-            if (_items.Count == 0) return;
-            var item = _items[0];
-            if (item.Go != null) UnityEngine.Object.Destroy(item.Go);
-            _items.RemoveAt(0);
-            if (_streamItem > 0) _streamItem--;
+            if (_turns.Count == 0) return;
+            var changed = false;
+            for (int i = _turns.Count - 1; i >= 0; i--)
+            {
+                var entry = _turns[i];
+                var found = false;
+                foreach (var line in _lines)
+                {
+                    if (line.TurnId != entry.Id) continue;
+                    found = true;
+                    break;
+                }
+                if (found) continue;
+
+                if (entry.Row != null) UnityEngine.Object.Destroy(entry.Row);
+                _turns.RemoveAt(i);
+                changed = true;
+            }
+            if (!changed) return;
+            RefreshIndexSelection();
+            RefreshIndexEmpty();
+        }
+
+        private void RemoveOldestLine()
+        {
+            if (_lines.Count == 0) return;
+            var line = _lines[0];
+            if (line.Block != null) ForgetBlock(line.Block);
+            if (line.Go != null) UnityEngine.Object.Destroy(line.Go);
+            _lines.RemoveAt(0);
+            RemoveItemByGo(line.Go);
+        }
+
+        private void RemoveItemByGo(GameObject go)
+        {
+            if (go == null) return;
+            for (int i = 0; i < _items.Count; i++)
+            {
+                if (_items[i].Go != go) continue;
+                _items.RemoveAt(i);
+                if (_streamItem > i) _streamItem--;
+                return;
+            }
         }
 
         /// <summary>
