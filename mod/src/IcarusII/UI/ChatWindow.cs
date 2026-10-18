@@ -531,6 +531,11 @@ namespace IcarusII.UI
             }
 
             ApplyHostScaleAndLayer();
+            ApplySoftTextMaterials();
+
+            // 窗口可能是在收到 save.bound/欢迎语之后才第一次打开的：
+            // 那时消息只进了 _lines，还没有可用的 _content。这里统一补建可见项。
+            RebuildTranscript();
 
             SetStatus(Strings.Get("status.disconnected"), _textDim);
             _root.SetActive(false);
@@ -1222,9 +1227,13 @@ namespace IcarusII.UI
             }
 
             // 字体：只替换占位字体（Arial）；prefab 里手工指定的游戏字体保留。
+            if (style.Font != null) _bodyFont = style.Font;
+
+            // 所有文字统一换成柔化材质（不改游戏共享材质）：prefab 烘焙的 Text 也要换，
+            // 否则只有运行期新建的正文变清晰，旧气泡/标题仍然一圈大光晕。
+            ApplySoftTextMaterials();
             if (style.Font != null)
             {
-                _bodyFont = style.Font;
                 foreach (var t in _root.GetComponentsInChildren<Text>(true))
                     ApplyBodyFont(t);
             }
@@ -2520,6 +2529,16 @@ namespace IcarusII.UI
 
         private void AddMessage(LineKind kind, string text)
         {
+            // 窗口还没 Create 时只记逻辑行；Create 末尾用 RebuildTranscript 补建。
+            // 否则会在 Canvas 之外建出一堆孤儿 Text，打开窗口后历史反而看不见。
+            if (_content == null)
+            {
+                _lines.Add(new Line { Kind = kind, Text = text });
+                TrimHistory();
+                _dirty = true;
+                return;
+            }
+
             var index = CreateItem(kind);
             if (index >= 0 && index < _items.Count && _items[index].Label != null)
                 _items[index].Label.text = SanitizeRichText(text);
@@ -2528,6 +2547,25 @@ namespace IcarusII.UI
             if (index >= 0 && index < _items.Count) FitBubbleWidth(_items[index].Go, text);
             TrimHistory();
             _dirty = true;
+        }
+
+        /// <summary>窗口首次 Create 时，把此前已进入 _lines 的消息补建成可见项。</summary>
+        private void RebuildTranscript()
+        {
+            if (_content == null || _lines.Count == 0) return;
+
+            foreach (var line in _lines)
+            {
+                var index = CreateItem(line.Kind);
+                if (index < 0 || index >= _items.Count) continue;
+                var item = _items[index];
+                if (item.Label != null) item.Label.text = SanitizeRichText(line.Text);
+                FitBubbleWidth(item.Go, line.Text);
+            }
+
+            TrimHistory();
+            _dirty = true;
+            ScrollToBottom();
         }
 
         /// <summary>
@@ -2602,6 +2640,18 @@ namespace IcarusII.UI
         /// 但如果 prefab 被手工换成了游戏字体（例如 SAIRASB），必须尊重它——
         /// 否则运行期会把你在 Unity 里调好的字重/字形整个覆盖掉。
         /// </summary>
+        /// <summary>把窗口内所有 Text 换成柔化材质（输入框保留稍厚版本）。</summary>
+        private void ApplySoftTextMaterials()
+        {
+            if (_root == null) return;
+            foreach (var t in _root.GetComponentsInChildren<Text>(true))
+            {
+                if (t == null) continue;
+                var thick = _input != null && t.transform.IsChildOf(_input.transform);
+                GameTextStyle.Apply(t, thick);
+            }
+        }
+
         private void ApplyBodyFont(Text label)
         {
             if (label == null || _bodyFont == null) return;

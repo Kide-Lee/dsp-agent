@@ -77,6 +77,9 @@ namespace IcarusII
         /// <summary>当前存档标识是否已经同步给服务端。</summary>
         private bool _saveSynced;
 
+        /// <summary>已经回放过历史的存档；同一存档重连时不重复粘贴历史。</summary>
+        private string _historyReplayedFor;
+
 
         /// <summary>欢迎语只补一次，之后即使清空记录也不再打扰。</summary>
         private bool _welcomeShown;
@@ -738,6 +741,7 @@ namespace IcarusII
                 _tools?.ClearCache();
                 _saveKey = key;
                 _saveSynced = false;
+                _historyReplayedFor = null;
                 _internalCalls.Clear();
                 // 对话串也必须跟着换档：否则新存档里还挂着旧档的消息，
                 // 即使 sidecar 已经换了会话，看起来仍然不是“新对话”。
@@ -766,16 +770,38 @@ namespace IcarusII
 
                 if (string.IsNullOrEmpty(info.SaveKey))
                 {
+                    _historyReplayedFor = null;
                     _chat.AppendSystem(Strings.Get("save.unbound"));
                     return;
                 }
 
                 var name = string.IsNullOrEmpty(info.SaveName) ? info.SaveKey : info.SaveName;
+
+                // 进入存档后把该存档上一次的对话贴回聊天窗。
+                // 同一个存档重连时只贴一次；正在流式输出时不打断当前回合。
+                var replay = info.History != null && info.History.Count > 0
+                             && info.SaveKey != _historyReplayedFor && !_streaming;
+                if (replay)
+                {
+                    _chat.ClearTranscript();
+                    _historyReplayedFor = info.SaveKey;
+                }
+
                 if (!info.Existed) _chat.AppendSystem(Strings.Get("save.new", name));
                 else if (info.MessageCount > 0)
                     _chat.AppendSystem(Strings.Get("save.bound", name, info.MessageCount));
                 else
                     _chat.AppendSystem(Strings.Get("save.bound.nocount", name));
+
+                if (replay)
+                {
+                    foreach (var message in info.History)
+                    {
+                        if (message == null || string.IsNullOrEmpty(message.Text)) continue;
+                        if (message.Role == "user") _chat.AppendUser(message.Text);
+                        else _chat.AppendLine(Strings.Get("agent"), message.Text);
+                    }
+                }
 
                 _chat.SetStatus(Strings.Get("status.ready"), OkColor);
             });

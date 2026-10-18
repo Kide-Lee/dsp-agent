@@ -102,6 +102,15 @@ capability → `ready.tools`、tool_call→tool_result 往返、超时、断线�
 | 旧配置迁移 | 旧 `config.json` 只有 `provider/model/apiKey/baseUrl` → 自动变成一条 provider，历史 key 不丢 |
 
 
+## 7.5 历史会话回放（M2.7）
+
+- [ ] 进入存档聊几句 → 退出到主菜单 → 再进入同一存档
+- [ ] 聊天窗自动显示上次的 user/assistant 消息（最多最近 40 条）
+- [ ] 重新打开窗口后历史仍在；不会重复粘贴
+- [ ] 换到另一个存档 → 聊天窗是另一个存档的历史，不串档
+- [ ] 同存档重连 sidecar → 不重复追加历史
+- [ ] 历史很长时只回放最近 40 条，单条超长会截断
+
 ## 8. 知识库（M3）
 
 > 离线测试：`cd sidecar && npm test`（含 kb 52 项 + kb-tools 35 项 + kb-session 10 项）。

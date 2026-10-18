@@ -366,17 +366,27 @@ export function parseSaveBindPayload(payload: JsonObject): SaveBindPayload | nul
   };
 }
 
+/** `save.bound.history` 的一条可回放消息（M2.7，UI 历史恢复用）。 */
+export interface HistoryMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp?: number;
+}
+
 export function buildSaveBoundPayload(args: {
   saveKey: string | null;
   saveName: string | null;
   existed: boolean;
   messageCount: number;
+  history?: readonly HistoryMessage[];
 }): JsonObject {
   return {
     saveKey: args.saveKey,
     saveName: args.saveName,
     existed: args.existed,
     messageCount: args.messageCount,
+    // 只带最近若干条；mod 只用于回放，不进入模型上下文。
+    history: args.history ?? [],
   };
 }
 

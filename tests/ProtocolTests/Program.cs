@@ -415,6 +415,17 @@ namespace IcarusII.Tests
             var fresh = SaveBoundInfo.Parse(JsonValue.Parse("{\"saveKey\":\"aa\",\"existed\":false}"));
             Check("新对话 existed=false", !fresh.Existed);
             Eq("缺 messageCount 时为 0", 0, fresh.MessageCount);
+            Eq("缺 history 时为空", 0, fresh.History.Count);
+
+            var withHistory = SaveBoundInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"3f2a\",\"existed\":true,\"messageCount\":2,\"history\":[" +
+                "{\"role\":\"user\",\"text\":\"上次的问题\",\"timestamp\":123}," +
+                "{\"role\":\"assistant\",\"text\":\"上次的回答\"}]}"));
+            Eq("save.bound history 条数", 2, withHistory.History.Count);
+            Eq("history 第一条 role", "user", withHistory.History[0].Role);
+            Eq("history 第一条 text", "上次的问题", withHistory.History[0].Text);
+            Eq("history 第一条 timestamp", 123L, withHistory.History[0].Timestamp);
+            Eq("history 第二条 role", "assistant", withHistory.History[1].Role);
 
             var noBound = SaveBoundInfo.Parse(null);
             Eq("null 载荷的安全默认", 0, noBound.MessageCount);

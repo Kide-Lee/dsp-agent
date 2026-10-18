@@ -229,6 +229,14 @@ namespace IcarusII.Common.Protocol
         }
     }
 
+    /// <summary>存档绑定结果里用于回放的一条历史消息（M2.7）。</summary>
+    public sealed class HistoryMessageInfo
+    {
+        public string Role { get; set; }
+        public string Text { get; set; }
+        public long Timestamp { get; set; }
+    }
+
     /// <summary>存档绑定结果（协议附录 A.6）。</summary>
     public sealed class SaveBoundInfo
     {
@@ -238,6 +246,8 @@ namespace IcarusII.Common.Protocol
         public bool Existed { get; private set; }
         /// <summary>恢复的历史消息条数。</summary>
         public int MessageCount { get; private set; }
+        /// <summary>最近若干条可回放的 user/assistant 文本；只用于 UI，不进入模型上下文。</summary>
+        public List<HistoryMessageInfo> History { get; private set; } = new List<HistoryMessageInfo>();
 
         public static SaveBoundInfo Parse(JsonValue payload)
         {
@@ -247,12 +257,31 @@ namespace IcarusII.Common.Protocol
             r.SaveName = payload["saveName"].AsString(null);
             r.Existed = payload["existed"].AsBool(false);
             r.MessageCount = payload["messageCount"].AsInt(0);
+
+            var history = payload["history"];
+            if (history != null && history.Count > 0)
+            {
+                for (int i = 0; i < history.Count; i++)
+                {
+                    var item = history[i];
+                    var role = item["role"].AsString(null);
+                    if (role != "user" && role != "assistant") continue;
+                    var text = item["text"].AsString(null);
+                    if (string.IsNullOrEmpty(text)) continue;
+                    r.History.Add(new HistoryMessageInfo
+                    {
+                        Role = role,
+                        Text = text,
+                        Timestamp = item["timestamp"].AsLong(0),
+                    });
+                }
+            }
             return r;
         }
 
         public override string ToString()
         {
-            return $"{SaveName ?? SaveKey ?? "(无存档)"} existed={Existed} messages={MessageCount}";
+            return $"{SaveName ?? SaveKey ?? "(无存档)"} existed={Existed} messages={MessageCount} history={History.Count}";
         }
     }
 

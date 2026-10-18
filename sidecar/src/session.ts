@@ -270,7 +270,7 @@ export class Session {
         this.handleConfigSet(env);
         return;
       case MessageType.SaveBind:
-        this.handleSaveBind(env);
+        void this.handleSaveBind(env);
         return;
       case MessageType.ToolResult:
         this.handleToolResult(env);
@@ -579,7 +579,7 @@ export class Session {
    * `save.bind`（附录 A.6）：通知 agent 切换到对应存档的会话。
    * 这里只做路由与回执；真正的会话切换由 agent 负责（它会在回合边界重建 pi session）。
    */
-  private handleSaveBind(env: import('./protocol.js').ParsedEnvelope): void {
+  private async handleSaveBind(env: import('./protocol.js').ParsedEnvelope): Promise<void> {
     if (this._state !== 'ready') {
       this.logger.warn('握手未完成就收到 save.bind');
       this.sendError('unauthorized', 'handshake not completed', env.id || null);
@@ -592,13 +592,13 @@ export class Session {
       return;
     }
 
-    const existed = bind.saveKey !== null && this.seenSaveKeys.has(bind.saveKey);
+    const known = bind.saveKey !== null && this.seenSaveKeys.has(bind.saveKey);
     if (bind.saveKey !== null) this.seenSaveKeys.add(bind.saveKey);
 
     this.logger.info('收到 save.bind', {
       saveKey: bind.saveKey,
       saveName: bind.saveName,
-      existed,
+      existed: known,
     });
 
     try {
@@ -607,6 +607,22 @@ export class Session {
       this.logger.warn('切换存档会话失败', errorFields(err));
     }
 
+    // 先在服务端读历史，再把 save.bound 发给 mod；mod 用它回放上一次对话。
+    // 读文件是纯本地操作，不建模型会话、不联网；失败时按“无历史”处理。
+    let history: Awaited<ReturnType<NonNullable<AgentRunner['getHistory']>>> = [];
+    if (bind.saveKey && this.options.agent.getHistory) {
+      try {
+        history = await this.options.agent.getHistory(bind.saveKey);
+      } catch (err) {
+        this.logger.warn('读取存档历史失败，按无历史处理', {
+          saveKey: bind.saveKey,
+          ...errorFields(err),
+        });
+      }
+    }
+
+    if (this._state !== 'ready') return;
+
     this.sendEnvelope(
       buildEnvelope({
         type: MessageType.SaveBound,
@@ -614,8 +630,9 @@ export class Session {
         payload: buildSaveBoundPayload({
           saveKey: bind.saveKey,
           saveName: bind.saveName,
-          existed,
-          messageCount: 0,
+          existed: known || history.length > 0,
+          messageCount: history.length,
+          history,
         }),
       }),
     );

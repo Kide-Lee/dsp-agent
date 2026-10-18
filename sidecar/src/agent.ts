@@ -15,6 +15,7 @@
  * 「未配置 key」的启动路径都不会加载 pi、不会联网。
  */
 
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   AgentSession,
@@ -32,6 +33,7 @@ import type {
   AgentInfo,
   ConfigView,
   ErrorCode,
+  HistoryMessage,
   JsonObject,
   ModelCatalogEntry,
   ModelCatalogResult,
@@ -88,6 +90,11 @@ export interface AgentRunner {
   /** 切换存档；null = 回到主菜单。agent 应在回合边界重建会话。 */
   onSaveChanged?(saveKey: string | null): void;
   /**
+   * 读取某个存档最近的对话历史，供 UI 进入存档后回放。
+   * 只读会话文件，不建模型会话、不联网、不改变当前 saveKey。
+   */
+  getHistory?(saveKey: string | null): Promise<HistoryMessage[]>;
+  /**
    * 拉取某个供应商的可用模型列表（M3）。
    * 已知供应商走 pi 目录；显式给了 baseUrl 的走 OpenAI 兼容 `/models`。
    * 失败时返回 `error`，不抛异常、不泄露 key。
@@ -110,6 +117,64 @@ export interface AgentRunner {
 /** 让出一轮事件循环：让 status{thinking} 先落到 socket 上，再开始吐字。 */
 export function tick(): Promise<void> {
   return new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+// ---------------------------------------------------------------- 历史
+
+/** 从 pi 的消息内容里只取可见文本；thinking / toolCall / 图片都忽略。 */
+function contentText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    const item = block as { type?: unknown; text?: unknown };
+    if (item.type === 'text' && typeof item.text === 'string') parts.push(item.text);
+  }
+  return parts.join('\n');
+}
+
+/**
+ * 把 pi 的 SessionEntry[] 投影成 UI 可回放的消息。
+ *
+ * 只保留 user/assistant 的文本；工具调用、工具结果、思考块、压缩摘要都不回放，
+ * 避免把内部上下文暴露到聊天窗。只取最近 `maxMessages` 条，单条 `maxText` 字符。
+ */
+export function extractHistoryMessages(
+  entries: readonly unknown[],
+  maxMessages = 40,
+  maxText = 4000,
+): HistoryMessage[] {
+  const out: HistoryMessage[] = [];
+  for (const raw of entries) {
+    if (!raw || typeof raw !== 'object') continue;
+    const entry = raw as {
+      type?: unknown;
+      timestamp?: unknown;
+      message?: {
+        role?: unknown;
+        content?: unknown;
+        timestamp?: unknown;
+      };
+    };
+    if (entry.type !== 'message' || !entry.message) continue;
+    const role = entry.message.role;
+    if (role !== 'user' && role !== 'assistant') continue;
+
+    const text = contentText(entry.message.content).trim();
+    if (!text) continue;
+
+    const clipped = text.length > maxText ? `${text.slice(0, maxText)}…` : text;
+    const rawTs =
+      typeof entry.message.timestamp === 'number'
+        ? entry.message.timestamp
+        : typeof entry.timestamp === 'string'
+          ? Date.parse(entry.timestamp)
+          : NaN;
+    const timestamp = Number.isFinite(rawTs) ? rawTs : undefined;
+    out.push({ role, text: clipped, ...(timestamp !== undefined ? { timestamp } : {}) });
+  }
+  return out.slice(-maxMessages);
 }
 
 // ---------------------------------------------------------------- echo
@@ -617,6 +682,20 @@ export class PiAgent implements AgentRunner {
     this.teardown();
   }
 
+  async getHistory(saveKey: string | null): Promise<HistoryMessage[]> {
+    if (!saveKey) return [];
+    const sessionDir = join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey));
+    // 没有会话文件就不要让 continueRecent 先建一个空会话（每次 bind 都会留垃圾）。
+    if (!existsSync(sessionDir)) return [];
+    if (!readdirSync(sessionDir).some((name) => name.endsWith('.jsonl'))) return [];
+
+    const pi = await this.loadSdk();
+    const manager = pi.SessionManager.continueRecent(this.dataDir, sessionDir);
+    const messages = extractHistoryMessages(manager.buildContextEntries());
+    this.logger.info('读取存档历史', { saveKey, messages: messages.length });
+    return messages;
+  }
+
   dispose(): void {
     this.teardown();
   }
@@ -748,7 +827,11 @@ export class PiAgent implements AgentRunner {
 
   /** 存档目录名：mod 传的是十六进制串，仍做一次白名单清洗防御异常输入。 */
   private sessionDirName(): string {
-    const raw = this.saveKey ?? 'menu';
+    return this.sessionDirNameFor(this.saveKey);
+  }
+
+  private sessionDirNameFor(saveKey: string | null): string {
+    const raw = saveKey ?? 'menu';
     const safe = raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
     return safe.length > 0 ? safe : 'menu';
   }

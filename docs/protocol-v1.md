@@ -450,12 +450,19 @@ mod                                   sidecar
 {
   "v": 1, "id": "s-12", "type": "save.bound", "replyTo": "m-11",
   "payload": { "saveKey": "3f2a91c4d8e05b17", "saveName": "我的档",
-               "existed": true, "messageCount": 12 }
+               "existed": true, "messageCount": 2,
+               "history": [
+                 { "role": "user", "text": "上次的问题", "timestamp": 1760000000000 },
+                 { "role": "assistant", "text": "上次的回答" }
+               ] }
 }
 ```
 
 - `existed`：该存档此前是否已有对话（`false` = 新建）
-- `messageCount`：恢复的历史消息条数
+- `messageCount`：本次带回的历史消息条数
+- `history`：最近最多 40 条 `user` / `assistant` 的可见文本（单条最多 4000 字符），
+  只用于 mod **回放聊天窗**，不进入模型上下文；工具调用、工具结果、思考块和
+  压缩摘要不会出现在这里。历史读取失败时为空数组，不阻断 `save.bound`。
 
 #### 语义
 

@@ -25,10 +25,11 @@
     "test:tools": "node test/tools.mjs",
     "test:pi-tools": "node test/pi-tools.mjs",
     "test:live": "node test/live.mjs",
-    "test": "npm run typecheck && npm run build && npm run test:negative && npm run test:config && npm run test:config-protocol && npm run test:model-catalog && npm run test:pi-loopback && npm run test:tools && npm run test:pi-tools && npm run test:kb && npm run test:kb-tools && npm run test:kb-session",
+    "test": "npm run typecheck && npm run build && npm run test:negative && npm run test:config && npm run test:config-protocol && npm run test:model-catalog && npm run test:pi-loopback && npm run test:tools && npm run test:pi-tools && npm run test:kb && npm run test:kb-tools && npm run test:kb-session && npm run test:history",
     "test:kb": "node test/kb.mjs",
     "test:kb-tools": "node test/kb-tools.mjs",
-    "test:kb-session": "node test/kb-session.mjs"
+    "test:kb-session": "node test/kb-session.mjs",
+    "test:history": "node test/history.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.82.1",
