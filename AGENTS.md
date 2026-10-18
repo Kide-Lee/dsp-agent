@@ -61,12 +61,12 @@
 当前 ChatWindow 的固定布局约束（改布局必须同时改 prefab 和对应构建器）：
 
 - `output` 底边 = `input` 顶边 + 2px；
-- 正文 `output/scroll-view/viewport` 右侧留 8px，`Scrollbar Vertical` 向内收 8px；
+- 正文 `output/scroll-view/viewport` 右侧留 18px（滚动条右侧内收 8px，再留 4px 文字间隙），`Scrollbar Vertical` 向内收 8px；
 - 正文/索引滚动条宽度 6px；
 - `input/editor/scroll-view/viewport` 与 `content` 拉伸，靠 prefab 维持高度；
 - `turn-row-template/delete/bg` 是删除按钮背景；hover 只染红背景，**不改 `x` 文字颜色**；
 - `chat-index-tooltip` 是 prefab 节点，默认 inactive，文本固定为“删除”；
-- 索引行来自 `chat-index-scroll/viewport/content/turn-row-template`，不要退回运行期手搭。
+- 索引行来自 `chat-index-scroll/viewport/content/turn-row-template`，行必须横向铺满 content；链接右边界留 34px 给删除区，不要退回运行期手搭。
 
 对应工具：
 

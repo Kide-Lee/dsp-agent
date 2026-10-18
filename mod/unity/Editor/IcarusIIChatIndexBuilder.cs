@@ -215,7 +215,7 @@ namespace IcarusII.EditorTools
             link.anchorMin = Vector2.zero;
             link.anchorMax = Vector2.one;
             link.offsetMin = new Vector2(8f, 0f);
-            link.offsetMax = new Vector2(-28f, 0f);
+            link.offsetMax = new Vector2(-34f, 0f);
             var linkHit = link.gameObject.AddComponent<Image>();
             linkHit.color = Color.clear;
             linkHit.raycastTarget = true;
@@ -239,7 +239,7 @@ namespace IcarusII.EditorTools
             del.anchorMin = new Vector2(1f, 0.5f);
             del.anchorMax = new Vector2(1f, 0.5f);
             del.pivot = new Vector2(1f, 0.5f);
-            del.sizeDelta = new Vector2(20f, 20f);
+            del.sizeDelta = new Vector2(24f, 24f);
             del.anchoredPosition = new Vector2(-2f, 0f);
             var delImage = del.gameObject.AddComponent<Image>();
             delImage.color = new Color(1f, 1f, 1f, 0.01f);

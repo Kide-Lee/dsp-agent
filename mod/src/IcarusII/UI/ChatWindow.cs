@@ -2741,7 +2741,10 @@ namespace IcarusII.UI
                 UnityEngine.Object.Destroy(delButton);
             }
 
-            label.text = IndexLabel(entry.Text);
+            var linkWidth = linkTf is RectTransform linkRect && linkRect.rect.width > 20f
+                ? linkRect.rect.width - 6f
+                : 190f;
+            label.text = IndexLabel(entry.Text, linkWidth);
             label.supportRichText = false;
             label.horizontalOverflow = HorizontalWrapMode.Overflow;
             label.verticalOverflow = VerticalWrapMode.Truncate;
@@ -2786,13 +2789,13 @@ namespace IcarusII.UI
             return colors;
         }
 
-        private string IndexLabel(string text)
+        private string IndexLabel(string text, float maxWidth)
         {
             var s = (text ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
             if (s.Length > 80) s = s.Substring(0, 80);
 
             var fontSize = Mathf.Max(10, _fontSize - 2);
-            const float maxWidth = 190f;
+            maxWidth = Mathf.Max(60f, maxWidth);
             if (EstimateTextWidth(s, fontSize) <= maxWidth) return s;
 
             while (s.Length > 0 && EstimateTextWidth(s + "…", fontSize) > maxWidth)

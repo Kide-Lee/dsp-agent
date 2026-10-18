@@ -61,12 +61,13 @@ namespace IcarusII.EditorTools
             var outputViewport = outputScroll != null ? outputScroll.Find("viewport") as RectTransform : null;
             if (outputViewport != null)
             {
-                // 正文 viewport 也必须是正常拉伸矩形；右边留 8px 给滚动条。
+                // 正文 viewport 也必须是正常拉伸矩形。
+                // 滚动条宽 6px、右边缘内收 8px；viewport 再留 4px 间隙，避免文字压在滚动条下。
                 outputViewport.anchorMin = Vector2.zero;
                 outputViewport.anchorMax = Vector2.one;
                 outputViewport.pivot = new Vector2(0.5f, 0.5f);
                 outputViewport.offsetMin = Vector2.zero;
-                outputViewport.offsetMax = new Vector2(-8f, 0f);
+                outputViewport.offsetMax = new Vector2(-18f, 0f);
             }
 
             var scrollbar = output.Find("scroll-view/Scrollbar Vertical") as RectTransform;
@@ -105,11 +106,42 @@ namespace IcarusII.EditorTools
             var scroll = index != null ? index.Find("chat-index-scroll") : null;
             var viewport = scroll != null ? scroll.Find("viewport") : null;
             var content = viewport != null ? viewport.Find("content") : null;
-            var delete = content != null ? content.Find("turn-row-template/delete") : null;
-            if (delete == null) return;
+            var row = content != null ? content.Find("turn-row-template") as RectTransform : null;
+            if (row == null) return;
 
+            // 行必须横向铺满 content；否则无滚动条时 hover 底色右边会缺一截。
+            row.anchorMin = new Vector2(0f, 1f);
+            row.anchorMax = new Vector2(1f, 1f);
+            row.pivot = new Vector2(0.5f, 1f);
+            row.anchoredPosition = new Vector2(0f, -2f);
+            row.sizeDelta = new Vector2(0f, 24f);
+
+            // 链接右边界给删除区留 34px：24px 删除区 + 10px 间隙。
+            var link = row.Find("link") as RectTransform;
+            if (link != null)
+            {
+                link.anchorMin = Vector2.zero;
+                link.anchorMax = Vector2.one;
+                link.offsetMin = new Vector2(8f, 0f);
+                link.offsetMax = new Vector2(-34f, 0f);
+            }
+
+            var delete = row.Find("delete") as RectTransform;
+            if (delete != null)
+            {
+                delete.anchorMin = new Vector2(1f, 0f);
+                delete.anchorMax = new Vector2(1f, 1f);
+                delete.pivot = new Vector2(1f, 0.5f);
+                delete.sizeDelta = new Vector2(24f, 0f);
+                delete.anchoredPosition = new Vector2(-2f, 0f);
+                EnsureDeleteBackground(delete);
+            }
+        }
+
+        private static void EnsureDeleteBackground(RectTransform delete)
+        {
             if (delete.GetComponent<Image>() != null) return;
-            var existing = delete.Find("bg");
+            var existing = delete.Find("bg") as RectTransform;
             if (existing != null)
             {
                 if (existing.GetComponent<Image>() == null)
