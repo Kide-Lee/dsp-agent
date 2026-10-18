@@ -33,7 +33,6 @@ namespace IcarusII.I18n
             ["save.new"] = "已为存档「{0}」开启新对话。",
             ["save.unbound"] = "已离开存档，对话暂时解绑。",
             ["welcome"] = "我是伊卡洛斯·贰。可以问我《戴森球计划》的机制、产线排布、或者卡住了该先修什么。",
-            ["chat.index.title"] = "对话索引",
             ["chat.index.empty"] = "暂无提问",
             ["hint.disconnected"] = "未连接到 sidecar。请检查 BepInEx 日志，或改用 LaunchMode=connectOnly 自行启动。",
             ["hint.conflict"] = "提示：{0}",

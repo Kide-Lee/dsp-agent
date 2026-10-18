@@ -2698,28 +2698,10 @@ namespace IcarusII.UI
                 bg.raycastTarget = false;
             }
 
-            if (_chatIndexTitle == null)
-            {
-                var header = _chatIndex.Find("chat-index-header") as RectTransform;
-                if (header == null)
-                {
-                    header = UiFactory.Node("chat-index-header", _chatIndex);
-                    header.anchorMin = new Vector2(0f, 1f);
-                    header.anchorMax = new Vector2(1f, 1f);
-                    header.pivot = new Vector2(0.5f, 1f);
-                    header.anchoredPosition = Vector2.zero;
-                    header.sizeDelta = new Vector2(0f, 22f);
-                }
-                _chatIndexTitle = header.GetComponent<Text>();
-                if (_chatIndexTitle == null)
-                {
-                    _chatIndexTitle = UiFactory.AddLabel(header, _bodyFont, 12,
-                        _textDim, TextAnchor.MiddleLeft);
-                }
-                _chatIndexTitle.text = Strings.Get("chat.index.title");
-                _chatIndexTitle.horizontalOverflow = HorizontalWrapMode.Overflow;
-                _chatIndexTitle.raycastTarget = false;
-            }
+            // 不要标题：旧 bundle 里若残留 chat-index-header，直接隐藏。
+            var oldHeader = _chatIndex.Find("chat-index-header");
+            if (oldHeader != null) oldHeader.gameObject.SetActive(false);
+            _chatIndexTitle = null;
 
             if (_chatIndexScroll == null)
             {
@@ -2731,7 +2713,7 @@ namespace IcarusII.UI
                     scrollRt.anchorMax = Vector2.one;
                     scrollRt.pivot = new Vector2(0.5f, 0.5f);
                     scrollRt.offsetMin = new Vector2(4f, 4f);
-                    scrollRt.offsetMax = new Vector2(-4f, -22f);
+                    scrollRt.offsetMax = new Vector2(-4f, -4f);
                 }
 
                 // 透明 Image：给 ScrollRect 一个可接收滚轮/拖拽的 raycast 目标。
@@ -2811,7 +2793,7 @@ namespace IcarusII.UI
                     emptyRt.anchorMin = Vector2.zero;
                     emptyRt.anchorMax = Vector2.one;
                     emptyRt.offsetMin = new Vector2(4f, 4f);
-                    emptyRt.offsetMax = new Vector2(-4f, -22f);
+                    emptyRt.offsetMax = new Vector2(-4f, -4f);
                 }
                 _chatIndexEmpty = emptyRt.GetComponent<Text>();
                 if (_chatIndexEmpty == null)

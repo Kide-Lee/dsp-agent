@@ -62,18 +62,8 @@ namespace IcarusII.EditorTools
                 bg.color = PanelBg;
                 bg.raycastTarget = false;
 
-                var header = index.Find(HeaderName) as RectTransform;
-                if (header == null) header = NewRect(HeaderName, index);
-                header.anchorMin = new Vector2(0f, 1f);
-                header.anchorMax = new Vector2(1f, 1f);
-                header.pivot = new Vector2(0.5f, 1f);
-                header.anchoredPosition = Vector2.zero;
-                header.sizeDelta = new Vector2(0f, 22f);
-                var headerText = header.GetComponent<Text>();
-                if (headerText == null) headerText = header.gameObject.AddComponent<Text>();
-                Style(headerText, font, material, 12, Dim, TextAnchor.MiddleLeft);
-                headerText.text = "对话索引";
-                headerText.raycastTarget = false;
+                var oldHeader = index.Find(HeaderName);
+                if (oldHeader != null) UnityEngine.Object.DestroyImmediate(oldHeader.gameObject);
 
                 var scroll = index.Find(ScrollName) as RectTransform;
                 var content = scroll != null
@@ -100,7 +90,7 @@ namespace IcarusII.EditorTools
                         scroll.anchorMax = Vector2.one;
                         scroll.pivot = new Vector2(0.5f, 0.5f);
                         scroll.offsetMin = new Vector2(4f, 4f);
-                        scroll.offsetMax = new Vector2(-4f, -22f);
+                        scroll.offsetMax = new Vector2(-4f, -4f);
                     }
 
                     var hit = scroll.GetComponent<Image>();
@@ -169,12 +159,29 @@ namespace IcarusII.EditorTools
                 empty.anchorMin = Vector2.zero;
                 empty.anchorMax = Vector2.one;
                 empty.offsetMin = new Vector2(4f, 4f);
-                empty.offsetMax = new Vector2(-4f, -22f);
+                empty.offsetMax = new Vector2(-4f, -4f);
                 var emptyText = empty.GetComponent<Text>();
                 if (emptyText == null) emptyText = empty.gameObject.AddComponent<Text>();
                 Style(emptyText, font, material, 12, Dim, TextAnchor.MiddleCenter);
                 emptyText.text = "暂无提问";
                 emptyText.raycastTarget = false;
+
+                var finalScroll = index.Find(ScrollName) as RectTransform;
+                if (finalScroll != null)
+                {
+                    finalScroll.offsetMin = new Vector2(4f, 4f);
+                    finalScroll.offsetMax = new Vector2(-4f, -4f);
+                    var finalViewport = finalScroll.Find(ViewportName) as RectTransform;
+                    if (finalViewport != null) finalViewport.sizeDelta = new Vector2(-9f, 0f);
+                    var finalScrollRect = finalScroll.GetComponent<ScrollRect>();
+                    if (finalScrollRect != null) EnsureScrollbar(finalScroll, finalScrollRect);
+                }
+                var finalEmpty = index.Find(EmptyName) as RectTransform;
+                if (finalEmpty != null)
+                {
+                    finalEmpty.offsetMin = new Vector2(4f, 4f);
+                    finalEmpty.offsetMax = new Vector2(-4f, -4f);
+                }
 
                 var uiLayer = index.gameObject.layer == 0 ? 5 : index.gameObject.layer;
                 SetLayer(index, uiLayer);
@@ -255,14 +262,12 @@ namespace IcarusII.EditorTools
         {
             var sb = scroll.Find("Scrollbar Vertical") as RectTransform;
             if (sb == null)
-            {
                 sb = NewRect("Scrollbar Vertical", scroll);
-                sb.anchorMin = new Vector2(1f, 0f);
-                sb.anchorMax = new Vector2(1f, 1f);
-                sb.pivot = new Vector2(1f, 1f);
-                sb.sizeDelta = new Vector2(7f, -4f);
-                sb.anchoredPosition = new Vector2(-2f, -2f);
-            }
+            sb.anchorMin = new Vector2(1f, 0f);
+            sb.anchorMax = new Vector2(1f, 1f);
+            sb.pivot = new Vector2(1f, 1f);
+            sb.sizeDelta = new Vector2(6f, 0f);
+            sb.anchoredPosition = Vector2.zero;
 
             var track = sb.GetComponent<Image>();
             if (track == null) track = sb.gameObject.AddComponent<Image>();
