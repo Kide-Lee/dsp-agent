@@ -96,6 +96,11 @@ namespace IcarusII.EditorTools
                 return Fail("chat-index prefab 结构构建失败：" + PrefabPath);
             }
 
+            if (!IcarusIIPrefabLayoutFix.Ensure(PrefabPath))
+            {
+                return Fail("聊天窗布局固化失败：" + PrefabPath);
+            }
+
             Directory.CreateDirectory(OutputDir);
 
             var build = new AssetBundleBuild

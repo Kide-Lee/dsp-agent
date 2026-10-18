@@ -377,22 +377,6 @@ namespace IcarusII.UI
         }
 
         /// <summary>
-        /// 输入区 content 的高度会被 InputField/ScrollRect 的刷新链重置成 0，
-        /// 一旦为 0，Mask 会把输入文字和光标全部裁掉。每帧校正一次，代价可忽略。
-        /// </summary>
-        private void EnsureInputContentLayout()
-        {
-            if (_inputViewport == null || _inputContent == null) return;
-            var viewportHeight = Mathf.Abs(_inputViewport.rect.height);
-            if (viewportHeight < 1f) return;
-            if (Mathf.Abs(_inputContent.sizeDelta.y - viewportHeight) <= 0.5f) return;
-
-            _inputContent.sizeDelta = new Vector2(_inputContent.sizeDelta.x, viewportHeight);
-            _inputContent.anchoredPosition = Vector2.zero;
-            if (_inputScrollRect != null) _inputScrollRect.verticalNormalizedPosition = 1f;
-        }
-
-        /// <summary>
         /// 游戏 InputField 的 Caret 是懒创建的：首次聚焦时可能只创建了空
         /// CanvasRenderer（材质 null、m_CaretVisible=false），结果输入框有焦点
         /// 但看不见光标。这里补一次材质/可见性，并把光标加粗到 2px。
@@ -578,7 +562,6 @@ namespace IcarusII.UI
 
             ApplyHostScaleAndLayer();
             EnsureChatIndex();
-            InsetBodyScrollbar();
             ApplySoftTextMaterials();
 
             // 窗口可能是在收到 save.bound/欢迎语之后才第一次打开的：
@@ -801,29 +784,9 @@ namespace IcarusII.UI
                     : null;
                 if (inputViewport != null && inputContent != null)
                 {
-                    var viewportHeight = Mathf.Abs(inputViewport.rect.height);
-                    inputContent.sizeDelta = new Vector2(inputContent.sizeDelta.x, viewportHeight);
-                    inputContent.anchoredPosition = Vector2.zero;
                     _inputScrollRect = inputScroll.GetComponent<ScrollRect>();
                     _inputViewport = inputViewport;
                     _inputContent = inputContent;
-                    if (_inputScrollRect != null) _inputScrollRect.verticalNormalizedPosition = 1f;
-                }
-            }
-
-            // 正文区底边贴住输入栏顶边（只留 2px）。不同分辨率/
-            // 旧 prefab 下如果 output 的 offset 被改过，这里按实际 input 顶边归一化，
-            // 避免正文和输入栏之间出现一大块空白。
-            var outputRt = panel.Find("output") as RectTransform;
-            var inputRootRt = panel.Find("input") as RectTransform;
-            if (outputRt != null && inputRootRt != null)
-            {
-                var inputTop = inputRootRt.anchoredPosition.y + Mathf.Abs(inputRootRt.rect.height);
-                var outputBottom = outputRt.offsetMin.y;
-                if (Mathf.Abs(outputBottom - (inputTop + 2f)) > 1f)
-                {
-                    outputRt.offsetMin = new Vector2(outputRt.offsetMin.x, inputTop + 2f);
-                    Plugin.Log.LogInfo($"[UI] output 底边对齐输入栏：{outputBottom:0.#} → {inputTop + 2f:0.#}");
                 }
             }
 
@@ -836,20 +799,12 @@ namespace IcarusII.UI
                 return false;
             }
 
-            // 正文容器在 prefab 里没给 → 运行期补一块（按你排好的标题/输入框位置自动夹在中间）。
             if (content == null)
             {
-                CreateTranscript(panel, font, autoFit: true);
-                if (_content == null)
-                {
-                    Plugin.Log.LogWarning("[UI] prefab 里没有正文容器，运行期补建也失败了，退回代码界面。");
-                    return false;
-                }
-                scroll = _scroll;
-                content = _content;
-                Plugin.Log.LogInfo("[UI] prefab 未提供正文区，已在运行期补建 Scroll/Viewport/Content。");
+                Plugin.Log.LogWarning("[UI] prefab 缺少正文容器 output/scroll-view/viewport/content");
+                return false;
             }
-            else if (scroll == null)
+            if (scroll == null)
             {
                 scroll = content.GetComponentInParent<ScrollRect>();
             }
@@ -2677,192 +2632,36 @@ namespace IcarusII.UI
         /// 找到/补建左侧 chat-index，并在里面建一个可滚动的提问列表。
         /// 用户只在 prefab 里摆了容器；列表内容全部由运行期按聊天记录生成。
         /// </summary>
-        /// <summary>
-        /// 原生 ScrollRect 的滚动条默认在 viewport 外侧，正好压在正文黑底边缘。
-        /// 这里把正文滚动条往内收 8px，并让 viewport 让出同样的宽度。
-        /// </summary>
-        private void InsetBodyScrollbar()
-        {
-            if (_panel == null) return;
-            var scrollbar = _panel.Find("output/scroll-view/Scrollbar Vertical") as RectTransform;
-            if (scrollbar == null) return;
-
-            var pos = scrollbar.anchoredPosition;
-            pos.x = -8f;
-            scrollbar.anchoredPosition = pos;
-
-            var viewport = _panel.Find("output/scroll-view/viewport") as RectTransform;
-            if (viewport != null)
-            {
-                var size = viewport.sizeDelta;
-                size.x = -8f;
-                viewport.sizeDelta = size;
-            }
-        }
-
-        /// <summary>
-        /// 删除按钮的背景块：默认透明，鼠标进入 × 区域时整体变红；× 文字颜色不变。
-        /// 如果 prefab 的 delete 自带 Image/bg，就复用它；否则运行期补一块。
-        /// </summary>
-        private static Graphic EnsureDeleteBackground(Transform delete)
-        {
-            if (delete == null) return null;
-            var graphic = delete.GetComponent<Graphic>();
-            if (graphic != null) return graphic;
-
-            var bgTf = delete.Find("bg") as RectTransform;
-            var created = bgTf == null;
-            if (created)
-            {
-                bgTf = UiFactory.Node("bg", delete);
-                UiFactory.Stretch(bgTf);
-                bgTf.SetAsFirstSibling();
-            }
-
-            var image = bgTf.GetComponent<Image>();
-            if (image == null)
-            {
-                image = bgTf.gameObject.AddComponent<Image>();
-                image.color = Color.clear;
-                created = true;
-            }
-            if (created) image.raycastTarget = false;
-            return image;
-        }
-
         private void EnsureChatIndex()
         {
             if (_panel == null) return;
 
+            _chatIndex = _panel.Find("chat-index") as RectTransform;
             if (_chatIndex == null)
             {
-                _chatIndex = _panel.Find("chat-index") as RectTransform;
-                if (_chatIndex == null)
-                {
-                    _chatIndex = UiFactory.Node("chat-index", _panel);
-                    _chatIndex.anchorMin = new Vector2(0f, 0f);
-                    _chatIndex.anchorMax = new Vector2(0f, 1f);
-                    _chatIndex.pivot = new Vector2(0f, 0.5f);
-                    _chatIndex.anchoredPosition = new Vector2(40f, -4f);
-                    _chatIndex.sizeDelta = new Vector2(250f, -88f);
-                    Plugin.Log.LogInfo("[UI] prefab 没有 chat-index，按默认位置补建");
-                }
+                Plugin.Log.LogWarning("[UI] prefab 缺少 chat-index，索引不可用");
+                return;
             }
 
-            if (_chatIndex.GetComponent<Image>() == null)
-            {
-                var bg = _chatIndex.gameObject.AddComponent<Image>();
-                bg.color = new Color(0f, 0f, 0f, 0.56f);
-                bg.raycastTarget = false;
-            }
-
-            // 不要标题：旧 bundle 里若残留 chat-index-header，直接隐藏。
-            var oldHeader = _chatIndex.Find("chat-index-header");
-            if (oldHeader != null) oldHeader.gameObject.SetActive(false);
+            var scrollRt = _chatIndex.Find("chat-index-scroll") as RectTransform;
+            var viewport = scrollRt != null ? scrollRt.Find("viewport") as RectTransform : null;
+            _chatIndexScroll = scrollRt != null ? scrollRt.GetComponent<ScrollRect>() : null;
+            _chatIndexContent = viewport != null ? viewport.Find("content") as RectTransform : null;
+            _chatIndexTemplate = _chatIndexContent != null
+                ? _chatIndexContent.Find("turn-row-template") as RectTransform
+                : null;
+            var emptyRt = _chatIndex.Find("chat-index-empty") as RectTransform;
+            _chatIndexEmpty = emptyRt != null ? emptyRt.GetComponent<Text>() : null;
             _chatIndexTitle = null;
 
-            if (_chatIndexScroll == null)
+            if (_chatIndexScroll == null || _chatIndexContent == null || _chatIndexTemplate == null)
             {
-                var scrollRt = _chatIndex.Find("chat-index-scroll") as RectTransform;
-                if (scrollRt == null)
-                {
-                    scrollRt = UiFactory.Node("chat-index-scroll", _chatIndex);
-                    scrollRt.anchorMin = Vector2.zero;
-                    scrollRt.anchorMax = Vector2.one;
-                    scrollRt.pivot = new Vector2(0.5f, 0.5f);
-                    scrollRt.offsetMin = new Vector2(4f, 4f);
-                    scrollRt.offsetMax = new Vector2(-4f, -4f);
-                }
-
-                // 透明 Image：给 ScrollRect 一个可接收滚轮/拖拽的 raycast 目标。
-                var hit = scrollRt.GetComponent<Image>();
-                if (hit == null)
-                {
-                    hit = scrollRt.gameObject.AddComponent<Image>();
-                    hit.color = new Color(0f, 0f, 0f, 0f);
-                    hit.raycastTarget = true;
-                }
-
-                var viewport = scrollRt.Find("viewport") as RectTransform;
-                if (viewport == null)
-                {
-                    viewport = UiFactory.Node("viewport", scrollRt);
-                    UiFactory.Stretch(viewport);
-                }
-                if (viewport.GetComponent<RectMask2D>() == null)
-                    viewport.gameObject.AddComponent<RectMask2D>();
-
-                var content = viewport.Find("content") as RectTransform;
-                if (content == null)
-                {
-                    content = UiFactory.Node("content", viewport);
-                    content.anchorMin = new Vector2(0f, 1f);
-                    content.anchorMax = new Vector2(1f, 1f);
-                    content.pivot = new Vector2(0.5f, 1f);
-                    content.anchoredPosition = Vector2.zero;
-                    content.sizeDelta = Vector2.zero;
-                }
-
-                var vlg = content.GetComponent<VerticalLayoutGroup>();
-                if (vlg == null) vlg = content.gameObject.AddComponent<VerticalLayoutGroup>();
-                vlg.padding = new RectOffset(2, 2, 2, 2);
-                vlg.spacing = 2f;
-                vlg.childControlWidth = true;
-                vlg.childControlHeight = true;
-                vlg.childForceExpandWidth = true;
-                vlg.childForceExpandHeight = false;
-                vlg.childAlignment = TextAnchor.UpperLeft;
-
-                var fitter = content.GetComponent<ContentSizeFitter>();
-                if (fitter == null) fitter = content.gameObject.AddComponent<ContentSizeFitter>();
-                fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
-                fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-                var scroll = scrollRt.GetComponent<ScrollRect>();
-                if (scroll == null) scroll = scrollRt.gameObject.AddComponent<ScrollRect>();
-                scroll.viewport = viewport;
-                scroll.content = content;
-                scroll.horizontal = false;
-                scroll.vertical = true;
-                scroll.movementType = ScrollRect.MovementType.Clamped;
-                scroll.elasticity = 0.08f;
-                scroll.inertia = true;
-                scroll.decelerationRate = 0.135f;
-                scroll.scrollSensitivity = 24f;
-
-                _chatIndexScroll = scroll;
-                _chatIndexContent = content;
+                Plugin.Log.LogWarning(
+                    "[UI] prefab 的 chat-index 结构不完整：需要 scroll/viewport/content/turn-row-template");
+                return;
             }
 
-            if (_chatIndexContent == null) return;
-
-            if (_chatIndexTemplate == null)
-            {
-                _chatIndexTemplate = _chatIndexContent.Find("turn-row-template") as RectTransform;
-                if (_chatIndexTemplate != null) _chatIndexTemplate.gameObject.SetActive(false);
-            }
-
-            if (_chatIndexEmpty == null)
-            {
-                var emptyRt = _chatIndex.Find("chat-index-empty") as RectTransform;
-                if (emptyRt == null)
-                {
-                    emptyRt = UiFactory.Node("chat-index-empty", _chatIndex);
-                    emptyRt.anchorMin = Vector2.zero;
-                    emptyRt.anchorMax = Vector2.one;
-                    emptyRt.offsetMin = new Vector2(4f, 4f);
-                    emptyRt.offsetMax = new Vector2(-4f, -4f);
-                }
-                _chatIndexEmpty = emptyRt.GetComponent<Text>();
-                if (_chatIndexEmpty == null)
-                {
-                    _chatIndexEmpty = UiFactory.AddLabel(emptyRt, _bodyFont, 12,
-                        _textDim, TextAnchor.MiddleCenter);
-                }
-                _chatIndexEmpty.text = Strings.Get("chat.index.empty");
-                _chatIndexEmpty.raycastTarget = false;
-            }
-
+            _chatIndexTemplate.gameObject.SetActive(false);
             if (_hostCanvas != null)
                 SetLayerRecursively(_chatIndex, _hostCanvas.gameObject.layer);
 
@@ -2900,12 +2699,12 @@ namespace IcarusII.UI
         private void CreateIndexRow(TurnEntry entry)
         {
             if (entry == null || _chatIndexContent == null || entry.Row != null) return;
-            if (_chatIndexTemplate != null)
+            if (_chatIndexTemplate == null)
             {
-                CreateIndexRowFromTemplate(entry);
+                Plugin.Log.LogWarning("[UI] prefab 缺少 turn-row-template，索引行无法创建");
                 return;
             }
-            CreateIndexRowFallback(entry);
+            CreateIndexRowFromTemplate(entry);
         }
 
         /// <summary>克隆 prefab 里的 turn-row-template；链接/删除按钮都在 prefab 里定义。</summary>
@@ -2922,9 +2721,8 @@ namespace IcarusII.UI
 
             if (label == null || delTf == null || linkTf == null)
             {
-                // prefab 结构不完整：退回运行期构建，不让索引整块消失。
+                Plugin.Log.LogWarning("[UI] prefab 的 turn-row-template 结构不完整");
                 UnityEngine.Object.Destroy(go);
-                CreateIndexRowFallback(entry);
                 return;
             }
 
@@ -2959,7 +2757,10 @@ namespace IcarusII.UI
             int delId = entry.Id;
             hover.Clicked += () => FocusTurn(linkId);
             hover.DeleteClicked += () => DeleteTurn(delId);
-            hover.SetDeleteBackground(EnsureDeleteBackground(delTf));
+            var deleteBg = delTf.Find("bg") != null
+                ? delTf.Find("bg").GetComponent<Graphic>()
+                : delTf.GetComponent<Graphic>();
+            hover.SetDeleteBackground(deleteBg);
             hover.DeleteHoverChanged += OnIndexDeleteHoverChanged;
             entry.Row = go;
             entry.Link = label;
@@ -2971,72 +2772,6 @@ namespace IcarusII.UI
 
             if (_hostCanvas != null)
                 SetLayerRecursively(go.transform, _hostCanvas.gameObject.layer);
-            RefreshIndexEmpty();
-        }
-
-        private void CreateIndexRowFallback(TurnEntry entry)
-        {
-            if (entry == null || _chatIndexContent == null || entry.Row != null) return;
-
-            var row = UiFactory.Node("turn-" + entry.Id, _chatIndexContent);
-            var le = row.gameObject.AddComponent<LayoutElement>();
-            le.minHeight = 24f;
-            le.preferredHeight = 24f;
-            var rowBg = row.gameObject.AddComponent<Image>();
-            rowBg.color = Color.clear;
-            rowBg.raycastTarget = true;
-
-            var linkRt = UiFactory.Node("link", row);
-            linkRt.anchorMin = Vector2.zero;
-            linkRt.anchorMax = Vector2.one;
-            linkRt.offsetMin = new Vector2(4f, 0f);
-            linkRt.offsetMax = new Vector2(-24f, 0f);
-
-            var link = UiFactory.AddLabel(linkRt, _bodyFont, Mathf.Max(10, _fontSize - 2),
-                _accent, TextAnchor.MiddleLeft);
-            link.text = IndexLabel(entry.Text);
-            link.supportRichText = false;
-            link.horizontalOverflow = HorizontalWrapMode.Overflow;
-            link.verticalOverflow = VerticalWrapMode.Truncate;
-            link.wideCharSpacing = 1f;
-            link.raycastTarget = true;
-
-            // 链接不使用 Button；行级 hover 负责 click + 显示删除按钮。
-
-            var delRt = UiFactory.Node("delete", row);
-            delRt.anchorMin = new Vector2(1f, 0.5f);
-            delRt.anchorMax = new Vector2(1f, 0.5f);
-            delRt.pivot = new Vector2(1f, 0.5f);
-            delRt.sizeDelta = new Vector2(20f, 20f);
-            delRt.anchoredPosition = new Vector2(-2f, 0f);
-
-            var delBg = delRt.gameObject.AddComponent<Image>();
-            delBg.color = new Color(1f, 1f, 1f, 0.01f);
-            delBg.raycastTarget = true;
-            delRt.gameObject.SetActive(false);
-
-            var delText = UiFactory.AddLabel(delRt, _bodyFont, Mathf.Max(12, _fontSize),
-                _textDim, TextAnchor.MiddleCenter);
-            delText.text = "×";
-            delText.raycastTarget = false;
-
-
-            var hover = row.gameObject.AddComponent<ChatIndexRowHover>();
-            hover.DeleteButton = delRt.gameObject;
-            hover.DeleteArea = delRt;
-            hover.HoverBackground = rowBg;
-            int linkId = entry.Id;
-            int delId = entry.Id;
-            hover.Clicked += () => FocusTurn(linkId);
-            hover.DeleteClicked += () => DeleteTurn(delId);
-            hover.SetDeleteBackground(delBg);
-            hover.DeleteHoverChanged += OnIndexDeleteHoverChanged;
-            entry.Row = row.gameObject;
-            entry.Link = link;
-            entry.Hover = hover;
-            hover.SetSelected(entry.Id == _focusedTurnId);
-            if (_hostCanvas != null)
-                SetLayerRecursively(row, _hostCanvas.gameObject.layer);
             RefreshIndexEmpty();
         }
 
@@ -3221,38 +2956,17 @@ namespace IcarusII.UI
         {
             if (_chatIndexTooltip != null || _panel == null) return;
 
-            var rt = UiFactory.Node("chat-index-tooltip", _panel);
-            rt.anchorMin = new Vector2(0.5f, 0.5f);
-            rt.anchorMax = new Vector2(0.5f, 0.5f);
-            rt.pivot = new Vector2(0f, 0f);
-            rt.sizeDelta = new Vector2(86f, 24f);
-            rt.anchoredPosition = Vector2.zero;
+            _chatIndexTooltip = _panel.Find("chat-index-tooltip") as RectTransform;
+            if (_chatIndexTooltip == null)
+            {
+                Plugin.Log.LogWarning("[UI] prefab 缺少 chat-index-tooltip，删除提示不可用");
+                return;
+            }
 
-            var bg = rt.gameObject.AddComponent<Image>();
-            bg.color = new Color(0.02f, 0.03f, 0.04f, 0.96f);
-            bg.raycastTarget = false;
-
-            var outline = rt.gameObject.AddComponent<Outline>();
-            outline.effectColor = new Color(1f, 0.30f, 0.25f, 0.45f);
-            outline.effectDistance = new Vector2(1f, -1f);
-
-            var labelRt = UiFactory.Node("label", rt);
-            labelRt.anchorMin = Vector2.zero;
-            labelRt.anchorMax = Vector2.one;
-            labelRt.offsetMin = new Vector2(8f, 0f);
-            labelRt.offsetMax = new Vector2(-8f, 0f);
-
-            _chatIndexTooltipText = UiFactory.AddLabel(labelRt, _bodyFont, 12,
-                new Color(1f, 0.48f, 0.40f, 1f), TextAnchor.MiddleLeft);
-            _chatIndexTooltipText.text = Strings.Get("chat.index.delete.tip");
-            _chatIndexTooltipText.raycastTarget = false;
-            _chatIndexTooltipText.horizontalOverflow = HorizontalWrapMode.Overflow;
-            _chatIndexTooltipText.verticalOverflow = VerticalWrapMode.Truncate;
-
-            rt.gameObject.SetActive(false);
-            if (_hostCanvas != null)
-                SetLayerRecursively(rt, _hostCanvas.gameObject.layer);
-            _chatIndexTooltip = rt;
+            _chatIndexTooltipText = _chatIndexTooltip.Find("label") != null
+                ? _chatIndexTooltip.Find("label").GetComponent<Text>()
+                : _chatIndexTooltip.GetComponentInChildren<Text>(true);
+            _chatIndexTooltip.gameObject.SetActive(false);
         }
 
         private void ShowChatIndexTooltip(Vector2 screenPosition, string text)
@@ -3867,7 +3581,6 @@ namespace IcarusII.UI
             {
                 _caretPrimed = false;
             }
-            if (IsOpen) EnsureInputContentLayout();
 
             // 图标表可能比窗口/消息晚就绪（主菜单 → 存档加载）；低频补齐即可。
             if (IsOpen && ++_iconMapTick % 30 == 0) EnsureIconMappings();
