@@ -578,6 +578,7 @@ namespace IcarusII.UI
 
             ApplyHostScaleAndLayer();
             EnsureChatIndex();
+            InsetBodyScrollbar();
             ApplySoftTextMaterials();
 
             // 窗口可能是在收到 save.bound/欢迎语之后才第一次打开的：
@@ -1287,7 +1288,7 @@ namespace IcarusII.UI
 
             // 正文与状态栏的文字颜色（聊天内容配色，不是窗口外观）。
             // 用户气泡与 prefab 助手正文保留 prefab 颜色；只给系统行和代码兜底项上色。
-            var generalIcons = TryGetGeneralIconMapping();
+            var generalIcons = TryGetChatIconMapping() ?? TryGetGeneralIconMapping();
             foreach (var item in _items)
             {
                 if (item.Label == null) continue;
@@ -1897,7 +1898,7 @@ namespace IcarusII.UI
             bodyText.supportRichText = true;
             bodyText.lineSpacing = 1f;
             bodyText.wideCharSpacing = 1f;
-            AssignIconMapping(bodyText, TryGetGeneralIconMapping());
+            AssignIconMapping(bodyText, TryGetChatIconMapping() ?? TryGetGeneralIconMapping());
 
             var headerButton = headerRt.gameObject.AddComponent<Button>();
             headerButton.transition = Selectable.Transition.None;
@@ -2676,6 +2677,29 @@ namespace IcarusII.UI
         /// 找到/补建左侧 chat-index，并在里面建一个可滚动的提问列表。
         /// 用户只在 prefab 里摆了容器；列表内容全部由运行期按聊天记录生成。
         /// </summary>
+        /// <summary>
+        /// 原生 ScrollRect 的滚动条默认在 viewport 外侧，正好压在正文黑底边缘。
+        /// 这里把正文滚动条往内收 8px，并让 viewport 让出同样的宽度。
+        /// </summary>
+        private void InsetBodyScrollbar()
+        {
+            if (_panel == null) return;
+            var scrollbar = _panel.Find("output/scroll-view/Scrollbar Vertical") as RectTransform;
+            if (scrollbar == null) return;
+
+            var pos = scrollbar.anchoredPosition;
+            pos.x = -8f;
+            scrollbar.anchoredPosition = pos;
+
+            var viewport = _panel.Find("output/scroll-view/viewport") as RectTransform;
+            if (viewport != null)
+            {
+                var size = viewport.sizeDelta;
+                size.x = -8f;
+                viewport.sizeDelta = size;
+            }
+        }
+
         private void EnsureChatIndex()
         {
             if (_panel == null) return;
@@ -3174,7 +3198,7 @@ namespace IcarusII.UI
             rt.anchorMin = new Vector2(0.5f, 0.5f);
             rt.anchorMax = new Vector2(0.5f, 0.5f);
             rt.pivot = new Vector2(0f, 0f);
-            rt.sizeDelta = new Vector2(170f, 24f);
+            rt.sizeDelta = new Vector2(86f, 24f);
             rt.anchoredPosition = Vector2.zero;
 
             var bg = rt.gameObject.AddComponent<Image>();
@@ -3217,7 +3241,7 @@ namespace IcarusII.UI
 
             var panelRect = _panel.rect;
             var size = _chatIndexTooltip.rect.size;
-            if (size.x < 1f || size.y < 1f) size = new Vector2(170f, 24f);
+            if (size.x < 1f || size.y < 1f) size = new Vector2(86f, 24f);
             var pos = local + new Vector2(12f, 18f);
             pos.x = Mathf.Clamp(pos.x, panelRect.xMin + 4f, panelRect.xMax - size.x - 4f);
             pos.y = Mathf.Clamp(pos.y, panelRect.yMin + 4f, panelRect.yMax - size.y - 4f);
@@ -3273,7 +3297,7 @@ namespace IcarusII.UI
 
                 // 图标映射优先用游戏全局表（包含物品/建筑/科技/矿脉的 \tag; 短码），
                 // 这样 AI 结果里的 iconTag 才能真正画出来。输入框那份只是兜底。
-                AssignIconMapping(label, TryGetGeneralIconMapping());
+                AssignIconMapping(label, TryGetChatIconMapping() ?? TryGetGeneralIconMapping());
                 if (label.iconMapping == null && _input != null && _input.textComponent != null)
                     AssignIconMapping(label, _input.textComponent.iconMapping);
             }
@@ -3301,7 +3325,7 @@ namespace IcarusII.UI
             label.verticalOverflow = VerticalWrapMode.Overflow;
             label.supportRichText = true;
             label.raycastTarget = false;
-            AssignIconMapping(label, TryGetGeneralIconMapping());
+            AssignIconMapping(label, TryGetChatIconMapping() ?? TryGetGeneralIconMapping());
             GameTextStyle.Apply(label);
             return rt.gameObject;
         }
@@ -3352,6 +3376,38 @@ namespace IcarusII.UI
 
         private static UnityEngine.UI.Youthcat.TextIconMapping _iconTagSource;
         private static HashSet<string> _iconTags;
+        private static UnityEngine.UI.Youthcat.TextIconMapping _chatIconMapping;
+        private static UnityEngine.UI.Youthcat.TextIconMapping _chatIconMappingSource;
+
+        /// <summary>
+        /// 聊天窗专用图标表：图标背景/描边由 TextGenerator 按 IconConfig.size 生成。
+        /// 原生大图标约 32px；聊天正文用 24px 时暗色底板的硬边会明显缩锯齿。
+        /// 这里复制全局表，只把 size 放大，不改 UV/outline。
+        /// </summary>
+        private static UnityEngine.UI.Youthcat.TextIconMapping TryGetChatIconMapping()
+        {
+            var source = TryGetGeneralIconMapping();
+            if (source == null || source.iconMappings == null) return null;
+            if (_chatIconMapping != null && ReferenceEquals(_chatIconMappingSource, source))
+                return _chatIconMapping;
+
+            var mappings = new UnityEngine.UI.Youthcat.TextIconMapping.IconConfig[source.iconMappings.Length];
+            for (int i = 0; i < source.iconMappings.Length; i++)
+            {
+                var entry = source.iconMappings[i];
+                if (entry == null) continue;
+                mappings[i] = new UnityEngine.UI.Youthcat.TextIconMapping.IconConfig(
+                    entry.name, entry.tag, entry.uvMin, entry.uvMax,
+                    new Vector2(32f, 32f), entry.outline);
+            }
+
+            var copy = ScriptableObject.CreateInstance<UnityEngine.UI.Youthcat.TextIconMapping>();
+            copy.iconMappings = mappings;
+            copy.Refresh();
+            _chatIconMapping = copy;
+            _chatIconMappingSource = source;
+            return copy;
+        }
 
         /// <summary>当前全局图标表里能真正渲染的 tag 集合；表没就绪时返回 null。</summary>
         private static HashSet<string> GetValidIconTags()
@@ -3399,36 +3455,37 @@ namespace IcarusII.UI
                 _iconMapReady = false;
                 return;
             }
+            var icons = TryGetChatIconMapping() ?? general;
 
             var valid = GetValidIconTags();
             if (valid == null || valid.Count == 0)
             {
                 // 表对象有了但条目还没填充：先挂上，等条目就绪后再清理文本。
-                AssignIconMapping(_transcript, general);
-                foreach (var item in _items) AssignIconMapping(item.Label, general);
-                if (_thinking != null) AssignIconMapping(_thinking.Body, general);
-                foreach (var block in _toolBlocks.Values) AssignIconMapping(block.Body, general);
+                AssignIconMapping(_transcript, icons);
+                foreach (var item in _items) AssignIconMapping(item.Label, icons);
+                if (_thinking != null) AssignIconMapping(_thinking.Body, icons);
+                foreach (var block in _toolBlocks.Values) AssignIconMapping(block.Body, icons);
                 return;
             }
 
             var firstReady = !_iconMapReady;
             _iconMapReady = true;
 
-            AssignIconMapping(_transcript, general);
+            AssignIconMapping(_transcript, icons);
             foreach (var item in _items)
             {
                 if (firstReady) ResanitizeLabel(item.Label);
-                AssignIconMapping(item.Label, general);
+                AssignIconMapping(item.Label, icons);
             }
             if (_thinking != null)
             {
                 if (firstReady) ResanitizeLabel(_thinking.Body);
-                AssignIconMapping(_thinking.Body, general);
+                AssignIconMapping(_thinking.Body, icons);
             }
             foreach (var block in _toolBlocks.Values)
             {
                 if (firstReady) ResanitizeLabel(block.Body);
-                AssignIconMapping(block.Body, general);
+                AssignIconMapping(block.Body, icons);
             }
         }
 
