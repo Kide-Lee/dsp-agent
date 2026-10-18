@@ -25,8 +25,16 @@ namespace IcarusII.EditorTools
     /// </summary>
     public static class IcarusIIBundleBuilder
     {
-        private const string PrefabPath = "Assets/IcarusII/IcarusIIWindow.prefab";
+        /// <summary>
+        /// 打包用的窗口 prefab：**你在 Unity 里手工做的 `ChatWindow.prefab`**。
+        /// 这份由你维护，我们只做加法（`IcarusIIWindowTransplant`）或核对结构；
+        /// 生成器默认拒绝覆盖它。
+        /// bundle 里的资源名仍然是 `IcarusIIWindow`（见 AssetName），mod 侧不用改。
+        /// </summary>
+        private const string PrefabPath = "Assets/IcarusII/ChatWindow.prefab";
         private const string SpriteDir = "Assets/Resources/UI/Textures/Sprites/Sci-fi/";
+        private const string IconDir = "Assets/Resources/UI/Textures/Sprites/Icons/";
+        private const string MaterialDir = "Assets/Resources/UI/Materials/";
         private const string OutputDir = "Build/IcarusIIBundle";
         private const string BundleName = "icarusii-ui";
         private const string AssetName = "IcarusIIWindow";
@@ -39,22 +47,23 @@ namespace IcarusII.EditorTools
                 ok ? "已生成：\n" + path : "打包失败，见 Console", "好");
         }
 
-        /// <summary>批处理入口：prefab 不存在时才生成，然后打包。</summary>
+        /// <summary>批处理入口：只打包，**不重建 prefab**（手工改的东西必须留着）。</summary>
         public static void BuildAll()
         {
-            if (AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath) == null)
-            {
-                Debug.Log("[IcarusII] prefab 不存在，先按脚本生成");
-                IcarusIIWindowPrefabBuilder.Build();
-            }
             Build();
         }
 
-        /// <summary>批处理入口：强制重建 prefab 后再打包（会覆盖你在 Unity 里的手改）。</summary>
-        public static void RebuildAll()
+        /// <summary>批处理入口：先给手工 prefab 做加法（幂等），再打包。</summary>
+        public static void AddPartsAndBuild()
         {
-            Debug.Log("[IcarusII] 强制重建 prefab");
-            IcarusIIWindowPrefabBuilder.Build();
+            string message;
+            if (!IcarusIIWindowTransplant.TransplantAt(PrefabPath, out message))
+            {
+                Fail("加聊天窗部件失败：" + message);
+                if (Application.isBatchMode) EditorApplication.Exit(1);
+                return;
+            }
+            Debug.Log("[IcarusII] " + message);
             Build();
         }
 
@@ -77,7 +86,9 @@ namespace IcarusII.EditorTools
 
             if (AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath) == null)
             {
-                return Fail("找不到 prefab：" + PrefabPath + "\n请先运行 Icarus II/Rebuild Window Prefab");
+                return Fail("找不到 prefab：" + PrefabPath + "\n" +
+                            "这份是手工维护的窗口 prefab；" +
+                            "如果你要的是从头生成，用 IcarusIIWindowPrefabBuilder.BuildForced()。");
             }
 
             Directory.CreateDirectory(OutputDir);
@@ -85,9 +96,13 @@ namespace IcarusII.EditorTools
             var build = new AssetBundleBuild
             {
                 assetBundleName = BundleName,
-                // 显式列出贴图：它们位于 Resources 下、会被构建进播放器；
-                // 这里再显式纳入 bundle，保证 prefab 的贴图引用在加载后一定有效，
+                // 显式列出 prefab 用到的贴图与材质：它们位于 Resources 下、会被构建进播放器；
+                // 这里再显式纳入 bundle，保证 prefab 的引用在加载后一定有效，
                 // 不依赖 Unity 的隐式依赖收集。
+                //
+                // 贴图是机甲信息窗外框那几张；材质是原生窗口给 widget/text 用的
+                // alpha 着色器（`UI Ex/Widget Alpha`、`UI Ex/Text Alpha`），
+                // 不做 5× 亮度与 alpha 曲线校正的话边框与文字会和原生对不上。
                 assetNames = new[]
                 {
                     PrefabPath,
@@ -95,6 +110,22 @@ namespace IcarusII.EditorTools
                     SpriteDir + "window-trsl-1-sd.png",
                     SpriteDir + "window-border-1.png",
                     SpriteDir + "window-glass-1.png",
+                    SpriteDir + "sci-fi-deco-1.png",
+                    IconDir + "checkbox-on-2.png",
+                    IconDir + "insert-icon-40.png",
+                    // 关闭/菜单按钮（照抄游戏窗口的 btn-box）
+                    SpriteDir + "hex-bg-30.png",
+                    SpriteDir + "hex-border-up-30.png",
+                    SpriteDir + "close-x-m.png",
+                    SpriteDir + "hex-btn-r-bg-30.png",
+                    SpriteDir + "hex-btn-l-bg-30.png",
+                    IconDir + "popup-menu-entry-icon-0.png",
+                    SpriteDir + "litter-panel-cc.png",
+                    MaterialDir + "widget-alpha-5x.mat",
+                    MaterialDir + "widget-text-alpha-5x.mat",
+                    MaterialDir + "widget-text-alpha-5x-thick.mat",
+                    MaterialDir + "trsl-panel-0.mat",
+                    MaterialDir + "trsl-panel-3.mat",
                 },
                 addressableNames = new[]
                 {
@@ -103,6 +134,21 @@ namespace IcarusII.EditorTools
                     "window-trsl-1-sd",
                     "window-border-1",
                     "window-glass-1",
+                    "sci-fi-deco-1",
+                    "checkbox-on-2",
+                    "insert-icon-40",
+                    "hex-bg-30",
+                    "hex-border-up-30",
+                    "close-x-m",
+                    "hex-btn-r-bg-30",
+                    "hex-btn-l-bg-30",
+                    "popup-menu-entry-icon-0",
+                    "litter-panel-cc",
+                    "widget-alpha-5x",
+                    "widget-text-alpha-5x",
+                    "widget-text-alpha-5x-thick",
+                    "trsl-panel-0",
+                    "trsl-panel-3",
                 },
             };
 

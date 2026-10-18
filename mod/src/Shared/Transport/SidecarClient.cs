@@ -158,17 +158,56 @@ namespace IcarusII.Common.Transport
 
         /// <summary>发一条 prompt；返回消息 id，供 UI 关联回复。</summary>
         /// <summary>
-        /// 上报配置（provider/model/apiKey）。apiKey 只在此方向传输一次；
+        /// 上报配置（provider/model/apiKey/thinkingLevel）。apiKey 只在此方向传输一次；
         /// 调用方必须确保它不被写进日志或聊天记录。
         /// </summary>
         public string SendConfigSet(string provider = null, string model = null,
-            string apiKey = null, string baseUrl = null)
+            string apiKey = null, string baseUrl = null, string thinkingLevel = null,
+            JsonValue providerConfig = null, JsonValue removeProviders = null,
+            string activeProvider = null, string activeModel = null)
         {
             if (_state != ConnectionState.Ready) return null;
 
             var env = Protocol.Protocol.Envelope(
                 Protocol.Protocol.ConfigSet,
-                Protocol.Protocol.BuildConfigSet(provider, model, apiKey, baseUrl),
+                Protocol.Protocol.BuildConfigSet(provider, model, apiKey, baseUrl, thinkingLevel,
+                    providerConfig, removeProviders, activeProvider, activeModel),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
+        /// <summary>
+        /// 拉取某供应商的可用模型目录（M3）。apiKey 只用于本次探测；
+        /// 响应是 `model.catalog`，通过 <see cref="Received"/> 事件按 replyTo 关联。
+        /// </summary>
+        public string SendModelCatalog(string provider, string baseUrl = null, string apiKey = null)
+        {
+            if (_state != ConnectionState.Ready || string.IsNullOrEmpty(provider)) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ModelCatalog,
+                Protocol.Protocol.BuildModelCatalogRequest(provider, baseUrl, apiKey),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
+        /// <summary>
+        /// 检测某供应商的 Key/端点是否可用（M3）。响应是 `provider.test`，
+        /// 通过 <see cref="Received"/> 事件按 replyTo 关联；key 不会回传。
+        /// </summary>
+        public string SendProviderTest(string provider, string baseUrl = null, string apiKey = null)
+        {
+            if (_state != ConnectionState.Ready || string.IsNullOrEmpty(provider)) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ProviderTest,
+                Protocol.Protocol.BuildProviderTestRequest(provider, baseUrl, apiKey),
                 NextId(), null);
 
             _sendQueue.Enqueue(env);
@@ -192,6 +231,25 @@ namespace IcarusII.Common.Transport
             _sendQueue.Enqueue(env);
             try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
             return env["id"].AsString();
+        }
+
+        /// <summary>
+        /// 回传一次 tool_result（协议附录 B）。`replyTo` 是 sidecar 发来的 callId。
+        /// 连接未就绪时返回 false；调用方无需重试（sidecar 侧会超时）。
+        /// </summary>
+        public bool SendToolResult(string callId, bool ok, JsonValue data,
+            string errorCode, string errorMessage, JsonValue meta)
+        {
+            if (_state != ConnectionState.Ready || string.IsNullOrEmpty(callId)) return false;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ToolResult,
+                Protocol.Protocol.BuildToolResult(callId, ok, data, errorCode, errorMessage, meta),
+                NextId(), callId);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return true;
         }
 
         private void UpdateConfig(Protocol.ConfigState next)

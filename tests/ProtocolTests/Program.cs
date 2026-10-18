@@ -258,6 +258,11 @@ namespace IcarusII.Tests
             Eq("只传 key 时字段数", 1, keyOnly.Count);
             Eq("只传 key 时 key 存在", "sk-x", keyOnly["apiKey"].AsString());
 
+            var cfgThink = Protocol.BuildConfigSet(null, null, null, null, "high");
+            Eq("config.set thinkingLevel", "high", cfgThink["thinkingLevel"].AsString());
+            var cfgNoThink = Protocol.BuildConfigSet(null, null, null, null, null);
+            Check("config.set 未给出 thinkingLevel 不写入", !cfgNoThink.Has("thinkingLevel"));
+
             // ready.payload.config（附录 A.2）
             var ready = JsonValue.Parse(
                 "{\"protocol\":1,\"sessionId\":\"sess_1\",\"agent\":\"pi/deepseek-v4-flash\"," +
@@ -274,6 +279,11 @@ namespace IcarusII.Tests
             Check("ready 视为就绪", cs.IsReady);
             Check("ready 不需要录入", !cs.NeedsKey);
             Eq("config.state.model", "deepseek-v4-pro", cs.Model);
+            Check("缺 thinkingLevel 时为 null", cs.ThinkingLevel == null);
+
+            var csThink = ConfigState.Parse(JsonValue.Parse(
+                "{\"state\":\"ready\",\"model\":\"deepseek-v4-pro\",\"thinkingLevel\":\"max\"}"));
+            Eq("config.state.thinkingLevel", "max", csThink.ThinkingLevel);
 
             var bad = ConfigState.Parse(JsonValue.Parse("{\"state\":\"invalid_key\"}"));
             Check("invalid_key 需要重新录入", bad.NeedsKey);
@@ -289,6 +299,92 @@ namespace IcarusII.Tests
             var legacy = ConfigState.AssumeReady();
             Check("缺 config 字段时假定为就绪", legacy.IsReady);
             Check("缺 config 字段时不要求录入", !legacy.NeedsKey);
+
+            // ---- M3：多供应商 / 多模型 ----
+            var providerPatch = JsonValue.NewObject();
+            var openai = JsonValue.NewObject();
+            openai.Set("apiKey", "sk-openai");
+            openai.Set("baseUrl", "https://api.openai.com/v1");
+            var openaiModels = JsonValue.NewArray();
+            var gpt = JsonValue.NewObject();
+            gpt.Set("id", "gpt-4o");
+            gpt.Set("name", "GPT-4o");
+            openaiModels.Add(gpt);
+            openai.Set("models", openaiModels);
+            providerPatch.Set("openai", openai);
+
+            var multiSet = Protocol.BuildConfigSet(null, null, null, null, null,
+                providerPatch, null, "openai", "gpt-4o");
+            Eq("config.set providerConfig.apiKey",
+                "sk-openai", multiSet["providerConfig"]["openai"]["apiKey"].AsString());
+            Eq("config.set activeProvider", "openai", multiSet["activeProvider"].AsString());
+            Eq("config.set activeModel", "gpt-4o", multiSet["activeModel"].AsString());
+            Eq("config.set models[0].name",
+                "GPT-4o", multiSet["providerConfig"]["openai"]["models"][0]["name"].AsString());
+
+            var stateMulti = ConfigState.Parse(JsonValue.Parse(
+                "{\"state\":\"ready\",\"provider\":\"openai\",\"model\":\"gpt-4o\"," +
+                "\"providers\":[" +
+                "{\"id\":\"deepseek\",\"name\":\"DeepSeek\",\"hasKey\":true,\"models\":" +
+                "[{\"id\":\"deepseek-v4-flash\",\"name\":\"DeepSeek V4 Flash\"}]}," +
+                "{\"id\":\"openai\",\"name\":\"OpenAI\",\"hasKey\":true,\"baseUrl\":\"https://api.openai.com/v1\"," +
+                "\"models\":[{\"id\":\"gpt-4o\",\"name\":\"GPT-4o\"}],\"isActive\":true}" +
+                "]}"));
+            Eq("config.state providers 数量", 2, stateMulti.Providers.Count);
+            Eq("config.state providers[0].name", "DeepSeek", stateMulti.Providers[0].Name);
+            Check("config.state providers[0].hasKey", stateMulti.Providers[0].HasKey);
+            Eq("config.state providers[1].models[0].id", "gpt-4o", stateMulti.Providers[1].Models[0].Id);
+            Eq("config.state providers[1].baseUrl",
+                "https://api.openai.com/v1", stateMulti.Providers[1].BaseUrl);
+
+            var legacyState = ConfigState.Parse(JsonValue.Parse(
+                "{\"state\":\"ready\",\"provider\":\"deepseek\",\"model\":\"deepseek-v4-flash\"}"));
+            Eq("老 config.state 合成一条 provider", 1, legacyState.Providers.Count);
+            Eq("老 config.state 合成一个 model", 1, legacyState.Providers[0].Models.Count);
+            Check("老 config.state provider 标记 active", legacyState.Providers[0].IsActive);
+
+            // ---- M3：模型目录 ----
+            var catalogReq = Protocol.BuildModelCatalogRequest(
+                "openai", "https://api.openai.com/v1", "sk-catalog");
+            Eq("model.catalog provider", "openai", catalogReq["provider"].AsString());
+            Eq("model.catalog baseUrl", "https://api.openai.com/v1", catalogReq["baseUrl"].AsString());
+            Eq("model.catalog apiKey", "sk-catalog", catalogReq["apiKey"].AsString());
+
+            var catalog = ModelCatalogResult.Parse(JsonValue.Parse(
+                "{\"provider\":\"openai\",\"source\":\"catalog\",\"models\":[" +
+                "{\"id\":\"gpt-4o\",\"name\":\"GPT-4o\"}," +
+                "{\"id\":\"gpt-4o-mini\"}],\"error\":null}"));
+            Eq("model.catalog provider 回显", "openai", catalog.Provider);
+            Eq("model.catalog 模型数", 2, catalog.Models.Count);
+            Eq("model.catalog models[0].name", "GPT-4o", catalog.Models[0].Name);
+            Eq("model.catalog models[1].name 缺省用 id", "gpt-4o-mini", catalog.Models[1].Name);
+            Check("model.catalog error 为空", string.IsNullOrEmpty(catalog.Error));
+
+            var catalogEmpty = ModelCatalogResult.Parse(JsonValue.Parse(
+                "{\"provider\":\"my-proxy\",\"models\":[],\"error\":\"端点没有返回模型列表\"}"));
+            Eq("model.catalog 空列表", 0, catalogEmpty.Models.Count);
+            Eq("model.catalog 错误信息", "端点没有返回模型列表", catalogEmpty.Error);
+
+            var testReq = Protocol.BuildProviderTestRequest(
+                "openai", "https://api.openai.com/v1", "sk-test");
+            Eq("provider.test provider", "openai", testReq["provider"].AsString());
+            Eq("provider.test baseUrl", "https://api.openai.com/v1", testReq["baseUrl"].AsString());
+            Eq("provider.test apiKey", "sk-test", testReq["apiKey"].AsString());
+
+            var testOk = ProviderTestResult.Parse(JsonValue.Parse(
+                "{\"provider\":\"openai\",\"ok\":true,\"status\":200," +
+                "\"latencyMs\":123,\"message\":\"Key 可用\",\"source\":\"http\"}"));
+            Check("provider.test ok", testOk.Ok);
+            Eq("provider.test status", 200, testOk.Status);
+            Eq("provider.test latency", 123, testOk.LatencyMs);
+            Eq("provider.test message", "Key 可用", testOk.Message);
+
+            var testBad = ProviderTestResult.Parse(JsonValue.Parse(
+                "{\"provider\":\"openai\",\"ok\":false,\"status\":401," +
+                "\"latencyMs\":80,\"message\":\"API Key 被拒绝（HTTP 401）\",\"source\":\"http\"}"));
+            Check("provider.test 失败", !testBad.Ok);
+            Eq("provider.test 失败状态", 401, testBad.Status);
+            Eq("provider.test 失败信息", "API Key 被拒绝（HTTP 401）", testBad.Message);
 
             // ---- 附录 A.6：存档 ↔ 对话串绑定 ----
             Eq("save.bind 类型名", "save.bind", Protocol.SaveBind);
@@ -327,6 +423,52 @@ namespace IcarusII.Tests
             // 前向兼容：config.state 未来新增字段不应影响解析
             var futureCfg = ConfigState.Parse(JsonValue.Parse("{\"state\":\"ready\",\"futureField\":42}"));
             Check("config.state 未知字段被容忍", futureCfg.IsReady);
+
+            // ---- 附录 B：tool_call / tool_result ----
+            Eq("tool_call 类型名", "tool_call", Protocol.ToolCall);
+            Eq("tool_result 类型名", "tool_result", Protocol.ToolResult);
+            Eq("只读能力名", "game.read.v1", Protocol.CapabilityGameRead);
+
+            var callPayload = JsonValue.Parse(
+                "{\"callId\":\"call_1\",\"name\":\"game_get_power\"," +
+                "\"args\":{\"planetId\":3},\"risk\":0,\"timeoutMs\":8000}");
+            var call = ToolCallInfo.Parse(callPayload, null);
+            Check("tool_call 可解析", call != null);
+            Eq("tool_call callId", "call_1", call.CallId);
+            Eq("tool_call name", "game_get_power", call.Name);
+            Eq("tool_call args.planetId", 3L, call.Args["planetId"].AsLong());
+            Eq("tool_call timeout", 8000, call.TimeoutMs);
+
+            var fallback = ToolCallInfo.Parse(
+                JsonValue.Parse("{\"name\":\"game_get_overview\",\"args\":{}}"), "call_from_replyTo");
+            Check("callId 可回退到 replyTo", fallback != null && fallback.CallId == "call_from_replyTo");
+            Check("缺 name 时拒绝", ToolCallInfo.Parse(JsonValue.Parse("{\"callId\":\"c\"}"), null) == null);
+            Check("args 非对象时退化为空对象",
+                ToolCallInfo.Parse(JsonValue.Parse("{\"callId\":\"c\",\"name\":\"x\",\"args\":[]}"), null)
+                    .Args.IsObject);
+
+            var clamped = ToolCallInfo.Parse(
+                JsonValue.Parse("{\"callId\":\"c\",\"name\":\"x\",\"timeoutMs\":999999}"), null);
+            Eq("timeout 上限被钳制", 30000, clamped.TimeoutMs);
+
+            var meta = JsonValue.NewObject();
+            meta.Set("gameTick", 123);
+            var okResult = Protocol.BuildToolResult("call_1", true,
+                JsonValue.Parse("{\"display\":\"ok\"}"), null, null, meta);
+            Check("ok=true 写出", okResult["ok"].AsBool());
+            Eq("tool_result data 透传", "ok", okResult["data"]["display"].AsString());
+            Check("ok 时 error 为 null", okResult["error"].IsNull);
+            Eq("tool_result meta.gameTick", 123L, okResult["meta"]["gameTick"].AsLong());
+
+            var errResult = Protocol.BuildToolResult("call_2", false, JsonValue.Null,
+                Protocol.CodeTimeout, "超时", null);
+            Check("ok=false 写出", !errResult["ok"].AsBool());
+            Eq("error.code", "timeout", errResult["error"]["code"].AsString());
+            Eq("error.message", "超时", errResult["error"]["message"].AsString());
+            Check("meta 缺省时仍为对象", errResult["meta"].IsObject);
+
+            // 空载荷/空对象不能抛
+            Check("null 载荷不抛", ToolCallInfo.Parse(null, null) == null);
         }
 
         // ---------------------------------------------------------------- 小测试框架

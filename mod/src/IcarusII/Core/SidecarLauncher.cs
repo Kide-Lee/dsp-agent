@@ -217,7 +217,7 @@ namespace IcarusII.Core
                 ModVersion = Plugin.PluginVersion,
                 GameVersion = Game.GameRefs.GameVersion,
                 GameLanguage = Game.GameRefs.LanguageCode,
-                Capabilities = new[] { "ui.chat" },
+                Capabilities = new[] { "ui.chat", IcarusII.Common.Protocol.Protocol.CapabilityGameRead },
                 ConnectTimeoutMs = Math.Max(500, _config.ConnectTimeoutMs),
                 MinBackoffMs = 1000,
                 MaxBackoffMs = 30000,

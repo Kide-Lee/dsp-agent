@@ -27,7 +27,13 @@ namespace IcarusII.UI
             return img;
         }
 
-        public static Text AddLabel(RectTransform rt, Font font, int fontSize, Color color, TextAnchor anchor)
+        /// <param name="gameMaterial">
+        /// 是否套用游戏的 `widget-text-alpha-5x` 材质（5x 亮度 + alpha 锐化）。
+        /// 聊天窗/气泡需要它；原生设置页的 Text 用的是 Unity 默认 UI 材质，
+        /// 在设置页里必须传 false，否则 18px 字会带一圈多余的光晕。
+        /// </param>
+        public static Text AddLabel(RectTransform rt, Font font, int fontSize, Color color, TextAnchor anchor,
+            bool gameMaterial = true)
         {
             var text = rt.gameObject.AddComponent<Text>();
             text.font = font;
@@ -38,6 +44,9 @@ namespace IcarusII.UI
             text.verticalOverflow = VerticalWrapMode.Overflow;
             text.supportRichText = true;
             text.raycastTarget = false;
+            // 游戏字体图集必须配 `UI Ex/Text Alpha` 材质，否则文字暗到几乎看不见。
+            // 设置页要跟原生一致，走 Unity 默认材质（材质留空）。
+            if (gameMaterial) GameTextStyle.Apply(text);
             return text;
         }
 

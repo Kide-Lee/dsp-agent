@@ -30,6 +30,7 @@ namespace IcarusII.UI
         private static readonly ManualLogSource Log = BepInEx.Logging.Logger.CreateLogSource("IcarusII.UI");
         private static bool _attempted;
         private static GameObject _prefab;
+        private static AssetBundle _bundle;
 
         /// <summary>上一次加载的结果，用于日志与诊断。</summary>
         public static string Status { get; private set; } = "(未尝试)";
@@ -42,6 +43,27 @@ namespace IcarusII.UI
             var go = UnityEngine.Object.Instantiate(prefab, parent, false);
             go.name = "Panel";
             return go;
+        }
+
+        /// <summary>
+        /// 从同一个 bundle 里取资源（例如文字材质）。
+        /// 游戏里 `Resources.Load("UI/Materials/widget-text-alpha-5x")` 不一定能拿到
+        /// （那些材质是随场景/窗口 prefab 打包的，不在 resources.assets 里），
+        /// 所以优先用 bundle 里那份。
+        /// </summary>
+        public static T LoadAsset<T>(string assetName) where T : UnityEngine.Object
+        {
+            if (string.IsNullOrEmpty(assetName)) return null;
+            try
+            {
+                Load();   // 确保 bundle 已加载
+                return _bundle != null ? _bundle.LoadAsset<T>(assetName) : null;
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"[UI] 从 bundle 加载 {assetName} 失败：{ex.Message}");
+                return null;
+            }
         }
 
         private static GameObject Load()
@@ -67,12 +89,15 @@ namespace IcarusII.UI
                     return null;
                 }
 
+                _bundle = bundle;
+
                 _prefab = bundle.LoadAsset<GameObject>(AssetName);
                 if (_prefab == null)
                 {
                     Status = $"bundle 内没有资源 {AssetName}";
                     Log.LogWarning($"[UI] {Status}：{path}");
                     bundle.Unload(false);
+                    _bundle = null;
                     return null;
                 }
 

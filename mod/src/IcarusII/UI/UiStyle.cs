@@ -28,8 +28,17 @@ namespace IcarusII.UI
     ///    是场景直接赋给 Image 的）。因此只能从活的机体信息窗上读——
     ///    好在结构已知且稳定，**按节点名直接取**即可，不需要打分挑选。
     ///
+    /// 3. **输入框**：来源是**信标窗**（全息信标）的待办框，不是机体信息窗——
+    ///    机体窗里没有 InputField。信标窗的 `to-do-list/editor/scroll-view`
+    ///    是"无贴图 + #0000008F"的深色底，直接抄它的 `Image` 即可。
+    ///
     /// 任一来源失败时回退到旧的启发式，再失败才用内置兜底色，
     /// 保证任何情况下窗口都能建出来。
+    ///
+    /// 注：prefab 路径下这些样式**不再用来重绘窗口**（prefab 已经把
+    /// 机甲信息窗的外框和信标窗的输入框烘焙好了，见 `IcarusIIWindowPrefabBuilder`）；
+    /// 这里捕获到的文字配色与字体仍然有效（正文明暗、强调色、中文字体）。
+    /// 只有拿不到 bundle、回退到代码建界面时才会整套套用。
     /// </summary>
     internal sealed class UiStyle
     {
@@ -74,6 +83,15 @@ namespace IcarusII.UI
         private const string SpriteBackdrop = "window-trsl-1";
         private const string SpriteBorder = "window-border-1";
         private const string SpriteGlass = "window-glass-1";
+
+        /// <summary>
+        /// 信标窗（全息信标）待办框的可见底：`to-do-list/editor/scroll-view`，
+        /// 相对 Marker Window 根。prefab 里抄的就是这一块（见 `IcarusIIWindowPrefabBuilder`）。
+        /// </summary>
+        private const string NodeBeaconInput = "to-do-list/editor/scroll-view";
+
+        /// <summary>信标待办框的底色（实测：无贴图 + #0000008F）。</summary>
+        private static readonly Color BeaconInputColor = new Color(0f, 0f, 0f, 0x8F / 255f);
 
         /// <summary>机体信息窗各层的节点名（与场景结构一致）。</summary>
         private const string NodePanelBg = "panel-bg";
@@ -132,11 +150,8 @@ namespace IcarusII.UI
 
             CaptureText(reference, log);
 
-            // 输入区没有原生控件可抄（机体窗里没有 InputField），用底衬贴图 + 略暗的颜色
-            HasInput = HasPanel && PanelSprite != null;
-            InputSprite = PanelSprite;
-            InputType = PanelType;
-            InputColor = Darken(PanelColor, 0.78f);
+            // 输入区：照抄信标窗的输入框（机体窗里根本没有 InputField）
+            CaptureInput(uiRoot, log);
 
             if (!HasPanel) return false;
 
@@ -246,7 +261,56 @@ namespace IcarusII.UI
             }
         }
 
-        // ---------------------------------------------------------------- 来源 3：启发式兜底
+        // ---------------------------------------------------------------- 来源 3：信标窗的输入框
+
+        /// <summary>
+        /// 输入区样式来自**信标窗**（全息信标）的待办框 `to-do-list`
+        /// （可见底是 `editor/scroll-view` 的那张 Image）。
+        ///
+        /// 换算历史：机体信息窗里没有 InputField，早先只能"用底衬贴图 + 略暗的颜色"
+        /// 编一个输入框出来——那是猜的，已弃用。信标窗有真正的输入框
+        /// （无贴图 + #0000008F），抄它即可；文字/占位色由 prefab 烘焙。
+        /// </summary>
+        private void CaptureInput(UIRoot uiRoot, BepInEx.Logging.ManualLogSource log)
+        {
+            // 常量兜底：就是信标窗待办框 scroll-view 的实测取值
+            HasInput = true;
+            InputSprite = null;
+            InputType = Image.Type.Sliced;
+            InputColor = BeaconInputColor;
+
+            var beacon = FindBeaconWindow(uiRoot);
+            if (beacon == null)
+            {
+                log?.LogInfo("[样式] 找不到信标窗，输入框样式用内置常量（无贴图 + #0000008F）。");
+                return;
+            }
+
+            var node = beacon.transform.Find(NodeBeaconInput);
+            var img = node != null ? node.GetComponent<Image>() : null;
+            if (img == null)
+            {
+                log?.LogInfo($"[样式] 信标窗里没有 {NodeBeaconInput}，输入框样式用内置常量。");
+                return;
+            }
+
+            InputSprite = img.sprite;
+            InputType = img.type;
+            InputColor = img.color;
+            log?.LogInfo($"[样式] 输入框取自信标窗：sprite={(img.sprite != null ? img.sprite.name : "无")} color={Fmt(img.color)}");
+        }
+
+        /// <summary>信标窗（点击游戏里的全息信标后弹出的那个窗口）。</summary>
+        private static GameObject FindBeaconWindow(UIRoot uiRoot)
+        {
+            if (uiRoot == null) return null;
+            var uiGame = uiRoot.uiGame;
+            if (uiGame == null) return null;
+            try { if (uiGame.markerWindow != null) return uiGame.markerWindow.gameObject; } catch { }
+            return null;
+        }
+
+        // ---------------------------------------------------------------- 来源 4：启发式兜底
 
         /// <summary>
         /// 旧路径：按面积与名字猜测各层。只在确定性来源失效时使用，
@@ -440,16 +504,15 @@ namespace IcarusII.UI
         public void ApplyInput(Image image)
         {
             if (image == null) return;
-            if (HasInput && InputSprite != null)
+            if (HasInput)
             {
+                // 信标输入框是"没有贴图 + 极淡的白"，这里连贴图一起清掉
                 image.sprite = InputSprite;
                 image.type = InputType;
                 image.color = InputColor;
+                return;
             }
-            else
-            {
-                image.color = Darken(PanelColor, 0.8f);
-            }
+            image.color = Darken(PanelColor, 0.8f);
         }
 
         // ---------------------------------------------------------------- 工具

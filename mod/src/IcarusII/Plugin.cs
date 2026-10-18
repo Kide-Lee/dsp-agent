@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using BepInEx;
@@ -10,6 +11,7 @@ using IcarusII.Common.Transport;
 using IcarusII.Config;
 using IcarusII.Core;
 using IcarusII.Game;
+using IcarusII.Game.Tools;
 using IcarusII.Input;
 using IcarusII.I18n;
 using IcarusII.UI;
@@ -48,6 +50,7 @@ namespace IcarusII
         private SidecarClient _client;
         private HotkeyService _hotkey;
         private ChatWindow _chat;
+        private GameToolDispatcher _tools;
 
         private string _pluginDir;
         private bool _uiInitialized;
@@ -59,11 +62,17 @@ namespace IcarusII
         private bool _initFailed;
         private ConfigState _lastConfig;
 
+        /// <summary>思考档位在本地改过、但还没成功发给 sidecar（下次 ready 时补发）。</summary>
+        private bool _thinkingLevelDirty;
+
         /// <summary>最近一个已渲染终稿的 promptId，用于对重复的 message{final} 去重。</summary>
         private string _lastFinalReplyTo;
 
         /// <summary>当前存档标识（null = 主菜单）。</summary>
         private string _saveKey;
+
+        /// <summary>sidecar 内部工具调用（知识库导出）：不显示工具卡，只回结果。</summary>
+        private readonly HashSet<string> _internalCalls = new HashSet<string>(StringComparer.Ordinal);
 
         /// <summary>当前存档标识是否已经同步给服务端。</summary>
         private bool _saveSynced;
@@ -88,10 +97,13 @@ namespace IcarusII
             {
                 _config = new PluginConfig(Config);
                 _dispatcher = new MainThreadDispatcher();
+                _tools = new GameToolDispatcher(Log);
                 _hotkey = new HotkeyService(_config);
                 _chat = new ChatWindow();
                 _chat.Submitted += OnUserSubmitted;
                 _chat.KeySubmitted += OnKeySubmitted;
+                _chat.ThinkingLevelChanged += OnThinkingLevelChanged;
+                _chat.ModelSelectionChanged += OnModelSelectionChanged;
                 // 注意：_client 尚未创建（它在后台的 PrepareSidecar 里才 new），
                 // 所以它的 ConfigChanged 必须在创建之后再订阅。
                 // 这里曾经写成 _client.ConfigChanged += ...，直接 NullReference，
@@ -122,9 +134,18 @@ namespace IcarusII
 
         private void Update()
         {
+            // 设置窗口打开时自动补「模型」页签（不依赖从哪个入口进入设置）
+            UI.ModelSettingsTab.Watch();
+
             if (_initFailed) return;
 
             _dispatcher.Drain(MainThreadBudgetMs, ex => Log.LogError($"主线程任务异常：{ex}"));
+
+            // 先同步存档绑定：换档后旧工具调用必须在同帧被取消，不能带着新档的数据返回。
+            SyncSaveBinding();
+
+            // 工具采集必须在 UI 就绪之前也持续运行：模型可能在窗口关闭时仍在用工具。
+            _tools.Tick(2, OnToolDone);
 
             // UIRoot 会在场景切换时重建；检测到旧对象被销毁就重置，等待重建
             if (_uiInitialized && !_chat.Alive)
@@ -140,7 +161,6 @@ namespace IcarusII
 
             _chat.Tick();
             TryApplyGameStyle();
-            SyncSaveBinding();
 
             if (_config.DebugLogGate && Time.frameCount % 60 == 0)
             {
@@ -192,6 +212,7 @@ namespace IcarusII
         private void OnDestroy()
         {
             try { _chat?.Destroy(); } catch (Exception ex) { Log?.LogWarning($"清理 UI 失败：{ex.Message}"); }
+            try { _tools?.CancelAll("插件卸载"); } catch { /* ignore */ }
             try { _client?.Stop(); } catch (Exception ex) { Log?.LogWarning($"停止客户端失败：{ex.Message}"); }
             try { _launcher?.Shutdown(); } catch (Exception ex) { Log?.LogWarning($"回收 sidecar 失败：{ex.Message}"); }
             Instance = null;
@@ -220,6 +241,7 @@ namespace IcarusII
                 client.Log += msg => Log.LogInfo($"[client] {msg}");
                 client.ConfigChanged += OnConfigChanged;
                 _client = client;
+                IcarusII.UI.ModelSettingsTab.Bind(client);   // 设置窗口的"模型"页签需要读写配置
                 client.Start();
             }
             catch (Exception ex)
@@ -248,9 +270,11 @@ namespace IcarusII
                         _saveSynced = false;
                         break;
                     case ConnectionState.Backoff:
+                        _tools.CancelAll("连接退避");
                         _chat.SetStatus(Strings.Get("status.backoff") + " " + detail, WarnColor);
                         break;
                     default:
+                        _tools.CancelAll("连接断开");
                         _chat.SetStatus(Strings.Get("status.disconnected"), null);
                         break;
                 }
@@ -282,15 +306,15 @@ namespace IcarusII
                     var state = payload["state"].AsString("");
                     if (state == Protocol.StateThinking || state == Protocol.StateTools)
                     {
-                        if (!_streaming)
-                        {
-                            _streaming = true;
-                            _chat.BeginStream(Strings.Get("agent"));
-                        }
-                        _chat.SetStatus(Strings.Get("status.tools"), AccentColor);
+                        // 这里**不**提前创建回答条目：思考块/工具块先入输出区，
+                        // 回答条目等第一个 text delta 到达时再建，顺序才是 思考 → 工具 → 回答。
+                        _chat.SetStatus(
+                            state == Protocol.StateTools ? Strings.Get("status.tools") : Strings.Get("status.thinking"),
+                            AccentColor);
                     }
                     else if (state == Protocol.StateIdle)
                     {
+                        _chat.EndThinking();
                         if (_streaming)
                         {
                             _chat.EndStream();
@@ -313,11 +337,10 @@ namespace IcarusII
                 {
                     var streamChannel = payload["channel"].AsString("text");
 
-                    // reasoning：模型的思考增量。不进正文（正文只该包含答案），
-                    // 但必须让玩家看到"它在想"——之前这里是静默 break，
-                    // 开了思考档位就会表现为"卡住没有任何反应"。
+                    // reasoning：模型的思考增量。进入输出区的可折叠思考块（不进正文）。
                     if (streamChannel == "reasoning")
                     {
+                        _chat.AppendThinkingDelta(payload["delta"].AsString(""));
                         _chat.SetStatus(Strings.Get("status.thinking"), AccentColor);
                         break;
                     }
@@ -326,6 +349,8 @@ namespace IcarusII
                     if (streamChannel != "text") break;
                     if (!_streaming)
                     {
+                        // 正文开始 ⇒ 思考结束，思考块收起并显示摘要。
+                        _chat.EndThinking();
                         _streaming = true;
                         _chat.BeginStream(Strings.Get("agent"));
                     }
@@ -346,6 +371,7 @@ namespace IcarusII
                         _lastFinalReplyTo = replyTo;
                     }
 
+                    _chat.EndThinking();
                     if (_streaming)
                     {
                         // 流式已经渲染过同样内容，直接收尾即可
@@ -363,10 +389,15 @@ namespace IcarusII
                     break;
                 }
 
+                case Protocol.ToolCall:
+                    OnToolCall(payload, replyTo);
+                    break;
+
                 case Protocol.Error:
                 {
                     var code = payload["code"].AsString("unknown");
                     var message = payload["message"].AsString("");
+                    _chat.EndThinking();
                     _chat.AppendSystem($"⚠ 错误 [{code}] {message}");
                     if (_streaming)
                     {
@@ -375,6 +406,107 @@ namespace IcarusII
                     }
                     break;
                 }
+            }
+        }
+
+        // ---------------------------------------------------------------- 工具
+
+        private void OnToolCall(JsonValue payload, string replyTo)
+        {
+            var call = ToolCallInfo.Parse(payload, replyTo);
+            if (call == null)
+            {
+                Log.LogWarning("[tool] 收到无法解析的 tool_call");
+                _client?.SendToolResult(replyTo ?? string.Empty, false, JsonValue.Null,
+                    Protocol.CodeInvalidArgs, "tool_call 缺少 name/callId", null);
+                return;
+            }
+
+            if (call.Internal)
+            {
+                _internalCalls.Add(call.CallId);
+            }
+            else
+            {
+                _chat?.SetStatus("正在读取" + ToolLabel(call.Name) + "…", AccentColor);
+                if (_chat != null && _chat.Created)
+                    _chat.BeginToolCard(call.CallId, ToolLabel(call.Name), ToolArgsText(call.Args));
+            }
+
+            if (_tools == null)
+            {
+                _client?.SendToolResult(call.CallId, false, JsonValue.Null,
+                    Protocol.CodeToolUnavailable, "工具执行器尚未初始化", null);
+                if (!call.Internal && _chat != null && _chat.Created)
+                    _chat.FinishToolCard(call.CallId, ToolLabel(call.Name), false, "工具执行器尚未初始化");
+                return;
+            }
+
+            var immediate = _tools.Begin(call.CallId, call.Name, call.Args, call.TimeoutMs);
+            if (immediate != null) OnToolDone(immediate);
+        }
+
+        private void OnToolDone(GameToolOutcome outcome)
+        {
+            if (outcome == null) return;
+            SendToolOutcome(outcome);
+
+            // 内部调用（知识库导出）只回结果，不碰聊天窗。
+            if (_internalCalls.Remove(outcome.CallId)) return;
+
+            var label = ToolLabel(outcome.Name);
+            if (outcome.Ok)
+            {
+                var summary = string.IsNullOrEmpty(outcome.Summary) ? "完成" : outcome.Summary;
+                if (_chat != null && _chat.Created)
+                    _chat.FinishToolCard(outcome.CallId, label, true, summary, outcome.Summary);
+                _chat?.SetStatus(Strings.Get("status.ready"), OkColor);
+            }
+            else
+            {
+                var message = outcome.ErrorMessage ?? outcome.ErrorCode ?? "未知错误";
+                if (_chat != null && _chat.Created)
+                    _chat.FinishToolCard(outcome.CallId, label, false, message, message);
+                _chat?.SetStatus(Strings.Get("status.ready"), WarnColor);
+            }
+        }
+
+        /// <summary>工具参数的可读文本（折叠块展开后显示）。参数缺失/过大时给个占位。</summary>
+        private static string ToolArgsText(JsonValue args)
+        {
+            if (args == null || args.IsNull) return null;
+            var text = args.ToString();
+            if (string.IsNullOrEmpty(text) || text == "{}") return null;
+            const int max = 600;
+            return text.Length <= max ? text : text.Substring(0, max) + "…";
+        }
+
+        private void SendToolOutcome(GameToolOutcome outcome)
+        {
+            if (outcome == null || _client == null) return;
+            var sent = _client.SendToolResult(
+                outcome.CallId,
+                outcome.Ok,
+                outcome.Ok ? outcome.Data : JsonValue.Null,
+                outcome.ErrorCode,
+                outcome.ErrorMessage,
+                outcome.Meta);
+            if (!sent)
+                Log.LogWarning($"[tool] tool_result 未能发出（连接未就绪）callId={outcome.CallId}");
+        }
+
+        private static string ToolLabel(string name)
+        {
+            switch (name)
+            {
+                case "game_get_overview": return "存档概览";
+                case "game_get_player": return "玩家状态";
+                case "game_get_planet": return "行星状态";
+                case "game_get_power": return "电力状态";
+                case "game_get_research": return "研究状态";
+                case "game_get_production": return "产线状态";
+                case "game_export_prototypes": return "建立知识库";
+                default: return string.IsNullOrEmpty(name) ? "工具" : name;
             }
         }
 
@@ -477,6 +609,58 @@ namespace IcarusII
             _chat.SetStatus("校验中…", null);
         }
 
+        /// <summary>
+        /// 玩家在聊天窗右下角切换了「思考」档位。
+        ///
+        /// 1. 先落到本地 icarus-ii.cfg（断线/重启也不丢）；
+        /// 2. 连接就绪就发 config.set，让 sidecar 落盘并重建 pi session；
+        /// 3. 连接没就绪就记 dirty，等 ready 后补发。
+        /// </summary>
+        private void OnThinkingLevelChanged(string level)
+        {
+            if (!PluginConfig.IsValidThinkingLevel(level)) return;
+
+            _config?.SetThinkingLevel(level);
+
+            if (_client == null || _client.State != ConnectionState.Ready)
+            {
+                _thinkingLevelDirty = true;
+                Log.LogInfo($"[配置] 思考档位 → {level}（连接未就绪，稍后补发）");
+                return;
+            }
+
+            var id = _client.SendConfigSet(thinkingLevel: level);
+            _thinkingLevelDirty = id == null;
+            Log.LogInfo($"[配置] 思考档位 → {level}（config.set {(id != null ? "已发送" : "发送失败")}）");
+        }
+
+        /// <summary>
+        /// 玩家在聊天窗里换了模型。模型列表由 sidecar 的 config.json 持久化，
+        /// 这里直接发 `config.set{activeProvider,activeModel}`；下一轮 prompt 生效。
+        /// </summary>
+        private void OnModelSelectionChanged(string provider, string model)
+        {
+            if (string.IsNullOrEmpty(provider) || string.IsNullOrEmpty(model)) return;
+
+            if (_client == null || _client.State != ConnectionState.Ready)
+            {
+                _chat?.SetStatus("sidecar 未连接，模型选择未生效", WarnColor);
+                Log.LogInfo($"[配置] 模型 → {provider}/{model}（连接未就绪，未发送）");
+                return;
+            }
+
+            var id = _client.SendConfigSet(activeProvider: provider, activeModel: model);
+            if (id == null)
+            {
+                _chat?.SetStatus("模型选择发送失败", WarnColor);
+                Log.LogWarning($"[配置] 模型 → {provider}/{model}（config.set 发送失败）");
+                return;
+            }
+
+            _chat?.SetStatus(Strings.Get("model.switched", provider + "/" + model), OkColor);
+            Log.LogInfo($"[配置] 模型 → {provider}/{model}（config.set 已发送）");
+        }
+
         /// <summary>sidecar 上报的配置状态变化：据此切换「首次引导」与正常聊天。</summary>
         private void OnConfigChanged(ConfigState config)
         {
@@ -499,6 +683,20 @@ namespace IcarusII
         {
             var config = _lastConfig;
             if (config == null || _chat == null || !_uiInitialized) return;
+
+            // 思考档位：
+            //   - 断线期间玩家改过档位（dirty）→ 先把本地值补发给 sidecar，UI 也先显示本地值；
+            //   - 否则跟随 sidecar 的 config.json（权威来源）；老服务端不带该字段时保持本地值。
+            if (config.State == P.ConfigReady && _thinkingLevelDirty && _client != null)
+            {
+                var id = _client.SendConfigSet(thinkingLevel: _config.ThinkingLevel);
+                _thinkingLevelDirty = id == null;
+            }
+            if (_thinkingLevelDirty) _chat.ApplyThinkingLevel(_config.ThinkingLevel);
+            else if (!string.IsNullOrEmpty(config.ThinkingLevel)) _chat.ApplyThinkingLevel(config.ThinkingLevel);
+
+            // 模型列表/当前模型：sidecar 的 config.state 是权威来源。
+            _chat.ApplyModels(config);
 
             switch (config.State)
             {
@@ -536,8 +734,14 @@ namespace IcarusII
             var key = GameRefs.CurrentSaveKey();
             if (key != _saveKey)
             {
+                _tools?.CancelAll("存档切换", OnToolDone);
+                _tools?.ClearCache();
                 _saveKey = key;
                 _saveSynced = false;
+                _internalCalls.Clear();
+                // 对话串也必须跟着换档：否则新存档里还挂着旧档的消息，
+                // 即使 sidecar 已经换了会话，看起来仍然不是“新对话”。
+                if (_chat != null && _chat.Created) _chat.ClearTranscript();
                 Log.LogInfo($"[存档] 当前存档变化：{key ?? "(无，主菜单)"}");
             }
 
@@ -567,9 +771,11 @@ namespace IcarusII
                 }
 
                 var name = string.IsNullOrEmpty(info.SaveName) ? info.SaveKey : info.SaveName;
-                _chat.AppendSystem(info.Existed
-                    ? Strings.Get("save.bound", name, info.MessageCount)
-                    : Strings.Get("save.new", name));
+                if (!info.Existed) _chat.AppendSystem(Strings.Get("save.new", name));
+                else if (info.MessageCount > 0)
+                    _chat.AppendSystem(Strings.Get("save.bound", name, info.MessageCount));
+                else
+                    _chat.AppendSystem(Strings.Get("save.bound.nocount", name));
 
                 _chat.SetStatus(Strings.Get("status.ready"), OkColor);
             });
@@ -627,7 +833,7 @@ namespace IcarusII
         {
             if (string.IsNullOrWhiteSpace(text)) return;
 
-            _chat.AppendLine(Strings.Get("you"), text);
+            _chat.AppendUser(text);   // 用户消息走气泡样式
 
             if (_client == null || _client.State != ConnectionState.Ready)
             {
