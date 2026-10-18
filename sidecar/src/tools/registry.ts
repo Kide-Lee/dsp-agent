@@ -46,6 +46,7 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_get_progress: CAPABILITY_GAME_PROGRESS,
   game_capture_view: CAPABILITY_GAME_VIEW,
   game_analyze_area: CAPABILITY_GAME_ANALYZE,
+  game_render_layout: CAPABILITY_GAME_ENTITY,
 };
 
 const MAX_RESULT_CHARS = 9000;
@@ -324,6 +325,25 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         ),
       }),
       timeoutMs: 15000,
+    }),
+    gameTool(host, {
+      name: 'game_render_layout',
+      label: '布局图',
+      description:
+        '把一片区域的建筑排布画成字符网格（上=+Z，左=-X）：物流站 S、生产设备 M、仓储 B、发电 P、' +
+        '采矿 V、分拣器 >、传送带 =。用来判断“布局对不对/有没有断路/密度如何”，比截图更省 token。',
+      promptSnippet: '输出区域建筑的字符布局图',
+      promptGuidelines: [
+        'Use game_render_layout 当玩家问布局、走线、是否堵死，或截图看不清时。',
+        '字符只表达类别与占位；朝向、配方、输入输出要再用 game_get_entities / game_analyze_area。',
+      ],
+      parameters: Type.Object({
+        planetId: planetArg,
+        entityId: Type.Optional(Type.Integer({ description: '以该建筑为中心' })),
+        radius: Type.Optional(Type.Number({ description: '半径（米），默认 40，范围 4–400' })),
+        cellSize: Type.Optional(Type.Number({ description: '每格米数，默认按半径自动（约 2–8m）' })),
+      }),
+      timeoutMs: 10000,
     }),
     gameTool(host, {
       name: 'game_analyze_area',

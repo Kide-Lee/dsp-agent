@@ -1164,4 +1164,190 @@ namespace IcarusII.Game.Tools
             return list;
         }
     }
+
+    // ---------------------------------------------------------------- 文本布局图
+
+    /// <summary>
+    /// 把一片区域的建筑排布画成字符网格。
+    ///
+    /// 截图受镜头/分辨率影响，模型很难判断“布局对不对”；字符网格更省 token、更确定。
+    /// 只表达占位与类别，不表达朝向细节；上=+Z，左=-X。
+    /// </summary>
+    internal sealed class RenderLayoutTool : IGameToolHandler
+    {
+        public string Name => "game_render_layout";
+        public int TimeoutMs => 10000;
+
+        private const int MaxWidth = 100;
+        private const int MaxHeight = 40;
+        private const string Chars = "MSBPV>=#";
+
+        public IGameToolJob Start(JsonValue args)
+        {
+            var planet = GameToolFormat.ResolvePlanet(args);
+            if (planet == null) throw new ArgumentException("找不到行星");
+            return new OneShotJob(() => Build(planet, args));
+        }
+
+        private static GameToolJobResult Build(PlanetData planet, JsonValue args)
+        {
+            var factory = planet.factory;
+            var data = JsonValue.NewObject();
+            data.Set("planetId", planet.id);
+            if (factory == null || factory.entityPool == null)
+            {
+                data.Set("available", false);
+                data.Set("display", "该行星的工厂尚未加载");
+                return new GameToolJobResult { Data = data };
+            }
+
+            double radius = args["radius"].AsDouble(40);
+            if (radius < 4) radius = 4;
+            if (radius > 400) radius = 400;
+            double cellSize = args["cellSize"].AsDouble(0);
+            if (cellSize <= 0) cellSize = Math.Max(2, radius * 2 / MaxWidth);
+
+            int width = Math.Max(8, Math.Min(MaxWidth, (int)Math.Ceiling(radius * 2 / cellSize)));
+            int height = Math.Max(6, Math.Min(MaxHeight, (int)Math.Ceiling(radius * 2 / cellSize)));
+
+            var center = ResolveCenter(factory, args, out var centerSource);
+            var originX = center.x - width * cellSize * 0.5;
+            var originZ = center.z - height * cellSize * 0.5;
+
+            var grid = new char[height, width];
+            for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                    grid[y, x] = ' ';
+
+            var counts = new Dictionary<char, int>();
+            var upper = Math.Min(factory.entityCursor, factory.entityPool.Length);
+            for (int id = 1; id < upper; id++)
+            {
+                var entity = factory.entityPool[id];
+                if (entity.id != id || entity.protoId <= 0) continue;
+
+                int col = (int)Math.Floor((entity.pos.x - originX) / cellSize);
+                int row = (int)Math.Floor((entity.pos.z - originZ) / cellSize);
+                if (col < 0 || col >= width || row < 0 || row >= height) continue;
+
+                var ch = CharFor(factory, entity);
+                if (Rank(ch) >= Rank(grid[row, col]))
+                {
+                    if (grid[row, col] != ' ')
+                    {
+                        int old;
+                        counts.TryGetValue(grid[row, col], out old);
+                        counts[grid[row, col]] = Math.Max(0, old - 1);
+                    }
+                    grid[row, col] = ch;
+                    int count;
+                    counts.TryGetValue(ch, out count);
+                    counts[ch] = count + 1;
+                }
+            }
+
+            var rows = JsonValue.NewArray();
+            for (int y = 0; y < height; y++)
+            {
+                var line = new char[width];
+                for (int x = 0; x < width; x++) line[x] = grid[y, x];
+                rows.Add(new string(line));
+            }
+
+            var legend = JsonValue.NewArray();
+            foreach (var ch in Chars)
+            {
+                int count;
+                if (!counts.TryGetValue(ch, out count) || count <= 0) continue;
+                var row = JsonValue.NewObject();
+                row.Set("char", ch.ToString());
+                row.Set("kind", KindOf(ch));
+                row.Set("count", count);
+                legend.Add(row);
+            }
+
+            data.Set("available", true);
+            data.Set("grid", rows);
+            data.Set("width", width);
+            data.Set("height", height);
+            data.Set("cellSize", GameToolFormat.Round(cellSize, 2));
+            data.Set("origin", JsonValue.NewObject());
+            data["origin"].Set("x", GameToolFormat.Round(originX, 1));
+            data["origin"].Set("z", GameToolFormat.Round(originZ, 1));
+            data["origin"].Set("centerSource", centerSource);
+            data.Set("legend", legend);
+            data.Set("orientation", "上=+Z，左=-X；每个字符代表一个 cellSize 米方格");
+            data.Set("display", "布局图 " + width + "×" + height + " · 格子 " + GameToolFormat.Round(cellSize, 1) + "m");
+            return new GameToolJobResult { Data = data };
+        }
+
+        private static Vector3 ResolveCenter(PlanetFactory factory, JsonValue args, out string source)
+        {
+            var entityId = args["entityId"].AsInt(0);
+            if (entityId > 0 && entityId < factory.entityPool.Length)
+            {
+                var entity = factory.entityPool[entityId];
+                if (entity.id == entityId && entity.protoId > 0)
+                {
+                    source = "entity";
+                    return entity.pos;
+                }
+            }
+            var center = args["center"];
+            if (center != null && center.IsObject)
+            {
+                source = "explicit";
+                return new Vector3(
+                    (float)center["x"].AsDouble(0),
+                    (float)center["y"].AsDouble(0),
+                    (float)center["z"].AsDouble(0));
+            }
+            source = "player";
+            var player = GameMain.data != null ? GameMain.data.mainPlayer : null;
+            return player != null ? player.position : Vector3.zero;
+        }
+
+        private static char CharFor(PlanetFactory factory, EntityData entity)
+        {
+            if (entity.stationId > 0) return 'S';
+            if (entity.assemblerId > 0) return 'M';
+            if (entity.storageId > 0) return 'B';
+            if (entity.powerGenId > 0) return 'P';
+            if (entity.minerId > 0) return 'V';
+            if (entity.inserterId > 0) return '>';
+            if (entity.beltId > 0) return '=';
+            return '#';
+        }
+
+        private static int Rank(char ch)
+        {
+            switch (ch)
+            {
+                case 'S': return 9;
+                case 'M': return 8;
+                case 'B': return 7;
+                case 'P': return 6;
+                case 'V': return 5;
+                case '>': return 4;
+                case '=': return 3;
+                case '#': return 1;
+                default: return 0;
+            }
+        }
+
+        private static string KindOf(char ch)
+        {
+            switch (ch)
+            {
+                case 'S': return "物流站";
+                case 'M': return "生产设备";
+                case 'B': return "仓储";
+                case 'P': return "发电";
+                case 'V': return "采矿";
+                case '>': return "分拣器";
+                case '=': return "传送带";
+                default: return "其它";
+            }
+        }
+    }
 }
