@@ -1626,6 +1626,28 @@ namespace IcarusII.UI
         {
             if (_content == null || card == null) return null;
 
+            // 卡片是数据驱动的运行期 UI：任何一条卡片失败都只该少一张卡片，
+            // 不能把调用方（历史回放 / 消息分发 / 建窗补建）整段打断。
+            var before = _content.childCount;
+            try
+            {
+                return BuildBlueprintCard(card);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[UI] 蓝图卡片创建失败（{card.FileName}）：{ex}");
+                // 清掉半成品，避免内容区里留下一个空白块。
+                for (var i = _content.childCount - 1; i >= before; i--)
+                {
+                    var child = _content.GetChild(i);
+                    if (child != null) UnityEngine.Object.Destroy(child.gameObject);
+                }
+                return null;
+            }
+        }
+
+        private GameObject BuildBlueprintCard(BlueprintCardInfo card)
+        {
             var root = UiFactory.Node("blueprint-card-" + (++_itemSeq), _content);
             root.anchorMin = new Vector2(0f, 1f);
             root.anchorMax = new Vector2(1f, 1f);
@@ -1730,11 +1752,19 @@ namespace IcarusII.UI
                 var badgeImage = badgeRt.gameObject.AddComponent<Image>();
                 badgeImage.color = new Color(_accent.r, _accent.g, _accent.b, 0.16f);
                 badgeImage.raycastTarget = false;
-                var badge = UiFactory.AddLabel(badgeRt, _bodyFont, Mathf.Max(9, _fontSize - 3),
+                // 同一个 GameObject 只能挂一个 Graphic（uGUI 的 DisallowMultipleComponent）：
+                // 直接在 badgeRt（已有 Image）上加 Text 会被 Unity 拒绝，AddComponent 返回 null，
+                // 紧接着 text.font 就 NRE——历史回放会因为这个异常整段中断。
+                var badgeLabelRt = UiFactory.Node("label", badgeRt);
+                UiFactory.Stretch(badgeLabelRt);
+                var badge = UiFactory.AddLabel(badgeLabelRt, _bodyFont, Mathf.Max(9, _fontSize - 3),
                     _accent, TextAnchor.MiddleCenter);
-                badge.text = source;
-                badge.horizontalOverflow = HorizontalWrapMode.Overflow;
-                badge.verticalOverflow = VerticalWrapMode.Truncate;
+                if (badge != null)
+                {
+                    badge.text = source;
+                    badge.horizontalOverflow = HorizontalWrapMode.Overflow;
+                    badge.verticalOverflow = VerticalWrapMode.Truncate;
+                }
             }
 
             var metaText = BuildBlueprintMeta(card);
@@ -3025,24 +3055,32 @@ namespace IcarusII.UI
                 var line = _lines[i];
                 _currentTurnId = line.TurnId;
 
-                // 蓝图卡片不是文本项：按数据重新建一张。
-                if (line.Kind == LineKind.Blueprint)
+                // 单条消息失败只丢掉这一条：建窗中途抛异常会让整个窗口打不开。
+                try
                 {
-                    line.Go = CreateBlueprintCard(line.Card);
-                    if (line.Go != null) _lines[i] = line;
-                    continue;
-                }
+                    // 蓝图卡片不是文本项：按数据重新建一张。
+                    if (line.Kind == LineKind.Blueprint)
+                    {
+                        line.Go = CreateBlueprintCard(line.Card);
+                        if (line.Go != null) _lines[i] = line;
+                        continue;
+                    }
 
-                var index = CreateItem(line.Kind);
-                if (index < 0 || index >= _items.Count) continue;
-                var item = _items[index];
-                line.Go = item.Go;
-                _lines[i] = line;
-                if (item.Label != null) item.Label.text = SanitizeRichText(line.Text);
-                FitBubbleWidth(item.Go, line.Text);
-                if (line.Kind == LineKind.Assistant) AttachReplyFooter(index, line.Text);
-                if (line.Kind == LineKind.User && line.TurnId > 0)
-                    UpdateTurnUserGo(line.TurnId, line.Go);
+                    var index = CreateItem(line.Kind);
+                    if (index < 0 || index >= _items.Count) continue;
+                    var item = _items[index];
+                    line.Go = item.Go;
+                    _lines[i] = line;
+                    if (item.Label != null) item.Label.text = SanitizeRichText(line.Text);
+                    FitBubbleWidth(item.Go, line.Text);
+                    if (line.Kind == LineKind.Assistant) AttachReplyFooter(index, line.Text);
+                    if (line.Kind == LineKind.User && line.TurnId > 0)
+                        UpdateTurnUserGo(line.TurnId, line.Go);
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogWarning($"[UI] 补建聊天记录第 {i} 条失败（{line.Kind}）：{ex.Message}");
+                }
             }
 
             if (_lines.Count > 0) _currentTurnId = _lines[_lines.Count - 1].TurnId;

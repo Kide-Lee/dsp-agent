@@ -35,7 +35,27 @@ namespace IcarusII.UI
         public static Text AddLabel(RectTransform rt, Font font, int fontSize, Color color, TextAnchor anchor,
             bool gameMaterial = true)
         {
-            var text = rt.gameObject.AddComponent<Text>();
+            if (rt == null) return null;
+
+            // 一个 GameObject 只能有一个 Graphic（uGUI 基类带 DisallowMultipleComponent）。
+            // 已有 Image 时 AddComponent<Text> 会被 Unity 拒绝并**返回 null**，随后访问
+            // text.font 就 NRE；UI 代码基本都在 Update/回调里跑，抛异常会打断整段逻辑
+            // （历史回放就是这么丢的）。所以这里提前说清楚，并把文字挂到子节点上。
+            var text = rt.gameObject.GetComponent<Text>();
+            if (text == null)
+            {
+                if (rt.gameObject.GetComponent<Graphic>() != null)
+                {
+                    Plugin.Log.LogWarning(
+                        $"[UI] 节点「{rt.name}」已有 Graphic，Text 不能叠在同一节点；已改挂到子节点「label」。");
+                    var labelRt = Node("label", rt);
+                    Stretch(labelRt);
+                    rt = labelRt;
+                }
+                text = rt.gameObject.AddComponent<Text>();
+            }
+            if (text == null) return null;
+
             text.font = font;
             text.fontSize = fontSize;
             text.color = color;

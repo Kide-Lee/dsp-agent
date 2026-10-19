@@ -49,6 +49,12 @@ dotnet run --project tests/ProtocolTests
     星图模式下先 `SyncBlueprintModeByPlanetMode()`。
 - 路径优先用 `GameConfig.blueprintFolder + fileName` 重新拼：sidecar 可能跑在
   Linux 侧，绝对路径与游戏在 Wine 里看到的路径不一定一致。
+- 一个 GameObject 只能挂一个 Graphic（uGUI 的 `DisallowMultipleComponent`）：
+  在已有 Image 的节点上再加 Text 会被 Unity 拒绝并返回 null，紧接着就 NRE。
+  来源角标的文字因此放在子节点 `label` 上；`UiFactory.AddLabel` 遇到这种节点会
+  告警并自动改挂子节点，不会再静默返回 null。
+- 卡片创建失败只丢这一张卡片：历史回放 / 消息分发 / 建窗补建都做了逐条容错，
+  一张卡片不会再把整段历史（或整个窗口）打断。
 
 ## 4. 已知限制
 

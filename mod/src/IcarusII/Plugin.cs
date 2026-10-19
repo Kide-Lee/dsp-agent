@@ -662,7 +662,22 @@ namespace IcarusII
 
             Log.LogInfo($"[UI] 界面形态：独立窗口（热键 {_hotkey.Key}）");
 
-            _chat.Create(root, font, _config);
+            // 建窗失败绝不能每帧刷一条同样的错误，也不能让异常抛进 Unity 的 Update；
+            // 记一次日志后保持 _uiInitialized=false，下一帧继续尝试（可能只是 UIRoot 还没好）。
+            try
+            {
+                _chat.Create(root, font, _config);
+            }
+            catch (Exception ex)
+            {
+                if (!_uiCreateFailureLogged)
+                {
+                    _uiCreateFailureLogged = true;
+                    Log.LogError($"创建聊天窗口失败：{ex}");
+                }
+                return;
+            }
+
             if (_styleCaptured) _chat.ApplyStyle(UiStyle.Current);
             _uiInitialized = true;
 
@@ -893,11 +908,7 @@ namespace IcarusII
                 // 同一个存档重连时只贴一次；正在流式输出时不打断当前回合。
                 var replay = info.History != null && info.History.Count > 0
                              && info.SaveKey != _historyReplayedFor && !_streaming;
-                if (replay)
-                {
-                    _chat.ClearTranscript();
-                    _historyReplayedFor = info.SaveKey;
-                }
+                if (replay) _chat.ClearTranscript();
 
                 if (!info.Existed) _chat.AppendSystem(Strings.Get("save.new", name));
                 else if (info.MessageCount > 0)
@@ -907,24 +918,42 @@ namespace IcarusII
 
                 if (replay)
                 {
+                    // 逐条回放：单条（或某张蓝图卡片）失败只丢那一条，
+                    // 不能让整个回调抛异常——否则后面的历史全都不会出现。
+                    var replayed = 0;
+                    var failed = 0;
                     foreach (var message in info.History)
                     {
                         if (message == null || string.IsNullOrEmpty(message.Text)) continue;
-                        if (message.Role == "user")
+                        try
                         {
-                            _chat.AppendUser(message.Text, message.Timestamp);
-                        }
-                        else
-                        {
-                            _chat.AppendLine(Strings.Get("agent"), message.Text);
-                            // 蓝图卡片跟在该回答后面，与实时收到的顺序一致。
-                            if (message.Cards != null)
+                            if (message.Role == "user")
                             {
-                                foreach (var card in message.Cards)
-                                    _chat.AppendBlueprintCard(card);
+                                _chat.AppendUser(message.Text, message.Timestamp);
                             }
+                            else
+                            {
+                                _chat.AppendLine(Strings.Get("agent"), message.Text);
+                                // 蓝图卡片跟在该回答后面，与实时收到的顺序一致。
+                                if (message.Cards != null)
+                                {
+                                    foreach (var card in message.Cards)
+                                        _chat.AppendBlueprintCard(card);
+                                }
+                            }
+                            replayed++;
+                        }
+                        catch (Exception ex)
+                        {
+                            failed++;
+                            Log.LogWarning($"[存档] 回放历史消息失败（{message.Role}）：{ex.Message}");
                         }
                     }
+
+                    // 回放成功才记下“这个存档贴过了”。整段失败时下次 save.bound 会重试，
+                    // 而不是让玩家进存档后永远看到空聊天窗。
+                    if (failed == 0) _historyReplayedFor = info.SaveKey;
+                    Log.LogInfo($"[存档] 回放历史：{replayed} 条，失败 {failed} 条（存档 {info.SaveKey}）");
                 }
 
                 _chat.SetStatus(Strings.Get("status.ready"), OkColor);
