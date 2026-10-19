@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
-using System.Security.Cryptography;
 using System.Text;
 using IcarusII.Common.Json;
 using IcarusII.Game;
@@ -166,14 +165,32 @@ namespace IcarusII.Game.Tools
                 path = dir + fileName;
             }
 
-            // 用游戏自己的解析器验收：能读回来且字节数一致，才允许落盘。
-            var check = BlueprintData.CreateNew(text);
-            if (check == null || !check.isValid || check.buildings == null
+            // 用游戏完整的文件加载路径验收（header + 签名 + 内容），
+            // CreateNew 只校验内容，会漏掉 MD5/header 问题。
+            var check = new BlueprintData();
+            var tmp = Path.Combine(Path.GetTempPath(), "icarus-bp-check.txt");
+            BlueprintDataIOError checkError;
+            try
+            {
+                File.WriteAllText(tmp, text, Encoding.ASCII);
+                checkError = check.LoadBlueprintData(tmp);
+            }
+            catch (Exception ex)
+            {
+                checkError = BlueprintDataIOError.DataCorruption;
+                data.Set("checkError", ex.Message);
+            }
+            finally
+            {
+                try { File.Delete(tmp); } catch { }
+            }
+            if (checkError != BlueprintDataIOError.OK || !check.isValid || check.buildings == null
                 || check.buildings.Length != list.Count)
             {
                 data.Set("saved", false);
                 data.Set("error", "encode_invalid");
-                data.Set("display", "生成失败：编码结果未通过游戏解析器校验");
+                data.Set("checkError", checkError.ToString());
+                data.Set("display", "生成失败：编码结果未通过游戏文件加载校验（" + checkError + "）");
                 return new GameToolJobResult { Data = data };
             }
 
@@ -307,14 +324,9 @@ namespace IcarusII.Game.Tools
 
             var b64 = Convert.ToBase64String(gz);
             var head = header + "\"";
-            byte[] digest;
-            using (var md5 = MD5.Create())
-            {
-                digest = md5.ComputeHash(Encoding.ASCII.GetBytes(head + b64));
-            }
-            var sb = new StringBuilder(digest.Length * 2);
-            foreach (var b in digest) sb.Append(b.ToString("x2", CultureInfo.InvariantCulture));
-            return head + b64 + "\"" + sb;
+            // 必须用游戏自己的 MD5F：它不是标准 MD5（同一段文本结果不同），
+            // 自己算的签名会被 CheckSignature 判为 MD5CannotMatch。
+            return head + b64 + "\"" + MD5F.Compute(head + b64);
         }
 
         private static string Sanitize(string raw)
