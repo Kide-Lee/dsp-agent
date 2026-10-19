@@ -114,7 +114,6 @@ namespace IcarusII.Game.Tools
             Register(new RenderLayoutTool());
             Register(new CopyBlueprintTool());
             Register(new TraceLineTool());
-            Register(new BlueprintCapsTool());
             Register(new PlanetsTool());
             Register(new LogisticsTool());
         }

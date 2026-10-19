@@ -114,7 +114,7 @@ function testToolGating() {
     'game.view.v1',
     'game.analyze.v1',
   ]);
-  check('全能力 ⇒ 17 个 game 工具', all.filter((n) => n.startsWith('game_')).length === 17);
+  check('全能力 ⇒ 16 个 game 工具', all.filter((n) => n.startsWith('game_')).length === 16);
   check('全能力仍带 kb_*', all.some((n) => n.startsWith('kb_')));
   check('全能力仍带 run_script', all.includes('run_script'));
   check('全能力包含布局图', all.includes('game_render_layout'));
@@ -122,7 +122,6 @@ function testToolGating() {
   check('全能力包含星球一览', all.includes('game_get_planets'));
   check('全能力包含星际物流', all.includes('game_get_logistics'));
   check('全能力包含产线拓扑', all.includes('game_trace_line'));
-  check('全能力包含蓝图档位', all.includes('game_get_blueprint_caps'));
 }
 
 // ---------------------------------------------------------------- 3. 内容块

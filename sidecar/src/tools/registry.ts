@@ -50,7 +50,6 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_copy_blueprint: CAPABILITY_GAME_ENTITY,
   game_get_planets: CAPABILITY_GAME_ENTITY,
   game_get_logistics: CAPABILITY_GAME_ENTITY,
-  game_get_blueprint_caps: CAPABILITY_GAME_ENTITY,
   game_trace_line: CAPABILITY_GAME_ENTITY,
 };
 
@@ -370,15 +369,6 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         cellSize: Type.Optional(Type.Number({ description: '每格米数，默认按半径自动（约 2–8m）' })),
       }),
       timeoutMs: 10000,
-    }),
-    gameTool(host, {
-      name: 'game_get_blueprint_caps',
-      label: '蓝图档位',
-      description: '返回玩家当前已解锁的最高建筑/传送带/分拣器档位（只读）。生成蓝图前先调用，用于选择默认档位。',
-      promptSnippet: '查询已解锁的蓝图建筑档位',
-      promptGuidelines: ['Use game_get_blueprint_caps 在 blueprint_generate 之前，取 beltTier/inserterTier，并作为 beltType/insertType 传入。'],
-      parameters: Type.Object({}),
-      timeoutMs: 8000,
     }),
     gameTool(host, {
       name: 'game_get_planets',
