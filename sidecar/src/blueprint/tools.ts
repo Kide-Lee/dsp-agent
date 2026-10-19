@@ -469,7 +469,7 @@ export function createBlueprintTools(client: BlueprintClient = new BlueprintClie
             beltType: typeof args['beltType'] === 'number' ? args['beltType'] : 2,
             insertType: typeof args['insertType'] === 'number' ? args['insertType'] : 2,
             rows: typeof args['rows'] === 'number' ? args['rows'] : 1,
-            stackSize: typeof args['stackSize'] === 'number' ? args['stackSize'] : 1,
+            stackSize: typeof args['stackSize'] === 'number' ? args['stackSize'] : 4,
             name: blueprintName,
             author,
             version,

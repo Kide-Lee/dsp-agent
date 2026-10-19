@@ -1,5 +1,4 @@
 import { computeBlueprint, generateBlueprint } from '../../vendor/dsp-calc/src/global_blueprint.js';
-import { fromStr, toStr } from '../../vendor/dsp-calc/src/blueprint/parser.js';
 import vanilla from '../../vendor/dsp-calc/data/Vanilla.mjs';
 import buildingsData from '../../vendor/dsp-calc/data/Buildings.mjs';
 
@@ -67,9 +66,9 @@ export function planSingle(itemId, rate, options = {}) {
     insertType: options.insertType ?? 2,
     recycleMode: options.recycleMode ?? 1,
     rows: rowCount,
-    stackSize: options.stackSize ?? 1,
-    floor: options.floor ?? 1,
-    stationPiler: options.stationPiler ?? 2,
+    stackSize: options.stackSize ?? 4,
+    floor: options.floor ?? 15,
+    stationPiler: options.stationPiler ?? 1,
     proNum: 0,
   });
   // 行拼接边界上偶发跨行连线（距离可达数百格），粘贴会报“距离太远”。
@@ -86,7 +85,12 @@ export function planSingle(itemId, rate, options = {}) {
       if (Math.sqrt(dx * dx + dy * dy + dz * dz) > 1.6) b[key] = -1;
     }
   }
-  const raw = generateBlueprint(blueprint, {
+  const areaW = blueprint.matrix && blueprint.matrix[0] ? blueprint.matrix[0].length : 0;
+  const areaH = blueprint.matrix ? blueprint.matrix.length : 0;
+  if (areaW > 1000 || areaH > 50) {
+    throw new Error(`蓝图尺寸 ${areaW}x${areaH} 超出安全范围（宽度上限 1000 格、高度上限 50 格）`);
+  }
+  return generateBlueprint(blueprint, {
     title: options.name || undefined,
     author: options.author ?? '自动生成',
     version: options.version ?? '0.10.35.29151',
@@ -95,30 +99,4 @@ export function planSingle(itemId, rate, options = {}) {
     iconId: itemId,
     gameVersion: options.gameVersion || undefined,
   });
-  const parsed = fromStr(raw);
-  for (const b of parsed.buildings) {
-    const p0 = b.localOffset && b.localOffset[0];
-    if (!p0) continue;
-    for (const key of ['outputObjIdx', 'inputObjIdx']) {
-      const idx = b[key];
-      const t = typeof idx === 'number' && idx >= 0 ? parsed.buildings[idx] : null;
-      const p1 = t && t.localOffset && t.localOffset[0];
-      if (!p1) continue;
-      const dx = p0.x - p1.x, dy = p0.y - p1.y, dz = (p0.z || 0) - (p1.z || 0);
-      if (Math.sqrt(dx * dx + dy * dy + dz * dz) > 1.6) b[key] = -1;
-    }
-  }
-  const area = parsed.areas && parsed.areas[0];
-  const w = area && area.size ? area.size.x : 0;
-  const h = area && area.size ? area.size.y : 0;
-  // 赤道 200 段 × 5 格 = 1000 格；南北向限制在回归线带内（50 格），
-  // 避免面积跨到经线格数变化的纬度。
-  if (w > 1000 || h > 50) {
-    throw new Error(`蓝图尺寸 ${w}x${h} 超出安全范围（宽度上限 1000 格、高度上限 50 格）`);
-  }
-  parsed.header.author = options.author ?? '自动生成';
-  parsed.header.customVersion = options.version ?? '0.10.35.29151';
-  parsed.header.externalFields = options.attributes ?? '';
-  parsed.header.desc = options.description ?? '';
-  return toStr(parsed);
 }
