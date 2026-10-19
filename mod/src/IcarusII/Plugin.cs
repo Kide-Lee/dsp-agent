@@ -593,6 +593,7 @@ namespace IcarusII
                 case "game_copy_blueprint": return "存为蓝图";
                 case "game_generate_blueprint": return "生成蓝图";
                 case "game_trace_line": return "产线拓扑";
+                case "game_get_blueprint_caps": return "蓝图档位";
                 case "game_get_planets": return "星球一览";
                 case "game_get_logistics": return "星际物流";
                 // sidecar 本地工具（tool_activity 卡片用）

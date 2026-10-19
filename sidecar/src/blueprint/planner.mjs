@@ -1,4 +1,5 @@
 import { computeBlueprint, generateBlueprint } from '../../vendor/dsp-calc/src/global_blueprint.js';
+import { fromStr } from '../../vendor/dsp-calc/src/blueprint/parser.js';
 import vanilla from '../../vendor/dsp-calc/data/Vanilla.mjs';
 import buildingsData from '../../vendor/dsp-calc/data/Buildings.mjs';
 
@@ -90,7 +91,7 @@ export function planSingle(itemId, rate, options = {}) {
   if (areaW > 1000 || areaH > 50) {
     throw new Error(`蓝图尺寸 ${areaW}x${areaH} 超出安全范围（宽度上限 1000 格、高度上限 50 格）`);
   }
-  return generateBlueprint(blueprint, {
+  const text = generateBlueprint(blueprint, {
     title: options.name || undefined,
     author: options.author ?? '自动生成',
     version: options.version ?? '0.10.35.29151',
@@ -99,4 +100,13 @@ export function planSingle(itemId, rate, options = {}) {
     iconId: itemId,
     gameVersion: options.gameVersion || undefined,
   });
+  const parsed = fromStr(text);
+  const area = parsed.areas && parsed.areas[0];
+  const width = area && area.size ? area.size.x : 0;
+  const height = area && area.size ? area.size.y : 0;
+  if (width > 1000 || height > 50) {
+    if (rowCount < 8) return planSingle(itemId, rate, { ...options, rows: rowCount + 1 });
+    throw new Error(`蓝图尺寸 ${width}x${height} 超出安全范围（宽度上限 1000 格、高度上限 50 格）`);
+  }
+  return text;
 }
