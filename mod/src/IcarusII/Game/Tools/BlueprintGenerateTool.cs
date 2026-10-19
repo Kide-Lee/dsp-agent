@@ -80,8 +80,10 @@ namespace IcarusII.Game.Tools
                     var row = explicitRows[i];
                     if (row == null || !row.IsObject) continue;
                     var proto = row["protoId"].AsInt(0);
-                    var recipe = row["recipeId"].AsInt(recipeId);
-                    if (proto <= 0 || recipe <= 0) continue;
+                    var recipe = row["recipeId"].AsInt(0);
+                    if (proto <= 0) continue;
+                    // 带子/爪子没有配方；不能因为它们 recipeId=0 就被过滤掉。
+                    if (recipe <= 0 && proto < 2000) continue;
 
                     // 兼容两种写法：
                     //   {x, z, y}  = Unity 习惯：x 东西、z 南北、y 高度；
@@ -186,6 +188,8 @@ namespace IcarusII.Game.Tools
                 var gz = Math.Max(b.Z, b.Z2);
                 if (gx + 1 > maxX) maxX = gx + 1;
                 if (gz + 1 > maxY) maxY = gz + 1;
+                // 爪子的起点/终点本来就和带子/机器同格，不能参与重叠判定。
+                if (b.ProtoId > 2010 && b.ProtoId < 2020) continue;
                 var key = ((long)Math.Round(b.X * 10) << 32) ^ (long)Math.Round(b.Z * 10);
                 if (!occupied.Add(key))
                 {
