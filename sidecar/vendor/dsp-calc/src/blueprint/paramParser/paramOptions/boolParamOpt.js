@@ -1,4 +1,4 @@
-import ParamOpt from "./paramOpt";
+import ParamOpt from "./paramOpt.js";
 /**
  * 布尔 建筑参数配置
  */

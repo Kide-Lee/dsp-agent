@@ -1,5 +1,5 @@
-import DefaultParamParser from "./defaultParamParser";
-import ParamOpt from "./paramOptions/paramOpt";
+import DefaultParamParser from "./defaultParamParser.js";
+import ParamOpt from "./paramOptions/paramOpt.js";
 
 /**
  * 建筑参数解析器

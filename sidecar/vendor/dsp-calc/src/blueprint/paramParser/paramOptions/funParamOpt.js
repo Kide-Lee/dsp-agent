@@ -1,4 +1,4 @@
-import ParamOpt from "./paramOpt";
+import ParamOpt from "./paramOpt.js";
 /**
  * 自定义转换方法 建筑参数配置
  */

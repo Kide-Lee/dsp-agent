@@ -1,7 +1,7 @@
-import pako from 'pako';
-import { digest } from './md5';
-import { getParamParser } from './paramParser/paramParserFactory';
-import { itemsMap } from "./itemsUtil";
+import zlib from 'node:zlib';
+import { digest } from './md5.js';
+import { getParamParser } from './paramParser/paramParserFactory.js';
+import { itemsMap } from "./itemsUtil.js";
 
 class BufferIO {
     view;
@@ -256,7 +256,7 @@ export function fromStr(strData) {
     if (d !== expectedD)
         throw Error('Checksum mismatch');
     const encoded = strData.substring(p1 + 1, p2);
-    const decoded = pako.ungzip(btoUint8Array(atob(encoded)));
+    const decoded = zlib.gunzipSync(btoUint8Array(atob(encoded)));
     const reader = new BufferReader(new DataView(decoded.buffer));
     const meta = {
         version: reader.getInt32(),
@@ -333,7 +333,7 @@ export function toStr(bp) {
     writer.setInt32(bp.buildings.length);
     for (const b of bp.buildings)
         exportBuilding(writer, b);
-    result += btoa(Uint8ArrayTob(pako.gzip(decoded)));
+    result += btoa(Uint8ArrayTob(zlib.gzipSync(decoded)));
     const d = hex(digest(btoUint8Array(result).buffer));
     result += '"';
     result += d;

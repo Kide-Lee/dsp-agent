@@ -1,5 +1,5 @@
-import { toStr } from "./parser";
-import { INSERTER_TYPE, SMELTER, CHEMICAL, LAB, OIL_REFINERY, HADRON_COLLIDER, ASSEMBLER, BELT_LEVEL } from "./constant";
+import { toStr } from "./parser.js";
+import { INSERTER_TYPE, SMELTER, CHEMICAL, LAB, OIL_REFINERY, HADRON_COLLIDER, ASSEMBLER, BELT_LEVEL } from "./constant.js";
 
 /**
  * 构建蓝图

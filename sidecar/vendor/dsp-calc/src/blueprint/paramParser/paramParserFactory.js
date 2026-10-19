@@ -1,9 +1,9 @@
-import DefaultParamParser from "./defaultParamParser";
-import BoolParamOpt from "./paramOptions/boolParamOpt";
-import FunParamOpt from "./paramOptions/funParamOpt";
-import ParamOpt, { getParam } from "./paramOptions/paramOpt";
-import ParamParser from "./paramParser";
-import * as itemUtil from "../itemsUtil";
+import DefaultParamParser from "./defaultParamParser.js";
+import BoolParamOpt from "./paramOptions/boolParamOpt.js";
+import FunParamOpt from "./paramOptions/funParamOpt.js";
+import ParamOpt, { getParam } from "./paramOptions/paramOpt.js";
+import ParamParser from "./paramParser.js";
+import * as itemUtil from "../itemsUtil.js";
 
 export function getParamParser(itemId) {
     if (itemUtil.isBelt(itemId)) {

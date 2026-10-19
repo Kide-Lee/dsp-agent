@@ -14,8 +14,10 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { Type } from 'typebox';
+// @ts-ignore vendored JS planner (no types)
+import { planSingle, findItemIdByName } from './planner.mjs';
 
-export const BLUEPRINT_TOOL_NAMES = ['blueprint_search', 'blueprint_info', 'blueprint_save'] as const;
+export const BLUEPRINT_TOOL_NAMES = ['blueprint_search', 'blueprint_info', 'blueprint_save', 'blueprint_generate'] as const;
 
 const REPO = 'DSPBluePrints/FactoryBluePrints';
 const LICENSE = 'CC BY-NC-SA 4.0';
@@ -331,6 +333,65 @@ export function createBlueprintTools(client: BlueprintClient = new BlueprintClie
           },
           true,
         );
+      },
+    },
+    {
+      name: 'blueprint_generate',
+      label: '生成产线蓝图',
+      description:
+        '用内置的 dsp-calc 规划器生成完整产线蓝图（机器 + 传送带 + 分拣器 + 连接槽位），' +
+        '保存到游戏蓝图目录。输入物品与每分钟产量，可选带子/分拣器级别、行数、堆叠。',
+      promptSnippet: '生成带传送带和分拣器的完整产线蓝图',
+      promptGuidelines: [
+        'Use blueprint_generate 当玩家要“完整产线蓝图/带带子和爪子的蓝图”时，不要回答只能下载。',
+        'item 可以是物品名（如“电磁涡轮”）或物品 id；rate 是每分钟产量。',
+        'beltType: 0 黄带 / 1 绿带 / 2 蓝带；insertType: 0 分拣器 / 1 高速 / 2 极速 / 3 集装。',
+        '生成后告诉玩家文件路径与大小；这是完整的混带产线，粘贴后应可运行。',
+      ],
+      parameters: Type.Object({
+        item: Type.String({ description: '物品名或物品 id' }),
+        rate: Type.Number({ description: '目标每分钟产量' }),
+        beltType: Type.Optional(Type.Integer({ minimum: 0, maximum: 2, description: '默认 2（蓝带）' })),
+        insertType: Type.Optional(Type.Integer({ minimum: 0, maximum: 3, description: '默认 2（极速）' })),
+        rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 8, description: '产线行数，默认 1' })),
+        stackSize: Type.Optional(Type.Integer({ minimum: 1, maximum: 4, description: '集装堆叠，默认 1' })),
+        name: Type.Optional(Type.String({ description: '蓝图文件名' })),
+      }),
+      async execute(_id, params) {
+        const args = (params ?? {}) as Record<string, unknown>;
+        const rawItem = typeof args['item'] === 'string' ? args['item'].trim() : '';
+        const rate = typeof args['rate'] === 'number' ? args['rate'] : 0;
+        if (!rawItem || !(rate > 0)) return reply({ error: 'item 与 rate 必填' }, false, 'bad_request');
+        const itemId = /^\d+$/.test(rawItem) ? Number(rawItem) : findItemIdByName(rawItem);
+        if (!itemId) return reply({ error: `找不到物品：${rawItem}` }, false, 'bad_request');
+        try {
+          const text = planSingle(itemId, rate, {
+            beltType: typeof args['beltType'] === 'number' ? args['beltType'] : 2,
+            insertType: typeof args['insertType'] === 'number' ? args['insertType'] : 2,
+            rows: typeof args['rows'] === 'number' ? args['rows'] : 1,
+            stackSize: typeof args['stackSize'] === 'number' ? args['stackSize'] : 1,
+          });
+          const dir = resolveBlueprintDir();
+          mkdirSync(dir, { recursive: true });
+          const base = sanitizeBlueprintName(
+            typeof args['name'] === 'string' && args['name'] ? args['name'] : `IcarusII-${rawItem}-${rate}`,
+          );
+          let fileName = `${base}.txt`;
+          for (let i = 2; i < 50 && existsSync(join(dir, fileName)); i++) fileName = `${base} (${i}).txt`;
+          const filePath = join(dir, fileName);
+          writeFileSync(filePath, text, 'ascii');
+          return reply({
+            saved: true,
+            path: filePath,
+            fileName,
+            bytes: text.length,
+            itemId,
+            rate,
+            note: '由 dsp-calc 规划器生成，含机器/传送带/分拣器与连接；粘贴后应可直接运行。',
+          }, true);
+        } catch (err) {
+          return reply({ error: err instanceof Error ? err.message : String(err) }, false, 'blueprint_generate_failed');
+        }
       },
     },
   ];

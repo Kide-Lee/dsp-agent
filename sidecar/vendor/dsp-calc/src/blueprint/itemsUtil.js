@@ -1,4 +1,4 @@
-import { items } from "./itemsData";
+import { items } from "./itemsData.js";
 export const itemsMap = new Map();
 for (const i of items) {
     itemsMap.set(i.id, i);

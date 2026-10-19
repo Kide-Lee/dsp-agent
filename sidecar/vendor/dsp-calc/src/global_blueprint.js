@@ -30,9 +30,11 @@ interface Recipe {
 }
 */
 
-import { recipes, items } from "../data/Vanilla.json";
-import { buildings, inserterSettings } from "../data/Buildings.json";
-import { BlueprintBuilder } from "./blueprint/builder";
+import vanilla from "../data/Vanilla.mjs";
+import buildingsData from "../data/Buildings.mjs";
+const { recipes, items } = vanilla;
+const { buildings, inserterSettings } = buildingsData;
+import { BlueprintBuilder } from "./blueprint/builder.js";
 import {
   INSERTER_TYPE,
   BELT_LEVEL,
@@ -46,7 +48,7 @@ import {
   SPRAY_COATER,
   SPLITTER_4DIR,
   STORAGE,
-} from "./blueprint/constant";
+} from "./blueprint/constant.js";
 
 const ROW_HEIGHT_INSERTER = 10; // 集装分拣器回收时一行的高度
 const ROW_HEIGHT_4DIR = 8; // 四向分流器一行的高度

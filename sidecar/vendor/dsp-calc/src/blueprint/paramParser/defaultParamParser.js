@@ -1,4 +1,4 @@
-import { setParam, getParam } from "./paramOptions/paramOpt";
+import { setParam, getParam } from "./paramOptions/paramOpt.js";
 /**
  * 默认建筑参数解析器
  */
