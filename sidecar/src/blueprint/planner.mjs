@@ -108,6 +108,14 @@ export function planSingle(itemId, rate, options = {}) {
       if (Math.sqrt(dx * dx + dy * dy + dz * dz) > 1.6) b[key] = -1;
     }
   }
+  const area = parsed.areas && parsed.areas[0];
+  const w = area && area.size ? area.size.x : 0;
+  const h = area && area.size ? area.size.y : 0;
+  // 赤道 200 段 × 5 格 = 1000 格；南北向限制在回归线带内（50 格），
+  // 避免面积跨到经线格数变化的纬度。
+  if (w > 1000 || h > 50) {
+    throw new Error(`蓝图尺寸 ${w}x${h} 超出安全范围（宽度上限 1000 格、高度上限 50 格）`);
+  }
   parsed.header.author = options.author ?? '自动生成';
   parsed.header.customVersion = options.version ?? '0.10.35.29151';
   parsed.header.externalFields = options.attributes ?? '';
