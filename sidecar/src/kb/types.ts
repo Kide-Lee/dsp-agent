@@ -234,6 +234,10 @@ export interface PlanOptions {
   buildingId?: number;
   /** 单条传送带吞吐（物品/秒），默认 6（Mk.I）。 */
   beltSpeed?: number;
+  /** 增产剂档位：none（默认）/ mk1 / mk2 / mk3。 */
+  proliferator?: 'none' | 'mk1' | 'mk2' | 'mk3';
+  /** 增产剂模式：extra = 额外产出（默认），speed = 加速生产。 */
+  proliferatorMode?: 'extra' | 'speed';
 }
 
 /** 一台机器的功率单位是 kW；`workEnergyPerTick` 是每 tick 工作功率。 */
@@ -265,6 +269,12 @@ export interface PlanResult {
   byproducts: { itemId: number; item: string; amount: number }[];
   cycles: { itemId: number; item: string }[];
   depthLimited: boolean;
+  proliferator: {
+    tier: 'none' | 'mk1' | 'mk2' | 'mk3';
+    mode: 'extra' | 'speed';
+    outputMultiplier: number;
+    speedMultiplier: number;
+  };
   assumptions: string[];
   warnings: string[];
 }

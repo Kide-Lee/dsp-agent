@@ -250,7 +250,8 @@ export function createKbTools(store: KnowledgeStore): ToolDefinition[] {
       'Use kb_plan 当玩家问某条产线要多少机器、多少电、几条传送带时。',
       '玩家问“怎么把 X 做到 N/min / 怎么规划 / 要准备什么”时，第一步就调 kb_plan，不要先查现状再心算。',
       'rate 是目标物品的每分钟产量，必填；机器数已向上取整（exactCount 是未取整值）。',
-      '结果里的 assumptions 必须转述给玩家：未建模增产剂、矿脉产率与建筑堆叠。',
+      '结果里的 assumptions 必须转述给玩家：未建模矿脉产率、建筑堆叠与喷涂消耗。',
+      '玩家提到增产剂/喷涂时传 proliferator=mk1/mk2/mk3；默认 extra（额外产出），要加速则 proliferatorMode=speed。',
     ],
     parameters: Type.Object({
       item: Type.String({ description: '目标物品名称、id 或 SID' }),
@@ -261,6 +262,16 @@ export function createKbTools(store: KnowledgeStore): ToolDefinition[] {
         Type.String({ description: '机器档位：base（默认，最低速）/ mk2 / mk3' }),
       ),
       buildingId: Type.Optional(Type.Integer({ description: '可选：直接指定机器原型 id' })),
+      proliferator: Type.Optional(
+        Type.Union([Type.Literal('none'), Type.Literal('mk1'), Type.Literal('mk2'), Type.Literal('mk3')], {
+          description: '增产剂档位，默认 none',
+        }),
+      ),
+      proliferatorMode: Type.Optional(
+        Type.Union([Type.Literal('extra'), Type.Literal('speed')], {
+          description: 'extra=额外产出（默认），speed=加速生产',
+        }),
+      ),
       beltSpeed: Type.Optional(
         Type.Number({ exclusiveMinimum: 0, description: '单条带吞吐（个/秒），默认 6（Mk.I）' }),
       ),

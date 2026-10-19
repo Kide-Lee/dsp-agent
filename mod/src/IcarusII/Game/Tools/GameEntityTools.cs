@@ -249,6 +249,16 @@ namespace IcarusII.Game.Tools
                 detail.Set("cycleCount", assembler.cycleCount);
                 detail.Set("extraCycleCount", assembler.extraCycleCount);
                 detail.Set("working", assembler.time > 0);
+                detail.Set("replicating", assembler.replicating);
+                detail.Set("extraSpeed", assembler.extraSpeed);
+                // 与 UIAssemblerWindow 同源：每台机器当前的每分钟产出（含增产剂加速）。
+                double extraRatio = assembler.speedOverride > 0
+                    ? 1.0 + assembler.extraSpeed * 0.1 / assembler.speedOverride
+                    : 1.0;
+                double perMachine = seconds > 0 ? 3600.0 / seconds * (assembler.speed / 10000.0) : 0;
+                detail.Set("productPerMin", assembler.replicating
+                    ? GameToolFormat.Round(perMachine * extraRatio, 2)
+                    : 0);
                 detail.Set("forceAccMode", assembler.forceAccMode);
 
                 var recipe = assembler.recipeId > 0 && LDB.recipes != null

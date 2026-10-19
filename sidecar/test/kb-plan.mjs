@@ -182,5 +182,24 @@ if (planTool) {
 
 // ---------------------------------------------------------------- main
 
+console.log('\n── 6. 增产剂 ──');
+{
+  const base = kb.plan('齿轮', { rate: 30 });
+  const extra = kb.plan('齿轮', { rate: 30, proliferator: 'mk3' });
+  const gearBase = base.recipes.find((row) => row.recipeName === '齿轮');
+  const gearExtra = extra.recipes.find((row) => row.recipeName === '齿轮');
+  check('mk3 额外产出：制作次数降到 80%', near(gearExtra.craftsPerMin, gearBase.craftsPerMin * 0.8), String(gearExtra.craftsPerMin));
+  check('输出倍率 1.25', near(extra.proliferator.outputMultiplier, 1.25));
+  check('原料随制作次数下降', near(extra.raw[0].amount, base.raw[0].amount * 0.8), String(extra.raw[0]?.amount));
+
+  const speed = kb.plan('齿轮', { rate: 30, proliferator: 'mk3', proliferatorMode: 'speed' });
+  const gearSpeed = speed.recipes.find((row) => row.recipeName === '齿轮');
+  check('mk3 加速：机器数减半', gearSpeed.buildingCount === Math.ceil(gearBase.buildingCount / 2), `${gearSpeed.buildingCount} vs ${gearBase.buildingCount}`);
+  check('加速不改变原料', near(speed.raw[0].amount, base.raw[0].amount));
+
+  const none = kb.plan('齿轮', { rate: 30, proliferator: 'none' });
+  check('none 与默认一致', none.recipes[0].buildingCount === base.recipes[0].buildingCount);
+}
+
 console.log(`\n${failed === 0 ? '✅' : '❌'} kb-plan 测试${failed === 0 ? '全部通过' : '失败'}（${passed} 项，失败 ${failed}）`);
 process.exit(failed === 0 ? 0 : 1);

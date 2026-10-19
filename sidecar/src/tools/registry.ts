@@ -50,6 +50,8 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_copy_blueprint: CAPABILITY_GAME_ENTITY,
   game_get_planets: CAPABILITY_GAME_ENTITY,
   game_get_logistics: CAPABILITY_GAME_ENTITY,
+  game_generate_blueprint: CAPABILITY_GAME_ENTITY,
+  game_trace_line: CAPABILITY_GAME_ENTITY,
 };
 
 const MAX_RESULT_CHARS = 9000;
@@ -367,6 +369,26 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       timeoutMs: 20000,
     }),
     gameTool(host, {
+      name: 'game_trace_line',
+      label: '产线拓扑',
+      description:
+        '从一栋建筑出发，沿传送带与分拣器把相连设备串成图：节点（id/名称/类别/坐标/深度）与有向边。' +
+        '用于回答“这条线从哪到哪、哪里断了、上下游有哪些机器”。',
+      promptSnippet: '沿传送带/分拣器追踪产线拓扑',
+      promptGuidelines: [
+        'Use game_trace_line 当玩家问某台机器的上下游、整条线是否连通、断在哪时。',
+        '结果只含实体连接，不含配方流向与星际物流；跨星用 game_get_logistics。',
+        'truncated=true 表示达到深度/节点上限，可调 depth / maxNodes 继续。',
+      ],
+      parameters: Type.Object({
+        planetId: planetArg,
+        entityId: Type.Integer({ description: '起点建筑 id（来自 game_get_entities / 截图）' }),
+        depth: Type.Optional(Type.Integer({ minimum: 1, maximum: 60, description: '最大跳数，默认 20' })),
+        maxNodes: Type.Optional(Type.Integer({ minimum: 2, maximum: 300, description: '最大节点数，默认 200' })),
+      }),
+      timeoutMs: 15000,
+    }),
+    gameTool(host, {
       name: 'game_get_logistics',
       label: '星际物流',
       description:
@@ -383,6 +405,46 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         planetId: Type.Optional(Type.Integer({ description: '只看某颗行星' })),
         offset: offsetArg,
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 40, description: '站点条数，默认 20' })),
+      }),
+      timeoutMs: 20000,
+    }),
+    gameTool(host, {
+      name: 'game_generate_blueprint',
+      label: '生成蓝图',
+      description:
+        '按模版从零生成一张只含生产设备的蓝图：给定配方与行列/间距（或显式 buildings 坐标），' +
+        '自动选择同配方类型的基础设备并保存到游戏蓝图目录。传送带/分拣器需粘贴后自行连接。' +
+        '产物是标准蓝图文本，与游戏内复制格式同源。',
+      promptSnippet: '按配方与行列生成机器阵列蓝图',
+      promptGuidelines: [
+        'Use game_generate_blueprint 当玩家要“新建一张 N×M 的某配方产线蓝图”时。',
+        '机器间默认 4 格间距（约 4m）；需要自定义坐标时传 buildings:[{protoId,recipeId,x,y,yaw}]。',
+        '生成的是裸机器阵列，不含带子；回答里要说明这一点，并给出保存路径。',
+      ],
+      parameters: Type.Object({
+        planetId: planetArg,
+        recipeId: Type.Optional(Type.Integer({ description: '配方 id；buildings 模式可省略' })),
+        protoId: Type.Optional(Type.Integer({ description: '设备原型 id；省略时按配方类型自动选基础档' })),
+        rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 40, description: '行数，默认 1' })),
+        cols: Type.Optional(Type.Integer({ minimum: 1, maximum: 60, description: '列数，默认 1' })),
+        spacingX: Type.Optional(Type.Number({ description: '列间距（格），默认 4' })),
+        spacingY: Type.Optional(Type.Number({ description: '行间距（格），默认 4' })),
+        originX: Type.Optional(Type.Number({ description: '起始 X（格），默认 0' })),
+        originY: Type.Optional(Type.Number({ description: '起始 Y（格），默认 0' })),
+        yaw: Type.Optional(Type.Number({ description: '朝向角度，默认 0' })),
+        buildings: Type.Optional(
+          Type.Array(
+            Type.Object({
+              protoId: Type.Integer(),
+              recipeId: Type.Integer(),
+              x: Type.Number(),
+              y: Type.Number(),
+              yaw: Type.Optional(Type.Number()),
+            }),
+            { description: '显式建筑列表，优先于行列模版；最多 800 台' },
+          ),
+        ),
+        name: Type.Optional(Type.String({ description: '蓝图文件名，默认“IcarusII 产线”' })),
       }),
       timeoutMs: 20000,
     }),

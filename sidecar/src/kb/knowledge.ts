@@ -621,6 +621,16 @@ export class KnowledgeBase {
     const beltItemsPerSec =
       typeof options.beltSpeed === 'number' && options.beltSpeed > 0 ? options.beltSpeed : 6;
 
+    const proliferatorTier = options.proliferator ?? 'none';
+    const proliferatorMode = options.proliferatorMode ?? 'extra';
+    // 额外产出：mk1 +12.5% / mk2 +20% / mk3 +25%；加速：+25% / +50% / +100%。
+    const proExtra: Record<string, number> = { none: 0, mk1: 0.125, mk2: 0.2, mk3: 0.25 };
+    const proSpeed: Record<string, number> = { none: 0, mk1: 0.25, mk2: 0.5, mk3: 1.0 };
+    const outputMultiplier =
+      proliferatorMode === 'extra' ? 1 + (proExtra[proliferatorTier] ?? 0) : 1;
+    const speedMultiplier =
+      proliferatorMode === 'speed' ? 1 + (proSpeed[proliferatorTier] ?? 0) : 1;
+
     const rootRecipe =
       options.recipeId !== undefined ? this.recipes.get(options.recipeId) : undefined;
     if (options.recipeId !== undefined && !rootRecipe) {
@@ -633,6 +643,14 @@ export class KnowledgeBase {
       depth,
       ...(options.recipeId !== undefined ? { recipeId: options.recipeId } : {}),
     });
+
+    // 额外产出会减少制作次数，原料/副产物按同一比例缩放（配方树本身不知道增产剂）。
+    const craftScale = 1 / outputMultiplier;
+    const rawScaled = tree.raw.map((row) => ({ ...row, amount: round4(row.amount * craftScale) }));
+    const byproductScaled = tree.byproducts.map((row) => ({
+      ...row,
+      amount: round4(row.amount * craftScale),
+    }));
 
     const forcedBinding = rootRecipe
       ? (() => {
@@ -662,7 +680,8 @@ export class KnowledgeBase {
       const binding = isRoot && forcedBinding ? forcedBinding : this.mainRecipeFor(itemId);
       if (!binding) return;
 
-      const craftsPerMin = itemRate / Math.max(1, binding.outputCount);
+      // 额外产出模式下，同样的制作次数会多出产物；反推制作次数时要除掉倍率。
+      const craftsPerMin = itemRate / Math.max(1, binding.outputCount) / outputMultiplier;
       const previous = aggregates.get(binding.recipe.id);
       if (previous) previous.craftsPerMin += craftsPerMin;
       else aggregates.set(binding.recipe.id, { recipe: binding.recipe, craftsPerMin });
@@ -718,7 +737,7 @@ export class KnowledgeBase {
       }
 
       // 机器数 = 每分钟制作次数 × 每件耗时 ÷ 60 ÷ 速度倍率。
-      const exactCount = (craftsPerMin * recipe.timeSeconds) / 60 / speed;
+      const exactCount = (craftsPerMin * recipe.timeSeconds) / 60 / (speed * speedMultiplier);
       const buildingCount = Math.max(1, Math.ceil(exactCount - 1e-9));
 
       const perBuildingKw = chosen?.building?.workEnergyPerTick
@@ -767,7 +786,10 @@ export class KnowledgeBase {
       '机器数向上取整；exactCount 是未取整值，用来看余量。',
       `单条传送带按 ${beltItemsPerSec} 个/秒折算；实际带数取决于布线。`,
       '电力只算工作功率（workEnergyPerTick × 60 ÷ 1000），不含待机、电网损耗与建筑自耗。',
-      '未建模增产剂、矿脉产率、建筑堆叠；原料是"到厂需求"，不是"矿脉开采需求"。',
+      '未建模矿脉产率与建筑堆叠；原料是"到厂需求"，不是"矿脉开采需求"。',
+      proliferatorTier === 'none'
+        ? '增产剂未启用；需要时传 proliferator=mk1/mk2/mk3。'
+        : `增产剂 ${proliferatorTier}（${proliferatorMode === 'extra' ? '额外产出' : '加速生产'}）已计入机器数与原料；喷涂消耗与电力增幅未建模。`,
     ];
 
     return {
@@ -780,10 +802,16 @@ export class KnowledgeBase {
         maxSingleInputPerMin: round4(maxSingleInputPerMin),
         maxBelts,
       },
-      raw: tree.raw,
-      byproducts: tree.byproducts,
+      raw: rawScaled,
+      byproducts: byproductScaled,
       cycles: tree.cycles,
       depthLimited: tree.depthLimited || depthCut,
+      proliferator: {
+        tier: proliferatorTier,
+        mode: proliferatorMode,
+        outputMultiplier: round4(outputMultiplier),
+        speedMultiplier: round4(speedMultiplier),
+      },
       assumptions,
       warnings,
     };

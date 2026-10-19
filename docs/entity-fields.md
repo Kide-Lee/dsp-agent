@@ -10,7 +10,7 @@
 
 | 建筑 | 字段 |
 | --- | --- |
-| 装配机 | `recipeId/Name`、`recipeSeconds`、`speedMultiplier`、`craftsPerMin`、`cycleCount`、`extraCycleCount`、`working`、`forceAccMode`、`inputs[]`（count/needed/incServed）、`outputs[]`、`powerSatisfactionPct`、`status`（working/missing_input/no_power/idle） |
+| 装配机 | `recipeId/Name`、`recipeSeconds`、`speedMultiplier`、`craftsPerMin`、`cycleCount`、`extraCycleCount`、`working`、`forceAccMode`、`inputs[]`（count/needed/incServed）、`outputs[]`、`powerSatisfactionPct`、`status`（working/missing_input/no_power/idle）、`replicating`、`extraSpeed`、`productPerMin`（与装配机面板同源） |
 | 矿机 | `productId/Name`、`productCount`、`period`、`orePerMin`、`veinCount`、`totalVeinAmount`、`workstate` |
 | 分拣器 | `grade`、`bidirectional`、`stage`、`filterItemId/Name`、`pickTarget/Name`、`insertTarget/Name`、`handItemId/Name/Count/Inc`、`stackCount`、`canStack`、`stackInput/Output`、`delay` |
 | 传送带 | `itemsPerSec`、`segLength`、`rangeFrom/To`、`nodeIndex`、`pathId`、`pathCapacity`、`pathNodeCount`、`pathCargoCount`、`cargoItems[]`（`itemId/name/iconTag/count`，按堆数聚合）、`outputId/backInputId/leftInputId/rightInputId` |
@@ -39,5 +39,5 @@
 
 - 反射字段是**组件内部命名**，不同建筑的可读性不一致；熟悉的类型走专门字段。
 - 炮塔/信标/护盾等 `DefenseSystem` 使用 `DataPool` 而非数组，暂未纳入。
-- 装配机的实时 `每分钟产量`（面板 0.0/分钟）没有稳定来源，仍只给装机 `craftsPerMin` 与 `working`。
+- 装配机 `productPerMin` 按面板公式（速度/增产剂加速/是否运行）计算，不包含电网供电比例。
 - 传送带 `cargoItems` 用堆数聚合，和面板“线路货物数”同源；不返回每个货物的位置。
