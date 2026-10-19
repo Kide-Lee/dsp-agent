@@ -48,8 +48,8 @@ namespace IcarusII.Game.Tools
             public float Yaw2;
             public float Tilt2;
             public float Pitch2;
-            public int OutputObjIndex;
-            public int InputObjIndex;
+            public int OutputObjIndex = -1;
+            public int InputObjIndex = -1;
             public sbyte OutputToSlot;
             public sbyte InputFromSlot;
             public sbyte OutputFromSlot;
@@ -319,23 +319,25 @@ namespace IcarusII.Game.Tools
             if (proto <= 0) proto = PickBuilding(recipe.Type);
             int belt = args["beltId"].AsInt(2003);
             int inserter = args["inserterId"].AsInt(2014);
-            float feedZ = -2f;
-            float outZ = 2f;
+            // 蓝图坐标不能为负：带子在 0/4，机器在 2，爪子各跨 1 格。
+            float feedZ = 0f;
+            float machineZ = 2f;
+            float outZ = 4f;
 
             for (int i = 0; i < count; i++)
-                list.Add(new BpBuilding { ProtoId = proto, RecipeId = recipeId, X = i * spacing, Z = 0f });
+                list.Add(new BpBuilding { ProtoId = proto, RecipeId = recipeId, X = i * spacing, Z = machineZ });
 
             int inputStart = list.Count;
             for (int i = 0; i < count; i++)
                 list.Add(new BpBuilding { ProtoId = belt, X = i * spacing, Z = feedZ, Yaw = 90f,
-                    InputObjIndex = i == 0 ? 0 : inputStart + i - 1, OutputObjIndex = i + 1 < count ? inputStart + i + 1 : 0,
-                    InputFromSlot = 1, OutputToSlot = 1, Params = new int[0] });
+                    InputObjIndex = i == 0 ? -1 : inputStart + i - 1, OutputObjIndex = i + 1 < count ? inputStart + i + 1 : -1,
+                    InputFromSlot = 0, OutputToSlot = 1, Params = new int[0] });
 
             int outputStart = list.Count;
             for (int i = 0; i < count; i++)
                 list.Add(new BpBuilding { ProtoId = belt, X = i * spacing, Z = outZ, Yaw = 90f,
-                    InputObjIndex = i == 0 ? 0 : outputStart + i - 1, OutputObjIndex = i + 1 < count ? outputStart + i + 1 : 0,
-                    InputFromSlot = 1, OutputToSlot = 1, Params = new int[0] });
+                    InputObjIndex = i == 0 ? -1 : outputStart + i - 1, OutputObjIndex = i + 1 < count ? outputStart + i + 1 : -1,
+                    InputFromSlot = 0, OutputToSlot = 1, Params = new int[0] });
 
             for (int i = 0; i < count; i++)
             {
@@ -343,16 +345,35 @@ namespace IcarusII.Game.Tools
                 int inBelt = inputStart + i;
                 int outBelt = outputStart + i;
                 list.Add(new BpBuilding { ProtoId = inserter, X = i * spacing, Z = feedZ + 1f,
-                    X2 = i * spacing, Z2 = 0f, Yaw = 180f, Yaw2 = 180f,
+                    X2 = i * spacing, Z2 = machineZ, Yaw = 180f, Yaw2 = 180f,
                     InputObjIndex = inBelt, InputFromSlot = -1,
                     OutputObjIndex = machineIndex, OutputToSlot = 0,
                     Params = new int[] { 1 } });
-                list.Add(new BpBuilding { ProtoId = inserter, X = i * spacing, Z = 0f,
-                    X2 = i * spacing, Z2 = outZ - 1f, Yaw = 0f, Yaw2 = 0f,
+                list.Add(new BpBuilding { ProtoId = inserter, X = i * spacing, Z = machineZ + 1f,
+                    X2 = i * spacing, Z2 = outZ, Yaw = 0f, Yaw2 = 0f,
                     InputObjIndex = machineIndex, InputFromSlot = 0,
                     OutputObjIndex = outBelt, OutputToSlot = -1,
                     Params = new int[] { 1 } });
             }
+        }
+
+        /// <summary>测试入口：只跑 row 规划 + 编码，不需要行星/工厂。</summary>
+        internal static string SelfTestRow(int recipeId, int count)
+        {
+            var args = JsonValue.NewObject();
+            args.Set("count", count);
+            var list = new List<BpBuilding>();
+            BuildRow(args, recipeId, list);
+            float maxX = 0, maxZ = 0;
+            foreach (var b in list)
+            {
+                maxX = Math.Max(maxX, Math.Max(b.X, b.X2) + 1);
+                maxZ = Math.Max(maxZ, Math.Max(b.Z, b.Z2) + 1);
+            }
+            var recipe = LDB.recipes.Select(recipeId);
+            int icon = recipe != null && recipe.Results != null && recipe.Results.Length > 0 ? recipe.Results[0] : 0;
+            return Encode("selftest", "", "", "", "", icon,
+                (int)Math.Ceiling(maxX), (int)Math.Ceiling(maxZ), list);
         }
 
         /// <summary>按配方类型挑同类型里速度最低（基础档）的设备；找不到就用制造台 Mk.I。</summary>
