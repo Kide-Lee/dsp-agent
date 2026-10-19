@@ -106,8 +106,8 @@ namespace IcarusII.Game.Tools
                         Tilt2 = (float)row["tilt2"].AsDouble(0),
                         Pitch2 = (float)row["pitch2"].AsDouble(0),
                         FilterId = row["filterId"].AsInt(0),
-                        OutputObjIndex = row["outputObjIndex"].AsInt(0),
-                        InputObjIndex = row["inputObjIndex"].AsInt(0),
+                        OutputObjIndex = row["outputObjIndex"].AsInt(-1),
+                        InputObjIndex = row["inputObjIndex"].AsInt(-1),
                         OutputToSlot = (sbyte)row["outputToSlot"].AsInt(0),
                         InputFromSlot = (sbyte)row["inputFromSlot"].AsInt(0),
                         OutputFromSlot = (sbyte)row["outputFromSlot"].AsInt(0),
@@ -119,7 +119,7 @@ namespace IcarusII.Game.Tools
                     list.Add(b);
                 }
             }
-            else
+            else if (layout != "row")
             {
                 if (recipeId <= 0)
                 {
