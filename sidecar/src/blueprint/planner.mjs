@@ -66,9 +66,9 @@ export function planSingle(itemId, rate, options = {}) {
     insertType: options.insertType ?? 2,
     recycleMode: options.recycleMode ?? 1,
     rows: rowCount,
-    stackSize: options.stackSize ?? 4,
-    floor: options.floor ?? 15,
-    stationPiler: options.stationPiler ?? 1,
+    stackSize: options.stackSize ?? 1,
+    floor: options.floor ?? 1,
+    stationPiler: options.stationPiler ?? 2,
     proNum: 0,
   });
   // 行拼接边界上偶发跨行连线（距离可达数百格），粘贴会报“距离太远”。
