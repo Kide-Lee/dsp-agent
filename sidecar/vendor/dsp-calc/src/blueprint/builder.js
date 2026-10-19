@@ -4,15 +4,18 @@ import { INSERTER_TYPE, SMELTER, CHEMICAL, LAB, OIL_REFINERY, HADRON_COLLIDER, A
 /**
  * 构建蓝图
  */
-function newBlueprint(title = "新蓝图", size = { x: 1, y: 1 }, dragBoxSize = size) {
+function newBlueprint(title = "新蓝图", size = { x: 1, y: 1 }, dragBoxSize = size, meta = {}) {
   return {
     header: {
       layout: 10,
-      icons: [0, 0, 0, 0, 0],
+      icons: [meta.iconId || 0, 0, 0, 0, 0],
       time: new Date().toISOString(),
-      gameVersion: "0.10.32.25552",
-      shortDesc: title,
-      desc: "",
+      gameVersion: meta.gameVersion || "0.10.35.29151",
+      shortDesc: meta.title || title,
+      author: meta.author || "",
+      customVersion: meta.version || "",
+      externalFields: meta.attributes || "",
+      desc: meta.description || "",
     },
     version: 1,
     cursorOffset: {
@@ -76,10 +79,10 @@ function buildSlotReverse(factory, slot) {
 export class BlueprintBuilder {
   dspBlueprint; // 游戏中的蓝图
   blueprint; // 原始蓝图
-  constructor(title, blueprint) {
+  constructor(title, blueprint, meta = {}) {
     // 计算size
     blueprint.generate();
-    this.dspBlueprint = newBlueprint(title, { x: blueprint.matrix[0].length, y: blueprint.matrix.length });
+    this.dspBlueprint = newBlueprint(title, { x: blueprint.matrix[0].length, y: blueprint.matrix.length }, undefined, meta);
     this.blueprint = blueprint;
   }
 

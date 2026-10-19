@@ -356,6 +356,10 @@ export function createBlueprintTools(client: BlueprintClient = new BlueprintClie
         rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 8, description: '产线行数，默认 1' })),
         stackSize: Type.Optional(Type.Integer({ minimum: 1, maximum: 4, description: '集装堆叠，默认 1' })),
         name: Type.Optional(Type.String({ description: '蓝图文件名' })),
+        author: Type.Optional(Type.String({ description: '作者，默认“自动生成”' })),
+        version: Type.Optional(Type.String({ description: '版本号，默认游戏版本 0.10.35.29151' })),
+        attributes: Type.Optional(Type.String({ description: '蓝图属性' })),
+        description: Type.Optional(Type.String({ description: '蓝图介绍' })),
       }),
       async execute(_id, params) {
         const args = (params ?? {}) as Record<string, unknown>;
@@ -370,6 +374,11 @@ export function createBlueprintTools(client: BlueprintClient = new BlueprintClie
             insertType: typeof args['insertType'] === 'number' ? args['insertType'] : 2,
             rows: typeof args['rows'] === 'number' ? args['rows'] : 1,
             stackSize: typeof args['stackSize'] === 'number' ? args['stackSize'] : 1,
+            name: typeof args['name'] === 'string' && args['name'] ? args['name'] : undefined,
+            author: typeof args['author'] === 'string' && args['author'] ? args['author'] : '自动生成',
+            version: typeof args['version'] === 'string' && args['version'] ? args['version'] : '0.10.35.29151',
+            attributes: typeof args['attributes'] === 'string' ? args['attributes'] : '',
+            description: typeof args['description'] === 'string' ? args['description'] : '',
           });
           const dir = resolveBlueprintDir();
           mkdirSync(dir, { recursive: true });

@@ -302,7 +302,7 @@ function encodedSize(bp) {
 }
 export function toStr(bp) {
     let result = START;
-    result += '0,';
+    result += '1,';
     result += bp.header.layout;
     result += ',';
     for (const i of bp.header.icons) {
@@ -315,6 +315,12 @@ export function toStr(bp) {
     result += bp.header.gameVersion;
     result += ',';
     result += encodeURIComponent(bp.header.shortDesc);
+    result += ',';
+    result += encodeURIComponent(bp.header.author || '');
+    result += ',';
+    result += encodeURIComponent(bp.header.customVersion || '');
+    result += ',';
+    result += encodeURIComponent(bp.header.externalFields || '');
     result += ',';
     result += encodeURIComponent(bp.header.desc);
     result += '"';

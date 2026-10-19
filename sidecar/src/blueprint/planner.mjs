@@ -44,18 +44,20 @@ export function findItemIdByName(name) {
 }
 
 export function planSingle(itemId, rate, options = {}) {
+  const rowCount = Math.max(1, Math.min(8, Math.floor(options.rows ?? 1)));
   const ri = recipeFor(itemId);
   if (ri < 0) throw new Error(`没有配方能产出物品 ${itemId}`);
   const r = recipes[ri];
-  const target = unitFor(itemId, rate, false);
-  const units = [target];
+  const perRow = rate / rowCount;
+  const units = [];
+  for (let r = 0; r < rowCount; r++) units.push(unitFor(itemId, perRow, false));
   for (let i = 0; i < (r.Items || []).length; i++) {
     const inputId = r.Items[i];
-    const need = (r.ItemCounts?.[i] || 1) * rate / (r.ResultCounts?.[0] || 1);
+    const need = (r.ItemCounts?.[i] || 1) * perRow / (r.ResultCounts?.[0] || 1);
     const u = unitFor(inputId, need, true);
     if (u) units.push(u);
   }
-  const produces = { [target.item]: rate };
+  const produces = { [units[0].item]: rate };
   const blueprint = computeBlueprint({
     allProduceUnits: units,
     surplusList: {},
@@ -63,11 +65,19 @@ export function planSingle(itemId, rate, options = {}) {
     beltType: options.beltType ?? 2,
     insertType: options.insertType ?? 2,
     recycleMode: options.recycleMode ?? 1,
-    rows: options.rows ?? 1,
+    rows: rowCount,
     stackSize: options.stackSize ?? 1,
     floor: options.floor ?? 1,
     stationPiler: options.stationPiler ?? 2,
     proNum: 0,
   });
-  return generateBlueprint(blueprint);
+  return generateBlueprint(blueprint, {
+    title: options.name || undefined,
+    author: options.author ?? '自动生成',
+    version: options.version ?? '0.10.35.29151',
+    attributes: options.attributes ?? '',
+    description: options.description ?? '',
+    iconId: itemId,
+    gameVersion: options.gameVersion || undefined,
+  });
 }
