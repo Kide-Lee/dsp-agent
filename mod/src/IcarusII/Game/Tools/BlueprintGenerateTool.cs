@@ -294,6 +294,7 @@ namespace IcarusII.Game.Tools
             }
 
             data.Set("saved", true);
+            data.Set("source", "generated");
             data.Set("path", path);
             data.Set("fileName", fileName);
             data.Set("buildings", list.Count);
@@ -301,6 +302,13 @@ namespace IcarusII.Game.Tools
             data.Set("height", (int)Math.Ceiling(maxY));
             data.Set("bytes", text.Length);
             data.Set("verified", true);
+            // 卡片所需元数据：与 header 同源，模型也能直接引用。
+            data.Set("name", title);
+            data.Set("author", author);
+            data.Set("version", bpVersion);
+            data.Set("attributes", attributes);
+            data.Set("description", description);
+            data.Set("iconItemId", iconItemId);
             data.Set("display", "已生成蓝图 " + fileName + " · " + list.Count + " 台 · "
                 + (int)Math.Ceiling(maxX) + "×" + (int)Math.Ceiling(maxY) + " 格");
             data.Set("note", "只含生产设备，不含传送带/分拣器；粘贴后自行接线。");

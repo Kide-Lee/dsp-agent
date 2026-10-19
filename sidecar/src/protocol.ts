@@ -51,6 +51,8 @@ export const MessageType = {
   HistoryDeleted: 'history.deleted',
   // M4f：sidecar 本地工具的 UI 事件（附录 A.8）
   ToolActivity: 'tool_activity',
+  // M4i：蓝图卡片（附录 A.9）
+  BlueprintCard: 'blueprint_card',
   // M3：拉取供应商的可用模型目录 / 检测 Key
   ModelCatalog: 'model.catalog',
   ProviderTest: 'provider.test',
@@ -390,6 +392,11 @@ export interface HistoryMessage {
   role: 'user' | 'assistant';
   text: string;
   timestamp?: number;
+  /**
+   * 该回答产出的蓝图卡片（附录 A.9）；只在 assistant 消息上出现。
+   * 老客户端忽略该字段，行为不变。
+   */
+  cards?: BlueprintCardPayload[];
 }
 
 export function buildSaveBoundPayload(args: {
@@ -473,6 +480,56 @@ export function buildToolActivityPayload(args: ToolActivityPayload): JsonObject 
   if (args.ok !== undefined) payload['ok'] = args.ok;
   if (args.summary !== undefined) payload['summary'] = args.summary;
   if (args.detail !== undefined) payload['detail'] = args.detail;
+  return payload;
+}
+
+// ---------------------------------------------------------------- 蓝图卡片（附录 A.9）
+
+export type BlueprintCardSource = 'generated' | 'downloaded' | 'copied';
+
+/** 蓝图卡片：所有字段都由工具结果推导，缺失就不发。 */
+export interface BlueprintCardPayload {
+  fileName: string;
+  path?: string;
+  name?: string;
+  item?: string;
+  itemId?: number;
+  rate?: number;
+  buildings?: number;
+  width?: number;
+  height?: number;
+  author?: string;
+  version?: string;
+  attributes?: string;
+  description?: string;
+  source?: BlueprintCardSource;
+  license?: string;
+  repository?: string;
+}
+
+export function buildBlueprintCardPayload(args: BlueprintCardPayload): JsonObject {
+  const payload: JsonObject = { fileName: args.fileName };
+  const optional: (keyof BlueprintCardPayload)[] = [
+    'path',
+    'name',
+    'item',
+    'itemId',
+    'rate',
+    'buildings',
+    'width',
+    'height',
+    'author',
+    'version',
+    'attributes',
+    'description',
+    'source',
+    'license',
+    'repository',
+  ];
+  for (const key of optional) {
+    const value = args[key];
+    if (value !== undefined && value !== null && value !== '') payload[key] = value;
+  }
   return payload;
 }
 

@@ -144,8 +144,44 @@ console.log('\n── 4. 保存到游戏蓝图目录 ──');
   delete process.env.ICARUS_BLUEPRINT_DIR;
 }
 
-console.log('\n── 5. 元数据 ──');
-check('三个蓝图工具', tools.length === 3 && BLUEPRINT_TOOL_NAMES.length === 3);
+console.log('\n── 5. header/二进制元数据（卡片用） ──');
+{
+  // 按 BlueprintData.headerStr + Import 的字段顺序造一份 v1 蓝图：
+  // version/cursor/dragBox/primaryArea 7×int32 + areaCount(1) + area(14) + buildingCount(4)
+  const makeBlueprint = ({ name, author, version, desc, width, height, buildings }) => {
+    const header = `BLUEPRINT:1,10,1206,0,0,0,0,0,0,9.9.9,${encodeURIComponent(name)},`
+      + `${encodeURIComponent(author)},${encodeURIComponent(version)},,${encodeURIComponent(desc)}`;
+    const areaCount = 1;
+    const binary = Buffer.alloc(29 + areaCount * 14 + 4);
+    binary.writeInt32LE(2, 0);
+    binary.writeInt32LE(width, 16);
+    binary.writeInt32LE(height, 20);
+    binary[28] = areaCount;
+    binary.writeInt32LE(buildings, 29 + areaCount * 14);
+    return `${header}"${gzipSync(binary).toString('base64')}"${'c'.repeat(32)}`;
+  };
+
+  const summary = inspectBlueprintText(makeBlueprint({
+    name: '电磁涡轮 20',
+    author: '自动生成',
+    version: '1.2.3',
+    desc: '一条测试产线',
+    width: 12,
+    height: 5,
+    buildings: 24,
+  }));
+  check('v1 名称', summary.name === '电磁涡轮 20', String(summary.name));
+  check('作者', summary.author === '自动生成', String(summary.author));
+  check('自定义版本', summary.version === '1.2.3', String(summary.version));
+  check('介绍', summary.description === '一条测试产线', String(summary.description));
+  check('图标物品', summary.iconItemId === 1206, String(summary.iconItemId));
+  check('建筑数', summary.buildings === 24, String(summary.buildings));
+  check('占地', summary.width === 12 && summary.height === 5);
+  check('老格式不误报元数据', inspectBlueprintText(validText).name === undefined);
+}
+
+console.log('\n── 6. 元数据 ──');
+check('四个蓝图工具', tools.length === 4 && BLUEPRINT_TOOL_NAMES.length === 4);
 check('描述带署名', byName['blueprint_search'].description.includes('CC BY-NC-SA 4.0'));
 
 console.log(`\n${failed === 0 ? '✅' : '❌'} blueprint 测试${failed === 0 ? '全部通过' : '失败'}（${passed} 项，失败 ${failed}）`);

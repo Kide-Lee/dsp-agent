@@ -463,6 +463,8 @@ mod                                   sidecar
 - `history`：最近最多 40 条 `user` / `assistant` 的可见文本（单条最多 4000 字符），
   只用于 mod **回放聊天窗**，不进入模型上下文；工具调用、工具结果、思考块和
   压缩摘要不会出现在这里。历史读取失败时为空数组，不阻断 `save.bound`。
+- `history` 的 `assistant` 消息可带可选的 `cards`（附录 A.9）：该回答产出的蓝图卡片，
+  形如 `[{fileName, path, name, ...}]`。老客户端忽略该字段；mod 回放时在回答后重建卡片。
 
 #### 语义
 
@@ -544,6 +546,57 @@ mod                                   sidecar
 - 同一次工具调用 `callId` 相同；mod 用它在 `start` 建卡、`end` 原地更新。
 - mod 必须容忍：只收到 `end`（补建卡）、`name` 未知（显示原名）、字段缺失。
 - 只对**模型可见**的本地工具发送；知识库导出等 internal 调用不发。
+
+### A.9 `blueprint_card` — 蓝图卡片（sidecar → mod）
+
+生成 / 下载 / 复制蓝图成功后，sidecar 在**本轮收尾**时（`message{final}` 之后、
+`status{idle}` 之前）发一条或多条 `blueprint_card`。mod 把卡片追加到对话末尾，
+卡片上提供「查看详情」与「粘贴铺设」两个动作。
+
+```jsonc
+{
+  "v": 1, "id": "s-80", "type": "blueprint_card",
+  "payload": {
+    "path": "/home/me/Documents/Dyson Sphere Program/Blueprint/电磁涡轮 20.txt",
+    "fileName": "电磁涡轮 20.txt",
+    "name": "电磁涡轮 20",
+    "item": "电磁涡轮",
+    "itemId": 1206,
+    "rate": 20,
+    "buildings": 24,
+    "width": 12,
+    "height": 5,
+    "author": "自动生成",
+    "version": "0.10.35.29151",
+    "attributes": "",
+    "description": "由 dsp-calc 规划器生成",
+    "source": "generated",
+    "license": "CC BY-NC-SA 4.0",
+    "repository": "https://github.com/DSPBluePrints/FactoryBluePrints"
+  }
+}
+```
+
+字段约定：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `fileName` | 是 | 蓝图文件名（含 `.txt`） |
+| `path` | 否 | sidecar 侧的绝对路径；**不保证** mod 能直接打开（Proton/Wine 路径可能不同） |
+| `name` | 否 | 蓝图标题（header 的 `shortDesc`） |
+| `item` / `itemId` / `rate` | 否 | 产物与目标产量（`blueprint_generate` 才有） |
+| `buildings` / `width` / `height` | 否 | 建筑数与占地（从蓝图二进制读出） |
+| `author` / `version` / `attributes` / `description` | 否 | 蓝图 header 元数据 |
+| `source` | 否 | `"generated"` \| `"downloaded"` \| `"copied"`，用于卡片角标 |
+| `license` / `repository` | 否 | 下载来源的许可与仓库，卡片可据此署名 |
+
+- 一次工具调用成功 → 一张卡片；一轮里调用多次就发多条，顺序与工具完成顺序一致。
+- 工具失败不发卡片。
+- mod 必须容忍字段缺失；`path` 打不开时应回退到
+  `GameConfig.blueprintFolder + fileName` 再尝试。
+- sidecar 会把卡片按「用户提问原文」持久化，并在后续 `save.bound.history` 的
+  assistant 消息上以可选 `cards` 字段带回；mod 回放时在回答后重建卡片。
+  记录损坏/找不到对应回合时只是不回放，不影响历史文本。
 
 ---
 

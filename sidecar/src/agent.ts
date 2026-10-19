@@ -15,8 +15,18 @@
  * 「未配置 key」的启动路径都不会加载 pi、不会联网。
  */
 
-import { existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
 import type {
   AgentSession,
   AgentSessionEvent,
@@ -50,11 +60,17 @@ import type {
 } from './protocol.js';
 import type { GameToolHost } from './tools/host.js';
 import { createKbTools } from './kb/tools.js';
-import type { ToolActivityPayload } from './protocol.js';
+import type { BlueprintCardPayload, ToolActivityPayload } from './protocol.js';
 import { parseSessionLines, removeTurnFromEntries, serializeSessionEntries } from './history.js';
 import { createScriptTool } from './tools/script.js';
 import { createWikiTools } from './wiki/tools.js';
 import { createBlueprintTools } from './blueprint/tools.js';
+import {
+  attachBlueprintCards,
+  compactBlueprintCard,
+  extractBlueprintCard,
+  type BlueprintCardRecord,
+} from './blueprint/card.js';
 import type { KnowledgeStore } from './kb/store.js';
 
 /** pi SDK 的完整类型（仅类型层面；运行时不静态引用）。 */
@@ -89,6 +105,8 @@ export interface AgentEmitter {
   ): Promise<ToolResultPayload>;
   /** 本地工具（kb_* / run_script）的 UI 事件；协议附录 A.8。 */
   toolActivity?(payload: ToolActivityPayload): void;
+  /** 蓝图卡片；协议附录 A.9。由 agent 在本轮收尾时统一发出。 */
+  blueprintCard?(payload: BlueprintCardPayload): void;
 }
 
 export interface AgentRunner {
@@ -280,10 +298,21 @@ export interface PiAgentOptions {
 interface RunState {
   emit: AgentEmitter;
   promptId: string | null;
+  /** 本轮开始时的存档；中途换档时卡片仍记在发起回合的存档里。 */
+  saveKey: string | null;
+  /** 本轮用户提问原文；用于把卡片记录挂回历史回合。 */
+  userText: string;
   text: string;
   thinking: string;
   error: string | null;
   stopReason: string | null;
+  /**
+   * 本轮成功产出的蓝图卡片。
+   *
+   * 不在 tool_end 立刻发：模型通常还会再写一段总结，卡片要排在**整轮最末尾**。
+   * 因此先入队，等 final message（或失败 error）之后再 flush。
+   */
+  cards: BlueprintCardPayload[];
 }
 
 /**
@@ -733,8 +762,110 @@ export class PiAgent implements AgentRunner {
     const pi = await this.loadSdk();
     const manager = pi.SessionManager.continueRecent(this.dataDir, sessionDir);
     const messages = extractHistoryMessages(manager.buildContextEntries());
-    this.logger.info('读取存档历史', { saveKey, messages: messages.length });
-    return messages;
+    const records = this.readBlueprintCards(saveKey);
+    const withCards = attachBlueprintCards(messages, records);
+    this.logger.info('读取存档历史', {
+      saveKey,
+      messages: withCards.length,
+      blueprintCards: records.length,
+    });
+    return withCards;
+  }
+
+  // ---------------------------------------------------------------- 蓝图卡片持久化
+
+  private blueprintCardLogPath(saveKey: string | null): string | null {
+    if (!saveKey) return null;
+    return join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey), 'blueprint-cards.jsonl');
+  }
+
+  /**
+   * 追加卡片记录。持久化是为了 `save.bound.history` 回放：
+   * 会话文件只存文本，卡片必须单独记一份，按「用户提问原文」挂回对应回答。
+   */
+  private appendBlueprintCards(
+    saveKey: string | null,
+    prompt: string,
+    cards: readonly BlueprintCardPayload[],
+  ): void {
+    const path = this.blueprintCardLogPath(saveKey);
+    if (!path || cards.length === 0) return;
+    const text = prompt.trim();
+    if (!text) return;
+
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      const now = Date.now();
+      const lines = cards
+        .map((card) =>
+          JSON.stringify({
+            prompt: text,
+            timestamp: now,
+            card: compactBlueprintCard(card),
+          } satisfies BlueprintCardRecord),
+        )
+        .join('\n');
+      appendFileSync(path, `${lines}\n`, { encoding: 'utf8', mode: 0o600 });
+    } catch (err) {
+      // 卡片已经发到 UI 了；落盘失败只影响下次历史回放，不打断本轮。
+      this.logger.warn('写蓝图卡片记录失败', { saveKey, ...errorFields(err) });
+    }
+  }
+
+  private readBlueprintCards(saveKey: string | null): BlueprintCardRecord[] {
+    const path = this.blueprintCardLogPath(saveKey);
+    if (!path || !existsSync(path)) return [];
+    let raw: string;
+    try {
+      raw = readFileSync(path, 'utf8');
+    } catch (err) {
+      this.logger.warn('读蓝图卡片记录失败', { saveKey, ...errorFields(err) });
+      return [];
+    }
+
+    const records: BlueprintCardRecord[] = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as Partial<BlueprintCardRecord>;
+        if (typeof parsed.prompt !== 'string' || !parsed.card || typeof parsed.card.fileName !== 'string') {
+          continue;
+        }
+        records.push({
+          prompt: parsed.prompt,
+          ...(typeof parsed.timestamp === 'number' ? { timestamp: parsed.timestamp } : {}),
+          card: parsed.card,
+        });
+      } catch {
+        // 坏行跳过，不能因为一条记录损坏就丢掉整段历史。
+      }
+    }
+    return records;
+  }
+
+  /** 删除某个提问对应的卡片记录（回合被删时调用）。 */
+  private removeBlueprintCardRecords(saveKey: string, prompt: string): void {
+    const path = this.blueprintCardLogPath(saveKey);
+    const text = prompt.trim();
+    if (!path || !text || !existsSync(path)) return;
+
+    const records = this.readBlueprintCards(saveKey);
+    const kept = records.filter((record) => record.prompt.trim() !== text);
+    if (kept.length === records.length) return;
+
+    const tmp = `${path}.tmp-${process.pid}`;
+    try {
+      const body = kept.map((record) => JSON.stringify(record)).join('\n');
+      writeFileSync(tmp, kept.length > 0 ? `${body}\n` : '', { encoding: 'utf8', mode: 0o600 });
+      renameSync(tmp, path);
+    } catch (err) {
+      try {
+        rmSync(tmp, { force: true });
+      } catch {
+        // ignore
+      }
+      this.logger.warn('删除蓝图卡片记录失败', { saveKey, ...errorFields(err) });
+    }
   }
 
   /**
@@ -800,6 +931,9 @@ export class PiAgent implements AgentRunner {
       return { ok: false, removed: 0, error: 'io_error' };
     }
 
+    // 卡片记录跟着回合一起删；否则重进存档时旧卡片可能挂到同一句提问的新回答上。
+    this.removeBlueprintCardRecords(saveKey, text);
+
     // 上下文必须重建，否则被删的回合还在内存会话里继续发给模型。
     if (this.saveKey === saveKey) this.teardown();
     this.logger.info('已删除对话回合', { saveKey, removed: outcome.removed, file: newest });
@@ -859,7 +993,17 @@ export class PiAgent implements AgentRunner {
     }
     if (!emit.isActive()) return;
 
-    const run: RunState = { emit, promptId, text: '', thinking: '', error: null, stopReason: null };
+    const run: RunState = {
+      emit,
+      promptId,
+      saveKey: this.saveKey,
+      userText: text,
+      text: '',
+      thinking: '',
+      error: null,
+      stopReason: null,
+      cards: [],
+    };
     this.active = run;
 
     emit.status('thinking', `${data.provider}/${data.model}`);
@@ -928,6 +1072,22 @@ export class PiAgent implements AgentRunner {
         emit.configState(this.store.clearRuntimeState());
       }
       emit.message(run.text, promptId, true);
+    }
+
+    // 蓝图卡片排在整轮最末尾：final message（或失败 error）之后、idle 之前。
+    // 一次工具调用成功一张；顺序与工具完成顺序一致。
+    // 同一 fileName 去重：上游自动重试可能把同一张蓝图再执行一遍。
+    const uniqueCards: BlueprintCardPayload[] = [];
+    const seenCards = new Set<string>();
+    for (const card of run.cards) {
+      if (seenCards.has(card.fileName)) continue;
+      seenCards.add(card.fileName);
+      uniqueCards.push(card);
+    }
+    if (uniqueCards.length > 0) {
+      // 先落盘再发帧：即使这一帧没送到，重进存档仍能从历史里回放。
+      this.appendBlueprintCards(run.saveKey, run.userText, uniqueCards);
+      for (const card of uniqueCards) emit.blueprintCard?.(card);
     }
 
     emit.status('idle');
@@ -1375,6 +1535,9 @@ export class PiAgent implements AgentRunner {
             detail: clipText(text, 4000),
           });
         }
+        // 蓝图工具成功 ⇒ 记一张卡片，等 final message 后统一发，保证排在对话末尾。
+        const card = extractBlueprintCard(event.toolName, event.result, event.isError);
+        if (card) run.cards.push(card);
         return;
       }
 

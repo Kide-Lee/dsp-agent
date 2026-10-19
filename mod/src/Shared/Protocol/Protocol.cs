@@ -63,6 +63,9 @@ namespace IcarusII.Common.Protocol
         /// <summary>sidecar → mod：本地工具的可视化事件（附录 A.8，仅 UI）。</summary>
         public const string ToolActivity = "tool_activity";
 
+        /// <summary>sidecar → mod：蓝图卡片（附录 A.9，仅 UI）。</summary>
+        public const string BlueprintCard = "blueprint_card";
+
         /// <summary>error.payload.code 的 M1 新增取值。</summary>
         public const string CodeInvalidKey = "invalid_key";
         public const string CodeUpstreamError = "upstream_error";
@@ -295,6 +298,70 @@ namespace IcarusII.Common.Protocol
         }
     }
 
+    /// <summary>
+    /// `blueprint_card` 的解析结果（附录 A.9）。
+    ///
+    /// 所有字段都是可选的（`fileName` 除外）；字段缺失/类型不对一律当没有，
+    /// 由 UI 决定显示哪几项。**不在 Shared 里碰 Unity**。
+    /// </summary>
+    public sealed class BlueprintCardInfo
+    {
+        public string Path { get; private set; }
+        public string FileName { get; private set; }
+        public string Name { get; private set; }
+        public string Item { get; private set; }
+        public int ItemId { get; private set; }
+        public double Rate { get; private set; }
+        public int Buildings { get; private set; }
+        public int Width { get; private set; }
+        public int Height { get; private set; }
+        public string Author { get; private set; }
+        public string Version { get; private set; }
+        public string Attributes { get; private set; }
+        public string Description { get; private set; }
+        /// <summary>`generated` | `downloaded` | `copied`；未知/缺失为 null。</summary>
+        public string Source { get; private set; }
+        public string License { get; private set; }
+        public string Repository { get; private set; }
+
+        /// <summary>卡片标题：蓝图名 → 文件名（去 .txt）→ 兜底。</summary>
+        public string DisplayTitle
+        {
+            get
+            {
+                if (!string.IsNullOrEmpty(Name)) return Name;
+                var file = FileName;
+                if (string.IsNullOrEmpty(file)) return "蓝图";
+                return file.EndsWith(".txt", StringComparison.OrdinalIgnoreCase)
+                    ? file.Substring(0, file.Length - 4)
+                    : file;
+            }
+        }
+
+        public static BlueprintCardInfo Parse(JsonValue payload)
+        {
+            var r = new BlueprintCardInfo();
+            if (payload == null || payload.IsNull) return r;
+            r.Path = payload["path"].AsString(null);
+            r.FileName = payload["fileName"].AsString(null);
+            r.Name = payload["name"].AsString(null);
+            r.Item = payload["item"].AsString(null);
+            r.ItemId = payload["itemId"].AsInt(0);
+            r.Rate = payload["rate"].AsDouble(0);
+            r.Buildings = payload["buildings"].AsInt(0);
+            r.Width = payload["width"].AsInt(0);
+            r.Height = payload["height"].AsInt(0);
+            r.Author = payload["author"].AsString(null);
+            r.Version = payload["version"].AsString(null);
+            r.Attributes = payload["attributes"].AsString(null);
+            r.Description = payload["description"].AsString(null);
+            r.Source = payload["source"].AsString(null);
+            r.License = payload["license"].AsString(null);
+            r.Repository = payload["repository"].AsString(null);
+            return r;
+        }
+    }
+
     /// <summary>`history.deleted` 的解析结果（附录 A.7）。</summary>
     public sealed class HistoryDeletedInfo
     {
@@ -322,6 +389,8 @@ namespace IcarusII.Common.Protocol
         public string Role { get; set; }
         public string Text { get; set; }
         public long Timestamp { get; set; }
+        /// <summary>该回答产出的蓝图卡片（附录 A.6/A.9，可选）。</summary>
+        public List<BlueprintCardInfo> Cards { get; set; } = new List<BlueprintCardInfo>();
     }
 
     /// <summary>存档绑定结果（协议附录 A.6）。</summary>
@@ -355,12 +424,23 @@ namespace IcarusII.Common.Protocol
                     if (role != "user" && role != "assistant") continue;
                     var text = item["text"].AsString(null);
                     if (string.IsNullOrEmpty(text)) continue;
-                    r.History.Add(new HistoryMessageInfo
+                    var info = new HistoryMessageInfo
                     {
                         Role = role,
                         Text = text,
                         Timestamp = item["timestamp"].AsLong(0),
-                    });
+                    };
+                    var cards = item["cards"];
+                    if (cards != null && cards.Count > 0)
+                    {
+                        for (int c = 0; c < cards.Count; c++)
+                        {
+                            var card = BlueprintCardInfo.Parse(cards[c]);
+                            if (card != null && (!string.IsNullOrEmpty(card.FileName) || !string.IsNullOrEmpty(card.Path)))
+                                info.Cards.Add(card);
+                        }
+                    }
+                    r.History.Add(info);
                 }
             }
             return r;

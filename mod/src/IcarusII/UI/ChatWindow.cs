@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using System.Text;
 using UnityEngine;
@@ -31,6 +32,13 @@ namespace IcarusII.UI
         {
             Target?.FocusInput();
         }
+    }
+
+    /// <summary>蓝图卡片上的两个动作（协议附录 A.9）。</summary>
+    internal enum BlueprintCardAction
+    {
+        Inspect,
+        Paste,
     }
 
     internal sealed class ChatWindow
@@ -125,8 +133,8 @@ namespace IcarusII.UI
             typeof(InputField).GetMethod("MarkGeometryAsDirty",
                 BindingFlags.Instance | BindingFlags.NonPublic);
 
-        /// <summary>消息类型：决定渲染成气泡（用户）还是裸文本（助手/系统）。</summary>
-        private enum LineKind { Assistant, User, System }
+        /// <summary>消息类型：决定渲染成气泡（用户）、裸文本（助手/系统）还是蓝图卡片。</summary>
+        private enum LineKind { Assistant, User, System, Blueprint }
 
         private struct Line
         {
@@ -134,10 +142,12 @@ namespace IcarusII.UI
             public string Text;
             /// <summary>所属的一问一答（0 = 系统/欢迎语，不进索引）。</summary>
             public int TurnId;
-            /// <summary>这条消息对应的可见对象（普通消息或工具/思考块）。</summary>
+            /// <summary>这条消息对应的可见对象（普通消息、工具/思考块或蓝图卡片）。</summary>
             public GameObject Go;
             /// <summary>工具/思考块（删除整轮时一起移除）；普通消息为 null。</summary>
             public Block Block;
+            /// <summary>蓝图卡片数据（只有 <see cref="LineKind.Blueprint"/> 会填）。</summary>
+            public BlueprintCardInfo Card;
         }
 
         private struct Item
@@ -407,6 +417,12 @@ namespace IcarusII.UI
 
         /// <summary>玩家提交了一条消息。参数为去除首尾空白后的文本。</summary>
         public event Action<string> Submitted;
+
+        /// <summary>
+        /// 玩家点了蓝图卡片上的动作。参数是卡片数据 + 动作类型；
+        /// 真正的游戏 API 调用由 <see cref="IcarusII.Game.BlueprintActions"/> 完成。
+        /// </summary>
+        public event Action<BlueprintCardInfo, BlueprintCardAction> BlueprintCardActionRequested;
 
         /// <summary>
         /// 处于"录入 API Key"状态时，用户回车提交的是密钥（而不是聊天消息）。
@@ -1561,6 +1577,317 @@ namespace IcarusII.UI
         }
 
         /// <summary>
+        /// 在对话末尾追加一张蓝图卡片（协议附录 A.9）。
+        ///
+        /// 这是**数据驱动的消息卡片**，与工具块/思考块同类：节点在运行期按数据创建，
+        /// 不新增 prefab 静态结构。sidecar 在本轮 final 消息之后才发，
+        /// 所以卡片天然排在整轮回答的末尾。
+        /// </summary>
+        public void AppendBlueprintCard(BlueprintCardInfo card)
+        {
+            if (card == null) return;
+
+            var line = new Line
+            {
+                Kind = LineKind.Blueprint,
+                Text = card.DisplayTitle,
+                TurnId = _currentTurnId,
+                Card = card,
+            };
+
+            // 窗口还没 Create 时只记逻辑行；Create 末尾由 RebuildTranscript 补建。
+            if (_content == null)
+            {
+                _lines.Add(line);
+                TrimHistory();
+                _dirty = true;
+                return;
+            }
+
+            var go = CreateBlueprintCard(card);
+            if (go == null) return;
+            line.Go = go;
+            _lines.Add(line);
+            TrimHistory();
+            _dirty = true;
+            ScrollToBottom();
+        }
+
+        /// <summary>
+        /// 建一张蓝图卡片：
+        ///
+        ///   blueprint-card      VerticalLayoutGroup + 淡底色 + 左侧强调条
+        ///   ├── header          图标 + 标题/文件名 + 来源角标
+        ///   ├── meta            产量 / 建筑数 / 占地 / 作者 / 版本
+        ///   ├── description     蓝图介绍（最多两行）
+        ///   └── actions         查看详情 / 粘贴铺设
+        /// </summary>
+        private GameObject CreateBlueprintCard(BlueprintCardInfo card)
+        {
+            if (_content == null || card == null) return null;
+
+            var root = UiFactory.Node("blueprint-card-" + (++_itemSeq), _content);
+            root.anchorMin = new Vector2(0f, 1f);
+            root.anchorMax = new Vector2(1f, 1f);
+            root.pivot = new Vector2(0.5f, 1f);
+            root.anchoredPosition = Vector2.zero;
+            root.sizeDelta = Vector2.zero;
+
+            var bg = root.gameObject.AddComponent<Image>();
+            bg.color = new Color(0.38f, 0.85f, 1f, 0.07f);
+            bg.raycastTarget = false;
+
+            var vlg = root.gameObject.AddComponent<VerticalLayoutGroup>();
+            vlg.padding = new RectOffset(10, 10, 8, 8);
+            vlg.spacing = 5f;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            vlg.childAlignment = TextAnchor.UpperLeft;
+
+            // 左侧强调条：ignoreLayout，不参与纵向堆叠。
+            var accentRt = UiFactory.Node("accent", root);
+            accentRt.anchorMin = new Vector2(0f, 0f);
+            accentRt.anchorMax = new Vector2(0f, 1f);
+            accentRt.pivot = new Vector2(0f, 0.5f);
+            accentRt.sizeDelta = new Vector2(2f, 0f);
+            accentRt.anchoredPosition = Vector2.zero;
+            var accent = accentRt.gameObject.AddComponent<Image>();
+            accent.color = new Color(_accent.r, _accent.g, _accent.b, 0.55f);
+            accent.raycastTarget = false;
+            accentRt.gameObject.AddComponent<LayoutElement>().ignoreLayout = true;
+
+            var headerRt = UiFactory.Node("header", root);
+            var headerLe = headerRt.gameObject.AddComponent<LayoutElement>();
+            headerLe.minHeight = 40f;
+            headerLe.preferredHeight = 40f;
+            var headerLayout = headerRt.gameObject.AddComponent<HorizontalLayoutGroup>();
+            headerLayout.padding = new RectOffset(0, 0, 0, 0);
+            headerLayout.spacing = 8f;
+            headerLayout.childControlWidth = true;
+            headerLayout.childControlHeight = true;
+            headerLayout.childForceExpandWidth = false;
+            headerLayout.childForceExpandHeight = false;
+            headerLayout.childAlignment = TextAnchor.MiddleLeft;
+
+            var iconRt = UiFactory.Node("icon", headerRt);
+            var iconLe = iconRt.gameObject.AddComponent<LayoutElement>();
+            iconLe.minWidth = 40f;
+            iconLe.preferredWidth = 40f;
+            iconLe.minHeight = 40f;
+            iconLe.preferredHeight = 40f;
+            var iconImage = iconRt.gameObject.AddComponent<Image>();
+            iconImage.raycastTarget = false;
+            iconImage.preserveAspect = true;
+            var icon = ResolveBlueprintIcon(card);
+            if (icon != null) iconImage.sprite = icon;
+            else iconRt.gameObject.SetActive(false);   // 没有图标时不要留 40px 空白
+
+            var textsRt = UiFactory.Node("texts", headerRt);
+            var textsLe = textsRt.gameObject.AddComponent<LayoutElement>();
+            textsLe.flexibleWidth = 1f;
+            var textsLayout = textsRt.gameObject.AddComponent<VerticalLayoutGroup>();
+            textsLayout.padding = new RectOffset(0, 0, 0, 0);
+            textsLayout.spacing = 1f;
+            textsLayout.childControlWidth = true;
+            textsLayout.childControlHeight = true;
+            textsLayout.childForceExpandWidth = true;
+            textsLayout.childForceExpandHeight = false;
+            textsLayout.childAlignment = TextAnchor.MiddleLeft;
+
+            var titleRt = UiFactory.Node("title", textsRt);
+            var titleLe = titleRt.gameObject.AddComponent<LayoutElement>();
+            titleLe.minHeight = Mathf.Max(16f, _fontSize + 3f);
+            titleLe.preferredHeight = Mathf.Max(16f, _fontSize + 3f);
+            var title = UiFactory.AddLabel(titleRt, _bodyFont, Mathf.Max(11, _fontSize),
+                _textMain, TextAnchor.MiddleLeft);
+            title.text = SanitizeRichText(card.DisplayTitle);
+            // 标题/文件名只占一行：Wrap + Truncate 不会像 Overflow 那样盖到来源角标上。
+            title.horizontalOverflow = HorizontalWrapMode.Wrap;
+            title.verticalOverflow = VerticalWrapMode.Truncate;
+            title.wideCharSpacing = 1f;
+
+            var fileRt = UiFactory.Node("file", textsRt);
+            var fileLe = fileRt.gameObject.AddComponent<LayoutElement>();
+            fileLe.minHeight = Mathf.Max(14f, _fontSize);
+            fileLe.preferredHeight = Mathf.Max(14f, _fontSize);
+            var file = UiFactory.AddLabel(fileRt, _bodyFont, Mathf.Max(9, _fontSize - 2),
+                _textDim, TextAnchor.MiddleLeft);
+            file.text = SanitizeRichText(string.IsNullOrEmpty(card.FileName) ? card.DisplayTitle : card.FileName);
+            file.horizontalOverflow = HorizontalWrapMode.Wrap;
+            file.verticalOverflow = VerticalWrapMode.Truncate;
+
+            var source = SourceLabel(card.Source);
+            if (!string.IsNullOrEmpty(source))
+            {
+                var badgeRt = UiFactory.Node("source", headerRt);
+                var badgeLe = badgeRt.gameObject.AddComponent<LayoutElement>();
+                badgeLe.minWidth = 42f;
+                badgeLe.preferredWidth = 44f;
+                badgeLe.minHeight = 20f;
+                badgeLe.preferredHeight = 20f;
+                var badgeImage = badgeRt.gameObject.AddComponent<Image>();
+                badgeImage.color = new Color(_accent.r, _accent.g, _accent.b, 0.16f);
+                badgeImage.raycastTarget = false;
+                var badge = UiFactory.AddLabel(badgeRt, _bodyFont, Mathf.Max(9, _fontSize - 3),
+                    _accent, TextAnchor.MiddleCenter);
+                badge.text = source;
+                badge.horizontalOverflow = HorizontalWrapMode.Overflow;
+                badge.verticalOverflow = VerticalWrapMode.Truncate;
+            }
+
+            var metaText = BuildBlueprintMeta(card);
+            if (!string.IsNullOrEmpty(metaText))
+            {
+                var metaRt = UiFactory.Node("meta", root);
+                var metaLe = metaRt.gameObject.AddComponent<LayoutElement>();
+                metaLe.minHeight = Mathf.Max(28f, _fontSize * 2f);
+                metaLe.preferredHeight = Mathf.Max(28f, _fontSize * 2f);
+                var meta = UiFactory.AddLabel(metaRt, _bodyFont, Mathf.Max(9, _fontSize - 2),
+                    _textDim, TextAnchor.UpperLeft);
+                meta.text = metaText;
+                meta.horizontalOverflow = HorizontalWrapMode.Wrap;
+                meta.verticalOverflow = VerticalWrapMode.Truncate;
+                meta.wideCharSpacing = 1f;
+            }
+
+            if (!string.IsNullOrEmpty(card.Description))
+            {
+                var descRt = UiFactory.Node("description", root);
+                var descLe = descRt.gameObject.AddComponent<LayoutElement>();
+                descLe.minHeight = 16f;
+                descLe.preferredHeight = Mathf.Max(30f, _fontSize * 2f + 2f);
+                var desc = UiFactory.AddLabel(descRt, _bodyFont, Mathf.Max(9, _fontSize - 2),
+                    new Color(_textDim.r, _textDim.g, _textDim.b, 0.95f), TextAnchor.UpperLeft);
+                desc.text = SanitizeRichText(card.Description);
+                desc.horizontalOverflow = HorizontalWrapMode.Wrap;
+                desc.verticalOverflow = VerticalWrapMode.Truncate;
+                desc.wideCharSpacing = 1f;
+            }
+
+            var actionsRt = UiFactory.Node("actions", root);
+            var actionsLe = actionsRt.gameObject.AddComponent<LayoutElement>();
+            actionsLe.minHeight = 26f;
+            actionsLe.preferredHeight = 26f;
+            var actionsLayout = actionsRt.gameObject.AddComponent<HorizontalLayoutGroup>();
+            actionsLayout.padding = new RectOffset(0, 0, 0, 0);
+            actionsLayout.spacing = 6f;
+            actionsLayout.childControlWidth = true;
+            actionsLayout.childControlHeight = true;
+            actionsLayout.childForceExpandWidth = false;
+            actionsLayout.childForceExpandHeight = false;
+            actionsLayout.childAlignment = TextAnchor.MiddleRight;
+
+            CreateCardButton(actionsRt, Strings.Get("blueprint.card.view"),
+                new Color(0.38f, 0.85f, 1f, 0.16f),
+                () => RequestCardAction(card, BlueprintCardAction.Inspect));
+            CreateCardButton(actionsRt, Strings.Get("blueprint.card.paste"),
+                new Color(0.38f, 0.85f, 1f, 0.30f),
+                () => RequestCardAction(card, BlueprintCardAction.Paste));
+
+            _items.Add(new Item
+            {
+                Go = root.gameObject,
+                Label = null,
+                Kind = LineKind.Blueprint,
+                TurnId = _currentTurnId,
+                FromPrefab = false,
+            });
+            return root.gameObject;
+        }
+
+        private void CreateCardButton(RectTransform parent, string labelText, Color background, Action onClick)
+        {
+            var rt = UiFactory.Node("button", parent);
+            var le = rt.gameObject.AddComponent<LayoutElement>();
+            le.minWidth = 84f;
+            le.preferredWidth = 92f;
+            le.preferredHeight = 26f;
+
+            var image = rt.gameObject.AddComponent<Image>();
+            image.color = background;
+            image.raycastTarget = true;
+
+            var button = rt.gameObject.AddComponent<Button>();
+            button.targetGraphic = image;
+            button.transition = Selectable.Transition.ColorTint;
+            var colors = button.colors;
+            colors.normalColor = Color.white;
+            colors.highlightedColor = new Color(1.25f, 1.25f, 1.25f, 1f);
+            colors.pressedColor = new Color(0.82f, 0.82f, 0.82f, 1f);
+            colors.selectedColor = Color.white;
+            colors.disabledColor = new Color(0.5f, 0.5f, 0.5f, 0.5f);
+            colors.colorMultiplier = 1f;
+            colors.fadeDuration = 0.08f;
+            button.colors = colors;
+            button.onClick.AddListener(() =>
+            {
+                try { onClick?.Invoke(); }
+                catch (Exception ex) { Plugin.Log.LogWarning($"[UI] 蓝图卡片动作失败：{ex.Message}"); }
+            });
+
+            var labelRt = UiFactory.Node("label", rt);
+            UiFactory.Stretch(labelRt);
+            var label = UiFactory.AddLabel(labelRt, _bodyFont, Mathf.Max(10, _fontSize - 1),
+                _textMain, TextAnchor.MiddleCenter);
+            label.text = labelText;
+            label.horizontalOverflow = HorizontalWrapMode.Overflow;
+            label.verticalOverflow = VerticalWrapMode.Truncate;
+        }
+
+        private void RequestCardAction(BlueprintCardInfo card, BlueprintCardAction action)
+        {
+            var handler = BlueprintCardActionRequested;
+            if (handler == null) return;
+            handler(card, action);
+        }
+
+        private static string SourceLabel(string source)
+        {
+            if (source == "generated") return Strings.Get("blueprint.card.source.generated");
+            if (source == "downloaded") return Strings.Get("blueprint.card.source.downloaded");
+            if (source == "copied") return Strings.Get("blueprint.card.source.copied");
+            return null;
+        }
+
+        private static string BuildBlueprintMeta(BlueprintCardInfo card)
+        {
+            var parts = new List<string>(6);
+            if (!string.IsNullOrEmpty(card.Item)) parts.Add(card.Item);
+            if (card.Rate > 0)
+                parts.Add(Strings.Get("blueprint.card.meta.rate",
+                    card.Rate.ToString("0.##", CultureInfo.InvariantCulture)));
+            if (card.Buildings > 0)
+                parts.Add(Strings.Get("blueprint.card.meta.buildings", card.Buildings));
+            if (card.Width > 0 && card.Height > 0)
+                parts.Add(Strings.Get("blueprint.card.meta.size", card.Width, card.Height));
+            if (!string.IsNullOrEmpty(card.Author))
+                parts.Add(Strings.Get("blueprint.card.meta.author", card.Author));
+            if (!string.IsNullOrEmpty(card.Version))
+                parts.Add(Strings.Get("blueprint.card.meta.version", card.Version));
+            if (!string.IsNullOrEmpty(card.License))
+                parts.Add(Strings.Get("blueprint.card.meta.license", card.License));
+            return string.Join(" · ", parts.ToArray());
+        }
+
+        /// <summary>蓝图 header 的 icon0 → 游戏物品图标；取不到就不显示图标。</summary>
+        private static Sprite ResolveBlueprintIcon(BlueprintCardInfo card)
+        {
+            if (card == null || card.ItemId <= 0) return null;
+            try
+            {
+                if (LDB.items == null) return null;
+                var item = LDB.items.Select(card.ItemId);
+                return item != null ? item.iconSprite : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
         /// 开始一个“工具块”（折叠态，标题显示读取中）。同一个 callId 后续用
         /// <see cref="FinishToolCard"/> 原地改成结果，不会出现两块。
         /// </summary>
@@ -2697,6 +3024,15 @@ namespace IcarusII.UI
             {
                 var line = _lines[i];
                 _currentTurnId = line.TurnId;
+
+                // 蓝图卡片不是文本项：按数据重新建一张。
+                if (line.Kind == LineKind.Blueprint)
+                {
+                    line.Go = CreateBlueprintCard(line.Card);
+                    if (line.Go != null) _lines[i] = line;
+                    continue;
+                }
+
                 var index = CreateItem(line.Kind);
                 if (index < 0 || index >= _items.Count) continue;
                 var item = _items[index];

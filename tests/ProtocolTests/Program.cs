@@ -43,6 +43,9 @@ namespace IcarusII.Tests
             Section("协议信封");
             ProtocolTests();
 
+            Section("蓝图卡片");
+            BlueprintCardTests();
+
             Console.WriteLine();
             if (_failures == 0)
             {
@@ -540,6 +543,58 @@ namespace IcarusII.Tests
 
             // 空载荷/空对象不能抛
             Check("null 载荷不抛", ToolCallInfo.Parse(null, null) == null);
+        }
+
+        // ---------------------------------------------------------------- 蓝图卡片（附录 A.9）
+
+        private static void BlueprintCardTests()
+        {
+            Eq("消息类型常量", "blueprint_card", Protocol.BlueprintCard);
+
+            var card = BlueprintCardInfo.Parse(JsonValue.Parse(
+                "{\"path\":\"C:\\\\bp\\\\电磁涡轮 20.txt\",\"fileName\":\"电磁涡轮 20.txt\"," +
+                "\"name\":\"电磁涡轮 20\",\"item\":\"电磁涡轮\",\"itemId\":1206,\"rate\":20," +
+                "\"buildings\":24,\"width\":12,\"height\":5,\"author\":\"自动生成\"," +
+                "\"version\":\"1.2.3\",\"attributes\":\"\",\"description\":\"测试\"," +
+                "\"source\":\"generated\",\"license\":\"CC BY-NC-SA 4.0\"," +
+                "\"repository\":\"https://github.com/DSPBluePrints/FactoryBluePrints\"}"));
+
+            Eq("fileName", "电磁涡轮 20.txt", card.FileName);
+            Eq("name", "电磁涡轮 20", card.Name);
+            Eq("item", "电磁涡轮", card.Item);
+            Eq("itemId", 1206, card.ItemId);
+            Eq("rate", 20.0, card.Rate);
+            Eq("buildings", 24, card.Buildings);
+            Eq("width", 12, card.Width);
+            Eq("height", 5, card.Height);
+            Eq("author", "自动生成", card.Author);
+            Eq("version", "1.2.3", card.Version);
+            Eq("description", "测试", card.Description);
+            Eq("source", "generated", card.Source);
+            Eq("license", "CC BY-NC-SA 4.0", card.License);
+            Eq("标题优先用 name", "电磁涡轮 20", card.DisplayTitle);
+
+            // 缺字段：不能抛，DisplayTitle 退化为去 .txt 的文件名。
+            var sparse = BlueprintCardInfo.Parse(JsonValue.Parse("{\"fileName\":\"abc.txt\"}"));
+            Eq("缺 name 时标题用文件名", "abc", sparse.DisplayTitle);
+            Eq("缺 rate 默认 0", 0.0, sparse.Rate);
+            Check("缺 source 为 null", sparse.Source == null);
+
+            var none = BlueprintCardInfo.Parse(null);
+            Check("null 载荷不抛", none != null);
+            Eq("null 载荷兜底标题", "蓝图", none.DisplayTitle);
+
+            // save.bound.history 的可选 cards（附录 A.6/A.9）
+            var bound = SaveBoundInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"s1\",\"history\":[" +
+                "{\"role\":\"user\",\"text\":\"生成蓝图\"}," +
+                "{\"role\":\"assistant\",\"text\":\"已生成\",\"cards\":[" +
+                "{\"fileName\":\"a.txt\",\"name\":\"A\",\"rate\":20}]}]}"));
+            Eq("历史消息 2 条", 2, bound.History.Count);
+            Eq("回答带 1 张卡片", 1, bound.History[1].Cards.Count);
+            Eq("历史卡片文件名", "a.txt", bound.History[1].Cards[0].FileName);
+            Eq("历史卡片名称", "A", bound.History[1].Cards[0].Name);
+            Eq("user 消息没有卡片", 0, bound.History[0].Cards.Count);
         }
 
         // ---------------------------------------------------------------- 小测试框架

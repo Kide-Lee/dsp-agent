@@ -108,6 +108,7 @@ namespace IcarusII
                 _chat.ThinkingLevelChanged += OnThinkingLevelChanged;
                 _chat.ModelSelectionChanged += OnModelSelectionChanged;
                 _chat.TurnDeleted += OnTurnDeleted;
+                _chat.BlueprintCardActionRequested += OnBlueprintCardAction;
                 // 注意：_client 尚未创建（它在后台的 PrepareSidecar 里才 new），
                 // 所以它的 ConfigChanged 必须在创建之后再订阅。
                 // 这里曾经写成 _client.ConfigChanged += ...，直接 NullReference，
@@ -357,6 +358,15 @@ namespace IcarusII
                         else
                             _chat.FinishToolCard(act.CallId, label, act.Ok, act.Summary, act.Detail);
                     }
+                    break;
+                }
+
+                case Protocol.BlueprintCard:
+                {
+                    // sidecar 在本轮 final message 之后才发，卡片自然排在对话末尾。
+                    var card = BlueprintCardInfo.Parse(payload);
+                    if (card != null && (!string.IsNullOrEmpty(card.FileName) || !string.IsNullOrEmpty(card.Path)))
+                        _chat.AppendBlueprintCard(card);
                     break;
                 }
 
@@ -900,8 +910,20 @@ namespace IcarusII
                     foreach (var message in info.History)
                     {
                         if (message == null || string.IsNullOrEmpty(message.Text)) continue;
-                        if (message.Role == "user") _chat.AppendUser(message.Text, message.Timestamp);
-                        else _chat.AppendLine(Strings.Get("agent"), message.Text);
+                        if (message.Role == "user")
+                        {
+                            _chat.AppendUser(message.Text, message.Timestamp);
+                        }
+                        else
+                        {
+                            _chat.AppendLine(Strings.Get("agent"), message.Text);
+                            // 蓝图卡片跟在该回答后面，与实时收到的顺序一致。
+                            if (message.Cards != null)
+                            {
+                                foreach (var card in message.Cards)
+                                    _chat.AppendBlueprintCard(card);
+                            }
+                        }
                     }
                 }
 
@@ -956,6 +978,44 @@ namespace IcarusII
         }
 
         // ---------------------------------------------------------------- 交互
+
+        /// <summary>
+        /// 蓝图卡片动作：查看详情 / 进入粘贴模式。
+        ///
+        /// 成功时关闭聊天窗——蓝图浏览器与粘贴预览都在游戏层，
+        /// 我们的窗口（sortingOrder 30000）留着会挡住它们。
+        /// 失败时把原因写回聊天窗，让玩家知道是"没解锁/文件没了/当前状态不允许"。
+        /// </summary>
+        private void OnBlueprintCardAction(BlueprintCardInfo card, BlueprintCardAction action)
+        {
+            if (card == null) return;
+
+            bool ok;
+            string error;
+            try
+            {
+                if (action == BlueprintCardAction.Inspect)
+                    ok = BlueprintActions.TryInspect(card, out error);
+                else
+                    ok = BlueprintActions.TryPaste(card, out error);
+            }
+            catch (Exception ex)
+            {
+                // 游戏对象在切场景/读档期间可能失效；不要让异常穿透到 UI 事件。
+                Log.LogWarning($"[蓝图卡] {action} 异常：{ex.Message}");
+                ok = false;
+                error = Strings.Get("blueprint.card.not_in_game");
+            }
+
+            if (!ok)
+            {
+                Log.LogInfo($"[蓝图卡] {action} 失败：{error}");
+                _chat.AppendSystem(error ?? Strings.Get("blueprint.card.open_failed"));
+                return;
+            }
+
+            _chat.SetOpen(false);
+        }
 
         private void OnUserSubmitted(string text)
         {

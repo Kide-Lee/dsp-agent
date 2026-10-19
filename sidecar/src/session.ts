@@ -35,6 +35,7 @@ import {
   buildStatusPayload,
   buildStreamPayload,
   buildToolActivityPayload,
+  buildBlueprintCardPayload,
   buildToolCallPayload,
   errorRetryable,
   parseConfigSetPayload,
@@ -50,6 +51,7 @@ import {
   type ConfigView,
   type ErrorCode,
   type JsonObject,
+  type BlueprintCardPayload,
   type ModelCatalogResult,
   type ProviderTestResult,
   type ToolResultPayload,
@@ -954,6 +956,15 @@ export class Session {
           buildEnvelope({
             type: MessageType.ToolActivity,
             payload: buildToolActivityPayload(payload),
+          }),
+        );
+      },
+
+      blueprintCard(payload: BlueprintCardPayload) {
+        session.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.BlueprintCard,
+            payload: buildBlueprintCardPayload(payload),
           }),
         );
       },

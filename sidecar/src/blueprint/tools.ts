@@ -120,21 +120,95 @@ export class BlueprintClient {
 
 const BLUEPRINT_PATTERN = /^([^"]*)"([A-Za-z0-9+/=]+)"([0-9a-fA-F]{32})\s*$/;
 
-/** 解析蓝图文本：头部 + base64(gzip) + md5。只体检，不反序列化建筑。 */
-export function inspectBlueprintText(text: string): {
+/** 蓝图 header + 二进制里能稳定读出的元信息（卡片/工具结果共用）。 */
+export interface BlueprintInspection {
   valid: boolean;
   header?: string;
   encodedBytes?: number;
   decodedBytes?: number;
   reason?: string;
-} {
+  name?: string;
+  author?: string;
+  version?: string;
+  attributes?: string;
+  description?: string;
+  iconItemId?: number;
+  buildings?: number;
+  width?: number;
+  height?: number;
+}
+
+function decodeHeaderField(raw: string | undefined): string | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  try {
+    const decoded = decodeURIComponent(raw);
+    return decoded.length > 0 ? decoded : undefined;
+  } catch {
+    // 第三方蓝图的 header 可能没有做 URI 转义；原样返回比丢掉更好。
+    return raw;
+  }
+}
+
+/**
+ * header 格式（BlueprintData.headerStr）：
+ *   BLUEPRINT:1,layout,icon0..icon4,0,ticks,gameVersion,shortDesc,author,customVersion,externalFields,desc
+ * 只有 v1 header 才按这些位置解析；老格式/字段不足时只返回格式体检结果。
+ */
+function parseHeaderFields(header: string): Partial<BlueprintInspection> {
+  if (!header.startsWith('BLUEPRINT:1,')) return {};
+  const fields = header.split(',');
+  if (fields.length < 15) return {};
+  const icon = Number.parseInt(fields[2] ?? '', 10);
+  return {
+    iconItemId: Number.isFinite(icon) && icon > 0 ? icon : undefined,
+    name: decodeHeaderField(fields[10]),
+    author: decodeHeaderField(fields[11]),
+    version: decodeHeaderField(fields[12]),
+    attributes: decodeHeaderField(fields[13]),
+    description: decodeHeaderField(fields[14]),
+  };
+}
+
+/** 从解码后的二进制里读占地与建筑数；字段越界/损坏时返回空对象。 */
+function parseBinaryFields(decoded: Buffer): Partial<BlueprintInspection> {
+  // version/cursor/dragBox/primaryArea = 7 × int32，areaCount = 1 byte，
+  // 每个 area 14 字节，之后才是 buildingCount。
+  if (decoded.length < 29) return {};
+  try {
+    const width = decoded.readInt32LE(16);
+    const height = decoded.readInt32LE(20);
+    const areaCount = decoded[28] ?? 0;
+    if (areaCount > 64) return {};
+    const offset = 29 + areaCount * 14;
+    if (offset + 4 > decoded.length) return {};
+    const buildings = decoded.readInt32LE(offset);
+    if (buildings < 0 || buildings > 1_048_576) return {};
+    return {
+      buildings,
+      width: width > 0 ? width : undefined,
+      height: height > 0 ? height : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** 解析蓝图文本：头部 + base64(gzip) + md5。只体检，不反序列化建筑。 */
+export function inspectBlueprintText(text: string): BlueprintInspection {
   const match = BLUEPRINT_PATTERN.exec(text.trim());
   if (!match) return { valid: false, reason: 'format' };
   const header = match[1] ?? '';
   const encoded = match[2] ?? '';
   try {
     const decoded = gunzipSync(Buffer.from(encoded, 'base64'));
-    return { valid: true, header, encodedBytes: encoded.length, decodedBytes: decoded.length };
+    return {
+      valid: true,
+      header,
+      encodedBytes: encoded.length,
+      decodedBytes: decoded.length,
+      ...parseHeaderFields(header),
+      ...parseBinaryFields(decoded),
+    };
   } catch {
     return { valid: false, reason: 'gzip' };
   }
@@ -322,11 +396,22 @@ export function createBlueprintTools(client: BlueprintClient = new BlueprintClie
           {
             ...client.meta(path),
             saved: true,
+            source: 'downloaded',
+            path: target,
             fileName,
             dir,
             bytes: fetched.text.length,
             header: info.header,
             decodedBytes: info.decodedBytes,
+            ...(info.name !== undefined ? { name: info.name } : {}),
+            ...(info.author !== undefined ? { author: info.author } : {}),
+            ...(info.version !== undefined ? { version: info.version } : {}),
+            ...(info.attributes !== undefined ? { attributes: info.attributes } : {}),
+            ...(info.description !== undefined ? { description: info.description } : {}),
+            ...(info.iconItemId !== undefined ? { iconItemId: info.iconItemId } : {}),
+            ...(info.buildings !== undefined ? { buildings: info.buildings } : {}),
+            ...(info.width !== undefined ? { width: info.width } : {}),
+            ...(info.height !== undefined ? { height: info.height } : {}),
             note:
               `已保存到游戏蓝图目录，打开游戏内蓝图界面即可使用（列表没刷新就关掉重开）。` +
               `内容来自社区仓库，许可 ${LICENSE}，请遵守许可并署名。`,
@@ -369,33 +454,54 @@ export function createBlueprintTools(client: BlueprintClient = new BlueprintClie
         const itemId = /^\d+$/.test(rawItem) ? Number(rawItem) : findItemIdByName(rawItem);
         if (!itemId) return reply({ error: `找不到物品：${rawItem}` }, false, 'bad_request');
         try {
+          const blueprintName = typeof args['name'] === 'string' && args['name'].trim()
+            ? args['name'].trim()
+            : `IcarusII-${rawItem}-${rate}`;
+          const author = typeof args['author'] === 'string' && args['author']
+            ? args['author']
+            : '自动生成';
+          const version = typeof args['version'] === 'string' && args['version']
+            ? args['version']
+            : '0.10.35.29151';
+          const attributes = typeof args['attributes'] === 'string' ? args['attributes'] : '';
+          const description = typeof args['description'] === 'string' ? args['description'] : '';
           const text = planSingle(itemId, rate, {
             beltType: typeof args['beltType'] === 'number' ? args['beltType'] : 2,
             insertType: typeof args['insertType'] === 'number' ? args['insertType'] : 2,
             rows: typeof args['rows'] === 'number' ? args['rows'] : 1,
             stackSize: typeof args['stackSize'] === 'number' ? args['stackSize'] : 1,
-            name: typeof args['name'] === 'string' && args['name'] ? args['name'] : undefined,
-            author: typeof args['author'] === 'string' && args['author'] ? args['author'] : '自动生成',
-            version: typeof args['version'] === 'string' && args['version'] ? args['version'] : '0.10.35.29151',
-            attributes: typeof args['attributes'] === 'string' ? args['attributes'] : '',
-            description: typeof args['description'] === 'string' ? args['description'] : '',
+            name: blueprintName,
+            author,
+            version,
+            attributes,
+            description,
           });
           const dir = resolveBlueprintDir();
           mkdirSync(dir, { recursive: true });
-          const base = sanitizeBlueprintName(
-            typeof args['name'] === 'string' && args['name'] ? args['name'] : `IcarusII-${rawItem}-${rate}`,
-          );
+          const base = sanitizeBlueprintName(blueprintName);
           let fileName = `${base}.txt`;
           for (let i = 2; i < 50 && existsSync(join(dir, fileName)); i++) fileName = `${base} (${i}).txt`;
           const filePath = join(dir, fileName);
           writeFileSync(filePath, text, 'ascii');
+          const info = inspectBlueprintText(text);
           return reply({
             saved: true,
+            source: 'generated',
             path: filePath,
             fileName,
             bytes: text.length,
+            item: rawItem,
             itemId,
             rate,
+            name: info.name ?? blueprintName,
+            author: info.author ?? author,
+            version: info.version ?? version,
+            ...(info.attributes !== undefined ? { attributes: info.attributes } : {}),
+            description: info.description ?? description,
+            ...(info.iconItemId !== undefined ? { iconItemId: info.iconItemId } : {}),
+            ...(info.buildings !== undefined ? { buildings: info.buildings } : {}),
+            ...(info.width !== undefined ? { width: info.width } : {}),
+            ...(info.height !== undefined ? { height: info.height } : {}),
             note: '由 dsp-calc 规划器生成，含机器/传送带/分拣器与连接；粘贴后应可直接运行。',
           }, true);
         } catch (err) {

@@ -1,4 +1,5 @@
 import { computeBlueprint, generateBlueprint } from '../../vendor/dsp-calc/src/global_blueprint.js';
+import { fromStr, toStr } from '../../vendor/dsp-calc/src/blueprint/parser.js';
 import vanilla from '../../vendor/dsp-calc/data/Vanilla.mjs';
 import buildingsData from '../../vendor/dsp-calc/data/Buildings.mjs';
 
@@ -71,7 +72,21 @@ export function planSingle(itemId, rate, options = {}) {
     stationPiler: options.stationPiler ?? 2,
     proNum: 0,
   });
-  return generateBlueprint(blueprint, {
+  // 行拼接边界上偶发跨行连线（距离可达数百格），粘贴会报“距离太远”。
+  // 断开这种明显的错误连接，避免整张蓝图被判无效。
+  for (const b of blueprint.buildings) {
+    if (!b || typeof b !== 'object') continue;
+    const p0 = b.localOffset && b.localOffset[0];
+    if (!p0) continue;
+    for (const key of ['outputObjIdx', 'inputObjIdx']) {
+      const t = b[key];
+      const p1 = t && t.localOffset && t.localOffset[0];
+      if (!p1) continue;
+      const dx = p0.x - p1.x, dy = p0.y - p1.y, dz = (p0.z || 0) - (p1.z || 0);
+      if (Math.sqrt(dx * dx + dy * dy + dz * dz) > 1.6) b[key] = -1;
+    }
+  }
+  const raw = generateBlueprint(blueprint, {
     title: options.name || undefined,
     author: options.author ?? '自动生成',
     version: options.version ?? '0.10.35.29151',
@@ -80,4 +95,22 @@ export function planSingle(itemId, rate, options = {}) {
     iconId: itemId,
     gameVersion: options.gameVersion || undefined,
   });
+  const parsed = fromStr(raw);
+  for (const b of parsed.buildings) {
+    const p0 = b.localOffset && b.localOffset[0];
+    if (!p0) continue;
+    for (const key of ['outputObjIdx', 'inputObjIdx']) {
+      const idx = b[key];
+      const t = typeof idx === 'number' && idx >= 0 ? parsed.buildings[idx] : null;
+      const p1 = t && t.localOffset && t.localOffset[0];
+      if (!p1) continue;
+      const dx = p0.x - p1.x, dy = p0.y - p1.y, dz = (p0.z || 0) - (p1.z || 0);
+      if (Math.sqrt(dx * dx + dy * dy + dz * dz) > 1.6) b[key] = -1;
+    }
+  }
+  parsed.header.author = options.author ?? '自动生成';
+  parsed.header.customVersion = options.version ?? '0.10.35.29151';
+  parsed.header.externalFields = options.attributes ?? '';
+  parsed.header.desc = options.description ?? '';
+  return toStr(parsed);
 }

@@ -1954,10 +1954,20 @@ namespace IcarusII.Game.Tools
             }
 
             data.Set("saved", true);
+            data.Set("source", "copied");
             data.Set("path", path);
             data.Set("fileName", fileName);
             data.Set("buildings", bp.buildings != null ? bp.buildings.Length : 0);
             data.Set("areas", bp.areas != null ? bp.areas.Length : 0);
+            // 卡片元数据：复制出来的蓝图已经有完整 header，直接回传。
+            data.Set("name", bp.shortDesc ?? string.Empty);
+            data.Set("author", bp.author ?? string.Empty);
+            data.Set("version", bp.customVersion ?? string.Empty);
+            data.Set("attributes", bp.externalFields ?? string.Empty);
+            data.Set("description", bp.desc ?? string.Empty);
+            data.Set("iconItemId", bp.icon0);
+            data.Set("width", bp.dragBoxSize_x);
+            data.Set("height", bp.dragBoxSize_y);
             data.Set("display", "已存蓝图 " + fileName + " · 建筑 " + (bp.buildings != null ? bp.buildings.Length : 0)
                 + " · 打开蓝图界面即可看到");
             return new GameToolJobResult { Data = data };

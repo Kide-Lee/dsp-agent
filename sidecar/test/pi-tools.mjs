@@ -33,6 +33,9 @@ class ToolFixture {
     this.modelsRequests = 0;
     /** 'tool' = 第一轮要求调用工具；'text' = 直接回答。 */
     this.mode = 'tool';
+    /** 第一轮要求调用的工具；默认概览，蓝图卡片用例会改它。 */
+    this.toolName = 'game_get_overview';
+    this.toolArgs = {};
     this.server = createServer((req, res) => {
       const path = (req.url || '').split('?')[0];
       if (req.method === 'GET' && (path === '/v1/models' || path === '/models')) {
@@ -103,7 +106,7 @@ class ToolFixture {
               index: 0,
               id: 'call_pi_1',
               type: 'function',
-              function: { name: 'game_get_overview', arguments: '{}' },
+              function: { name: this.toolName, arguments: JSON.stringify(this.toolArgs) },
             }],
           },
           finish_reason: null,
@@ -148,6 +151,7 @@ let upstream;
 let server;
 let client;
 let dataDir;
+let blueprintDir;
 let finished = false;
 
 function cleanup() {
@@ -158,6 +162,10 @@ function cleanup() {
   void upstream?.close();
   if (dataDir) {
     try { rmSync(dataDir, { recursive: true, force: true }); } catch {}
+  }
+  if (blueprintDir) {
+    try { rmSync(blueprintDir, { recursive: true, force: true }); } catch {}
+    delete process.env.ICARUS_BLUEPRINT_DIR;
   }
 }
 
@@ -175,6 +183,9 @@ async function main() {
   assertBuilt();
   upstream = await new ToolFixture().start();
   dataDir = mkdtempSync(join(tmpdir(), 'icarus-ii-pi-tools-'));
+  blueprintDir = mkdtempSync(join(tmpdir(), 'icarus-ii-pi-tools-bp-'));
+  // 本用例会真的跑 blueprint_generate；把落盘目录指到临时目录，避免污染玩家蓝图。
+  process.env.ICARUS_BLUEPRINT_DIR = blueprintDir;
   mkdirSync(join(dataDir, 'agent'), { recursive: true });
   writeFileSync(
     join(dataDir, 'agent', 'settings.json'),
@@ -476,6 +487,93 @@ async function main() {
     'provider.test(stored)',
   );
   check('已保存的 Key/baseUrl 能检测', storedTest.payload?.ok === true, JSON.stringify(storedTest.payload));
+
+  // ---- 蓝图卡片（协议附录 A.9）----
+  // 让假上游要求 blueprint_generate；它是 sidecar 本地工具，执行后会落一张真蓝图，
+  // 这里验证卡片在 final message 之后、idle 之前发出，且载荷来自工具结果。
+  upstream.mode = 'tool';
+  upstream.toolName = 'blueprint_generate';
+  upstream.toolArgs = { item: '电磁涡轮', rate: 20, author: '卡片测试' };
+  const cardMark = client.frames.length;
+  client.send({ v: 1, id: 'm-card', type: 'prompt', payload: { text: '生成一张电磁涡轮蓝图' } });
+  const cardFrame = await client.waitFor(
+    (f) => f?.type === 'blueprint_card',
+    15000,
+    'blueprint_card',
+  );
+  const card = cardFrame.payload ?? {};
+  check('卡片文件名以 .txt 结尾', typeof card.fileName === 'string' && card.fileName.endsWith('.txt'), JSON.stringify(card));
+  check('卡片带 item/rate', card.item === '电磁涡轮' && card.rate === 20, JSON.stringify(card));
+  check('卡片 source=generated', card.source === 'generated', String(card.source));
+  check('卡片带作者', card.author === '卡片测试', String(card.author));
+  check('卡片带建筑数', typeof card.buildings === 'number' && card.buildings > 0, String(card.buildings));
+  check('生成文件确实存在', existsSync(join(blueprintDir, card.fileName)), join(blueprintDir, card.fileName));
+
+  const cardSeq = client.frames.slice(cardMark);
+  const messageIdx = cardSeq.findIndex((f) => f?.type === 'message' && f.replyTo === 'm-card');
+  const cardIdx = cardSeq.findIndex((f) => f?.type === 'blueprint_card');
+  // 卡片是 idle 之前的最后一帧；waitFor 会在卡片刚到时返回，这里再等 idle 落盘。
+  await client.waitUntil(
+    () => client.frames.slice(cardMark).some((f) => f?.type === 'status' && f.payload?.state === 'idle'),
+    5000,
+    'status(idle, after card)',
+  );
+  const cardSeqAfterIdle = client.frames.slice(cardMark);
+  const idleIdx = cardSeqAfterIdle.findIndex(
+    (f, i) => i > cardIdx && f?.type === 'status' && f.payload?.state === 'idle',
+  );
+  check('卡片排在 final message 之后', messageIdx >= 0 && messageIdx < cardIdx, `${messageIdx}/${cardIdx}`);
+  check('卡片排在 idle 之前', idleIdx > cardIdx, `${cardIdx}/${idleIdx}`);
+
+  // 重进存档：sidecar 把卡片记录挂回 save.bound.history 的 assistant 消息。
+  client.send({
+    v: 1,
+    id: 's-replay',
+    type: 'save.bind',
+    payload: { saveKey: 'saveB', saveName: '存档 B' },
+  });
+  const replayBound = await client.waitFor(
+    (f) => f?.type === 'save.bound' && f.replyTo === 's-replay',
+    5000,
+    'save.bound(replay)',
+  );
+  const replayHistory = Array.isArray(replayBound.payload?.history) ? replayBound.payload.history : [];
+  const replayCards = replayHistory
+    .filter((m) => m?.role === 'assistant' && Array.isArray(m.cards))
+    .flatMap((m) => m.cards);
+  check('历史回放带卡片', replayCards.length === 1, JSON.stringify(replayHistory));
+  check('回放卡片文件名一致', replayCards[0]?.fileName === card.fileName, String(replayCards[0]?.fileName));
+  check('回放卡片保留 rate', replayCards[0]?.rate === 20, String(replayCards[0]?.rate));
+
+  // 删除该回合：卡片记录也要一起删，重新绑定后不再回放。
+  client.send({
+    v: 1,
+    id: 'del-card-turn',
+    type: 'history.delete',
+    payload: { saveKey: 'saveB', text: '生成一张电磁涡轮蓝图' },
+  });
+  const deleted = await client.waitFor(
+    (f) => f?.type === 'history.deleted' && f.replyTo === 'del-card-turn',
+    5000,
+    'history.deleted(card turn)',
+  );
+  check('删除蓝图回合成功', deleted.payload?.ok === true, JSON.stringify(deleted.payload));
+
+  client.send({
+    v: 1,
+    id: 's-replay-2',
+    type: 'save.bind',
+    payload: { saveKey: 'saveB', saveName: '存档 B' },
+  });
+  const replayBound2 = await client.waitFor(
+    (f) => f?.type === 'save.bound' && f.replyTo === 's-replay-2',
+    5000,
+    'save.bound(replay after delete)',
+  );
+  const replayCards2 = (Array.isArray(replayBound2.payload?.history) ? replayBound2.payload.history : [])
+    .filter((m) => m?.role === 'assistant' && Array.isArray(m.cards))
+    .flatMap((m) => m.cards);
+  check('删除回合后卡片不再回放', replayCards2.length === 0, JSON.stringify(replayCards2));
 
   clearTimeout(watchdog);
   cleanup();
