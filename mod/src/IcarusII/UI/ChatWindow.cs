@@ -2583,6 +2583,7 @@ namespace IcarusII.UI
                 var text = _stream.ToString();
                 var item = _items[_streamItem];
                 if (item.Label != null) item.Label.text = SanitizeRichText(text);
+                AttachReplyFooter(_streamItem, text);
                 _lines.Add(new Line
                 {
                     Kind = LineKind.Assistant,
@@ -2629,6 +2630,36 @@ namespace IcarusII.UI
             _dirty = true;
         }
 
+        private static string GameClock()
+        {
+            if (GameMain.data == null) return "--:--";
+            long sec = GameMain.gameTick / 60L;
+            int hour = (int)((sec / 3600L) % 24L);
+            int min = (int)((sec / 60L) % 60L);
+            return hour.ToString("00") + ":" + min.ToString("00");
+        }
+
+        /// <summary>
+        /// 给助手回复挂上“游戏时间 + 点击复制”。按钮是这条消息自带的交互，
+        /// 不属于窗口静态布局，因此不需要改 prefab。
+        /// </summary>
+        private void AttachReplyFooter(int index, string rawText)
+        {
+            if (index < 0 || index >= _items.Count) return;
+            var item = _items[index];
+            if (item.Go == null || item.Label == null || string.IsNullOrEmpty(rawText)) return;
+
+            var footer = "\n<size=16><color=#8FA3B8>游戏时间 " + GameClock()
+                + " · 点击复制</color></size>";
+            item.Label.text = SanitizeRichText(rawText) + footer;
+
+            var button = item.Go.GetComponent<Button>();
+            if (button == null) button = item.Go.AddComponent<Button>();
+            button.onClick.RemoveAllListeners();
+            var copy = rawText;
+            button.onClick.AddListener(() => GUIUtility.systemCopyBuffer = copy);
+        }
+
         private void AddMessage(LineKind kind, string text)
         {
             var line = new Line { Kind = kind, Text = text, TurnId = _currentTurnId };
@@ -2649,6 +2680,7 @@ namespace IcarusII.UI
                 line.Go = _items[index].Go;
                 if (_items[index].Label != null) _items[index].Label.text = SanitizeRichText(text);
                 FitBubbleWidth(_items[index].Go, text);
+                if (kind == LineKind.Assistant) AttachReplyFooter(index, text);
             }
 
             _lines.Add(line);
@@ -2672,6 +2704,7 @@ namespace IcarusII.UI
                 _lines[i] = line;
                 if (item.Label != null) item.Label.text = SanitizeRichText(line.Text);
                 FitBubbleWidth(item.Go, line.Text);
+                if (line.Kind == LineKind.Assistant) AttachReplyFooter(index, line.Text);
                 if (line.Kind == LineKind.User && line.TurnId > 0)
                     UpdateTurnUserGo(line.TurnId, line.Go);
             }
