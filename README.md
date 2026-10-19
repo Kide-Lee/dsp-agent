@@ -71,7 +71,6 @@
 | `game_copy_blueprint` | 把选中的一批建筑存成游戏蓝图文件（复用游戏复制逻辑） |
 | `game_get_planets` | 跨行星总览：轨道、工厂、电力、按探索等级披露的矿脉 |
 | `game_get_logistics` | 全银河物流塔的供给/需求与站点，定位跨星供应链 |
-| `game_generate_blueprint` | 按配方/行列从零生成机器阵列蓝图 |
 | `game_trace_line` | 沿传送带/分拣器追踪上下游拓扑 |
 | `game_analyze_area` | 按范围聚合产线：机器/配方计数、装机产能、耗电、物流设施、涉及电网 |
 

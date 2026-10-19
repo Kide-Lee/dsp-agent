@@ -591,7 +591,6 @@ namespace IcarusII
                 case "game_analyze_area": return "产线分析";
                 case "game_render_layout": return "布局图";
                 case "game_copy_blueprint": return "存为蓝图";
-                case "game_generate_blueprint": return "生成蓝图";
                 case "game_trace_line": return "产线拓扑";
                 case "game_get_blueprint_caps": return "蓝图档位";
                 case "game_get_planets": return "星球一览";

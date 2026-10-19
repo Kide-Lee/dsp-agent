@@ -95,7 +95,7 @@ console.log('\n── 3. 失败/无关结果 ──');
 {
   check('失败标记不发卡', extractBlueprintCard('blueprint_generate', generated, true) === null);
   const failed = { details: { ok: false, data: { saved: false, error: 'x' } } };
-  check('saved=false 不发卡', extractBlueprintCard('game_generate_blueprint', failed) === null);
+  check('saved=false 不发卡', extractBlueprintCard('blueprint_generate', failed) === null);
   check('非蓝图工具不发卡', extractBlueprintCard('game_get_power', generated) === null);
   check('没有 fileName 不发卡',
     extractBlueprintCard('blueprint_generate', { details: { saved: true } }) === null);
@@ -109,7 +109,7 @@ console.log('\n── 4. dir + fileName ──');
   });
   check('拼出 path', card.path === join('/tmp/blueprint', '下载.txt'), card.path);
   check('保留许可', card.license === 'CC BY-NC-SA 4.0');
-  check('工具清单', BLUEPRINT_PRODUCING_TOOLS.length === 4, BLUEPRINT_PRODUCING_TOOLS.join(','));
+  check('工具清单', BLUEPRINT_PRODUCING_TOOLS.length === 3, BLUEPRINT_PRODUCING_TOOLS.join(','));
 }
 
 console.log('\n── 5. 历史回放挂载 ──');

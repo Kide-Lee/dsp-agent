@@ -1,5 +1,5 @@
 import { computeBlueprint, generateBlueprint } from '../../vendor/dsp-calc/src/global_blueprint.js';
-import { fromStr } from '../../vendor/dsp-calc/src/blueprint/parser.js';
+import { fromStr, toStr } from '../../vendor/dsp-calc/src/blueprint/parser.js';
 import vanilla from '../../vendor/dsp-calc/data/Vanilla.mjs';
 import buildingsData from '../../vendor/dsp-calc/data/Buildings.mjs';
 
@@ -91,7 +91,7 @@ export function planSingle(itemId, rate, options = {}) {
   if (areaW > 1000 || areaH > 50) {
     throw new Error(`蓝图尺寸 ${areaW}x${areaH} 超出安全范围（宽度上限 1000 格、高度上限 50 格）`);
   }
-  const text = generateBlueprint(blueprint, {
+  const raw = generateBlueprint(blueprint, {
     title: options.name || undefined,
     author: options.author ?? '自动生成',
     version: options.version ?? '0.10.35.29151',
@@ -100,7 +100,7 @@ export function planSingle(itemId, rate, options = {}) {
     iconId: itemId,
     gameVersion: options.gameVersion || undefined,
   });
-  const parsed = fromStr(text);
+  const parsed = fromStr(raw);
   const area = parsed.areas && parsed.areas[0];
   const width = area && area.size ? area.size.x : 0;
   const height = area && area.size ? area.size.y : 0;
@@ -108,5 +108,31 @@ export function planSingle(itemId, rate, options = {}) {
     if (rowCount < 8) return planSingle(itemId, rate, { ...options, rows: rowCount + 1 });
     throw new Error(`蓝图尺寸 ${width}x${height} 超出安全范围（宽度上限 1000 格、高度上限 50 格）`);
   }
-  return text;
+  // 带子首尾相连：只在环上断开“回边”，合法长带子（非环）保持不动。
+  const isBelt = (b) => b && b.itemId >= 2001 && b.itemId <= 2009;
+  const out = new Map();
+  for (const b of parsed.buildings) if (isBelt(b)) out.set(b.index, b.outputObjIdx);
+  const state = new Map();
+  let broken = 0;
+  const visit = (idx) => {
+    if (state.get(idx) === 1) return true;
+    if (state.get(idx) === 2) return false;
+    state.set(idx, 1);
+    const next = out.get(idx);
+    if (typeof next === 'number' && next >= 0 && out.has(next) && visit(next)) {
+      const b = parsed.buildings.find((x) => x.index === idx);
+      if (b) { b.outputObjIdx = -1; broken++; }
+      state.set(idx, 2);
+      return false;
+    }
+    state.set(idx, 2);
+    return false;
+  };
+  for (const idx of out.keys()) visit(idx);
+  parsed.header.author = options.author ?? '自动生成';
+  parsed.header.customVersion = options.version ?? '0.10.35.29151';
+  parsed.header.externalFields = options.attributes ?? '';
+  parsed.header.desc = options.description ?? '';
+  if (broken) console.log('断开首尾环:', broken);
+  return toStr(parsed);
 }

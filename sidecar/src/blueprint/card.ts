@@ -13,7 +13,6 @@ import type { BlueprintCardPayload, BlueprintCardSource, HistoryMessage } from '
 export const BLUEPRINT_PRODUCING_TOOLS: readonly string[] = [
   'blueprint_generate',
   'blueprint_save',
-  'game_generate_blueprint',
   'game_copy_blueprint',
 ];
 
@@ -37,7 +36,7 @@ function num(value: unknown): number | undefined {
 function sourceFor(toolName: string, raw: unknown): BlueprintCardSource | undefined {
   const value = str(raw);
   if (value === 'generated' || value === 'downloaded' || value === 'copied') return value;
-  if (toolName === 'blueprint_generate' || toolName === 'game_generate_blueprint') return 'generated';
+  if (toolName === 'blueprint_generate') return 'generated';
   if (toolName === 'blueprint_save') return 'downloaded';
   if (toolName === 'game_copy_blueprint') return 'copied';
   return undefined;
