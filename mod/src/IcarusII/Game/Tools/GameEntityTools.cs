@@ -995,10 +995,10 @@ namespace IcarusII.Game.Tools
             height = Math.Min(height, MaxHeight);
             var includeEntities = args["includeEntities"].AsBool(true);
 
-            return new OneShotJob(() => Build(width, height, includeEntities));
+            return new OneShotJob(() => Build(width, height, includeEntities, args));
         }
 
-        private static GameToolJobResult Build(int width, int height, bool includeEntities)
+        private static GameToolJobResult Build(int width, int height, bool includeEntities, JsonValue args)
         {
             var data = JsonValue.NewObject();
             data.Set("width", width);
@@ -1010,6 +1010,41 @@ namespace IcarusII.Game.Tools
                 data.Set("available", false);
                 data.Set("display", "游戏尚未就绪");
                 return new GameToolJobResult { Data = data };
+            }
+
+            // 可选：临时把相机切到俯视/自定义机位，拍完立刻还原。
+            // 只对**当前行星、已流送的区块**有效——相机移动不会触发远处区块加载。
+            Camera cam = GameCamera.main;
+            Vector3 savedPos = Vector3.zero;
+            Quaternion savedRot = Quaternion.identity;
+            float savedFov = 60f;
+            var view = args["view"].AsString("player");
+            var cameraInfo = JsonValue.NewObject();
+            cameraInfo.Set("view", view);
+            if (cam != null)
+            {
+                savedPos = cam.transform.position;
+                savedRot = cam.transform.rotation;
+                savedFov = cam.fieldOfView;
+                if (view == "topdown")
+                {
+                    var center = ResolveCaptureCenter(gameData, args, out var centerSource);
+                    var heightMeters = Math.Max(10, Math.Min(150, args["cameraHeight"].AsDouble(60)));
+                    var yaw = args["yaw"].AsDouble(0);
+                    var fov = Math.Max(20, Math.Min(90, args["fov"].AsDouble(60)));
+                    var up = center.sqrMagnitude > 0.0001f ? center.normalized : Vector3.up;
+                    var forward = Vector3.Cross(up, Vector3.right);
+                    if (forward.sqrMagnitude < 0.01f) forward = Vector3.Cross(up, Vector3.forward);
+                    forward.Normalize();
+                    cam.transform.position = center + up * (float)heightMeters;
+                    cam.transform.rotation = Quaternion.LookRotation(-up, Quaternion.AngleAxis((float)yaw, up) * forward);
+                    cam.fieldOfView = (float)fov;
+                    cameraInfo.Set("center", EntityToolUtil.Vec3(center));
+                    cameraInfo.Set("centerSource", centerSource);
+                    cameraInfo.Set("height", GameToolFormat.Round(heightMeters, 1));
+                    cameraInfo.Set("yaw", GameToolFormat.Round(yaw, 0));
+                    cameraInfo.Set("fov", GameToolFormat.Round(fov, 0));
+                }
             }
 
             // 复用游戏自己的截图路径：它把 cullingMask 设成 gameLayerMask（UI 不进画面），
@@ -1024,6 +1059,15 @@ namespace IcarusII.Game.Tools
                 data.Set("reason", "capture_failed");
                 data.Set("display", "截图失败：" + ex.Message);
                 return new GameToolJobResult { Data = data };
+            }
+            finally
+            {
+                if (cam != null && view == "topdown")
+                {
+                    cam.transform.position = savedPos;
+                    cam.transform.rotation = savedRot;
+                    cam.fieldOfView = savedFov;
+                }
             }
 
             var png = gameData.screenShot;
@@ -1063,13 +1107,45 @@ namespace IcarusII.Game.Tools
 
             data.Set("available", true);
             data.Set("bytes", jpeg.Length);
-            data.Set("camera", CameraInfo());
+            var info = CameraInfo();
+            if (cameraInfo.Count > 0)
+            {
+                foreach (var key in new[] { "view", "center", "centerSource", "height", "yaw", "fov" })
+                {
+                    var value = cameraInfo[key];
+                    if (value != null && !value.IsNull) info.Set(key, value);
+                }
+            }
+            data.Set("camera", info);
             if (includeEntities) data.Set("visibleEntities", VisibleEntities(gameData, outWidth, outHeight));
 
             data.Set("display", "已截图 " + outWidth + "×" + outHeight + "（"
                 + (jpeg.Length / 1024) + " KiB）");
 
             return new GameToolJobResult { Data = data, Image = image };
+        }
+
+        private static Vector3 ResolveCaptureCenter(GameData gameData, JsonValue args, out string source)
+        {
+            var entityId = args["entityId"].AsInt(0);
+            var planet = gameData.localPlanet;
+            if (entityId > 0 && planet != null && planet.factory != null
+                && EntityToolUtil.HasEntity(planet.factory, entityId))
+            {
+                source = "entity";
+                return planet.factory.entityPool[entityId].pos;
+            }
+            var center = args["center"];
+            if (center != null && center.IsObject)
+            {
+                source = "explicit";
+                return new Vector3(
+                    (float)center["x"].AsDouble(0),
+                    (float)center["y"].AsDouble(0),
+                    (float)center["z"].AsDouble(0));
+            }
+            source = "player";
+            return gameData.mainPlayer != null ? gameData.mainPlayer.position : Vector3.zero;
         }
 
         private static bool TryEncodeJpeg(byte[] png, int expectedWidth, int expectedHeight,

@@ -316,11 +316,13 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       label: '截图',
       description:
         '截取当前游戏画面（不含 UI），以 JPEG 返回图片本身，并附带可见建筑的屏幕坐标。' +
-        '玩家问“这里摆得对不对”“你看一眼”时调用。' +
-        '截图只反映当前镜头；需要看别处时先用 game_focus_camera（尚未实现）或让玩家转视角。',
+        '支持临时切到俯视机位（view=topdown）看平面布局，拍完自动还原玩家视角。' +
+        '注意：只能拍到当前行星已渲染的区块，相机不会触发远处地形/建筑加载。',
       promptSnippet: '截取当前画面并返回图片与可见实体坐标',
       promptGuidelines: [
         'Use game_capture_view 当玩家让你看画面、问布局/摆放/接线是否正确时。',
+        '需要平面布局时用 view=topdown，并用 entityId/center 指定中心、height 指定高度（10–150m）。',
+        '俯视图只覆盖玩家附近已加载的区块；画面缺一块时说明是流送限制，不要当成空地。',
         '拿到图片后先描述你看到的，再结合 game_get_entity / game_get_entities 的数值下结论；不要只凭像素猜配方。',
       ],
       parameters: Type.Object({
@@ -329,6 +331,20 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         includeEntities: Type.Optional(
           Type.Boolean({ description: '是否附带可见建筑的屏幕坐标，默认 true' }),
         ),
+        view: Type.Optional(
+          Type.Union([Type.Literal('player'), Type.Literal('topdown')], {
+            description: 'player=当前镜头（默认），topdown=临时俯视',
+          }),
+        ),
+        entityId: Type.Optional(Type.Integer({ description: '俯视中心：建筑 id' })),
+        center: Type.Optional(
+          Type.Object({ x: Type.Number(), y: Type.Number(), z: Type.Number() }, {
+            description: '俯视中心（行星局部坐标）',
+          }),
+        ),
+        cameraHeight: Type.Optional(Type.Number({ description: '俯视高度（米），默认 60，范围 10–150' })),
+        yaw: Type.Optional(Type.Number({ description: '俯视朝向角度，默认 0' })),
+        fov: Type.Optional(Type.Number({ description: '俯视 FOV，默认 60，范围 20–90' })),
       }),
       timeoutMs: 15000,
     }),
