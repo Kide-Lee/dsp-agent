@@ -439,13 +439,22 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       promptGuidelines: [
         'Use game_generate_blueprint 当玩家要“新建一张 N×M 的某配方产线蓝图”时。',
         '机器间默认 4 格间距（约 4m）；需要自定义坐标时传 buildings:[{protoId,recipeId,x,y,yaw}]。',
-        '默认模版只生成裸机器阵列；需要带子/爪子时用 buildings 显式给 protoId、坐标、tilt/pitch、朝向与连接槽位。',
+        'layout=template 只生成裸机器阵列；layout=row 生成单行机器+上下直带+爪子（实验，需进游戏验证连接）。',
+        '需要完全自定义时用 buildings 显式给 protoId、坐标、tilt/pitch、朝向与连接槽位。',
         '显式坐标：x 东西、z 南北、y 高度；只给 x/y 时按“y=南北、高度 0”处理。',
         '作者/版本/属性/介绍分别用 author/version/attributes/description，封面图标默认取配方产物。',
       ],
       parameters: Type.Object({
         planetId: planetArg,
         recipeId: Type.Optional(Type.Integer({ description: '配方 id；buildings 模式可省略' })),
+        layout: Type.Optional(
+          Type.Union([Type.Literal('template'), Type.Literal('row')], {
+            description: 'template=机器阵列（默认）；row=单行机器+上下直带+爪子（实验）',
+          }),
+        ),
+        count: Type.Optional(Type.Integer({ minimum: 1, maximum: 30, description: 'row 模式机器数' })),
+        beltId: Type.Optional(Type.Integer({ description: 'row 模式传送带原型，默认 2003' })),
+        inserterId: Type.Optional(Type.Integer({ description: 'row 模式分拣器原型，默认 2014' })),
         author: Type.Optional(Type.String({ description: '蓝图作者' })),
         version: Type.Optional(Type.String({ description: '蓝图版本号（自定义版本）' })),
         attributes: Type.Optional(Type.String({ description: '蓝图属性/标签' })),

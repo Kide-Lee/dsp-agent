@@ -55,6 +55,7 @@ namespace IcarusII.Game.Tools
             public sbyte OutputFromSlot;
             public sbyte InputToSlot;
             public int FilterId;
+            public int[] Params;
         }
 
         public IGameToolJob Start(JsonValue args)
@@ -68,6 +69,7 @@ namespace IcarusII.Game.Tools
         {
             var data = JsonValue.NewObject();
             var recipeId = args["recipeId"].AsInt(0);
+            var layout = args["layout"].AsString("template");
             var explicitRows = args["buildings"];
             var list = new List<BpBuilding>();
 
@@ -160,6 +162,11 @@ namespace IcarusII.Game.Tools
                         });
                     }
                 }
+            }
+
+            if (layout == "row" && (explicitRows == null || !explicitRows.IsArray || explicitRows.Count == 0))
+            {
+                BuildRow(args, recipeId, list);
             }
 
             if (list.Count == 0)
@@ -296,6 +303,58 @@ namespace IcarusII.Game.Tools
             return new GameToolJobResult { Data = data };
         }
 
+        /// <summary>
+        /// 单行产线：机器一排，上下各一条直带，爪子从带子进/出机器。
+        /// 约定来自真实蓝图：爪子接带子时槽位 -1，接机器时用机器槽位；爪子参数 [length]。
+        /// </summary>
+        private static void BuildRow(JsonValue args, int recipeId, List<BpBuilding> list)
+        {
+            if (recipeId <= 0) return;
+            var recipe = LDB.recipes != null ? LDB.recipes.Select(recipeId) : null;
+            if (recipe == null) return;
+
+            int count = Math.Max(1, Math.Min(30, args["count"].AsInt(args["cols"].AsInt(4))));
+            float spacing = (float)Math.Max(3.0, args["spacingX"].AsDouble(4));
+            int proto = args["protoId"].AsInt(0);
+            if (proto <= 0) proto = PickBuilding(recipe.Type);
+            int belt = args["beltId"].AsInt(2003);
+            int inserter = args["inserterId"].AsInt(2014);
+            float feedZ = -2f;
+            float outZ = 2f;
+
+            for (int i = 0; i < count; i++)
+                list.Add(new BpBuilding { ProtoId = proto, RecipeId = recipeId, X = i * spacing, Z = 0f });
+
+            int inputStart = list.Count;
+            for (int i = 0; i < count; i++)
+                list.Add(new BpBuilding { ProtoId = belt, X = i * spacing, Z = feedZ, Yaw = 90f,
+                    InputObjIndex = i == 0 ? 0 : inputStart + i - 1, OutputObjIndex = i + 1 < count ? inputStart + i + 1 : 0,
+                    InputFromSlot = 1, OutputToSlot = 1, Params = new int[0] });
+
+            int outputStart = list.Count;
+            for (int i = 0; i < count; i++)
+                list.Add(new BpBuilding { ProtoId = belt, X = i * spacing, Z = outZ, Yaw = 90f,
+                    InputObjIndex = i == 0 ? 0 : outputStart + i - 1, OutputObjIndex = i + 1 < count ? outputStart + i + 1 : 0,
+                    InputFromSlot = 1, OutputToSlot = 1, Params = new int[0] });
+
+            for (int i = 0; i < count; i++)
+            {
+                int machineIndex = i;
+                int inBelt = inputStart + i;
+                int outBelt = outputStart + i;
+                list.Add(new BpBuilding { ProtoId = inserter, X = i * spacing, Z = feedZ + 1f,
+                    X2 = i * spacing, Z2 = 0f, Yaw = 180f, Yaw2 = 180f,
+                    InputObjIndex = inBelt, InputFromSlot = -1,
+                    OutputObjIndex = machineIndex, OutputToSlot = 0,
+                    Params = new int[] { 1 } });
+                list.Add(new BpBuilding { ProtoId = inserter, X = i * spacing, Z = 0f,
+                    X2 = i * spacing, Z2 = outZ - 1f, Yaw = 0f, Yaw2 = 0f,
+                    InputObjIndex = machineIndex, InputFromSlot = 0,
+                    OutputObjIndex = outBelt, OutputToSlot = -1,
+                    Params = new int[] { 1 } });
+            }
+        }
+
         /// <summary>按配方类型挑同类型里速度最低（基础档）的设备；找不到就用制造台 Mk.I。</summary>
         private static int PickBuilding(ERecipeType type)
         {
@@ -395,7 +454,9 @@ namespace IcarusII.Game.Tools
                         w.Write((sbyte)0);   // inputOffset
                         w.Write((short)b.RecipeId);
                         w.Write((short)b.FilterId);
-                        w.Write((short)0);   // parameters length
+                        var prms = b.Params ?? new int[0];
+                        w.Write((short)prms.Length);
+                        for (int pi = 0; pi < prms.Length; pi++) w.Write(prms[pi]);
                     }
 
                     // version 2 必须在建筑之后写 Patch 和 reformData 标志；
