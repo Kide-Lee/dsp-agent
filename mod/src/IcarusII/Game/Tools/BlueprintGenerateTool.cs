@@ -319,10 +319,11 @@ namespace IcarusII.Game.Tools
             if (proto <= 0) proto = PickBuilding(recipe.Type);
             int belt = args["beltId"].AsInt(2003);
             int inserter = args["inserterId"].AsInt(2014);
-            // 蓝图坐标不能为负：带子在 0/4，机器在 2，爪子各跨 1 格。
-            float feedZ = 0f;
+            // 与真实蓝图一致：机器在 2，进料带在 4、出料带在 0；
+            // 爪子从带子跨 2 格到机器，parameters[0] = 2。
+            float feedZ = 4f;
             float machineZ = 2f;
-            float outZ = 4f;
+            float outZ = 0f;
 
             for (int i = 0; i < count; i++)
                 list.Add(new BpBuilding { ProtoId = proto, RecipeId = recipeId, X = i * spacing, Z = machineZ });
@@ -344,16 +345,16 @@ namespace IcarusII.Game.Tools
                 int machineIndex = i;
                 int inBelt = inputStart + i;
                 int outBelt = outputStart + i;
-                list.Add(new BpBuilding { ProtoId = inserter, X = i * spacing, Z = feedZ + 1f,
+                list.Add(new BpBuilding { ProtoId = inserter, X = i * spacing, Z = feedZ,
                     X2 = i * spacing, Z2 = machineZ, Yaw = 180f, Yaw2 = 180f,
                     InputObjIndex = inBelt, InputFromSlot = -1,
                     OutputObjIndex = machineIndex, OutputToSlot = 0,
-                    Params = new int[] { 1 } });
-                list.Add(new BpBuilding { ProtoId = inserter, X = i * spacing, Z = machineZ + 1f,
+                    Params = new int[] { 2 } });
+                list.Add(new BpBuilding { ProtoId = inserter, X = i * spacing, Z = machineZ,
                     X2 = i * spacing, Z2 = outZ, Yaw = 0f, Yaw2 = 0f,
                     InputObjIndex = machineIndex, InputFromSlot = 0,
                     OutputObjIndex = outBelt, OutputToSlot = -1,
-                    Params = new int[] { 1 } });
+                    Params = new int[] { 2 } });
             }
         }
 
