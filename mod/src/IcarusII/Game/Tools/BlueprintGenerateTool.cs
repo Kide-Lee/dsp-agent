@@ -166,6 +166,17 @@ namespace IcarusII.Game.Tools
                 path = dir + fileName;
             }
 
+            // 用游戏自己的解析器验收：能读回来且字节数一致，才允许落盘。
+            var check = BlueprintData.CreateNew(text);
+            if (check == null || !check.isValid || check.buildings == null
+                || check.buildings.Length != list.Count)
+            {
+                data.Set("saved", false);
+                data.Set("error", "encode_invalid");
+                data.Set("display", "生成失败：编码结果未通过游戏解析器校验");
+                return new GameToolJobResult { Data = data };
+            }
+
             try
             {
                 Directory.CreateDirectory(dir);
@@ -185,6 +196,7 @@ namespace IcarusII.Game.Tools
             data.Set("width", (int)Math.Ceiling(maxX));
             data.Set("height", (int)Math.Ceiling(maxY));
             data.Set("bytes", text.Length);
+            data.Set("verified", true);
             data.Set("display", "已生成蓝图 " + fileName + " · " + list.Count + " 台 · "
                 + (int)Math.Ceiling(maxX) + "×" + (int)Math.Ceiling(maxY) + " 格");
             data.Set("note", "只含生产设备，不含传送带/分拣器；粘贴后自行接线。");
@@ -219,8 +231,10 @@ namespace IcarusII.Game.Tools
         {
             var version = GameConfig.gameVersion.ToFullString();
             var ticks = DateTime.UtcNow.Ticks;
-            var header = "BLUEPRINT:0,10,0,0,0,0,0,0," + ticks.ToString(CultureInfo.InvariantCulture)
-                + "," + version + "," + Uri.EscapeDataString(title) + ",";
+            // 与 BlueprintData.headerStr 完全一致：
+            // BLUEPRINT:1,layout,icon0..4,0,ticks,gameVersion,shortDesc,author,customVersion,externalFields,desc"
+            var header = "BLUEPRINT:1,10,0,0,0,0,0,0," + ticks.ToString(CultureInfo.InvariantCulture)
+                + "," + version + "," + Uri.EscapeDataString(title) + ",,,,";
 
             byte[] binary;
             using (var ms = new MemoryStream())
@@ -272,6 +286,11 @@ namespace IcarusII.Game.Tools
                         w.Write((short)0);   // filterId
                         w.Write((short)0);   // parameters length
                     }
+
+                    // version 2 必须在建筑之后写 Patch 和 reformData 标志；
+                    // 少了这两段，游戏 Import 会在 EOF 抛异常，蓝图被判无效。
+                    w.Write(1);              // Patch = CURRENT_PATCH
+                    w.Write((byte)0);        // 无地基 reformData
                 }
                 binary = ms.ToArray();
             }
