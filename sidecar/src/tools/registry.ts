@@ -432,14 +432,15 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       name: 'game_generate_blueprint',
       label: '生成蓝图',
       description:
-        '按模版从零生成一张只含生产设备的蓝图：给定配方与行列/间距（或显式 buildings 坐标），' +
-        '自动选择同配方类型的基础设备并保存到游戏蓝图目录。传送带/分拣器需粘贴后自行连接。' +
-        '产物是标准蓝图文本，与游戏内复制格式同源。',
+        '从零生成蓝图并保存到游戏蓝图目录：layout=template 生成机器阵列；' +
+        'layout=row 自动生成“一排机器 + 上下两条直传送带 + 进出料分拣器”并写好连接与槽位。' +
+        '也可以用 buildings 显式指定带子/爪子/坐标/朝向/槽位。产物是标准蓝图文本，与游戏内复制同源。',
       promptSnippet: '按配方与行列生成机器阵列蓝图',
       promptGuidelines: [
-        'Use game_generate_blueprint 当玩家要“新建一张 N×M 的某配方产线蓝图”时。',
+        'Use game_generate_blueprint 当玩家要“新建一张产线蓝图/带带子和爪子的蓝图”时；不要回答“只能下载”。',
+        '玩家要带子/爪子时优先用 layout=row（count 指定机器数）。',
         '机器间默认 4 格间距（约 4m）；需要自定义坐标时传 buildings:[{protoId,recipeId,x,y,yaw}]。',
-        'layout=template 只生成裸机器阵列；layout=row 生成单行机器+上下直带+爪子（实验，需进游戏验证连接）。',
+        'layout=template 只生成裸机器阵列；layout=row 生成单行机器+上下直带+进出料爪子，并写入带子链路与爪子槽位。',
         '需要完全自定义时用 buildings 显式给 protoId、坐标、tilt/pitch、朝向与连接槽位。',
         '显式坐标：x 东西、z 南北、y 高度；只给 x/y 时按“y=南北、高度 0”处理。',
         '作者/版本/属性/介绍分别用 author/version/attributes/description，封面图标默认取配方产物。',
