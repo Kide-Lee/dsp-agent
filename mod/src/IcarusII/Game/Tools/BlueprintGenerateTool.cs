@@ -35,9 +35,26 @@ namespace IcarusII.Game.Tools
         {
             public int ProtoId;
             public int RecipeId;
+            // 地面坐标 X/Z，高度 Y；与蓝图二进制的 (localOffset_x, localOffset_y, localOffset_z) 对应。
             public float X;
-            public float Y;
+            public float Z;
+            public float Alt;
+            public float X2;
+            public float Z2;
+            public float Alt2;
             public float Yaw;
+            public float Tilt;
+            public float Pitch;
+            public float Yaw2;
+            public float Tilt2;
+            public float Pitch2;
+            public int OutputObjIndex;
+            public int InputObjIndex;
+            public sbyte OutputToSlot;
+            public sbyte InputFromSlot;
+            public sbyte OutputFromSlot;
+            public sbyte InputToSlot;
+            public int FilterId;
         }
 
         public IGameToolJob Start(JsonValue args)
@@ -63,14 +80,41 @@ namespace IcarusII.Game.Tools
                     var proto = row["protoId"].AsInt(0);
                     var recipe = row["recipeId"].AsInt(recipeId);
                     if (proto <= 0 || recipe <= 0) continue;
-                    list.Add(new BpBuilding
+
+                    // 兼容两种写法：
+                    //   {x, z, y}  = Unity 习惯：x 东西、z 南北、y 高度；
+                    //   {x, y}     = 蓝图习惯：x 东西、y 南北、高度 0。
+                    var groundZ = row["z"] != null && !row["z"].IsNull
+                        ? row["z"].AsDouble(0)
+                        : row["y"].AsDouble(0);
+                    var alt = row["z"] != null && !row["z"].IsNull
+                        ? row["y"].AsDouble(0)
+                        : row["height"].AsDouble(0);
+                    var b = new BpBuilding
                     {
                         ProtoId = proto,
                         RecipeId = recipe,
                         X = (float)row["x"].AsDouble(0),
-                        Y = (float)row["y"].AsDouble(0),
+                        Z = (float)groundZ,
+                        Alt = (float)alt,
                         Yaw = (float)row["yaw"].AsDouble(0),
-                    });
+                        Tilt = (float)row["tilt"].AsDouble(0),
+                        Pitch = (float)row["pitch"].AsDouble(0),
+                        Yaw2 = (float)row["yaw2"].AsDouble(row["yaw"].AsDouble(0)),
+                        Tilt2 = (float)row["tilt2"].AsDouble(0),
+                        Pitch2 = (float)row["pitch2"].AsDouble(0),
+                        FilterId = row["filterId"].AsInt(0),
+                        OutputObjIndex = row["outputObjIndex"].AsInt(0),
+                        InputObjIndex = row["inputObjIndex"].AsInt(0),
+                        OutputToSlot = (sbyte)row["outputToSlot"].AsInt(0),
+                        InputFromSlot = (sbyte)row["inputFromSlot"].AsInt(0),
+                        OutputFromSlot = (sbyte)row["outputFromSlot"].AsInt(0),
+                        InputToSlot = (sbyte)row["inputToSlot"].AsInt(0),
+                    };
+                    b.X2 = (float)row["x2"].AsDouble(b.X);
+                    b.Z2 = (float)row["z2"].AsDouble(b.Z);
+                    b.Alt2 = (float)row["height2"].AsDouble(b.Alt);
+                    list.Add(b);
                 }
             }
             else
@@ -111,7 +155,7 @@ namespace IcarusII.Game.Tools
                             ProtoId = protoId,
                             RecipeId = recipeId,
                             X = (float)(originX + c * spacingX),
-                            Y = (float)(originY + r * spacingY),
+                            Z = (float)(originY + r * spacingY),
                             Yaw = (float)yaw,
                         });
                     }
@@ -131,10 +175,11 @@ namespace IcarusII.Game.Tools
             var occupied = new HashSet<long>();
             foreach (var b in list)
             {
-                if (b.X < 0 || b.Y < 0) continue;
-                if (b.X + 1 > maxX) maxX = b.X + 1;
-                if (b.Y + 1 > maxY) maxY = b.Y + 1;
-                var key = ((long)Math.Round(b.X * 10) << 32) ^ (long)Math.Round(b.Y * 10);
+                var gx = Math.Max(b.X, b.X2);
+                var gz = Math.Max(b.Z, b.Z2);
+                if (gx + 1 > maxX) maxX = gx + 1;
+                if (gz + 1 > maxY) maxY = gz + 1;
+                var key = ((long)Math.Round(b.X * 10) << 32) ^ (long)Math.Round(b.Z * 10);
                 if (!occupied.Add(key))
                 {
                     data.Set("saved", false);
@@ -152,7 +197,19 @@ namespace IcarusII.Game.Tools
 
             var title = args["name"].AsString(null);
             if (string.IsNullOrEmpty(title)) title = "IcarusII 产线";
-            var text = Encode(title, (int)Math.Ceiling(maxX), (int)Math.Ceiling(maxY), list);
+            var iconItemId = args["iconItemId"].AsInt(0);
+            if (iconItemId <= 0)
+            {
+                var rootRecipe = LDB.recipes.Select(recipeId);
+                if (rootRecipe != null && rootRecipe.Results != null && rootRecipe.Results.Length > 0)
+                    iconItemId = rootRecipe.Results[0];
+            }
+            var author = args["author"].AsString("");
+            var bpVersion = args["version"].AsString("");
+            var attributes = args["attributes"].AsString("");
+            var description = args["description"].AsString("");
+            var text = Encode(title, author, bpVersion, attributes, description, iconItemId,
+                (int)Math.Ceiling(maxX), (int)Math.Ceiling(maxY), list);
 
             var safe = Sanitize(title);
             if (string.IsNullOrEmpty(safe)) safe = "IcarusII-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
@@ -184,8 +241,27 @@ namespace IcarusII.Game.Tools
             {
                 try { File.Delete(tmp); } catch { }
             }
+            // 除了能加载，还要确认坐标/朝向原样回读，避免二进制字段顺序写错。
+            bool coordsOk = checkError == BlueprintDataIOError.OK && check.buildings != null
+                && check.buildings.Length == list.Count;
+            if (coordsOk)
+            {
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var src = list[i];
+                    var got = check.buildings[i];
+                    if (Math.Abs(got.localOffset_x - src.X) > 0.001f
+                        || Math.Abs(got.localOffset_y - src.Z) > 0.001f
+                        || Math.Abs(got.localOffset_z - src.Alt) > 0.001f
+                        || got.recipeId != src.RecipeId)
+                    {
+                        coordsOk = false;
+                        break;
+                    }
+                }
+            }
             if (checkError != BlueprintDataIOError.OK || !check.isValid || check.buildings == null
-                || check.buildings.Length != list.Count)
+                || check.buildings.Length != list.Count || !coordsOk)
             {
                 data.Set("saved", false);
                 data.Set("error", "encode_invalid");
@@ -244,14 +320,17 @@ namespace IcarusII.Game.Tools
             return DefaultAssembler;
         }
 
-        private static string Encode(string title, int width, int height, List<BpBuilding> buildings)
+        private static string Encode(string title, string author, string customVersion,
+            string attributes, string description, int iconItemId, int width, int height, List<BpBuilding> buildings)
         {
             var version = GameConfig.gameVersion.ToFullString();
             var ticks = DateTime.UtcNow.Ticks;
             // 与 BlueprintData.headerStr 完全一致：
             // BLUEPRINT:1,layout,icon0..4,0,ticks,gameVersion,shortDesc,author,customVersion,externalFields,desc"
-            var header = "BLUEPRINT:1,10,0,0,0,0,0,0," + ticks.ToString(CultureInfo.InvariantCulture)
-                + "," + version + "," + Uri.EscapeDataString(title) + ",,,,";
+            var header = "BLUEPRINT:1,10," + iconItemId.ToString(CultureInfo.InvariantCulture)
+                + ",0,0,0,0,0," + ticks.ToString(CultureInfo.InvariantCulture)
+                + "," + version + "," + Esc(title) + "," + Esc(author) + "," + Esc(customVersion)
+                + "," + Esc(attributes) + "," + Esc(description) + "\"";
 
             byte[] binary;
             using (var ms = new MemoryStream())
@@ -287,20 +366,35 @@ namespace IcarusII.Game.Tools
                         w.Write((short)b.ProtoId);
                         w.Write((short)modelIndex);
                         w.Write((sbyte)0);   // area index
-                        w.Write(b.X);
-                        w.Write(0f);
-                        w.Write(b.Y);
+                        w.Write(b.X);        // 东西
+                        w.Write(b.Z);        // 南北
+                        w.Write(b.Alt);      // 高度
                         w.Write(b.Yaw);
-                        w.Write(0);          // output obj
-                        w.Write(0);          // input obj
-                        w.Write((sbyte)0);   // outputToSlot
-                        w.Write((sbyte)0);   // inputFromSlot
-                        w.Write((sbyte)0);   // outputFromSlot
-                        w.Write((sbyte)0);   // inputToSlot
+                        if (b.ProtoId > 2000 && b.ProtoId < 2010)
+                        {
+                            w.Write(b.Tilt);
+                        }
+                        else if (b.ProtoId > 2010 && b.ProtoId < 2020)
+                        {
+                            w.Write(b.Tilt);
+                            w.Write(b.Pitch);
+                            w.Write(b.X2);
+                            w.Write(b.Z2);
+                            w.Write(b.Alt2);
+                            w.Write(b.Yaw2);
+                            w.Write(b.Tilt2);
+                            w.Write(b.Pitch2);
+                        }
+                        w.Write(b.OutputObjIndex);
+                        w.Write(b.InputObjIndex);
+                        w.Write(b.OutputToSlot);
+                        w.Write(b.InputFromSlot);
+                        w.Write(b.OutputFromSlot);
+                        w.Write(b.InputToSlot);
                         w.Write((sbyte)0);   // outputOffset
                         w.Write((sbyte)0);   // inputOffset
                         w.Write((short)b.RecipeId);
-                        w.Write((short)0);   // filterId
+                        w.Write((short)b.FilterId);
                         w.Write((short)0);   // parameters length
                     }
 
@@ -323,10 +417,15 @@ namespace IcarusII.Game.Tools
             }
 
             var b64 = Convert.ToBase64String(gz);
-            var head = header + "\"";
+            var head = header;
             // 必须用游戏自己的 MD5F：它不是标准 MD5（同一段文本结果不同），
             // 自己算的签名会被 CheckSignature 判为 MD5CannotMatch。
             return head + b64 + "\"" + MD5F.Compute(head + b64);
+        }
+
+        private static string Esc(string raw)
+        {
+            return Uri.EscapeDataString(raw ?? "");
         }
 
         private static string Sanitize(string raw)
