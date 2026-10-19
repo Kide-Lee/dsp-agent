@@ -994,11 +994,12 @@ namespace IcarusII.Game.Tools
             width = Math.Min(width, MaxWidth);
             height = Math.Min(height, MaxHeight);
             var includeEntities = args["includeEntities"].AsBool(true);
+            var annotate = args["annotate"].AsBool(true);
 
-            return new OneShotJob(() => Build(width, height, includeEntities, args));
+            return new OneShotJob(() => Build(width, height, includeEntities, annotate, args));
         }
 
-        private static GameToolJobResult Build(int width, int height, bool includeEntities, JsonValue args)
+        private static GameToolJobResult Build(int width, int height, bool includeEntities, bool annotate, JsonValue args)
         {
             var data = JsonValue.NewObject();
             data.Set("width", width);
@@ -1079,10 +1080,11 @@ namespace IcarusII.Game.Tools
                 return new GameToolJobResult { Data = data };
             }
 
+            var marks = CollectMarks(gameData, width, height);
             byte[] jpeg;
             int outWidth;
             int outHeight;
-            if (!TryEncodeJpeg(png, width, height, out jpeg, out outWidth, out outHeight))
+            if (!TryEncodeJpeg(png, width, height, annotate ? marks : null, out jpeg, out outWidth, out outHeight))
             {
                 data.Set("available", false);
                 data.Set("reason", "encode_failed");
@@ -1117,7 +1119,12 @@ namespace IcarusII.Game.Tools
                 }
             }
             data.Set("camera", info);
-            if (includeEntities) data.Set("visibleEntities", VisibleEntities(gameData, outWidth, outHeight));
+            if (includeEntities) data.Set("visibleEntities", MarkRows(marks, outWidth, outHeight));
+            if (annotate)
+            {
+                data.Set("annotated", true);
+                data.Set("legend", LegendRows(marks, outWidth, outHeight));
+            }
 
             data.Set("display", "已截图 " + outWidth + "×" + outHeight + "（"
                 + (jpeg.Length / 1024) + " KiB）");
@@ -1149,7 +1156,7 @@ namespace IcarusII.Game.Tools
         }
 
         private static bool TryEncodeJpeg(byte[] png, int expectedWidth, int expectedHeight,
-            out byte[] jpeg, out int width, out int height)
+            List<VisibleMark> marks, out byte[] jpeg, out int width, out int height)
         {
             jpeg = null;
             width = expectedWidth;
@@ -1162,6 +1169,8 @@ namespace IcarusII.Game.Tools
                 if (!texture.LoadImage(png)) return false;
                 width = texture.width;
                 height = texture.height;
+                if (marks != null && marks.Count > 0) DrawMarks(texture, marks, width, height);
+                texture.Apply(false, false);
                 jpeg = texture.EncodeToJPG(JpegQuality);
                 return jpeg != null && jpeg.Length > 0;
             }
@@ -1195,57 +1204,182 @@ namespace IcarusII.Game.Tools
         /// 可见建筑投影：给模型"图上这个点对应哪个 id"的对应关系。
         /// 只投影屏幕内的建筑，按到相机的距离排序，最多 60 个。
         /// </summary>
-        private static JsonValue VisibleEntities(GameData gameData, int width, int height)
+        private sealed class VisibleMark
         {
-            var rows = JsonValue.NewArray();
+            public int Id;
+            public int ProtoId;
+            public string Name;
+            public string Category;
+            public int X;
+            public int Y;
+            public float Distance;
+        }
+
+        /// <summary>
+        /// 屏幕内最近的实体（视口坐标换算成截图像素）。截图标注与 visibleEntities 共用这份结果，
+        /// 避免两处筛选条件不一致导致“图上的编号和图例对不上”。
+        /// </summary>
+        private static List<VisibleMark> CollectMarks(GameData gameData, int width, int height)
+        {
+            var marks = new List<VisibleMark>();
             var camera = GameCamera.main;
             var planet = gameData.localPlanet;
-            if (camera == null || planet == null || planet.factory == null) return rows;
+            if (camera == null || planet == null || planet.factory == null) return marks;
 
             var factory = planet.factory;
-            if (factory.entityPool == null) return rows;
+            if (factory.entityPool == null) return marks;
 
             var origin = camera.transform.position;
             var candidates = new List<KeyValuePair<float, int>>();
-
             var upper = Math.Min(factory.entityCursor, factory.entityPool.Length);
             for (int id = 1; id < upper; id++)
             {
                 var entity = factory.entityPool[id];
                 if (entity.id != id || entity.protoId <= 0) continue;
-
-                // 用视口坐标而不是屏幕坐标：截图的 RenderTexture 尺寸与窗口像素尺寸可能不同，
-                // viewport 归一化后乘截图宽高，才能和图片像素对齐。
                 var viewport = camera.WorldToViewportPoint(entity.pos);
                 if (viewport.z <= 0) continue;
                 if (viewport.x < 0 || viewport.x > 1) continue;
                 if (viewport.y < 0 || viewport.y > 1) continue;
-
-                var distance = Vector3.Distance(origin, entity.pos);
-                candidates.Add(new KeyValuePair<float, int>(distance, id));
+                candidates.Add(new KeyValuePair<float, int>(Vector3.Distance(origin, entity.pos), id));
             }
 
             candidates.Sort((a, b) => a.Key.CompareTo(b.Key));
-
             for (int i = 0; i < candidates.Count && i < MaxVisibleEntities; i++)
             {
                 var id = candidates[i].Value;
                 var entity = factory.entityPool[id];
                 var viewport = camera.WorldToViewportPoint(entity.pos);
+                marks.Add(new VisibleMark
+                {
+                    Id = id,
+                    ProtoId = entity.protoId,
+                    Name = EntityToolUtil.ProtoName(entity.protoId),
+                    Category = EntityToolUtil.Category(entity),
+                    X = (int)Math.Round(viewport.x * width),
+                    Y = (int)Math.Round((1f - viewport.y) * height),
+                    Distance = candidates[i].Key,
+                });
+            }
+            return marks;
+        }
+
+        private static JsonValue MarkRows(List<VisibleMark> marks, int width, int height)
+        {
+            var rows = JsonValue.NewArray();
+            foreach (var mark in marks)
+            {
                 var row = JsonValue.NewObject();
-                row.Set("id", id);
-                row.Set("protoId", entity.protoId);
-                row.Set("protoName", EntityToolUtil.ProtoName(entity.protoId));
-                row.Set("category", EntityToolUtil.Category(entity));
-                // 图片坐标以左上角为原点。
-                row.Set("x", GameToolFormat.Round(viewport.x * width, 0));
-                row.Set("y", GameToolFormat.Round((1f - viewport.y) * height, 0));
-                row.Set("distance", GameToolFormat.Round(candidates[i].Key, 1));
+                row.Set("id", mark.Id);
+                row.Set("protoId", mark.ProtoId);
+                row.Set("protoName", mark.Name);
+                row.Set("category", mark.Category);
+                row.Set("x", mark.X);
+                row.Set("y", mark.Y);
+                row.Set("distance", GameToolFormat.Round(mark.Distance, 1));
                 rows.Add(row);
             }
-
             return rows;
         }
+
+        /// <summary>只给前 20 个画编号框，避免图上一团花；图例序号与之对应。</summary>
+        private static JsonValue LegendRows(List<VisibleMark> marks, int width, int height)
+        {
+            var rows = JsonValue.NewArray();
+            for (int i = 0; i < marks.Count && i < 20; i++)
+            {
+                var mark = marks[i];
+                var row = JsonValue.NewObject();
+                row.Set("index", i + 1);
+                row.Set("id", mark.Id);
+                row.Set("protoName", mark.Name);
+                row.Set("category", mark.Category);
+                row.Set("x", mark.X);
+                row.Set("y", mark.Y);
+                rows.Add(row);
+            }
+            return rows;
+        }
+
+        // 3×5 点阵数字；比引 TextMesh 便宜，也不会把 UI 画进截图。
+        private static readonly string[] DigitFont =
+        {
+            "111101101101111", "010110010010111", "111001111100111", "111001111001111",
+            "101101111001001", "111100111001111", "111100111101111", "111001001001001",
+            "111101111101111", "111101111001111",
+        };
+
+        private static void DrawMarks(Texture2D texture, List<VisibleMark> marks, int width, int height)
+        {
+            var pixels = texture.GetPixels32();
+            for (int i = 0; i < marks.Count && i < 20; i++)
+            {
+                var mark = marks[i];
+                var color = ColorFor(mark.Category);
+                const int half = 11;
+                DrawBox(pixels, width, height, mark.X - half, mark.Y - half, mark.X + half, mark.Y + half, color);
+                DrawNumber(pixels, width, height, mark.X - 6, mark.Y - half - 12, i + 1, 2, color);
+            }
+            texture.SetPixels32(pixels);
+        }
+
+        private static Color32 ColorFor(string category)
+        {
+            switch (category)
+            {
+                case "assembler": return new Color32(120, 255, 140, 255);
+                case "station": return new Color32(255, 120, 255, 255);
+                case "storage": return new Color32(255, 190, 90, 255);
+                case "power_generator":
+                case "power_node":
+                case "power_accumulator": return new Color32(120, 190, 255, 255);
+                case "inserter": return new Color32(255, 240, 110, 255);
+                case "belt": return new Color32(110, 230, 230, 255);
+                default: return new Color32(230, 230, 230, 255);
+            }
+        }
+
+        private static void DrawBox(Color32[] pixels, int width, int height, int x0, int y0, int x1, int y1, Color32 color)
+        {
+            for (int x = x0; x <= x1; x++)
+            {
+                Put(pixels, width, height, x, y0, color);
+                Put(pixels, width, height, x, y1, color);
+            }
+            for (int y = y0; y <= y1; y++)
+            {
+                Put(pixels, width, height, x0, y, color);
+                Put(pixels, width, height, x1, y, color);
+            }
+        }
+
+        private static void DrawNumber(Color32[] pixels, int width, int height, int x, int y, int value, int scale, Color32 color)
+        {
+            var text = value.ToString(CultureInfo.InvariantCulture);
+            foreach (var ch in text)
+            {
+                var digit = ch - '0';
+                if (digit < 0 || digit > 9) continue;
+                var glyph = DigitFont[digit];
+                for (int gy = 0; gy < 5; gy++)
+                {
+                    for (int gx = 0; gx < 3; gx++)
+                    {
+                        if (glyph[gy * 3 + gx] != '1') continue;
+                        for (int sy = 0; sy < scale; sy++)
+                            for (int sx = 0; sx < scale; sx++)
+                                Put(pixels, width, height, x + gx * scale + sx, y + gy * scale + sy, color);
+                    }
+                }
+                x += 4 * scale;
+            }
+        }
+
+        private static void Put(Color32[] pixels, int width, int height, int x, int y, Color32 color)
+        {
+            if (x < 0 || y < 0 || x >= width || y >= height) return;
+            pixels[y * width + x] = color;
+        }
+
     }
 
     // ---------------------------------------------------------------- 区域产线分析

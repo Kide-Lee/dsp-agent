@@ -323,13 +323,17 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         'Use game_capture_view 当玩家让你看画面、问布局/摆放/接线是否正确时。',
         '需要平面布局时用 view=topdown，并用 entityId/center 指定中心、height 指定高度（10–150m）。',
         '俯视图只覆盖玩家附近已加载的区块；画面缺一块时说明是流送限制，不要当成空地。',
-        '拿到图片后先描述你看到的，再结合 game_get_entity / game_get_entities 的数值下结论；不要只凭像素猜配方。',
+        '图上的编号框与 legend 的 index 一一对应；先按编号定位，再结合 game_get_entity / game_get_entities 的数值下结论，不要只凭像素猜配方。',
+        'annotate=false 可关掉标注（例如只想看纯净画面）。',
       ],
       parameters: Type.Object({
         width: Type.Optional(Type.Integer({ description: '像素宽，默认 1280，上限 1600' })),
         height: Type.Optional(Type.Integer({ description: '像素高，默认 720，上限 900' })),
         includeEntities: Type.Optional(
           Type.Boolean({ description: '是否附带可见建筑的屏幕坐标，默认 true' }),
+        ),
+        annotate: Type.Optional(
+          Type.Boolean({ description: '是否在图上画编号框并返回 legend，默认 true' }),
         ),
         view: Type.Optional(
           Type.Union([Type.Literal('player'), Type.Literal('topdown')], {
