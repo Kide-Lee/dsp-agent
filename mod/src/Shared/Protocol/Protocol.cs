@@ -510,6 +510,8 @@ namespace IcarusII.Common.Protocol
         public List<ModelInfo> Models { get; private set; }
         public string Source { get; private set; }
         public string Error { get; private set; }
+        /// <summary>sidecar 探测成功后给出的「聊天可用地址」（可能为空）。</summary>
+        public string ResolvedBaseUrl { get; private set; }
 
         public ModelCatalogResult()
         {
@@ -523,6 +525,7 @@ namespace IcarusII.Common.Protocol
             result.Provider = value["provider"].AsString(null);
             result.Source = value["source"].AsString(null);
             result.Error = value["error"].AsString(null);
+            result.ResolvedBaseUrl = value["resolvedBaseUrl"].AsString(null);
 
             var models = value["models"];
             if (models != null && models.IsArray)
@@ -546,6 +549,8 @@ namespace IcarusII.Common.Protocol
         public int LatencyMs { get; private set; }
         public string Message { get; private set; }
         public string Source { get; private set; }
+        /// <summary>sidecar 探测成功后给出的「聊天可用地址」（可能为空）。</summary>
+        public string ResolvedBaseUrl { get; private set; }
 
         public static ProviderTestResult Parse(JsonValue value)
         {
@@ -557,6 +562,7 @@ namespace IcarusII.Common.Protocol
             result.LatencyMs = value["latencyMs"].AsInt(0);
             result.Message = value["message"].AsString(null);
             result.Source = value["source"].AsString(null);
+            result.ResolvedBaseUrl = value["resolvedBaseUrl"].AsString(null);
             return result;
         }
     }

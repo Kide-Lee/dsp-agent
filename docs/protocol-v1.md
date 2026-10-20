@@ -316,8 +316,14 @@ mod                                   sidecar
 ```
 
 - `source`：`catalog`（pi 内置目录）或 `openai-compatible`（`GET {baseUrl}/models`）。
+- `baseUrl` 会先清洗：补 `https://`、去掉尾部 `/chat/completions` 之类的完整端点、去尾斜杠；
+  鉴权与解析规则与 `provider.test` 相同（Anthropic `x-api-key`、Gemini `x-goog-api-key`，
+  Gemini 的 `models/` 前缀会被去掉）。
 - 失败时 `models: []`，`payload.error` 是人类可读的错误（不含 key）。
 - 显式给了 `baseUrl` 时只问端点，不会拿官方目录冒充端点模型。
+- `resolvedBaseUrl`（可选，向后兼容）：探测成功后返回「聊天适配器期望的 base」。
+  地址写错时（OpenAI 兼容缺 `/v1`、Anthropic 多 `/v1`、Gemini 缺版本段）mod 会用它
+  补全输入框，避免「检测通过、发消息 404」。
 
 #### `provider.test`（mod → sidecar → mod）
 
@@ -346,8 +352,13 @@ mod                                   sidecar
 
 - `apiKey` 只用于本次探测，sidecar 不回传、不落盘、不写日志。
 - 401/403 → `ok:false, status:401/403, message:"API Key 被拒绝（HTTP …）"`。
+- 404 → 提示「端点没有 /models（HTTP 404，可能缺 /v1）」。
 - 未知供应商需要先填 `baseUrl`；已知供应商会用 pi 目录里该模型自己的 API 地址。
-- Anthropic 用 `x-api-key` + `/v1/models`；Google 用 `?key=`；其余按 OpenAI 兼容 Bearer。
+- 鉴权按供应商选择：Anthropic `x-api-key` + `/v1/models`，Gemini `x-goog-api-key` +
+  `/v1beta/models`，Azure `api-key` + `api-version`，其余 `Authorization: Bearer`。
+- 与 `model.catalog` 共用同一套清洗与回退：缺 `/v1` 自动补一次；401/403/404 才换写法重试
+  （最多 3 次，单次 9s / 回退 5s，总预算 17s）。
+- `resolvedBaseUrl`（可选）：同 `model.catalog`，成功时给出聊天可用的 base。
 
 ### A.2 `ready` 新增可选字段
 

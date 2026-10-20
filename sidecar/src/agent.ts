@@ -45,6 +45,13 @@ import {
 } from './config.js';
 import { ICARUS_II_PERSONA_NAME, ICARUS_II_SYSTEM_PROMPT } from './persona.js';
 import { errorFields, type Logger, type LogFields, log as rootLog } from './log.js';
+import {
+  canonicalBaseForChat,
+  describeProbeFailure,
+  parseModelList,
+  probeModelEndpoint,
+  safeEndpoint,
+} from './provider-endpoint.js';
 import type {
   AgentInfo,
   ConfigView,
@@ -568,111 +575,65 @@ async function probeProviderKey(
   apiKey: string,
   api: string | null,
 ): Promise<ProviderTestResult> {
-  const anthropic =
-    provider === 'anthropic' || /anthropic/i.test(baseUrl) || Boolean(api && /anthropic/i.test(api));
-  const google =
-    provider === 'google' ||
-    provider.startsWith('google-') ||
-    /generativelanguage|googleapis/i.test(baseUrl);
-
-  const headers: Record<string, string> = { accept: 'application/json' };
-  let url: string;
-  let rawBase = baseUrl.replace(/\/+$/, '');
-
-  if (anthropic) {
-    if (!/\/v1$/.test(rawBase)) rawBase += '/v1';
-    url = `${rawBase}/models`;
-    headers['x-api-key'] = apiKey;
-    headers['anthropic-version'] = '2023-06-01';
-  } else if (google) {
-    if (!/\/(v1beta|v1)$/.test(rawBase)) rawBase += '/v1beta';
-    url = `${rawBase}/models?key=${encodeURIComponent(apiKey)}`;
-  } else {
-    url = rawBase.endsWith('/models') ? rawBase : `${rawBase}/models`;
-    headers.authorization = `Bearer ${apiKey}`;
-  }
-
-  const started = Date.now();
-  try {
-    const response = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
-    const latencyMs = Date.now() - started;
-    if (response.ok) {
-      return { provider, ok: true, status: response.status, latencyMs, message: 'Key 可用', source: 'http' };
-    }
-    const message =
-      response.status === 401 || response.status === 403
-        ? `API Key 被拒绝（HTTP ${response.status}）`
-        : response.status === 404
-          ? '端点没有 /models 接口（HTTP 404）'
-          : response.status === 429
-            ? '请求被限流（HTTP 429）'
-            : `端点返回 HTTP ${response.status}`;
-    return { provider, ok: false, status: response.status, latencyMs, message, source: 'http' };
-  } catch (err) {
-    const raw = describeError(err);
-    const safe = redactSecrets(raw, [apiKey]);
-    const message = /timeout|aborted/i.test(raw) ? '检测超时' : `网络错误：${safe}`;
-    return { provider, ok: false, status: 0, latencyMs: Date.now() - started, message, source: 'http' };
-  }
+  const result = await probeModelEndpoint({ provider, baseUrl, apiKey, api });
+  return {
+    provider,
+    ok: result.ok,
+    status: result.status,
+    latencyMs: result.latencyMs,
+    message: result.ok ? 'Key 可用' : describeProbeFailure(result),
+    source: result.attempts > 0 ? 'http' : 'none',
+    resolvedBaseUrl: result.workingBaseUrl || null,
+  };
 }
 
 /**
- * 调 OpenAI 兼容的 `GET {baseUrl}/models`。
- * 返回 `models` + 可选错误；调用方仍可退回 pi 目录。
+ * 调端点的 `GET /models` 拿模型列表。
+ *
+ * 与 Key 检测共用同一套地址清洗/鉴权/回退逻辑，避免出现「检测通过但拿不到模型」
+ * 或反过来的情况；解析同时覆盖 OpenAI/Anthropic 的 `data[].id` 与 Gemini 的
+ * `models[].name`（Gemini 的 `models/` 前缀会被去掉）。
  */
-async function fetchOpenAICompatibleModels(
+async function fetchEndpointModels(
+  provider: string,
   baseUrl: string,
   apiKey: string | null,
-): Promise<{ models: ModelCatalogEntry[]; source: 'openai-compatible' | 'none'; error: string | null }> {
-  const base = baseUrl.replace(/\/+$/, '');
-  const url = base.endsWith('/models') ? base : `${base}/models`;
-  const headers: Record<string, string> = { accept: 'application/json' };
-  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
-
-  try {
-    const response = await fetch(url, { headers, signal: AbortSignal.timeout(12000) });
-    if (!response.ok) {
-      const hint =
-        response.status === 401 || response.status === 403
-          ? 'API Key 被拒绝'
-          : `HTTP ${response.status}`;
-      return { models: [], source: 'none', error: `获取模型列表失败：${hint}` };
-    }
-    const body = (await response.json()) as unknown;
-    const list =
-      body && typeof body === 'object' && Array.isArray((body as Record<string, unknown>)['data'])
-        ? ((body as Record<string, unknown>)['data'] as unknown[])
-        : body && typeof body === 'object' && Array.isArray((body as Record<string, unknown>)['models'])
-          ? ((body as Record<string, unknown>)['models'] as unknown[])
-          : [];
-
-    const seen = new Set<string>();
-    const models: ModelCatalogEntry[] = [];
-    for (const item of list) {
-      let id = '';
-      let name = '';
-      if (typeof item === 'string') {
-        id = item;
-        name = item;
-      } else if (item && typeof item === 'object') {
-        const obj = item as Record<string, unknown>;
-        if (typeof obj['id'] === 'string') id = obj['id'];
-        else if (typeof obj['name'] === 'string') id = obj['name'];
-        if (typeof obj['name'] === 'string') name = obj['name'];
-        else if (typeof obj['id'] === 'string') name = obj['id'];
-      }
-      id = id.trim();
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      models.push({ id, name: name.trim() || id });
-    }
-    return { models, source: 'openai-compatible', error: null };
-  } catch (err) {
-    const raw = describeError(err);
-    const safe = redactSecrets(raw, apiKey ? [apiKey] : []);
-    const message = /timeout|aborted/i.test(raw) ? '获取模型列表超时' : `获取模型列表失败：${safe}`;
-    return { models: [], source: 'none', error: message };
+  api: string | null,
+): Promise<{
+  models: ModelCatalogEntry[];
+  source: 'openai-compatible' | 'none';
+  error: string | null;
+  endpoint: string;
+  resolvedBaseUrl: string | null;
+}> {
+  const result = await probeModelEndpoint({ provider, baseUrl, apiKey, api });
+  if (!result.ok) {
+    return {
+      models: [],
+      source: 'none',
+      error: describeProbeFailure(result),
+      endpoint: result.endpoint,
+      resolvedBaseUrl: null,
+    };
   }
+
+  const models = parseModelList(result.body);
+  if (models.length === 0) {
+    return {
+      models: [],
+      source: 'none',
+      error: '端点没有返回模型列表',
+      endpoint: result.endpoint,
+      resolvedBaseUrl: result.workingBaseUrl || null,
+    };
+  }
+  return {
+    models,
+    source: 'openai-compatible',
+    error: null,
+    endpoint: result.endpoint,
+    resolvedBaseUrl: result.workingBaseUrl || null,
+  };
 }
 
 /**
@@ -1248,6 +1209,12 @@ export class PiAgent implements AgentRunner {
     const exact = runtime.getModel(provider, modelId);
     const template = exact ?? runtime.getModels(provider)[0];
 
+    // 玩家经常把文档里的「完整端点」整段粘进 API 地址（.../v1/chat/completions）。
+    // 探测侧会清洗，聊天侧也必须用同一个地址，否则会出现「检测通过、对话 404」。
+    // `api` 以聊天实际使用的适配器为准；自定义供应商固定 openai-completions。
+    const chatApi = template?.api ?? 'openai-completions';
+    const normalizedBase = baseUrl ? canonicalBaseForChat(provider, baseUrl, chatApi) : null;
+
     // 配置里的 `input` 是对目录的覆盖：pi 目录可能滞后（模型已支持读图但标成 text）。
     // 不覆盖的话，provider 适配层会按 `model.input.includes("image")` 把截图丢掉。
     const configured = this.store
@@ -1263,10 +1230,10 @@ export class PiAgent implements AgentRunner {
         name: displayName || exact?.name || modelId,
         ...(configuredInput ? { input: [...configuredInput] } : {}),
       } as Model<Api>;
-      return baseUrl ? { ...model, baseUrl } : model;
+      return normalizedBase ? { ...model, baseUrl: normalizedBase } : model;
     }
 
-    if (!baseUrl) return undefined;
+    if (!normalizedBase) return undefined;
 
     // 自定义 OpenAI 兼容端点：没有目录元数据，给一组保守默认值。
     const custom: Model<Api> = {
@@ -1274,7 +1241,7 @@ export class PiAgent implements AgentRunner {
       name: displayName || modelId,
       api: 'openai-completions',
       provider,
-      baseUrl,
+      baseUrl: normalizedBase,
       reasoning: false,
       input: configuredInput ? [...configuredInput] : ['text'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -1286,14 +1253,14 @@ export class PiAgent implements AgentRunner {
     try {
       runtime.registerProvider(provider, {
         name: providerDisplayName(provider),
-        baseUrl,
+        baseUrl: normalizedBase,
         apiKey,
         api: 'openai-completions',
         models: [{
           id: modelId,
           name: custom.name,
           api: 'openai-completions',
-          baseUrl,
+          baseUrl: normalizedBase,
           reasoning: false,
           input: configuredInput ? [...configuredInput] : ['text'],
           cost: custom.cost,
@@ -1375,6 +1342,7 @@ export class PiAgent implements AgentRunner {
     const result = await probeProviderKey(provider, resolvedBase, apiKey, api);
     this.logger.info('检测供应商 Key', {
       provider,
+      endpoint: safeEndpoint(resolvedBase),
       status: result.status,
       ok: result.ok,
       source: result.source,
@@ -1402,11 +1370,27 @@ export class PiAgent implements AgentRunner {
     // 显式 baseUrl 只问端点：中转站/本地推理的模型 id 往往不在 pi 目录里，
     // 这时拿官方目录来“兜底”反而会列出端点根本没有的模型。
     if (baseUrl) {
-      const fetched = await fetchOpenAICompatibleModels(baseUrl, apiKey);
+      const fetched = await fetchEndpointModels(provider, baseUrl, apiKey, null);
       if (fetched.models.length > 0) {
-        this.logger.info('获取模型目录', { provider, source: fetched.source, count: fetched.models.length });
-        return { provider, models: fetched.models, source: fetched.source, error: null };
+        this.logger.info('获取模型目录', {
+          provider,
+          source: fetched.source,
+          count: fetched.models.length,
+          endpoint: fetched.endpoint,
+        });
+        return {
+          provider,
+          models: fetched.models,
+          source: fetched.source,
+          error: null,
+          resolvedBaseUrl: fetched.resolvedBaseUrl,
+        };
       }
+      this.logger.warn('获取模型目录失败', {
+        provider,
+        endpoint: fetched.endpoint,
+        error: fetched.error ?? '端点没有返回模型列表',
+      });
       return {
         provider,
         models: [],

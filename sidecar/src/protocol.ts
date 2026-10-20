@@ -833,6 +833,8 @@ export interface ModelCatalogResult {
   models: ModelCatalogEntry[];
   source: 'catalog' | 'openai-compatible' | 'none';
   error: string | null;
+  /** 端点探测成功时，适配器期望的聊天 base（可选；mod 可用它补全地址）。 */
+  resolvedBaseUrl?: string | null;
 }
 
 /** `model.catalog` 请求：provider 必填；baseUrl/apiKey 可选（草稿值优先）。 */
@@ -871,6 +873,8 @@ export interface ProviderTestResult {
   latencyMs: number;
   message: string;
   source: 'http' | 'none';
+  /** 同 `model.catalog`：成功时给出聊天可用的 base（可选）。 */
+  resolvedBaseUrl?: string | null;
 }
 
 /** `provider.test` 请求：provider 必填；baseUrl/apiKey 可选（草稿值优先）。 */
@@ -897,7 +901,7 @@ export function parseProviderTestPayload(payload: JsonObject): ProviderTestReque
 }
 
 export function buildProviderTestPayload(result: ProviderTestResult): JsonObject {
-  return {
+  const payload: JsonObject = {
     provider: result.provider,
     ok: result.ok,
     status: result.status,
@@ -905,6 +909,8 @@ export function buildProviderTestPayload(result: ProviderTestResult): JsonObject
     message: result.message,
     source: result.source,
   };
+  if (result.resolvedBaseUrl) payload['resolvedBaseUrl'] = result.resolvedBaseUrl;
+  return payload;
 }
 
 export function buildModelCatalogPayload(result: ModelCatalogResult): JsonObject {
@@ -914,6 +920,7 @@ export function buildModelCatalogPayload(result: ModelCatalogResult): JsonObject
     source: result.source,
   };
   if (result.error) payload['error'] = result.error;
+  if (result.resolvedBaseUrl) payload['resolvedBaseUrl'] = result.resolvedBaseUrl;
   return payload;
 }
 

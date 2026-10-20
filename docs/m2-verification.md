@@ -98,6 +98,13 @@ capability → `ready.tools`、tool_call→tool_result 往返、超时、断线�
 | Key 检测 | API Key 旁「检测」→ `provider.test` 的 `/models` 探测；成功显示绿色「Key 可用 · N ms」，401 显示红色拒绝 |
 | 已知供应商目录 | DeepSeek/OpenAI 无 baseURL → pi 内置目录（`test/pi-tools.mjs` 断言 OpenAI 有 gpt-4o） |
 | 自定义端点目录 | 自定义供应商 + baseURL → `GET {baseURL}/models`；失败时显示错误，不拿官方目录冒充 |
+| 完整端点地址 | API 地址填成 `.../v1/chat/completions` → 检测/目录都按 `.../v1` 处理（不再拼出 `.../chat/completions/models`） |
+| 漏写 /v1 | 地址只写到域名 → 自动补一次 `/v1`；仍 404 时提示「可能缺 /v1」 |
+| Anthropic 风格端点 | 目录与检测都用 `x-api-key`（回归：以前目录固定 Bearer，导致 401） |
+| Gemini 风格端点 | 用 `x-goog-api-key`；模型 id 去掉 `models/` 前缀，`displayName` 作为显示名 |
+| 401/404 文案 | 401 显示「API Key 被拒绝」；404 提示检查 `/v1`；网络失败提示代理设置 |
+| 地址自动补全 | 「检测」/「获取可用模型」成功后，聊天需要的 base（补 `/v1`、Anthropic 去 `/v1`、Gemini 补 `/v1beta`）会写回输入框；点「应用设置」生效 |
+| 代理 | 不动系统代理；需要时代理通过 `HTTPS_PROXY` + `NODE_OPTIONS=--use-env-proxy` 提供 |
 | 自定义端点 | 供应商 id 不在 pi 目录 + 填 baseURL → 按 OpenAI 兼容协议工作（`test/pi-tools.mjs` 已断言） |
 | 旧配置迁移 | 旧 `config.json` 只有 `provider/model/apiKey/baseUrl` → 自动变成一条 provider，历史 key 不丢 |
 

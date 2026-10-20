@@ -381,6 +381,13 @@ namespace IcarusII.Tests
             Eq("provider.test status", 200, testOk.Status);
             Eq("provider.test latency", 123, testOk.LatencyMs);
             Eq("provider.test message", "Key 可用", testOk.Message);
+            Check("provider.test 未返回 resolvedBaseUrl 时为 null", testOk.ResolvedBaseUrl == null);
+
+            var testResolved = ProviderTestResult.Parse(JsonValue.Parse(
+                "{\"provider\":\"openai\",\"ok\":true,\"status\":200,\"latencyMs\":10," +
+                "\"message\":\"Key 可用\",\"source\":\"http\"," +
+                "\"resolvedBaseUrl\":\"https://api.example.com/v1\"}"));
+            Eq("provider.test resolvedBaseUrl", "https://api.example.com/v1", testResolved.ResolvedBaseUrl);
 
             var testBad = ProviderTestResult.Parse(JsonValue.Parse(
                 "{\"provider\":\"openai\",\"ok\":false,\"status\":401," +

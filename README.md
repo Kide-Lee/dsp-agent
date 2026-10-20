@@ -216,12 +216,22 @@ WINEDLLOVERRIDES="winhttp=n,b" %command%
 模型页参考 dsh Web UI 的组织方式：左栏是供应商列表（带密钥状态点），右栏是当前
 供应商的编辑卡片——API 密钥（只写不读）、API 地址、模型列表（可增删），点模型行
 把它设为当前模型；修改点右下角原生的「应用设置」提交。模型输入框旁的
-**「获取可用模型」** 会从 pi 内置目录或供应商的 OpenAI 兼容 `/models` 端点拉取列表，
+**「获取可用模型」** 会从 pi 内置目录或供应商的 `/models` 端点拉取列表，
 在弹层里点「+ 添加」即可加入当前供应商（未知供应商需要先填 API 地址）。
 新增供应商时可用**预设下拉框**选择 DeepSeek / OpenAI / Anthropic / Google Gemini /
 OpenRouter，也可以选「自定义」输入 ID；API 密钥旁的**「检测」**按钮会做一次
-`GET /models` 轻量探测，直接显示 Key 是否可用和延迟。密钥只保存在 sidecar 的
-`config.json`（0600），不会回传到游戏 UI。
+`GET /models` 轻量探测，直接显示 Key 是否可用和延迟。
+
+「检测」和「获取可用模型」共用同一套端点规则：按供应商使用各自的鉴权头
+（OpenAI 兼容用 `Authorization: Bearer`，Anthropic 用 `x-api-key`，Gemini 用
+`x-goog-api-key`）；粘贴成 `.../v1/chat/completions` 的完整端点会自动削成 base URL，
+漏写 `/v1` 时自动补一次。两者不会再出现「检测通过但拿不到模型」；检测成功后
+如果聊天需要的地址与输入框不同（例如缺少 `/v1`），输入框会被自动补全。
+密钥只保存在 sidecar 的 `config.json`（0600），不会回传到游戏 UI。
+
+> 已知限制：sidecar 默认不读取系统代理设置。需要代理才能访问上游时，请给游戏进程
+> 设置 `HTTPS_PROXY` 与 `NODE_OPTIONS=--use-env-proxy`（Node 24 才支持该参数），
+> 或改用可直连的中转地址。
 
 ### 关于 R 键冲突
 

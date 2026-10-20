@@ -29,10 +29,6 @@ namespace IcarusII.UI
         // ---- 原生设置页的排版基准（从 DSPGame.unity 的 Option Window 量的）----
         private const float PageLeft = 30f;
         private const float PageTop = 12f;
-        private const float RevertX = 30f;
-        private const float RevertY = 20f;
-        private const float RevertWidth = 218f;
-        private const float RevertHeight = 36f;
 
         private const string DefaultProvider = "deepseek";
         private const string DefaultModel = "deepseek-v4-flash";
@@ -253,10 +249,9 @@ namespace IcarusII.UI
                     return;
                 }
 
-                // 原生每个页签左下角都有一枚「恢复本页设置」按钮。
-                // 在清空克隆内容之前先把它记下来，模型页也放一枚同款——
-                // 既对齐观感，也让 tabButtons / revertButtons 两个数组长度一致
-                // （原生 _OnUnregEvent 会按 tabButtons.Length 去索引 revertButtons）。
+                // 原生 `_OnUnregEvent` 会按 tabButtons.Length 去索引 revertButtons 且不判空，
+                // 所以模型页必须占一格。模型页**不提供**「恢复本页设置」——它会把其它
+                // 供应商的 key/地址一起删掉，语义太危险；这里只克隆一个隐藏占位按钮。
                 var revertTemplate = FindRevertTemplate(srcGroup.transform);
 
                 Plugin.Log.LogInfo("[模型页] 步骤1：克隆页签按钮");
@@ -372,18 +367,17 @@ namespace IcarusII.UI
                 btn.onClick += _ => SwitchTo(window, target);
 
                 Plugin.Log.LogInfo("[模型页] 步骤5：构建页面控件");
-                var revertButton = BuildPage(content.transform, window, revertTemplate);
+                var revertSlot = BuildPage(content.transform, window, revertTemplate);
 
                 // revertButtons 与 tabButtons 必须等长：原生 _OnUnregEvent 会
                 // 用 tabButtons.Length 索引 revertButtons，少一格就会 IndexOutOfRange。
-                // 模板缺失（revertButton == null）时也要扩容，只留一个空位——
-                // 页面上少一枚按钮可以接受，设置窗口在销毁时抛越界不行。
+                // 模型页这一格放的是**隐藏**的占位按钮，不显示也不响应点击。
                 if (window.revertButtons != null)
                 {
                     if (window.revertButtons.Length == count)
                         Array.Resize(ref window.revertButtons, next);
                     if (window.revertButtons.Length > count)
-                        window.revertButtons[count] = revertButton;
+                        window.revertButtons[count] = revertSlot;
                 }
                 Plugin.Log.LogInfo("[模型页] 步骤6：完成");
 
@@ -412,7 +406,7 @@ namespace IcarusII.UI
             }
         }
 
-        /// <summary>在原生页签内容根里找左下角的「恢复本页设置」按钮，作为模型页的同款模板。</summary>
+        /// <summary>在原生页签内容根里找「恢复本页设置」按钮，仅作为隐藏占位槽的克隆模板。</summary>
         private static Transform FindRevertTemplate(Transform contentRoot)        {
             if (contentRoot == null) return null;
 
@@ -512,7 +506,7 @@ namespace IcarusII.UI
             vlg.childForceExpandWidth = true;
             vlg.childForceExpandHeight = false;
             vlg.spacing = 8f;
-            // 底部留 60：原生「恢复本页设置」在 (30,20)、高 36，不能被正文压住。
+            // 底部留 60：原生窗口底部按钮区（全局「恢复默认设置」等）不能被正文压住。
             vlg.padding = new RectOffset((int)PageLeft, 24, (int)PageTop, 60);
 
             var head = UiFactory.Node("page-head", root);
@@ -541,13 +535,13 @@ namespace IcarusII.UI
             _hint = AddText(hintRow, string.Empty, 15, HintColor, TextAnchor.MiddleLeft);
             UiFactory.Stretch(_hint.rectTransform, 0f, 0f, 0f, 0f);
 
-            var revertButton = AddRevertButton(root, revertTemplate);
+            var revertSlot = CreateHiddenRevertSlot(root, revertTemplate);
             HookApplyButton(window);
             BuildCatalogPopup(root);
 
             RefreshFromConfig(force: true);
             LogTextDiagnostics("密钥输入框", _apiKeyField != null ? _apiKeyField.textComponent : null);
-            return revertButton;
+            return revertSlot;
         }
 
         private static void BuildProviderPane(RectTransform body, UIOptionWindow window)
@@ -737,7 +731,9 @@ namespace IcarusII.UI
                 : null;
 
             var keyStatus = AddText(pane, string.Empty, 12, DimColor, TextAnchor.MiddleLeft);
-            keyStatus.gameObject.AddComponent<LayoutElement>().preferredHeight = 18f;
+            keyStatus.horizontalOverflow = HorizontalWrapMode.Wrap;
+            keyStatus.verticalOverflow = VerticalWrapMode.Truncate;
+            keyStatus.gameObject.AddComponent<LayoutElement>().preferredHeight = 32f;
             _keyTestStatus = keyStatus;
 
             var urlRow = AddRow(pane, "base-url-row", 30f, 0f);
@@ -762,7 +758,10 @@ namespace IcarusII.UI
                 : null;
 
             _editorHint = AddText(pane, string.Empty, 13, DimColor, TextAnchor.MiddleLeft);
-            _editorHint.gameObject.AddComponent<LayoutElement>().preferredHeight = 22f;
+            // 错误文案可能带 HTTP 状态与地址建议，允许折成两行，避免横向压到别的控件。
+            _editorHint.horizontalOverflow = HorizontalWrapMode.Wrap;
+            _editorHint.verticalOverflow = VerticalWrapMode.Truncate;
+            _editorHint.gameObject.AddComponent<LayoutElement>().preferredHeight = 52f;
         }
 
         // ---------------------------------------------------------------- 获取可用模型
@@ -905,9 +904,20 @@ namespace IcarusII.UI
 
             ShowCatalog(result);
             if (!string.IsNullOrEmpty(result.Error))
-                SetEditorHint("获取可用模型失败：" + result.Error, true);
+            {
+                // 有些中转的 /models 不可用（404/限流/挂住），但聊天接口正常；
+                // 提示玩家可以直接手填模型 ID，不要卡在弹层里。
+                SetEditorHint("获取可用模型失败：" + result.Error + "；可在「模型 ID」手动填写后点 +", true);
+            }
             else
-                SetEditorHint("已获取 " + result.Models.Count + " 个可用模型；点「+ 添加」加入当前供应商", false);
+            {
+                var fixedBase = ApplyResolvedBaseUrl(result.ResolvedBaseUrl);
+                SetEditorHint(
+                    fixedBase != null
+                        ? "已获取 " + result.Models.Count + " 个可用模型；API 地址已补全为 " + fixedBase
+                        : "已获取 " + result.Models.Count + " 个可用模型；点「+ 添加」加入当前供应商",
+                    false);
+            }
         }
 
         private static void OnTestKey()
@@ -975,6 +985,7 @@ namespace IcarusII.UI
 
             if (result.Ok)
             {
+                ApplyResolvedBaseUrl(result.ResolvedBaseUrl);
                 SetKeyTestStatus("Key 可用 · " + Mathf.Max(0, result.LatencyMs) + " ms", false);
                 if (_keyDot != null) _keyDot.color = KeyOkColor;
             }
@@ -983,6 +994,37 @@ namespace IcarusII.UI
                 SetKeyTestStatus(string.IsNullOrEmpty(result.Message) ? "检测失败" : result.Message, true);
                 if (_keyDot != null) _keyDot.color = KeyMissingColor;
             }
+        }
+
+        /// <summary>
+        /// 把 sidecar 带回的「聊天可用地址」写回草稿与输入框。
+        ///
+        /// 探测地址和聊天地址并不总是同一个：OpenAI 兼容端点可能缺 `/v1`，
+        /// Anthropic 的 SDK 自己会补 `/v1/messages`（base 不能带 `/v1`），
+        /// Gemini 适配器则要求 base 里带 `/v1beta`。不补全就会出现
+        /// 「检测通过、发消息 404」。返回补全后的地址；无变化时返回 null。
+        /// </summary>
+        private static string ApplyResolvedBaseUrl(string resolved)
+        {
+            if (string.IsNullOrEmpty(resolved)) return null;
+            var draft = SelectedDraft;
+            if (draft == null) return null;
+            // 玩家正在编辑地址时不要抢输入框；等他自己改完或重新检测。
+            if (_baseUrlField != null && _baseUrlField.isFocused) return null;
+
+            var current = (draft.BaseUrl ?? string.Empty).Trim();
+            if (string.Equals(current.TrimEnd('/'), resolved.TrimEnd('/'), StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            draft.BaseUrl = resolved;
+            _dirty = true;
+            if (_baseUrlField != null)
+            {
+                _suppressFieldEvents = true;
+                try { _baseUrlField.text = resolved; }
+                finally { _suppressFieldEvents = false; }
+            }
+            return resolved;
         }
 
         private static void SetTestButtonBusy(bool busy)
@@ -1353,47 +1395,44 @@ namespace IcarusII.UI
             }
         }
 
-        private static UIButton AddRevertButton(Transform root, Transform template)
+        /// <summary>
+        /// 给 `revertButtons` 数组占一个**隐藏**的槽位。
+        ///
+        /// 原生 `UIOptionWindow._OnUnregEvent` 会遍历 `tabButtons.Length` 并直接访问
+        /// `revertButtons[i].onClick`，不判空；数组少一格或该格为 null 都会让设置窗口
+        /// 在关闭时抛 NRE。所以这里只克隆一个不可见、不可点的按钮占位，不挂任何逻辑。
+        /// </summary>
+        private static UIButton CreateHiddenRevertSlot(Transform root, Transform template)
         {
             if (template == null)
             {
-                Plugin.Log.LogWarning("[模型页] 原生页签里没有 revert-button，模型页会缺少左下角按钮。");
-                return null;
+                // 模板缺失也必须给出一个真实对象：原生 _OnUnregEvent 不判空。
+                Plugin.Log.LogWarning("[模型页] 原生页签里没有 revert-button，用空 UIButton 占位。");
+                var holder = new GameObject("revert-slot-hidden", typeof(RectTransform));
+                holder.transform.SetParent(root, false);
+                holder.SetActive(false);
+                return holder.AddComponent<UIButton>();
             }
 
             var clone = UnityEngine.Object.Instantiate(template, root, false);
-            clone.name = "revert-button";
-            var rt = clone as RectTransform;
-            if (rt != null)
-            {
-                // 原生值：anchor/pivot (0,0)、位置 (30,20)、尺寸 218x36。
-                rt.anchorMin = Vector2.zero;
-                rt.anchorMax = Vector2.zero;
-                rt.pivot = Vector2.zero;
-                rt.anchoredPosition = new Vector2(RevertX, RevertY);
-                rt.sizeDelta = new Vector2(RevertWidth, RevertHeight);
-            }
+            clone.name = "revert-slot-hidden";
 
             // 原生页面是手工摆的；这里挂在 VLG 下，必须让布局组跳过它，
-            // 否则会被当成第 5 行排到状态行下面。
+            // 否则会被当成正文的一行。反正不可见，只保留 ignoreLayout 防御。
             var le = clone.GetComponent<LayoutElement>();
             if (le == null) le = clone.gameObject.AddComponent<LayoutElement>();
             le.ignoreLayout = true;
 
             var button = clone.GetComponent<UIButton>();
-            if (button != null)
+            if (button != null && button.button != null)
             {
-                button.onClick += _ => ResetToDefaults();
-                Plugin.Log.LogInfo("[模型页] 已克隆原生「恢复本页设置」按钮。");
+                // 原生 _OnRegEvent 仍会往这个槽位上挂 OnRevertButtonClick；
+                // 但对象是 inactive + 不可交互，玩家点不到，也不会触发模型页逻辑。
+                button.button.interactable = false;
             }
-            else
-            {
-                Plugin.Log.LogWarning("[模型页] 克隆的 revert-button 上没有 UIButton，恢复按钮不可点。");
-            }
+            clone.gameObject.SetActive(false);
             return button;
         }
-
-        // ---------------------------------------------------------------- 数据
 
         // ---------------------------------------------------------------- 数据
 
@@ -1929,21 +1968,6 @@ namespace IcarusII.UI
             SetHint("已提交，等待 sidecar 确认…", true);
             Plugin.Log.LogInfo(
                 $"[模型页] 已提交 {_providers.Count} 个供应商，当前 {_activeProvider}/{_activeModel}。");
-        }
-
-        private static void ResetToDefaults()
-        {
-            foreach (var provider in _providers)
-                if (provider.Id != DefaultProvider) _removed.Add(provider.Id);
-
-            _providers.Clear();
-            _dirty = true;
-            _activeProvider = DefaultProvider;
-            _activeModel = DefaultModel;
-            _selectedProvider = DefaultProvider;
-            SeedDefaults();
-            RebuildAll();
-            SetHint("已恢复默认供应商，点「应用设置」生效", false);
         }
 
         private static void SeedDefaults()
