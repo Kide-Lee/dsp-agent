@@ -1936,13 +1936,37 @@ namespace IcarusII.Game.Tools
             var requested = args["name"].AsString(null);
             var baseName = Sanitize(requested);
             if (string.IsNullOrEmpty(baseName)) baseName = "IcarusII-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            var dir = GameConfig.blueprintFolder;
+
+            var requestedDir = args["dir"].AsString(null);
+            var rootRequested = requestedDir == "/" || requestedDir == "." || requestedDir == "./";
+            var dirRel = rootRequested ? string.Empty : SafeDir(requestedDir);
+            if (!string.IsNullOrEmpty(requestedDir) && !rootRequested && string.IsNullOrEmpty(dirRel))
+            {
+                data.Set("saved", false);
+                data.Set("error", "invalid_dir");
+                data.Set("display", "保存目录不合法；只能使用蓝图目录内的相对路径");
+                return new GameToolJobResult { Data = data };
+            }
+            if (string.IsNullOrEmpty(requestedDir)) dirRel = "IcarusII";
+            var root = GameConfig.blueprintFolder;
+            var dir = string.IsNullOrEmpty(dirRel) ? root : System.IO.Path.Combine(root, dirRel);
+            try
+            {
+                System.IO.Directory.CreateDirectory(dir);
+            }
+            catch (Exception ex)
+            {
+                data.Set("saved", false);
+                data.Set("error", "mkdir_failed: " + ex.Message);
+                return new GameToolJobResult { Data = data };
+            }
+
             var fileName = baseName + ".txt";
-            var path = dir + fileName;
+            var path = System.IO.Path.Combine(dir, fileName);
             for (int i = 2; i < 50 && System.IO.File.Exists(path); i++)
             {
                 fileName = baseName + " (" + i.ToString(CultureInfo.InvariantCulture) + ").txt";
-                path = dir + fileName;
+                path = System.IO.Path.Combine(dir, fileName);
             }
 
             Exception error;
@@ -1956,6 +1980,9 @@ namespace IcarusII.Game.Tools
             data.Set("saved", true);
             data.Set("source", "copied");
             data.Set("path", path);
+            data.Set("relPath", string.IsNullOrEmpty(dirRel) ? fileName : dirRel + "/" + fileName);
+            data.Set("dir", dir);
+            data.Set("dirRel", string.IsNullOrEmpty(dirRel) ? string.Empty : dirRel);
             data.Set("fileName", fileName);
             data.Set("buildings", bp.buildings != null ? bp.buildings.Length : 0);
             data.Set("areas", bp.areas != null ? bp.areas.Length : 0);
@@ -1971,6 +1998,24 @@ namespace IcarusII.Game.Tools
             data.Set("display", "已存蓝图 " + fileName + " · 建筑 " + (bp.buildings != null ? bp.buildings.Length : 0)
                 + " · 打开蓝图界面即可看到");
             return new GameToolJobResult { Data = data };
+        }
+
+        /// <summary>把工具参数里的相对目录清洗成安全路径；非法返回空串（退回根目录）。</summary>
+        private static string SafeDir(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return string.Empty;
+            var normalized = raw.Replace('\\', '/').Trim();
+            if (normalized.StartsWith("/") || normalized.Contains(":") || normalized.Contains("\0")) return string.Empty;
+            var parts = new List<string>();
+            foreach (var part in normalized.Split('/'))
+            {
+                if (string.IsNullOrEmpty(part) || part == ".") continue;
+                if (part == "..") return string.Empty;
+                var cleaned = Sanitize(part);
+                if (string.IsNullOrEmpty(cleaned)) return string.Empty;
+                parts.Add(cleaned);
+            }
+            return string.Join("/", parts);
         }
 
         private static string Sanitize(string raw)

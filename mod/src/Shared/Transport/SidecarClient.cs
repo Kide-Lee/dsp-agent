@@ -219,13 +219,13 @@ namespace IcarusII.Common.Transport
         /// 把对话串绑定到某个存档（协议附录 A.6）。
         /// saveKey 为 null 表示"当前没有存档"，即解绑（不销毁线程）。
         /// </summary>
-        public string SendSaveBind(string saveKey, string saveName = null)
+        public string SendSaveBind(string saveKey, string saveName = null, JsonValue blueprintTiers = null)
         {
             if (_state != ConnectionState.Ready) return null;
 
             var env = Protocol.Protocol.Envelope(
                 Protocol.Protocol.SaveBind,
-                Protocol.Protocol.BuildSaveBind(saveKey, saveName),
+                Protocol.Protocol.BuildSaveBind(saveKey, saveName, blueprintTiers),
                 NextId(), null);
 
             _sendQueue.Enqueue(env);
@@ -287,6 +287,25 @@ namespace IcarusII.Common.Transport
             _sendQueue.Enqueue(env);
             try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
             return env["id"].AsString();
+        }
+
+        /// <summary>
+        /// 回存回答完成时的游戏时间（协议附录 A.10）。不要求 sidecar 回复；
+        /// 连接未就绪时返回 false，历史脚注退化为当前时间。
+        /// </summary>
+        public bool SendReplyTime(string prompt, string reply, string gameTime)
+        {
+            if (_state != ConnectionState.Ready || string.IsNullOrEmpty(prompt) || string.IsNullOrEmpty(gameTime))
+                return false;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ReplyTime,
+                Protocol.Protocol.BuildReplyTime(prompt, reply, gameTime),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return true;
         }
 
         private string NextId() => "m-" + Interlocked.Increment(ref _messageCounter);

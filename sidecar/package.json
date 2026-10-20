@@ -13,7 +13,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-planner.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "serve": "node dist/index.js serve",
     "dev": "tsx src/index.ts serve",
@@ -26,7 +26,7 @@
     "test:tools-view": "node test/tools-view.mjs",
     "test:pi-tools": "node test/pi-tools.mjs",
     "test:live": "node test/live.mjs",
-    "test": "npm run typecheck && npm run build && npm run test:negative && npm run test:config && npm run test:config-protocol && npm run test:model-catalog && npm run test:pi-loopback && npm run test:tools && npm run test:tools-view && npm run test:pi-tools && npm run test:kb && npm run test:kb-tools && npm run test:kb-session && npm run test:kb-plan && npm run test:script && npm run test:wiki && npm run test:blueprint && npm run test:blueprint-card && npm run test:history && npm run test:history-delete",
+    "test": "npm run typecheck && npm run build && npm run test:negative && npm run test:config && npm run test:config-protocol && npm run test:model-catalog && npm run test:pi-loopback && npm run test:tools && npm run test:tools-view && npm run test:pi-tools && npm run test:kb && npm run test:kb-tools && npm run test:kb-session && npm run test:kb-plan && npm run test:script && npm run test:wiki && npm run test:wiki-alias && npm run test:blueprint && npm run test:blueprint-fs && npm run test:blueprint-card && npm run test:blueprint-plan && npm run test:blueprint-tiers && npm run test:history && npm run test:game-time && npm run test:history-delete",
     "test:kb": "node test/kb.mjs",
     "test:kb-tools": "node test/kb-tools.mjs",
     "test:kb-session": "node test/kb-session.mjs",
@@ -36,7 +36,12 @@
     "test:blueprint": "node test/blueprint.mjs",
     "test:blueprint-card": "node test/blueprint-card.mjs",
     "test:history": "node test/history.mjs",
-    "test:history-delete": "node test/history-delete.mjs"
+    "test:history-delete": "node test/history-delete.mjs",
+    "test:blueprint-plan": "node test/blueprint-plan.mjs",
+    "test:wiki-alias": "node test/wiki-alias.mjs",
+    "test:blueprint-tiers": "node test/blueprint-tiers.mjs",
+    "test:blueprint-fs": "node test/blueprint-fs.mjs",
+    "test:game-time": "node test/game-time.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.82.1",

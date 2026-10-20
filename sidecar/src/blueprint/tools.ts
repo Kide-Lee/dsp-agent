@@ -9,15 +9,21 @@
  */
 
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
+import type { KnowledgeStore } from '../kb/store.js';
+import type { KnowledgeBase } from '../kb/knowledge.js';
+import type { PlanResult } from '../kb/types.js';
+import type { AliasResolver } from '../wiki/aliases.js';
+import type { BlueprintTiers } from '../protocol.js';
+import { BlueprintPathError, BlueprintWorkspace } from './workspace.js';
+import type { PlanBlueprintMeta } from './planner.js';
 import { gunzipSync } from 'node:zlib';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { Type } from 'typebox';
 // @ts-ignore vendored JS planner (no types)
-import { planSingle, findItemIdByName } from './planner.mjs';
+import { planBlueprint } from './planner.mjs';
 
-export const BLUEPRINT_TOOL_NAMES = ['blueprint_search', 'blueprint_info', 'blueprint_save', 'blueprint_generate'] as const;
+export const BLUEPRINT_TOOL_NAMES = ['blueprint_fs', 'blueprint_search', 'blueprint_info', 'blueprint_save', 'blueprint_generate'] as const;
 
 const REPO = 'DSPBluePrints/FactoryBluePrints';
 const LICENSE = 'CC BY-NC-SA 4.0';
@@ -236,8 +242,315 @@ export function sanitizeBlueprintName(raw: string): string {
   return cleaned.length > 0 ? cleaned : 'blueprint';
 }
 
-export function createBlueprintTools(client: BlueprintClient = new BlueprintClient()): ToolDefinition[] {
+interface BuildTilesOptions {
+  buildingTier: 'base' | 'mk2' | 'mk3';
+  depth?: number;
+  author: string;
+  version: string;
+  attributes: string;
+  blueprintName: string;
+  beltType: number;
+  insertType: number;
+  rows: number;
+  stackSize: number;
+  from?: 'ore' | 'smelted' | number;
+  description?: (index: number, count: number, tileRate: number, totalRate: number) => string;
+}
+
+interface BuiltTile {
+  text: string;
+  meta: PlanBlueprintMeta;
+  plan: PlanResult;
+  rate: number;
+  name: string;
+}
+
+function isBusCapacityError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes('传送带最大容量') || (message.includes('分配') && message.includes('超过传送带'));
+}
+
+/**
+ * 一张混带蓝图的总线最多承载 3 条蓝带（vendor 的硬限制），高产量只能拆成多张。
+ * 这里先试单张；命中总线容量上限时，按 2..8 张均分重试，每张独立生成。
+ * 返回的是**文本**，落盘由调用方完成，避免生成一半留下半套文件。
+ */
+function buildBlueprintTiles(
+  kb: KnowledgeBase,
+  itemId: number,
+  rate: number,
+  options: BuildTilesOptions,
+): { tiles: BuiltTile[]; ratePerTile: number } {
+  const buildOne = (tileRate: number, name: string, index: number, count: number): BuiltTile => {
+    const plan = kb.plan(itemId, {
+      rate: tileRate,
+      buildingTier: options.buildingTier,
+      ...(options.depth !== undefined ? { depth: options.depth } : {}),
+      ...(options.from !== undefined ? { from: options.from } : {}),
+    });
+    const built = planBlueprint(plan, {
+      beltType: options.beltType,
+      insertType: options.insertType,
+      rows: options.rows,
+      stackSize: options.stackSize,
+      name,
+      author: options.author,
+      version: options.version,
+      attributes: options.attributes,
+      description: options.description
+        ? options.description(index, count, tileRate, rate)
+        : `全链路（从原矿投入）：${tileRate}/min`,
+      gameVersion: kb.gameVersion,
+    });
+    return { text: built.text, meta: built.meta, plan, rate: tileRate, name };
+  };
+
+  let lastError: unknown = null;
+  try {
+    return { tiles: [buildOne(rate, options.blueprintName, 1, 1)], ratePerTile: rate };
+  } catch (err) {
+    if (!isBusCapacityError(err)) throw err;
+    lastError = err;
+  }
+
+  for (let count = 2; count <= 8; count += 1) {
+    const tileRate = rate / count;
+    if (!(tileRate > 0)) break;
+    try {
+      const tiles: BuiltTile[] = [];
+      for (let index = 0; index < count; index += 1) {
+        tiles.push(buildOne(tileRate, `${options.blueprintName} ${index + 1}of${count}`, index + 1, count));
+      }
+      return { tiles, ratePerTile: tileRate };
+    } catch (err) {
+      if (!isBusCapacityError(err)) throw err;
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('蓝图生成失败');
+}
+
+
+export function createBlueprintTools(
+  client: BlueprintClient = new BlueprintClient(),
+  store?: KnowledgeStore,
+  aliases?: AliasResolver,
+  getTiers?: () => BlueprintTiers | null,
+  workspace?: BlueprintWorkspace,
+): ToolDefinition[] {
+  const ws = workspace ?? new BlueprintWorkspace();
   return [
+    {
+      name: 'blueprint_fs',
+      label: '蓝图文件',
+      description:
+        '在游戏的蓝图目录里查看和整理文件，类似受限的 ls/cd/pwd/cat/mkdir/rm/rmdir。' +
+        '路径以蓝图根为 `/`；默认保存目录是 `/IcarusII`。不能访问蓝图目录之外。',
+      promptSnippet: '查看/整理蓝图目录（ls/cd/pwd/cat/mkdir/rm/rmdir/write）',
+      promptGuidelines: [
+        'Use blueprint_fs 当玩家要查看蓝图目录、进入子目录、读取蓝图信息、建目录、删除或保存任意蓝图文本时。',
+        '默认保存到 `/IcarusII`；用 op=write 保存模型从其他途径拿到的蓝图原文（必须是合法 .txt 蓝图）。',
+        'op=rm/rmdir 是永久删除；必须先向玩家确认，只有玩家明确同意后才传 confirm=true。',
+        'cat 默认返回蓝图元数据；只有确实需要原文时才传 raw=true。',
+        '路径不能含 .. 或盘符；不能越出蓝图根。',
+      ],
+      parameters: Type.Object({
+        op: Type.Union(
+          [
+            Type.Literal('pwd'),
+            Type.Literal('cd'),
+            Type.Literal('ls'),
+            Type.Literal('cat'),
+            Type.Literal('mkdir'),
+            Type.Literal('write'),
+            Type.Literal('rm'),
+            Type.Literal('rmdir'),
+          ],
+          { description: '操作类型' },
+        ),
+        path: Type.Optional(Type.String({ description: '虚拟路径；相对当前目录，或以 / 开头' })),
+        content: Type.Optional(Type.String({ description: 'op=write：蓝图 .txt 原文' })),
+        recursive: Type.Optional(Type.Boolean({ description: 'ls 递归 / rmdir 递归删除，默认 false' })),
+        confirm: Type.Optional(Type.Boolean({ description: 'rm/rmdir 必须为 true；永久删除' })),
+        overwrite: Type.Optional(Type.Boolean({ description: 'write 是否覆盖同名文件，默认 false' })),
+        raw: Type.Optional(Type.Boolean({ description: 'cat 是否返回蓝图原文，默认 false（只返回元数据）' })),
+        details: Type.Optional(Type.Boolean({ description: 'ls 是否解析 .txt 蓝图元数据，默认 false' })),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000, description: 'ls 最多返回条目，默认 200' })),
+      }),
+      async execute(_id, params) {
+        const args = (params ?? {}) as Record<string, unknown>;
+        const op = typeof args['op'] === 'string' ? args['op'] : '';
+        const path = typeof args['path'] === 'string' ? args['path'] : undefined;
+        try {
+          if (op === 'pwd') {
+            return reply({ root: ws.root, cwd: ws.currentDir, defaultDir: ws.defaultDir }, true);
+          }
+          if (op === 'cd') {
+            if (!path) return reply({ error: 'path 不能为空' }, false, 'bad_request');
+            const cwd = ws.setCwd(path);
+            return reply({ cwd }, true);
+          }
+          if (op === 'ls') {
+            const listed = ws.list(path, {
+              recursive: args['recursive'] === true,
+              limit: typeof args['limit'] === 'number' ? args['limit'] : 200,
+            });
+            const details = args['details'] === true;
+            const entries = listed.entries.map((entry) => {
+              if (!details || entry.type !== 'file' || !entry.name.toLowerCase().endsWith('.txt')) return entry;
+              try {
+                const file = ws.read(`/${entry.relPath}`, 2 * 1024 * 1024);
+                const info = inspectBlueprintText(file.text);
+                return {
+                  ...entry,
+                  blueprint: {
+                    valid: info.valid,
+                    name: info.name,
+                    author: info.author,
+                    buildings: info.buildings,
+                    width: info.width,
+                    height: info.height,
+                    iconItemId: info.iconItemId,
+                  },
+                };
+              } catch {
+                return entry;
+              }
+            });
+            return reply(
+              {
+                cwd: ws.currentDir,
+                path: listed.path.virtual,
+                entries,
+                truncated: listed.truncated,
+                note: '路径以蓝图根 / 为根；文件大小单位 bytes。',
+              },
+              true,
+            );
+          }
+          if (op === 'cat') {
+            if (!path) return reply({ error: 'path 不能为空' }, false, 'bad_request');
+            const file = ws.read(path, 2 * 1024 * 1024);
+            const info = inspectBlueprintText(file.text);
+            const base = {
+              path: file.path.virtual,
+              relPath: file.path.relPath,
+              size: file.size,
+              mtimeMs: file.mtimeMs,
+              valid: info.valid,
+              ...(info.reason ? { reason: info.reason } : {}),
+              header: info.header,
+              name: info.name,
+              author: info.author,
+              version: info.version,
+              attributes: info.attributes,
+              description: info.description,
+              buildings: info.buildings,
+              width: info.width,
+              height: info.height,
+              iconItemId: info.iconItemId,
+            };
+            if (args['raw'] === true) {
+              const text = file.text.length > 256 * 1024 ? file.text.slice(0, 256 * 1024) : file.text;
+              return reply(
+                {
+                  ...base,
+                  raw: text,
+                  truncated: file.text.length > text.length,
+                },
+                true,
+              );
+            }
+            return reply(base, true);
+          }
+          if (op === 'mkdir') {
+            if (!path) return reply({ error: 'path 不能为空' }, false, 'bad_request');
+            const created = ws.mkdir(path, args['recursive'] !== false);
+            return reply({ created: created.virtual, cwd: ws.currentDir }, true);
+          }
+          if (op === 'write') {
+            const content = typeof args['content'] === 'string' ? args['content'] : '';
+            if (!content) return reply({ error: 'content 不能为空' }, false, 'bad_request');
+            const contentBytes = Buffer.byteLength(content, 'utf8');
+            if (contentBytes > 2 * 1024 * 1024) {
+              return reply(
+                { error: `蓝图文本过大：${contentBytes} bytes（上限 2 MB）` },
+                false,
+                'too_large',
+              );
+            }
+            const info = inspectBlueprintText(content);
+            if (!info.valid) {
+              return reply(
+                { error: `蓝图格式无效：${info.reason ?? 'unknown'}`, valid: false },
+                false,
+                'blueprint_invalid',
+              );
+            }
+            const fileName =
+              path && path.trim()
+                ? path.trim()
+                : `${ws.defaultDir}/${info.name ?? `IcarusII-${Date.now()}`}.txt`;
+            const target = ws.resolveVirtual(fileName.endsWith('.txt') ? fileName : `${fileName}.txt`);
+            const written = ws.write(target.virtual, content, { overwrite: args['overwrite'] === true });
+            const savedInfo = inspectBlueprintText(content);
+            return reply(
+              {
+                saved: true,
+                source: 'written',
+                path: written.path.real,
+                relPath: written.path.relPath,
+                fileName: written.path.relPath.split('/').pop(),
+                bytes: written.size,
+                name: savedInfo.name,
+                author: savedInfo.author,
+                version: savedInfo.version,
+                attributes: savedInfo.attributes,
+                description: savedInfo.description,
+                buildings: savedInfo.buildings,
+                width: savedInfo.width,
+                height: savedInfo.height,
+                iconItemId: savedInfo.iconItemId,
+                note: '已保存蓝图原文；打开游戏蓝图界面即可使用。',
+              },
+              true,
+            );
+          }
+          if (op === 'rm' || op === 'rmdir') {
+            if (!path) return reply({ error: 'path 不能为空' }, false, 'bad_request');
+            const target = ws.resolveVirtual(path);
+            if (args['confirm'] !== true) {
+              return reply(
+                {
+                  requiresConfirmation: true,
+                  confirm: false,
+                  path: target.virtual,
+                  relPath: target.relPath,
+                  note: '永久删除；请先向玩家确认，再传 confirm=true。',
+                },
+                false,
+                'confirmation_required',
+              );
+            }
+            if (op === 'rm') {
+              const removed = ws.remove(path);
+              return reply({ removed: true, path: removed.virtual, relPath: removed.relPath }, true);
+            }
+            const removed = ws.removeDir(path, args['recursive'] === true);
+            return reply(
+              { removed: true, directory: true, path: removed.virtual, relPath: removed.relPath },
+              true,
+            );
+          }
+          return reply({ error: `不支持的操作：${op}` }, false, 'bad_request');
+        } catch (err) {
+          if (err instanceof BlueprintPathError) {
+            return reply({ error: err.message, code: err.code }, false, err.code);
+          }
+          return reply({ error: err instanceof Error ? err.message : String(err) }, false, 'blueprint_fs_failed');
+        }
+      },
+    },
     {
       name: 'blueprint_search',
       label: '蓝图搜索',
@@ -341,6 +654,9 @@ export function createBlueprintTools(client: BlueprintClient = new BlueprintClie
       parameters: Type.Object({
         path: Type.String({ description: 'blueprint_search 返回的仓库路径' }),
         name: Type.Optional(Type.String({ description: '保存名（不含 .txt），默认用原文件名' })),
+        dir: Type.Optional(
+          Type.String({ description: '保存目录（相对蓝图根，默认 /IcarusII）；不存在会自动创建' }),
+        ),
         overwrite: Type.Optional(Type.Boolean({ description: '同名时覆盖，默认 false' })),
       }),
       async execute(_id, params) {
@@ -358,7 +674,16 @@ export function createBlueprintTools(client: BlueprintClient = new BlueprintClie
           return reply({ ...client.meta(path), ...info, error: '蓝图格式无效，未保存' }, false, 'blueprint_invalid');
         }
 
-        const dir = resolveBlueprintDir();
+        let dir;
+        try {
+          dir = ws.resolveTargetDir(typeof args['dir'] === 'string' ? args['dir'] : undefined);
+        } catch (err) {
+          return reply(
+            { ...client.meta(path), error: err instanceof Error ? err.message : String(err) },
+            false,
+            'blueprint_save_failed',
+          );
+        }
         let requested = typeof args['name'] === 'string' && args['name'].trim()
           ? args['name']
           : '';
@@ -373,33 +698,39 @@ export function createBlueprintTools(client: BlueprintClient = new BlueprintClie
         const base = sanitizeBlueprintName(requested);
         const overwrite = args['overwrite'] === true;
 
-        let fileName = `${base}.txt`;
-        if (!overwrite && existsSync(join(dir, fileName))) {
-          let index = 2;
-          while (index < 50 && existsSync(join(dir, `${base} (${index}).txt`))) index += 1;
-          fileName = `${base} (${index}).txt`;
-        }
-
-        const target = join(dir, fileName);
+        let target;
         try {
-          mkdirSync(dir, { recursive: true });
-          writeFileSync(target, fetched.text, { encoding: 'utf8' });
+          if (overwrite) {
+            target = ws.resolveVirtual(`${dir.relPath}/${base}.txt`, '/');
+            ws.write(target.virtual, fetched.text, { overwrite: true });
+          } else {
+            const unique = ws.uniqueFileName(dir, base);
+            target = unique.virtual;
+            ws.write(target.virtual, fetched.text);
+          }
         } catch (err) {
           return reply(
-            { ...client.meta(path), error: err instanceof Error ? err.message : String(err), dir },
+            {
+              ...client.meta(path),
+              error: err instanceof Error ? err.message : String(err),
+              dir: dir.real,
+            },
             false,
             'blueprint_save_failed',
           );
         }
+        const fileName = target.relPath.split('/').pop() ?? `${base}.txt`;
 
         return reply(
           {
             ...client.meta(path),
             saved: true,
             source: 'downloaded',
-            path: target,
+            path: target.real,
+            relPath: target.relPath,
             fileName,
-            dir,
+            dir: dir.real,
+            dirRel: dir.relPath,
             bytes: fetched.text.length,
             header: info.header,
             decodedBytes: info.decodedBytes,
@@ -424,25 +755,41 @@ export function createBlueprintTools(client: BlueprintClient = new BlueprintClie
       name: 'blueprint_generate',
       label: '生成产线蓝图',
       description:
-        '用内置的 dsp-calc 规划器生成完整产线蓝图（机器 + 传送带 + 分拣器 + 连接槽位），' +
-        '保存到游戏蓝图目录。输入物品与每分钟产量，可选带子/分拣器级别、行数、堆叠。',
-      promptSnippet: '生成带传送带和分拣器的完整产线蓝图',
+        '按知识库里的真实配方，从原矿开始生成完整产线蓝图（各阶段机器 + 传送带 + 分拣器 + 连接槽位），' +
+        '保存到游戏蓝图目录。需要先进入存档让知识库建立；输入物品与每分钟产量，可选机器/带子/分拣器级别与行数。',
+      promptSnippet: '按真实配方生成带传送带和分拣器的完整产线蓝图',
       promptGuidelines: [
         'Use blueprint_generate 当玩家要“完整产线蓝图/带带子和爪子的蓝图”时，不要回答只能下载。',
         'item 可以是物品名（如“电磁涡轮”）或物品 id；rate 是每分钟产量。',
-        'beltType: 0 黄带 / 1 绿带 / 2 蓝带；insertType: 0 分拣器 / 1 高速 / 2 极速 / 3 集装。',
-        '生成后告诉玩家文件路径与大小；这是完整的混带产线，粘贴后应可运行。',
+        'buildingTier: base 对应最低速机器 / mk2 / mk3；beltType: 0 黄带 / 1 绿带 / 2 蓝带；insertType: 0 分拣器 / 1 高速 / 2 极速 / 3 集装。',
+        '返回里的 stages 是每个阶段的机器数与产物，回答时先报最终产物与总机器数，再按阶段说明。',
+        'warnings 非空时必须原样告诉玩家，不要声称“完整可用”。',
       ],
       parameters: Type.Object({
         item: Type.String({ description: '物品名或物品 id' }),
         rate: Type.Number({ description: '目标每分钟产量' }),
+        buildingTier: Type.Optional(
+          Type.Union([Type.Literal('base'), Type.Literal('mk2'), Type.Literal('mk3')], {
+            description: '机器档位，默认 base（知识库里的最低速机器）',
+          }),
+        ),
         beltType: Type.Optional(Type.Integer({ minimum: 0, maximum: 2, description: '默认 2（蓝带）' })),
         insertType: Type.Optional(Type.Integer({ minimum: 0, maximum: 3, description: '默认 2（极速）' })),
-        rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 8, description: '产线行数，默认 1' })),
+        rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 8, description: '产线行数，默认 1；超宽时会自动加行' })),
         stackSize: Type.Optional(Type.Integer({ minimum: 1, maximum: 4, description: '集装堆叠，默认 1' })),
+        depth: Type.Optional(Type.Integer({ minimum: 1, maximum: 16, description: '配方展开深度，默认 8' })),
+        from: Type.Optional(
+          Type.String({
+            description:
+              '起点：ore（默认，从原矿投入）/ smelted（从冶炼产物，如铁块/钛块开始）/ 物品名或 id（从该中间产物开始）',
+          }),
+        ),
+        dir: Type.Optional(
+          Type.String({ description: '保存目录（相对蓝图根，默认 /IcarusII）；不存在会自动创建' }),
+        ),
         name: Type.Optional(Type.String({ description: '蓝图文件名' })),
         author: Type.Optional(Type.String({ description: '作者，默认“自动生成”' })),
-        version: Type.Optional(Type.String({ description: '版本号，默认游戏版本 0.10.35.29151' })),
+        version: Type.Optional(Type.String({ description: '版本号，默认当前游戏版本' })),
         attributes: Type.Optional(Type.String({ description: '蓝图属性' })),
         description: Type.Optional(Type.String({ description: '蓝图介绍' })),
       }),
@@ -451,62 +798,255 @@ export function createBlueprintTools(client: BlueprintClient = new BlueprintClie
         const rawItem = typeof args['item'] === 'string' ? args['item'].trim() : '';
         const rate = typeof args['rate'] === 'number' ? args['rate'] : 0;
         if (!rawItem || !(rate > 0)) return reply({ error: 'item 与 rate 必填' }, false, 'bad_request');
-        const itemId = /^\d+$/.test(rawItem) ? Number(rawItem) : findItemIdByName(rawItem);
-        if (!itemId) return reply({ error: `找不到物品：${rawItem}` }, false, 'bad_request');
-        try {
-          const blueprintName = typeof args['name'] === 'string' && args['name'].trim()
+
+        const kb = store?.snapshot;
+        if (!kb) {
+          return reply(
+            {
+              error:
+                '知识库尚未建立，无法按真实配方生成。先进入存档，等 sidecar 完成原型数据导出（约 1 秒）后再试。',
+            },
+            false,
+            'kb_unavailable',
+          );
+        }
+
+        // 别名（蓝马达/绿马达/白糖…）先走 curated + wiki；精确名直接命中 KB。
+        let resolution;
+        if (aliases) {
+          resolution = await aliases.resolve(kb, rawItem);
+        } else {
+          const item = /^\d+$/.test(rawItem) ? kb.resolveItem(Number(rawItem)) : kb.resolveItem(rawItem);
+          resolution = {
+            input: rawItem,
+            ...(item ? { item, alias: item.name } : {}),
+            source: item ? 'kb' : 'none',
+            candidates: [],
+          };
+        }
+        const resolved = resolution.item;
+        if (!resolved) {
+          if (resolution.candidates.length > 1) {
+            return reply(
+              {
+                error: `「${rawItem}」对应多个物品，请让玩家确认要哪一个`,
+                candidates: resolution.candidates,
+              },
+              false,
+              'ambiguous_item',
+            );
+          }
+          return reply({ error: `找不到物品：${rawItem}` }, false, 'bad_request');
+        }
+        const aliasInfo =
+          resolution.source === 'kb'
+            ? undefined
+            : { input: rawItem, resolved: resolved.name, source: resolution.source };
+
+        const tiers = getTiers?.() ?? null;
+        const explicitBuildingTier =
+          args['buildingTier'] === 'base' || args['buildingTier'] === 'mk2' || args['buildingTier'] === 'mk3';
+        const buildingTier = explicitBuildingTier
+          ? (args['buildingTier'] as 'base' | 'mk2' | 'mk3')
+          : tiers?.assembler === 2
+            ? 'mk3'
+            : tiers?.assembler === 1
+              ? 'mk2'
+              : 'base';
+        const explicitBelt = typeof args['beltType'] === 'number';
+        const explicitInsert = typeof args['insertType'] === 'number';
+        const explicitStack = typeof args['stackSize'] === 'number';
+        const beltType = explicitBelt
+          ? (args['beltType'] as number)
+          : typeof tiers?.belt === 'number'
+            ? Math.max(0, Math.min(2, Math.floor(tiers.belt)))
+            : 2;
+        const insertType = explicitInsert
+          ? (args['insertType'] as number)
+          : typeof tiers?.inserter === 'number'
+            ? Math.max(0, Math.min(3, Math.floor(tiers.inserter)))
+            : 2;
+        const stackSize = explicitStack
+          ? (args['stackSize'] as number)
+          : tiers?.stacking
+            ? 4
+            : 1;
+        const tierSource = explicitBuildingTier || explicitBelt || explicitInsert || explicitStack
+          ? 'explicit'
+          : tiers
+            ? 'mod'
+            : 'default';
+        const depth = typeof args['depth'] === 'number' ? args['depth'] : undefined;
+        const fromRaw = typeof args['from'] === 'string' ? args['from'].trim() : '';
+        let from: 'ore' | 'smelted' | number | undefined;
+        let fromLabel = '从原矿投入';
+        if (fromRaw === 'ore' || fromRaw === 'smelted') {
+          from = fromRaw;
+          fromLabel = fromRaw === 'smelted' ? '从冶炼产物投入' : '从原矿投入';
+        } else if (fromRaw) {
+          const fromItem = aliases
+            ? (await aliases.resolve(kb, fromRaw)).item
+            : /^\d+$/.test(fromRaw)
+              ? kb.resolveItem(Number(fromRaw))
+              : kb.resolveItem(fromRaw);
+          if (!fromItem) {
+            return reply({ error: `找不到起点物品：${fromRaw}` }, false, 'bad_request');
+          }
+          from = fromItem.id;
+          fromLabel = `从${fromItem.name}投入`;
+        }
+        const blueprintName =
+          typeof args['name'] === 'string' && args['name'].trim()
             ? args['name'].trim()
-            : `IcarusII-${rawItem}-${rate}`;
-          const author = typeof args['author'] === 'string' && args['author']
-            ? args['author']
-            : '自动生成';
-          const version = typeof args['version'] === 'string' && args['version']
-            ? args['version']
-            : '0.10.35.29151';
-          const attributes = typeof args['attributes'] === 'string' ? args['attributes'] : '';
-          const description = typeof args['description'] === 'string' ? args['description'] : '';
-          const text = planSingle(itemId, rate, {
-            beltType: typeof args['beltType'] === 'number' ? args['beltType'] : 2,
-            insertType: typeof args['insertType'] === 'number' ? args['insertType'] : 2,
-            rows: typeof args['rows'] === 'number' ? args['rows'] : 1,
-            stackSize: typeof args['stackSize'] === 'number' ? args['stackSize'] : 1,
-            name: blueprintName,
+            : `IcarusII-${resolved.name}-${rate}`;
+        const author = typeof args['author'] === 'string' && args['author'] ? args['author'] : '自动生成';
+        const version =
+          typeof args['version'] === 'string' && args['version'] ? args['version'] : kb.gameVersion;
+        const attributes = typeof args['attributes'] === 'string' ? args['attributes'] : '';
+        const rows = typeof args['rows'] === 'number' ? args['rows'] : 1;
+
+        let tileSet;
+        try {
+          tileSet = buildBlueprintTiles(kb, resolved.id, rate, {
+            buildingTier,
+            ...(depth !== undefined ? { depth } : {}),
             author,
             version,
             attributes,
-            description,
+            blueprintName,
+            beltType,
+            insertType,
+            rows,
+            stackSize,
+            ...(from !== undefined ? { from } : {}),
+            ...(typeof args['description'] === 'string' && args['description']
+              ? { description: () => String(args['description']) }
+              : {}),
+            ...(typeof args['description'] !== 'string' || !args['description']
+              ? {
+                  description: (index: number, count: number, tileRate: number, totalRate: number) =>
+                    count > 1
+                      ? `全链路（${fromLabel}）：第 ${index}/${count} 张，每张约 ${tileRate}/min，合计 ${totalRate}/min`
+                      : `全链路（${fromLabel}）：${tileRate}/min`,
+                }
+              : {}),
           });
-          const dir = resolveBlueprintDir();
-          mkdirSync(dir, { recursive: true });
-          const base = sanitizeBlueprintName(blueprintName);
-          let fileName = `${base}.txt`;
-          for (let i = 2; i < 50 && existsSync(join(dir, fileName)); i++) fileName = `${base} (${i}).txt`;
-          const filePath = join(dir, fileName);
-          writeFileSync(filePath, text, 'ascii');
-          const info = inspectBlueprintText(text);
-          return reply({
+        } catch (err) {
+          return reply(
+            { error: err instanceof Error ? err.message : String(err), item: resolved.name, rate },
+            false,
+            'blueprint_generate_failed',
+          );
+        }
+
+        let targetDir;
+        try {
+          targetDir = ws.resolveTargetDir(typeof args['dir'] === 'string' ? args['dir'] : undefined);
+        } catch (err) {
+          return reply(
+            { error: err instanceof Error ? err.message : String(err) },
+            false,
+            'blueprint_generate_failed',
+          );
+        }
+        const tiles = [];
+        for (const tile of tileSet.tiles) {
+          const unique = ws.uniqueFileName(targetDir, sanitizeBlueprintName(tile.name));
+          const filePath = unique.virtual.real;
+          try {
+            ws.write(unique.virtual.virtual, tile.text);
+          } catch (err) {
+            return reply(
+              { error: err instanceof Error ? err.message : String(err), dir: targetDir.real },
+              false,
+              'blueprint_save_failed',
+            );
+          }
+          tiles.push({
+            fileName: unique.name,
+            relPath: unique.virtual.relPath,
+            path: filePath,
+            bytes: tile.text.length,
+            rate: tile.rate,
+            width: tile.meta.width,
+            height: tile.meta.height,
+            rows: tile.meta.rows,
+            buildings: tile.meta.buildings,
+            machines: tile.meta.machines,
+            stages: tile.meta.stages,
+            warnings: tile.meta.warnings,
+          });
+        }
+
+        const firstTile = tiles[0];
+        if (!firstTile) {
+          return reply({ error: '没有生成任何蓝图' }, false, 'blueprint_generate_failed');
+        }
+        const first = tileSet.tiles[0];
+        const info = first ? inspectBlueprintText(first.text) : null;
+        const tierWarnings: string[] = [];
+        if (tiers && typeof tiers.inserter === 'number' && tiers.inserter < 3) {
+          tierWarnings.push(
+            '当前混带布局器使用集装分拣器（2014）；玩家未解锁集装分拣器时这张蓝图可能无法粘贴。',
+          );
+        }
+        const warnings = [...new Set([...tierWarnings, ...tiles.flatMap((tile) => tile.warnings)])];
+        const machines = tiles.reduce((sum, tile) => sum + tile.machines, 0);
+        const totalBuildings = tiles.reduce((sum, tile) => sum + tile.buildings, 0);
+        const totalBytes = tiles.reduce((sum, tile) => sum + tile.bytes, 0);
+        const raw = first?.plan.raw ?? [];
+        const byproducts = first?.plan.byproducts ?? [];
+        const description =
+          info?.description ??
+          `全链路（${fromLabel}）：${rate}/min${tiles.length > 1 ? `，分 ${tiles.length} 张` : ''}`;
+        const multi = tiles.length > 1;
+        return reply(
+          {
             saved: true,
             source: 'generated',
-            path: filePath,
-            fileName,
-            bytes: text.length,
-            item: rawItem,
-            itemId,
+            path: firstTile.path,
+            relPath: firstTile.relPath,
+            fileName: firstTile.fileName,
+            dir: targetDir.real,
+            dirRel: targetDir.relPath,
+            files: tiles.map((tile) => tile.path),
+            bytes: totalBytes,
+            item: resolved.name,
+            itemId: resolved.id,
             rate,
-            name: info.name ?? blueprintName,
-            author: info.author ?? author,
-            version: info.version ?? version,
-            ...(info.attributes !== undefined ? { attributes: info.attributes } : {}),
-            description: info.description ?? description,
-            ...(info.iconItemId !== undefined ? { iconItemId: info.iconItemId } : {}),
-            ...(info.buildings !== undefined ? { buildings: info.buildings } : {}),
-            ...(info.width !== undefined ? { width: info.width } : {}),
-            ...(info.height !== undefined ? { height: info.height } : {}),
-            note: '由 dsp-calc 规划器生成，含机器/传送带/分拣器与连接；粘贴后应可直接运行。',
-          }, true);
-        } catch (err) {
-          return reply({ error: err instanceof Error ? err.message : String(err) }, false, 'blueprint_generate_failed');
-        }
+            buildingTier,
+            ...(aliasInfo ? { alias: aliasInfo } : {}),
+            from: fromLabel,
+            tierSource,
+            ...(tiers ? { blueprintTiers: tiers } : {}),
+            name: info?.name ?? blueprintName,
+            author: info?.author ?? author,
+            version: info?.version ?? version,
+            ...(info?.attributes !== undefined ? { attributes: info.attributes } : {}),
+            description,
+            ...(info?.iconItemId !== undefined ? { iconItemId: info.iconItemId } : {}),
+            buildings: firstTile.buildings,
+            totalBuildings,
+            width: Math.max(...tiles.map((tile) => tile.width)),
+            height: Math.max(...tiles.map((tile) => tile.height)),
+            rows: firstTile.rows,
+            machines,
+            tileCount: tiles.length,
+            ratePerTile: tileSet.ratePerTile,
+            tiles,
+            stages: firstTile.stages,
+            raw,
+            byproducts,
+            warnings,
+            validation: { ok: warnings.length === 0, warnings },
+            note: multi
+              ? `单张混带蓝图的总线容量有限，已拆成 ${tiles.length} 张（每张约 ${tileSet.ratePerTile}/min，合计 ${rate}/min）。` +
+                '全部铺下才达到目标产量；先打开第一张确认布局，再逐张粘贴。'
+              : `已按知识库 ${kb.gameVersion} 的配方生成：${firstTile.stages.length} 个阶段、${machines} 台机器；` +
+                `${fromLabel}（不含采矿机/矿脉），含各阶段机器、传送带与分拣器。粘贴后先检查进料/出料是否接通。`,
+          },
+          true,
+        );
       },
     },
   ];

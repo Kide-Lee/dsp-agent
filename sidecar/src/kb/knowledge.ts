@@ -146,6 +146,8 @@ interface RecipeBinding {
 }
 
 export interface RecipeTreeOptions {
+  /** 从哪一层开始：ore（默认，从原矿）/ smelted（从冶炼产物）/ 物品 id（从该中间产物）。 */
+  from?: 'ore' | 'smelted' | number;
   /** 目标物品数量；默认 1。 */
   amount?: number;
   /** 每分钟目标产量；给出时 amount 被忽略，所有结果都是每分钟口径。 */
@@ -439,6 +441,26 @@ export class KnowledgeBase {
     return null;
   }
 
+  /**
+   * `from` → 停止展开的物品集合。被停止的物品按原料处理（计入 plan.raw），
+   * 不再生成上游机器。根物品永远不停止。
+   */
+  private stopAtFor(from: PlanOptions['from'] | RecipeTreeOptions['from'], rootId: number): Set<number> {
+    const stop = new Set<number>();
+    if (from === undefined || from === 'ore') return stop;
+    if (typeof from === 'number') {
+      if (from !== rootId) stop.add(from);
+      return stop;
+    }
+    // 冶炼产物：主配方 type === 1（电弧熔炉/位面熔炉/负熵熔炉）。
+    for (const item of this.items.values()) {
+      if (item.id === rootId) continue;
+      const binding = this.mainRecipeFor(item.id);
+      if (binding && binding.recipe.type === 1) stop.add(item.id);
+    }
+    return stop;
+  }
+
   // ---------------------------------------------------------------- 配方树
 
   recipeTree(ref: string | number, options: RecipeTreeOptions = {}): RecipeTreeResult {
@@ -450,6 +472,7 @@ export class KnowledgeBase {
     const depth = Math.max(1, Math.min(16, Math.floor(options.depth ?? 8)));
     const rootRecipe = options.recipeId !== undefined ? this.recipes.get(options.recipeId) : undefined;
     if (options.recipeId !== undefined && !rootRecipe) throw new Error(`找不到配方：${options.recipeId}`);
+    const stopAt = this.stopAtFor(options.from, item.id);
 
     const raw = new Map<number, number>();
     const byproducts = new Map<number, number>();
@@ -476,6 +499,12 @@ export class KnowledgeBase {
         cycles.add(itemId);
         add(raw, itemId, qty);
         node.recipe = '（循环，已按原料处理）';
+        return node;
+      }
+
+      if (path.length > 0 && stopAt.has(itemId)) {
+        add(raw, itemId, qty);
+        node.recipe = '（从中间产物开始，未展开）';
         return node;
       }
 
@@ -641,8 +670,10 @@ export class KnowledgeBase {
     const tree = this.recipeTree(item.id, {
       rate,
       depth,
+      ...(options.from !== undefined ? { from: options.from } : {}),
       ...(options.recipeId !== undefined ? { recipeId: options.recipeId } : {}),
     });
+    const stopAt = this.stopAtFor(options.from, item.id);
 
     // 额外产出会减少制作次数，原料/副产物按同一比例缩放（配方树本身不知道增产剂）。
     const craftScale = 1 / outputMultiplier;
@@ -663,7 +694,7 @@ export class KnowledgeBase {
         })()
       : null;
 
-    const aggregates = new Map<number, { recipe: KbRecipe; craftsPerMin: number }>();
+    const aggregates = new Map<number, { recipe: KbRecipe; craftsPerMin: number; primaryItemId: number }>();
     const warnings: string[] = [];
     let depthCut = false;
 
@@ -676,6 +707,7 @@ export class KnowledgeBase {
     ): void => {
       if (!(itemRate > 0)) return;
       if (path.includes(itemId)) return;
+      if (!isRoot && stopAt.has(itemId)) return;
 
       const binding = isRoot && forcedBinding ? forcedBinding : this.mainRecipeFor(itemId);
       if (!binding) return;
@@ -684,7 +716,13 @@ export class KnowledgeBase {
       const craftsPerMin = itemRate / Math.max(1, binding.outputCount) / outputMultiplier;
       const previous = aggregates.get(binding.recipe.id);
       if (previous) previous.craftsPerMin += craftsPerMin;
-      else aggregates.set(binding.recipe.id, { recipe: binding.recipe, craftsPerMin });
+      else {
+        aggregates.set(binding.recipe.id, {
+          recipe: binding.recipe,
+          craftsPerMin,
+          primaryItemId: itemId,
+        });
+      }
 
       if (remaining <= 0) {
         depthCut = true;
@@ -762,9 +800,17 @@ export class KnowledgeBase {
       }
       if (beltsPerInput > maxBelts) maxBelts = beltsPerInput;
 
+      const outputsPerMin = recipe.outputs.map((output) => ({
+        itemId: output.id,
+        item: this.items.get(output.id)?.name ?? `#${output.id}`,
+        amount: round4(output.count * craftsPerMin),
+      }));
       rows.push({
         recipeId: recipe.id,
         recipeName: recipe.name,
+        primaryItemId: aggregate.primaryItemId,
+        primaryItem: this.items.get(aggregate.primaryItemId)?.name,
+        outputsPerMin,
         ...(typeof recipe.type === 'number' ? { recipeType: recipe.type } : {}),
         ...(chosen ? { buildingId: chosen.id, buildingName: chosen.name } : {}),
         buildingCount,

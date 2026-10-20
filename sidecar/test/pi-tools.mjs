@@ -12,9 +12,12 @@
  */
 
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { KB_CACHE_REVISION } from '../dist/kb/store.js';
+import { KB_SCHEMA_VERSION } from '../dist/kb/types.js';
 import {
   FAKE_KEY,
   assertBuilt,
@@ -24,6 +27,7 @@ import {
   summary,
 } from './helpers.mjs';
 
+const here = dirname(fileURLToPath(import.meta.url));
 const MODEL = 'deepseek-v4-flash';
 const TOKEN = 'test-token-pi-tools';
 
@@ -187,6 +191,13 @@ async function main() {
   // 本用例会真的跑 blueprint_generate；把落盘目录指到临时目录，避免污染玩家蓝图。
   process.env.ICARUS_BLUEPRINT_DIR = blueprintDir;
   mkdirSync(join(dataDir, 'agent'), { recursive: true });
+  // blueprint_generate 依赖知识库。把最小 fixture 放到 hello 的版本/语言对应的缓存路径，
+  // sidecar 在 hello 时直接加载，不需要假 mod 走 export_prototypes。
+  mkdirSync(join(dataDir, 'kb'), { recursive: true });
+  copyFileSync(
+    join(here, 'fixtures', 'kb-blueprint.json'),
+    join(dataDir, 'kb', `ldb-v${KB_SCHEMA_VERSION}-r${KB_CACHE_REVISION}-test-zh-CN.json`),
+  );
   writeFileSync(
     join(dataDir, 'agent', 'settings.json'),
     `${JSON.stringify({ retry: { enabled: false, maxRetries: 0 } }, null, 2)}\n`,
@@ -210,7 +221,7 @@ async function main() {
     },
   });
   const ready = await client.waitForType('ready');
-  check('ready.tools 含 17 个工具（6 game + 4 kb + 2 wiki + 4 蓝图 + 脚本）', (ready.payload?.tools ?? []).length === 17);
+  check('ready.tools 含 18 个工具（6 game + 4 kb + 2 wiki + 5 蓝图 + 脚本）', (ready.payload?.tools ?? []).length === 18);
 
   // 配置假上游。
   client.send({
@@ -507,7 +518,8 @@ async function main() {
   check('卡片 source=generated', card.source === 'generated', String(card.source));
   check('卡片带作者', card.author === '卡片测试', String(card.author));
   check('卡片带建筑数', typeof card.buildings === 'number' && card.buildings > 0, String(card.buildings));
-  check('生成文件确实存在', existsSync(join(blueprintDir, card.fileName)), join(blueprintDir, card.fileName));
+  check('卡片带 relPath', typeof card.relPath === 'string' && card.relPath.startsWith('IcarusII/'), String(card.relPath));
+  check('生成文件确实存在', existsSync(join(blueprintDir, card.relPath ?? card.fileName)), join(blueprintDir, card.relPath ?? card.fileName));
 
   const cardSeq = client.frames.slice(cardMark);
   const messageIdx = cardSeq.findIndex((f) => f?.type === 'message' && f.replyTo === 'm-card');

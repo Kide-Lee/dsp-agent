@@ -28,6 +28,15 @@ export interface WikiPageResult {
   truncated: boolean;
 }
 
+/** 页面 wikitext；别名解析用它读 `|别称=`，比 extracts 可靠（物品页 extract 常为空）。 */
+export interface WikiTextResult {
+  lang: WikiLang;
+  title: string;
+  url: string;
+  text: string;
+  truncated: boolean;
+}
+
 export interface WikiClientOptions {
   fetchImpl?: typeof fetch;
   zhApi?: string;
@@ -203,6 +212,47 @@ export class WikiClient {
         title: actualTitle,
         url: pageUrl(this.bases[lang], actualTitle),
         extract: truncated ? `${extractRaw.slice(0, MAX_EXTRACT_CHARS)}\n…（已截断）` : extractRaw,
+        truncated,
+      };
+      this.cacheSet(cacheKey, page);
+      return { page };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * 读取页面 wikitext（`action=parse&prop=wikitext`）。
+   * 只用于解析物品模板里的 `|别称=`；不作为模型可见正文。
+   */
+  async wikitext(
+    title: string,
+    lang: WikiLang,
+  ): Promise<{ page?: WikiTextResult; error?: string }> {
+    const trimmed = title.trim();
+    if (!trimmed) return { error: 'empty_title' };
+    const cacheKey = `w:${lang}:${trimmed}`;
+    const cached = this.cacheGet<WikiTextResult>(cacheKey);
+    if (cached) return { page: cached };
+
+    try {
+      const raw = (await this.request(lang, {
+        action: 'parse',
+        page: trimmed,
+        prop: 'wikitext',
+        redirects: '1',
+      })) as { parse?: { title?: unknown; wikitext?: unknown }; error?: { info?: unknown } };
+      if (!raw.parse || typeof raw.parse.wikitext !== 'string') {
+        return { error: typeof raw.error?.info === 'string' ? raw.error.info : 'not_found' };
+      }
+      const actualTitle = typeof raw.parse.title === 'string' ? raw.parse.title : trimmed;
+      const text = raw.parse.wikitext;
+      const truncated = text.length > MAX_EXTRACT_CHARS;
+      const page: WikiTextResult = {
+        lang,
+        title: actualTitle,
+        url: pageUrl(this.bases[lang], actualTitle),
+        text: truncated ? text.slice(0, MAX_EXTRACT_CHARS) : text,
         truncated,
       };
       this.cacheSet(cacheKey, page);

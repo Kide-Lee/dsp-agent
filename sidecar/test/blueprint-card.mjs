@@ -109,7 +109,7 @@ console.log('\n── 4. dir + fileName ──');
   });
   check('拼出 path', card.path === join('/tmp/blueprint', '下载.txt'), card.path);
   check('保留许可', card.license === 'CC BY-NC-SA 4.0');
-  check('工具清单', BLUEPRINT_PRODUCING_TOOLS.length === 3, BLUEPRINT_PRODUCING_TOOLS.join(','));
+  check('工具清单', BLUEPRINT_PRODUCING_TOOLS.length === 4, BLUEPRINT_PRODUCING_TOOLS.join(','));
 }
 
 console.log('\n── 5. 历史回放挂载 ──');

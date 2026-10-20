@@ -67,6 +67,8 @@ namespace IcarusII
 
         /// <summary>最近一个已渲染终稿的 promptId，用于对重复的 message{final} 去重。</summary>
         private string _lastFinalReplyTo;
+        /// <summary>请求 id → 用户提问原文；final 到达时用来回存该回答的游戏时间。</summary>
+        private readonly Dictionary<string, string> _promptById = new Dictionary<string, string>(StringComparer.Ordinal);
 
         /// <summary>当前存档标识（null = 主菜单）。</summary>
         private string _saveKey;
@@ -326,7 +328,7 @@ namespace IcarusII
                     }
                     else if (state == Protocol.StateIdle)
                     {
-                        _chat.EndThinking();
+                        _chat.EndThinking(finalize: true);
                         if (_streaming)
                         {
                             _chat.EndStream();
@@ -419,7 +421,16 @@ namespace IcarusII
                         _lastFinalReplyTo = replyTo;
                     }
 
-                    _chat.EndThinking();
+                    var finalText = string.Empty;
+                    foreach (var block in payload["content"].Items)
+                    {
+                        if (block["type"].AsString() != "text") continue;
+                        var part = block["text"].AsString("");
+                        if (string.IsNullOrEmpty(part)) continue;
+                        finalText = string.IsNullOrEmpty(finalText) ? part : finalText + "\n" + part;
+                    }
+
+                    _chat.EndThinking(finalize: true);
                     if (_streaming)
                     {
                         // 流式已经渲染过同样内容，直接收尾即可
@@ -434,6 +445,16 @@ namespace IcarusII
                                 _chat.AppendLine(Strings.Get("agent"), block["text"].AsString(""));
                         }
                     }
+
+                    // 把这一轮完成时的游戏时间回存到 sidecar；history 回放时脚注显示原时间。
+                    // reply 原文用于区分“继续”这类重复提问。
+                    string prompt = null;
+                    if (!string.IsNullOrEmpty(replyTo)) _promptById.TryGetValue(replyTo, out prompt);
+                    if (!string.IsNullOrEmpty(prompt))
+                    {
+                        _client?.SendReplyTime(prompt, finalText, ChatWindow.CurrentGameClock());
+                        _promptById.Remove(replyTo);
+                    }
                     break;
                 }
 
@@ -443,9 +464,10 @@ namespace IcarusII
 
                 case Protocol.Error:
                 {
+                    if (!string.IsNullOrEmpty(replyTo)) _promptById.Remove(replyTo);
                     var code = payload["code"].AsString("unknown");
                     var message = payload["message"].AsString("");
-                    _chat.EndThinking();
+                    _chat.EndThinking(finalize: true);
                     _chat.AppendSystem($"⚠ 错误 [{code}] {message}");
                     if (_streaming)
                     {
@@ -879,7 +901,21 @@ namespace IcarusII
             if (_client.State != ConnectionState.Ready) return;
 
             var name = key != null ? GameRefs.CurrentSaveName() : null;
-            if (_client.SendSaveBind(key, name) == null) return;
+            JsonValue tiers = null;
+            if (key != null)
+            {
+                var info = GameRefs.CurrentBlueprintTiers();
+                if (info.Available)
+                {
+                    tiers = JsonValue.NewObject();
+                    tiers.Set("assembler", info.Assembler);
+                    tiers.Set("belt", info.Belt);
+                    tiers.Set("inserter", info.Inserter);
+                    tiers.Set("piler", info.Piler);
+                    tiers.Set("stacking", info.Stacking);
+                }
+            }
+            if (_client.SendSaveBind(key, name, tiers) == null) return;
 
             _saveSynced = true;
             Log.LogInfo($"[存档] 已上报绑定：{key ?? "(解绑)"} / {name ?? "-"}");
@@ -932,12 +968,21 @@ namespace IcarusII
                             }
                             else
                             {
-                                _chat.AppendLine(Strings.Get("agent"), message.Text);
+                                _chat.AppendLine(Strings.Get("agent"), message.Text,
+                                    string.IsNullOrEmpty(message.GameTime) ? "--:--" : message.GameTime);
                                 // 蓝图卡片跟在该回答后面，与实时收到的顺序一致。
                                 if (message.Cards != null)
                                 {
                                     foreach (var card in message.Cards)
+                                    {
+                                        if (card != null && string.IsNullOrEmpty(card.CreatedAt) && message.Timestamp > 0)
+                                        {
+                                            card.CreatedAt = DateTimeOffset
+                                                .FromUnixTimeMilliseconds(message.Timestamp)
+                                                .LocalDateTime.ToString("yyyy-MM-dd");
+                                        }
                                         _chat.AppendBlueprintCard(card);
+                                    }
                                 }
                             }
                             replayed++;
@@ -1064,6 +1109,7 @@ namespace IcarusII
                 _chat.AppendSystem("发送失败（连接状态已变化）。");
                 return;
             }
+            _promptById[id] = text;
             _chat.SetStatus(Strings.Get("status.thinking"), AccentColor);
         }
 

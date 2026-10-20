@@ -10,6 +10,7 @@
 | [ws](https://github.com/websockets/ws) | sidecar 的 WebSocket 服务端 | MIT | 打包进 sidecar |
 | [typebox](https://github.com/sinclairzx81/typebox) | 工具参数 JSON Schema（M2 起） | MIT | 打包进 sidecar |
 | [QuickJS](https://github.com/quickjs-ng/quickjs) / [quickjs-emscripten](https://github.com/justjake/quickjs-emscripten) | `run_script` 的脚本沙箱（M4d） | MIT | 打包进 sidecar；WASM 以 base64 内联（`@jitl/quickjs-singlefile-cjs-release-sync`），不额外落文件 |
+| [dsp-calc](https://github.com/antian369/dsp-calc) | 蓝图布局算法与建筑/配方数据（`blueprint_generate`） | 木兰宽松许可证，第 2 版（Mulan PSL v2） | 仅算法与数据 vendored 到 `sidecar/vendor/dsp-calc/`，打包进 sidecar；不包含其 UI |
 | [Unity Skills](https://github.com/Unity-Technologies/skills) — `ui-ugui` | Agent Skill：Unity uGUI / Canvas / RectTransform / Layout Group 开发规范 | Unity Companion License | 内容收录于 `.dsh/skills/ui-ugui/`，仅用于开发期辅助，不进入发布产物 |
 
 ## 关于 BepInEx
@@ -20,6 +21,12 @@ BepInEx 采用 **LGPL-2.1**。本项目**不再分发** BepInEx 本体：
 
 仓库内的 `scripts/fetch-deps.sh` 会把 BepInEx 下载到 `.deps/`（已被 `.gitignore` 忽略），
 **该目录仅用于编译期引用程序集，不进入任何发布产物**。
+
+## 关于 dsp-calc
+
+`sidecar/vendor/dsp-calc/` 收录上游的蓝图布局算法与数据（`src/`、`data/`），
+遵循 **木兰宽松许可证，第 2 版**（许可证原文见 `sidecar/vendor/dsp-calc/LICENSE`）。
+本项目只移植/调用算法，不复制其 UI；生成的蓝图版权归玩家自己的存档内容。
 
 ## 关于内嵌的 Node.js
 

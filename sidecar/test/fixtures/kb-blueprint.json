@@ -1,0 +1,245 @@
+{
+  "schemaVersion": 1,
+  "gameVersion": "test",
+  "locale": "zh-CN",
+  "source": "offline-extract",
+  "items": [
+    {
+      "id": 1001,
+      "name": "铁矿",
+      "type": 1
+    },
+    {
+      "id": 1002,
+      "name": "铜矿",
+      "type": 1
+    },
+    {
+      "id": 1101,
+      "name": "铁块",
+      "type": 2
+    },
+    {
+      "id": 1104,
+      "name": "铜块",
+      "type": 2
+    },
+    {
+      "id": 1201,
+      "name": "齿轮",
+      "type": 3
+    },
+    {
+      "id": 1102,
+      "name": "磁铁",
+      "type": 2
+    },
+    {
+      "id": 1202,
+      "name": "磁线圈",
+      "type": 3
+    },
+    {
+      "id": 1203,
+      "name": "电动机",
+      "type": 3
+    },
+    {
+      "id": 1204,
+      "name": "电磁涡轮",
+      "type": 3
+    },
+    {
+      "id": 2302,
+      "name": "电弧熔炉",
+      "building": {
+        "assemblerSpeed": 10000,
+        "workEnergyPerTick": 6000,
+        "assemblerRecipeType": 1
+      }
+    },
+    {
+      "id": 2303,
+      "name": "制造台 Mk.I",
+      "building": {
+        "assemblerSpeed": 7500,
+        "workEnergyPerTick": 4500,
+        "assemblerRecipeType": 4
+      }
+    },
+    {
+      "id": 2304,
+      "name": "制造台 Mk.II",
+      "building": {
+        "assemblerSpeed": 10000,
+        "workEnergyPerTick": 9000,
+        "assemblerRecipeType": 4
+      }
+    },
+    {
+      "id": 2305,
+      "name": "制造台 Mk.III",
+      "building": {
+        "assemblerSpeed": 15000,
+        "workEnergyPerTick": 18000,
+        "assemblerRecipeType": 4
+      }
+    }
+  ],
+  "recipes": [
+    {
+      "id": 1,
+      "name": "铁块",
+      "type": 1,
+      "timeSpend": 60,
+      "timeSeconds": 1,
+      "inputs": [
+        {
+          "id": 1001,
+          "count": 1
+        }
+      ],
+      "outputs": [
+        {
+          "id": 1101,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "磁铁",
+      "type": 1,
+      "timeSpend": 90,
+      "timeSeconds": 1.5,
+      "inputs": [
+        {
+          "id": 1001,
+          "count": 1
+        }
+      ],
+      "outputs": [
+        {
+          "id": 1102,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "铜块",
+      "type": 1,
+      "timeSpend": 60,
+      "timeSeconds": 1,
+      "inputs": [
+        {
+          "id": 1002,
+          "count": 1
+        }
+      ],
+      "outputs": [
+        {
+          "id": 1104,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "齿轮",
+      "type": 4,
+      "timeSpend": 60,
+      "timeSeconds": 1,
+      "inputs": [
+        {
+          "id": 1101,
+          "count": 1
+        }
+      ],
+      "outputs": [
+        {
+          "id": 1201,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "磁线圈",
+      "type": 4,
+      "timeSpend": 60,
+      "timeSeconds": 1,
+      "inputs": [
+        {
+          "id": 1102,
+          "count": 2
+        },
+        {
+          "id": 1104,
+          "count": 1
+        }
+      ],
+      "outputs": [
+        {
+          "id": 1202,
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": 97,
+      "name": "电动机",
+      "type": 4,
+      "timeSpend": 120,
+      "timeSeconds": 2,
+      "inputs": [
+        {
+          "id": 1101,
+          "count": 2
+        },
+        {
+          "id": 1201,
+          "count": 1
+        },
+        {
+          "id": 1202,
+          "count": 1
+        }
+      ],
+      "outputs": [
+        {
+          "id": 1203,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": 98,
+      "name": "电磁涡轮",
+      "type": 4,
+      "timeSpend": 120,
+      "timeSeconds": 2,
+      "inputs": [
+        {
+          "id": 1203,
+          "count": 2
+        },
+        {
+          "id": 1202,
+          "count": 2
+        }
+      ],
+      "outputs": [
+        {
+          "id": 1204,
+          "count": 1
+        }
+      ]
+    }
+  ],
+  "techs": [],
+  "models": [],
+  "veins": [],
+  "signals": [],
+  "texts": []
+}

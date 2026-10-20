@@ -7,7 +7,7 @@
 游戏里按 **`R`** 打开聊天窗，可以问机制、要攻略、让 AI 读取你当前的存档状态给建议，
 也可以在**你确认之后**让 AI 执行游戏内操作。
 
-> 状态：**M3（游戏本体知识库）**。
+> 状态：**M4（读写工具 + 蓝图生成）**。
 > - M0 已完成并实机验证：插件加载 → 窗口开关（`R`）→ 与 sidecar 握手 → 消息回显。
 > - M1 已完成：sidecar 接入 [pi](https://github.com/earendil-works/pi) + DeepSeek，
 >   mod 侧实现首次密钥引导与配置上报。
@@ -20,16 +20,17 @@
 >   模型增删），聊天窗「模型」下拉框即时切换；支持自定义 OpenAI 兼容端点。
 > - M2.7 已实现：左侧 **chat-index** 提问索引——每条用户提问一个可点击链接，点击定位到对应消息；
 >   每行带删除按钮：同时删掉聊天窗显示、会话文件条目与模型上下文（`history.delete`）。
-> - M4a–M4d 已实现（离线验证；实机待验收）：建筑详情/建筑列表/进度阶段/截图（含聊天窗缩略图）、
->   `kb_plan` 量化计算、`game_analyze_area` 区域产线、`run_script` 只读脚本沙箱。
+> - M4a–M4j 已实现（部分实机验证）：建筑详情/建筑列表/进度阶段/截图（含聊天窗缩略图）、
+>   `kb_plan` 量化计算、`game_analyze_area` 区域产线、`run_script` 只读脚本沙箱、
+>   Wiki/蓝图仓库、蓝图卡片，以及按知识库真实配方生成的**完整产线蓝图**。
 > - M3 已实现（离线验证；实机待验收）：**游戏本体知识库**——运行时从 LDB / Locale / Wiki 导出物品、配方、科技、
 >   建筑、提示、教程、里程碑、指引与术语；`kb_search` / `kb_get` / `kb_recipe_tree` / `kb_plan`
 >   由 sidecar 本地查询，配方原料树与机器数/电力不再靠模型心算。schema 与清洗规则见
 >   [docs/kb-v1.md](docs/kb-v1.md)。
-> - ⚠️ **真实 DeepSeek 端点与游戏内数值尚未实测**（开发环境没有 API Key；本机未启动游戏）。
->   协议、工具链路、知识库导出/索引/配方树、超时/断线/非法结果已用离线假游戏验证；
->   实机验收清单见 [docs/m2-verification.md](docs/m2-verification.md) 与
->   [docs/m3-verification.md](docs/m3-verification.md)。
+> - 真实 DeepSeek 端点、KB 导出、工具调用、蓝图落盘与卡片已在实机跑通；
+>   M4a–M4d 的完整验收清单仍未逐条过，见 [docs/m2-verification.md](docs/m2-verification.md)
+>   与 [docs/m3-verification.md](docs/m3-verification.md)。
+>   蓝图生成的离线回归与实机检查项见 [docs/m4j-verification.md](docs/m4j-verification.md)。
 >
 > 设计与路线图见 [design.md](design.md)，待定想法见 [docs/ideas.md](docs/ideas.md)。
 
@@ -96,10 +97,21 @@
 | `wiki_search` / `wiki_page` | 搜索并读取中/英文 DSP Wiki，回答带来源链接 |
 | `blueprint_search` / `blueprint_info` | 在线检索社区蓝图仓库（CC BY-NC-SA 4.0，带署名），并做格式体检 |
 | `blueprint_save` | 直接把蓝图保存到游戏蓝图目录，打开蓝图界面即可用，无需退出游戏下载 |
+| `blueprint_generate` | 按知识库真实配方生成完整产线（各阶段机器 + 带 + 爪）；单张总线容量不足时自动拆成多张 |
+| `blueprint_fs` | 在蓝图目录里 `ls/cd/pwd/cat/mkdir/write/rm/rmdir`；默认保存到 `IcarusII/`，不能越出蓝图根 |
 | `run_script` | 在 QuickJS-WASM 沙箱里跑只读脚本：`dsp.call` 同步调用 game_* 工具，可循环/筛选/求和；无 fs/net/process，调用与时长都有上限 |
 
 本地工具（`kb_*` / `run_script`）也会在聊天窗里显示工具卡（“量化计算”“知识库检索”“脚本”），
 数据来自 sidecar 的 `tool_activity` 事件，不经过游戏侧执行。
+
+`blueprint_generate` 默认**从原矿投入开始**（不含采矿机/矿脉，需要自己把矿石送进蓝图里的物流站），
+会展开知识库里的全部中间阶段；单张混带总线最多承载 3 条蓝带，超过时自动拆成多张，
+每张独立可粘贴。物品别名（蓝马达/绿马达/白糖等）先查内置表，再按需查 Wiki 的物品
+`|别称=` 并缓存 30 天；对应多个物品时会先问玩家。想让蓝图从铁块/钛块等中间产物开始，
+传 `from=smelted` 或 `from=铁块`。下载/生成/游戏复制默认都保存到 `IcarusII/`；
+AI 也可以直接用 `blueprint_fs` 查看、建子目录、写任意合法蓝图文本，或永久删除（会先确认）。
+机器/带子/分拣器档位由 mod 在 `save.bind` 里被动上报，
+不需要模型额外查询；显式参数可以覆盖。多产物/多副产物配方目前仍有布局器限制，工具会返回 `warnings`。
 
 **蓝图卡片**：生成 / 下载 / 复制蓝图成功后，sidecar 会在本轮回答末尾追加一张卡片
 （协议附录 A.9），显示名称、产量、建筑数、占地、作者/版本与来源；
@@ -257,6 +269,10 @@ MaxTranscriptLines = 500
 | `LaunchMode=spawnExe` | 由插件自动拉起随包的 `icarus-ii-sidecar.exe`（默认，推荐） |
 | `LaunchMode=connectOnly` | 插件只连接；你自己先启动 sidecar（便于调试 / 多存档共用） |
 | `Hotkey` | 任意 Unity `KeyCode` 名 |
+
+原生 Linux 跑 `connectOnly` 时，sidecar 与游戏不在同一 Wine 环境，需用
+`ICARUS_BLUEPRINT_DIR` 指向 Proton prefix 里的 `Documents/Dyson Sphere Program/Blueprint`
+（否则 `blueprint_fs`/`blueprint_save` 会写到宿主 home 下）。
 
 ---
 

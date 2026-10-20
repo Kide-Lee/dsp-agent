@@ -54,6 +54,7 @@ import type {
   ModelCatalogEntry,
   ModelCatalogResult,
   ProviderTestResult,
+  BlueprintTiers,
   StatusState,
   StreamChannel,
   ToolResultPayload,
@@ -64,14 +65,26 @@ import type { BlueprintCardPayload, ToolActivityPayload } from './protocol.js';
 import { parseSessionLines, removeTurnFromEntries, serializeSessionEntries } from './history.js';
 import { createScriptTool } from './tools/script.js';
 import { createWikiTools } from './wiki/tools.js';
+import { WikiClient } from './wiki/client.js';
+import { AliasResolver } from './wiki/aliases.js';
 import { createBlueprintTools } from './blueprint/tools.js';
+import { BlueprintWorkspace } from './blueprint/workspace.js';
 import {
   attachBlueprintCards,
   compactBlueprintCard,
   extractBlueprintCard,
   type BlueprintCardRecord,
 } from './blueprint/card.js';
+import { attachGameTimes, type GameTimeRecord } from './history/game-time.js';
 import type { KnowledgeStore } from './kb/store.js';
+
+/** 会话目录里的元数据日志；它们不是 pi 会话文件，不能被当成会话读取/删除。 */
+const SESSION_METADATA_FILES = new Set(['blueprint-cards.jsonl', 'reply-times.jsonl']);
+
+/** 判断一个文件名是否是可读的 pi 会话 JSONL。 */
+function isSessionFile(name: string): boolean {
+  return name.endsWith('.jsonl') && !SESSION_METADATA_FILES.has(name);
+}
 
 /** pi SDK 的完整类型（仅类型层面；运行时不静态引用）。 */
 type PiSdk = typeof import('@earendil-works/pi-coding-agent');
@@ -120,6 +133,8 @@ export interface AgentRunner {
   onClientCapabilities?(capabilities: readonly string[]): void;
   /** 切换存档；null = 回到主菜单。agent 应在回合边界重建会话。 */
   onSaveChanged?(saveKey: string | null): void;
+  /** save.bind 带来的玩家已解锁蓝图档位；null = 未知/解绑。 */
+  onBlueprintTiers?(tiers: BlueprintTiers | null): void;
   /**
    * 读取某个存档最近的对话历史，供 UI 进入存档后回放。
    * 只读会话文件，不建模型会话、不联网、不改变当前 saveKey。
@@ -134,6 +149,8 @@ export interface AgentRunner {
     text: string,
     timestamp?: number,
   ): Promise<{ ok: boolean; removed: number; error?: string }>;
+  /** 回存一轮回答完成时的游戏时间（附录 A.10）；写盘失败不影响回答。 */
+  recordReplyTime?(saveKey: string | null, prompt: string, reply: string, gameTime: string): void;
   /**
    * 拉取某个供应商的可用模型列表（M3）。
    * 已知供应商走 pi 目录；显式给了 baseUrl 的走 OpenAI 兼容 `/models`。
@@ -678,6 +695,9 @@ export class PiAgent implements AgentRunner {
   private readonly store: ConfigStore;
   private readonly host: GameToolHost;
   private readonly kb: KnowledgeStore | null;
+  private readonly wiki: WikiClient;
+  private readonly aliases: AliasResolver;
+  private readonly blueprintWorkspace: BlueprintWorkspace;
   private readonly logger: Logger;
   private readonly loadSdk: () => Promise<PiSdk>;
 
@@ -689,8 +709,14 @@ export class PiAgent implements AgentRunner {
   private pendingTeardown = false;
   /** 当前绑定的存档；每个存档使用独立的 session 目录。 */
   private saveKey: string | null = null;
+  /** mod 在 save.bind 里被动上报的蓝图档位；模型不需要调用查询工具。 */
+  private blueprintTiers: BlueprintTiers | null = null;
   /** 进程内全局串行：多连接共用同一个 pi 会话。 */
   private chain: Promise<unknown> = Promise.resolve();
+
+  onBlueprintTiers(tiers: BlueprintTiers | null): void {
+    this.blueprintTiers = tiers;
+  }
 
   constructor(options: PiAgentOptions) {
     this.dataDir = options.dataDir;
@@ -698,6 +724,12 @@ export class PiAgent implements AgentRunner {
     this.store = options.store;
     this.host = options.host;
     this.kb = options.kb ?? null;
+    this.wiki = new WikiClient();
+    this.aliases = new AliasResolver({
+      wiki: this.wiki,
+      cacheFile: join(this.dataDir, 'wiki-aliases.json'),
+    });
+    this.blueprintWorkspace = new BlueprintWorkspace();
     this.logger = (options.logger ?? rootLog).child({ component: 'pi-agent' });
     this.loadSdk =
       options.loadSdk ?? (() => import('@earendil-works/pi-coding-agent') as Promise<PiSdk>);
@@ -741,6 +773,8 @@ export class PiAgent implements AgentRunner {
   }
 
   onSaveChanged(saveKey: string | null): void {
+    this.blueprintTiers = null;
+    this.blueprintWorkspace.resetCwd();
     if (this.saveKey === saveKey) return;
     this.saveKey = saveKey;
     this.logger.info('存档变化，切换对话会话', { saveKey });
@@ -757,19 +791,22 @@ export class PiAgent implements AgentRunner {
     const sessionDir = join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey));
     // 没有会话文件就不要让 continueRecent 先建一个空会话（每次 bind 都会留垃圾）。
     if (!existsSync(sessionDir)) return [];
-    if (!readdirSync(sessionDir).some((name) => name.endsWith('.jsonl'))) return [];
+    if (!readdirSync(sessionDir).some((name) => isSessionFile(name))) return [];
 
     const pi = await this.loadSdk();
     const manager = pi.SessionManager.continueRecent(this.dataDir, sessionDir);
     const messages = extractHistoryMessages(manager.buildContextEntries());
     const records = this.readBlueprintCards(saveKey);
     const withCards = attachBlueprintCards(messages, records);
+    const timeRecords = this.readReplyTimes(saveKey);
+    const withTimes = attachGameTimes(withCards, timeRecords);
     this.logger.info('读取存档历史', {
       saveKey,
-      messages: withCards.length,
+      messages: withTimes.length,
       blueprintCards: records.length,
+      replyTimes: timeRecords.length,
     });
-    return withCards;
+    return withTimes;
   }
 
   // ---------------------------------------------------------------- 蓝图卡片持久化
@@ -843,6 +880,90 @@ export class PiAgent implements AgentRunner {
     return records;
   }
 
+  // ---------------------------------------------------------------- 回答游戏时间持久化
+
+  private replyTimeLogPath(saveKey: string | null): string | null {
+    if (!saveKey) return null;
+    return join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey), 'reply-times.jsonl');
+  }
+
+  /** 按提问原文回存每轮回答完成时的游戏时间，供历史脚注回放。 */
+  recordReplyTime(saveKey: string | null, prompt: string, reply: string, gameTime: string): void {
+    const path = this.replyTimeLogPath(saveKey);
+    const text = prompt.trim();
+    const answer = (reply ?? '').trim();
+    const time = gameTime.trim();
+    if (!path || !text || !time) return;
+
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      const record: GameTimeRecord = {
+        prompt: text.slice(0, 4000),
+        ...(answer ? { reply: answer.slice(0, 4000) } : {}),
+        gameTime: time.slice(0, 16),
+        timestamp: Date.now(),
+      };
+      appendFileSync(path, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 });
+    } catch (err) {
+      // 时间只是 UI 元数据；写盘失败只影响下次回放，不打断本轮。
+      this.logger.warn('写回答游戏时间失败', { saveKey, ...errorFields(err) });
+    }
+  }
+
+  private readReplyTimes(saveKey: string | null): GameTimeRecord[] {
+    const path = this.replyTimeLogPath(saveKey);
+    if (!path || !existsSync(path)) return [];
+    let raw: string;
+    try {
+      raw = readFileSync(path, 'utf8');
+    } catch (err) {
+      this.logger.warn('读回答游戏时间失败', { saveKey, ...errorFields(err) });
+      return [];
+    }
+
+    const records: GameTimeRecord[] = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as Partial<GameTimeRecord>;
+        if (typeof parsed.prompt !== 'string' || typeof parsed.gameTime !== 'string') continue;
+        if (!parsed.prompt.trim() || !parsed.gameTime.trim()) continue;
+        records.push({
+          prompt: parsed.prompt,
+          gameTime: parsed.gameTime,
+          ...(typeof parsed.timestamp === 'number' ? { timestamp: parsed.timestamp } : {}),
+        });
+      } catch {
+        // 坏行跳过，不因一条记录损坏丢掉整段历史。
+      }
+    }
+    return records;
+  }
+
+  private removeReplyTimeRecords(saveKey: string, prompt: string): void {
+    const path = this.replyTimeLogPath(saveKey);
+    const text = prompt.trim();
+    if (!path || !text || !existsSync(path)) return;
+
+    const records = this.readReplyTimes(saveKey);
+    const kept = records.filter((record) => record.prompt.trim() !== text);
+    if (kept.length === records.length) return;
+
+    const tmp = `${path}.tmp-${process.pid}`;
+    try {
+      const body = kept.map((record) => JSON.stringify(record)).join('\n');
+      writeFileSync(tmp, kept.length > 0 ? `${body}\n` : '', { encoding: 'utf8', mode: 0o600 });
+      renameSync(tmp, path);
+    } catch (err) {
+      try {
+        rmSync(tmp, { force: true });
+      } catch {
+        // ignore
+      }
+      this.logger.warn('删除回答游戏时间失败', { saveKey, ...errorFields(err) });
+    }
+  }
+
   /** 删除某个提问对应的卡片记录（回合被删时调用）。 */
   private removeBlueprintCardRecords(saveKey: string, prompt: string): void {
     const path = this.blueprintCardLogPath(saveKey);
@@ -885,7 +1006,7 @@ export class PiAgent implements AgentRunner {
     const dir = join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey));
     if (!existsSync(dir)) return { ok: false, removed: 0, error: 'turn_not_found' };
 
-    const files = readdirSync(dir).filter((name) => name.endsWith('.jsonl'));
+    const files = readdirSync(dir).filter((name) => isSessionFile(name));
     if (files.length === 0) return { ok: false, removed: 0, error: 'turn_not_found' };
 
     // 取最近写入的会话文件（与 continueRecent 的选择一致）。
@@ -931,8 +1052,9 @@ export class PiAgent implements AgentRunner {
       return { ok: false, removed: 0, error: 'io_error' };
     }
 
-    // 卡片记录跟着回合一起删；否则重进存档时旧卡片可能挂到同一句提问的新回答上。
+    // 卡片/时间记录跟着回合一起删；否则重进存档时旧记录可能挂到同一句提问的新回答上。
     this.removeBlueprintCardRecords(saveKey, text);
+    this.removeReplyTimeRecords(saveKey, text);
 
     // 上下文必须重建，否则被删的回合还在内存会话里继续发给模型。
     if (this.saveKey === saveKey) this.teardown();
@@ -1406,8 +1528,14 @@ export class PiAgent implements AgentRunner {
       customTools: [
         ...this.host.tools(),
         ...(this.kb ? createKbTools(this.kb) : []),
-        ...createWikiTools(),
-        ...createBlueprintTools(),
+        ...createWikiTools(this.wiki),
+        ...createBlueprintTools(
+          undefined,
+          this.kb ?? undefined,
+          this.aliases,
+          () => this.blueprintTiers,
+          this.blueprintWorkspace,
+        ),
         createScriptTool(this.host),
       ],
       // 替换 pi 默认的 coding agent system prompt 为游戏内助手人格。

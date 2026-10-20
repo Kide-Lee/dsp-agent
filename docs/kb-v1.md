@@ -152,18 +152,20 @@ Wiki/Tutorial/*-<lang>.txt   ──game_export_text─────────�
 - 文本类支持 `kind:id` 或标题精确匹配。
 - 不存在返回 `not_found`，不要猜。
 
-### `kb_recipe_tree(item, amount?, rate?, depth?, recipeId?)`
+### `kb_recipe_tree(item, amount?, rate?, depth?, recipeId?, from?)`
 
 - 选主配方规则与 `ItemProto.FindRecipes` 一致：结果下标最小，其次 recipe id 最小。
 - `amount`：目标物品数量（默认 1）；`rate`：目标物品每分钟产量（给出时忽略 amount）。
 - `depth`：默认 8，上限 16；到上限的项按原料处理，`depthLimited=true`。
 - 循环：路径里出现过的物品按原料处理，`cycles[]` 列出。
 - 副产物：与同名原料**抵扣**；仍有剩余才进 `byproducts[]`。
+- `from`：`ore`（默认，从原矿）/ `smelted`（从冶炼产物开始）/ 物品名或 id
+  （从该中间产物开始）；被停止的物品计入 `raw`，不再展开上游。
 - 返回 `tree`（直接输入）、`raw`（原料汇总）、`byproducts`、`cycles`、`notes`。
 - 注意：机器数/建筑能耗需要 `building` 字段（运行时导出）；M3 的配方树只算物料，
   M4b 起改用 `kb_plan` 算机器与电力。
 
-### `kb_plan(item, rate, depth?, recipeId?, buildingTier?, buildingId?, beltSpeed?)`
+### `kb_plan(item, rate, depth?, recipeId?, buildingTier?, buildingId?, beltSpeed?, from?)`
 
 - `rate` **必填**：目标物品每分钟产量。
 - 机器数：`craftsPerMin × timeSeconds ÷ 60 ÷ speed`，再**向上取整**；
@@ -172,6 +174,7 @@ Wiki/Tutorial/*-<lang>.txt   ──game_export_text─────────�
   取档（`base` / `mk2` / `mk3`）；`buildingId` 可直接指定。
 - 电力：`buildingCount × workEnergyPerTick × 60 ÷ 1000`（kW），不含待机与电网损耗。
 - 传送带：每条输入流按 `beltSpeed`（默认 6 个/秒）折算，取最大路数。
+- `from`：与 `kb_recipe_tree` 同口径；蓝图生成默认 `ore`，可用 `smelted` 从铁块/钛块开始。
 - 原料/副产物：直接复用 `kb_recipe_tree` 的结果（同一套抵扣规则）。
 - **不建模**（写在 `assumptions` 里，必须转述给玩家）：增产剂、矿脉产率、建筑堆叠。
 - 离线 KB 没有 `prefabDesc` ⇒ 没有 `building`，机器数按 1x 估算并给出 warning；

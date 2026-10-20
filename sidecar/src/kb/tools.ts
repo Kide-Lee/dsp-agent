@@ -186,6 +186,9 @@ export function createKbTools(store: KnowledgeStore): ToolDefinition[] {
       rate: Type.Optional(Type.Number({ exclusiveMinimum: 0, description: '目标每分钟产量；给出时忽略 amount' })),
       depth: Type.Optional(Type.Integer({ minimum: 1, maximum: 16, description: '递归深度，默认 8' })),
       recipeId: Type.Optional(Type.Integer({ description: '可选：指定根物品的配方 id（替代配方）' })),
+      from: Type.Optional(
+        Type.String({ description: '起点：ore（默认，从原矿）/ smelted（从冶炼产物）/ 物品名或 id' }),
+      ),
     }),
     async execute(_toolCallId, params) {
       const kb = store.snapshot;
@@ -198,12 +201,27 @@ export function createKbTools(store: KnowledgeStore): ToolDefinition[] {
           details: { ok: false, error: { code: 'bad_request', message: 'item 不能为空' } },
         };
       }
+      const fromRaw = typeof args['from'] === 'string' ? args['from'].trim() : '';
+      let from: 'ore' | 'smelted' | number | undefined;
+      if (fromRaw === 'ore' || fromRaw === 'smelted') {
+        from = fromRaw;
+      } else if (fromRaw) {
+        const fromItem = kb.resolveItem(fromRaw);
+        if (!fromItem) {
+          return {
+            content: [{ type: 'text', text: `[bad_request] 找不到起点物品：${fromRaw}` }],
+            details: { ok: false, error: { code: 'bad_request', message: `找不到起点物品：${fromRaw}` } },
+          };
+        }
+        from = fromItem.id;
+      }
       try {
         const result = kb.recipeTree(item, {
           amount: typeof args['amount'] === 'number' ? args['amount'] : undefined,
           rate: typeof args['rate'] === 'number' ? args['rate'] : undefined,
           depth: typeof args['depth'] === 'number' ? args['depth'] : undefined,
           recipeId: typeof args['recipeId'] === 'number' ? args['recipeId'] : undefined,
+          ...(from !== undefined ? { from } : {}),
         });
         const unit = result.perMinute ? '/min' : '';
         const direct = result.tree.inputs
@@ -275,6 +293,9 @@ export function createKbTools(store: KnowledgeStore): ToolDefinition[] {
       beltSpeed: Type.Optional(
         Type.Number({ exclusiveMinimum: 0, description: '单条带吞吐（个/秒），默认 6（Mk.I）' }),
       ),
+      from: Type.Optional(
+        Type.String({ description: '起点：ore（默认，从原矿）/ smelted（从冶炼产物）/ 物品名或 id' }),
+      ),
     }),
     async execute(_toolCallId, params) {
       const kb = store.snapshot;
@@ -299,6 +320,20 @@ export function createKbTools(store: KnowledgeStore): ToolDefinition[] {
       const buildingTier =
         tierRaw === 'mk2' || tierRaw === 'mk3' || tierRaw === 'base' ? tierRaw : undefined;
 
+      const fromRaw = typeof args['from'] === 'string' ? args['from'].trim() : '';
+      let from: 'ore' | 'smelted' | number | undefined;
+      if (fromRaw === 'ore' || fromRaw === 'smelted') {
+        from = fromRaw;
+      } else if (fromRaw) {
+        const fromItem = kb.resolveItem(fromRaw);
+        if (!fromItem) {
+          return {
+            content: [{ type: 'text', text: `[bad_request] 找不到起点物品：${fromRaw}` }],
+            details: { ok: false, error: { code: 'bad_request', message: `找不到起点物品：${fromRaw}` } },
+          };
+        }
+        from = fromItem.id;
+      }
       try {
         const result = kb.plan(item, {
           rate,
@@ -307,6 +342,7 @@ export function createKbTools(store: KnowledgeStore): ToolDefinition[] {
           ...(buildingTier ? { buildingTier } : {}),
           buildingId: typeof args['buildingId'] === 'number' ? args['buildingId'] : undefined,
           beltSpeed: typeof args['beltSpeed'] === 'number' ? args['beltSpeed'] : undefined,
+          ...(from !== undefined ? { from } : {}),
         });
 
         const machines = result.recipes

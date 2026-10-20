@@ -222,6 +222,8 @@ export interface RecipeTreeResult {
 // ---------------------------------------------------------------- 产线规划（M4b）
 
 export interface PlanOptions {
+  /** 从哪一层开始：ore（默认，从原矿）/ smelted（从冶炼产物）/ 物品 id（从该中间产物）。 */
+  from?: 'ore' | 'smelted' | number;
   /** 目标物品的每分钟产量。 */
   rate: number;
   /** 展开深度；与 kb_recipe_tree 同一口径。 */
@@ -257,6 +259,11 @@ export interface PlanRecipeRow {
   powerKw: number;
   inputsPerMin: { itemId: number; item: string; amount: number }[];
   beltsPerInput: number;
+  /** 这一行配方在本链里被需要的那个产物；多产物配方用它区分主/副产。 */
+  primaryItemId?: number;
+  primaryItem?: string;
+  /** 本行按 craftsPerMin 折算后的全部产出（含副产物）。 */
+  outputsPerMin?: { itemId: number; item: string; amount: number }[];
 }
 
 export interface PlanResult {

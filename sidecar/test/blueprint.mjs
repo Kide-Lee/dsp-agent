@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { gzipSync } from 'node:zlib';
 import { BlueprintClient, createBlueprintTools, inspectBlueprintText, BLUEPRINT_TOOL_NAMES } from '../dist/blueprint/tools.js';
+import { BlueprintWorkspace } from '../dist/blueprint/workspace.js';
 
 let passed = 0;
 let failed = 0;
@@ -120,25 +121,38 @@ console.log('\n── 4. 保存到游戏蓝图目录 ──');
 {
   const dir = mkdtempSync(join(tmpdir(), 'icarus-bp-'));
   process.env.ICARUS_BLUEPRINT_DIR = dir;
-  const saved = JSON.parse(await run('blueprint_save', { path: '产线/卡西米尔晶体/卡西米尔晶体 300/min.txt' }));
+  const ws = new BlueprintWorkspace({ root: dir });
+  const saveTools = createBlueprintTools(client, undefined, undefined, undefined, ws);
+  const saveByName = Object.fromEntries(saveTools.map((tool) => [tool.name, tool]));
+  const save = async (name, params) => JSON.parse((await saveByName[name].execute('save_1', params)).content[0].text);
+
+  const saved = await save('blueprint_save', { path: '产线/卡西米尔晶体/卡西米尔晶体 300/min.txt' });
   check('saved=true', saved.saved === true, JSON.stringify(saved));
-  const file = join(dir, saved.fileName);
+  check('默认保存到 IcarusII', saved.relPath.startsWith('IcarusII/'), saved.relPath);
+  const file = join(dir, saved.relPath);
   check('文件已写入', existsSync(file));
   check('内容与仓库一致', readFileSync(file, 'utf8') === validText);
   check('默认文件名可用', saved.fileName.includes('卡西米尔') && saved.fileName.endsWith('.txt'), saved.fileName);
   check('保留许可', saved.license === 'CC BY-NC-SA 4.0');
 
-  const second = JSON.parse(await run('blueprint_save', { path: '产线/卡西米尔晶体/卡西米尔晶体 300/min.txt' }));
+  const second = await save('blueprint_save', { path: '产线/卡西米尔晶体/卡西米尔晶体 300/min.txt' });
   check('同名自动加序号', second.fileName.endsWith('(2).txt'), second.fileName);
 
-  const overwritten = JSON.parse(await run('blueprint_save', { path: '产线/卡西米尔晶体/卡西米尔晶体 300/min.txt', overwrite: true }));
+  const overwritten = await save('blueprint_save', { path: '产线/卡西米尔晶体/卡西米尔晶体 300/min.txt', overwrite: true });
   check('overwrite 覆盖原文件', overwritten.fileName === saved.fileName);
 
-  const evil = JSON.parse(await run('blueprint_save', { path: '产线/卡西米尔晶体/卡西米尔晶体 300/min.txt', name: '../evil/name' }));
+  const nested = await save('blueprint_save', {
+    path: '产线/卡西米尔晶体/卡西米尔晶体 300/min.txt',
+    dir: 'IcarusII/子目录',
+    name: '嵌套',
+  });
+  check('可保存到任意子目录', nested.relPath === 'IcarusII/子目录/嵌套.txt', nested.relPath);
+
+  const evil = await save('blueprint_save', { path: '产线/卡西米尔晶体/卡西米尔晶体 300/min.txt', name: '../evil/name' });
   check('非法文件名被清洗', !evil.fileName.includes('/') && !evil.fileName.includes('..'), evil.fileName);
 
-  const bad = await run('blueprint_save', { path: '产线/坏.txt' });
-  check('坏蓝图不保存', bad.includes('[blueprint_invalid]'));
+  const bad = (await saveByName['blueprint_save'].execute('save_bad', { path: '产线/坏.txt' })).content[0].text;
+  check('坏蓝图不保存', bad.includes('[blueprint_invalid]'), bad.slice(0, 120));
 
   rmSync(dir, { recursive: true, force: true });
   delete process.env.ICARUS_BLUEPRINT_DIR;
@@ -181,7 +195,7 @@ console.log('\n── 5. header/二进制元数据（卡片用） ──');
 }
 
 console.log('\n── 6. 元数据 ──');
-check('四个蓝图工具', tools.length === 4 && BLUEPRINT_TOOL_NAMES.length === 4);
+check('五个蓝图工具', tools.length === 5 && BLUEPRINT_TOOL_NAMES.length === 5);
 check('描述带署名', byName['blueprint_search'].description.includes('CC BY-NC-SA 4.0'));
 
 console.log(`\n${failed === 0 ? '✅' : '❌'} blueprint 测试${failed === 0 ? '全部通过' : '失败'}（${passed} 项，失败 ${failed}）`);

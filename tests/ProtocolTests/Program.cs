@@ -397,6 +397,18 @@ namespace IcarusII.Tests
             var bind = Protocol.BuildSaveBind("3f2a91c4d8e05b17", "我的档");
             Eq("save.bind saveKey", "3f2a91c4d8e05b17", bind["saveKey"].AsString());
             Eq("save.bind saveName", "我的档", bind["saveName"].AsString());
+            Check("save.bind 默认不带 blueprintTiers", !bind.Has("blueprintTiers"));
+
+            var tiers = JsonValue.NewObject();
+            tiers.Set("assembler", 2);
+            tiers.Set("belt", 1);
+            tiers.Set("inserter", 3);
+            tiers.Set("piler", true);
+            var bindTiers = Protocol.BuildSaveBind("save-a", "档 A", tiers);
+            Eq("save.bind tiers assembler", 2L, bindTiers["blueprintTiers"]["assembler"].AsLong());
+            Eq("save.bind tiers belt", 1L, bindTiers["blueprintTiers"]["belt"].AsLong());
+            Check("save.bind tiers piler", bindTiers["blueprintTiers"]["piler"].AsBool());
+            Check("save.bind tiers 是可选字段", !Protocol.BuildSaveBind("save-a", "档 A").Has("blueprintTiers"));
 
             // 解绑：字段必须**存在且为 null**，sidecar 靠这个区分"解绑"与"没提"
             var unbind = Protocol.BuildSaveBind(null, null);
@@ -423,16 +435,24 @@ namespace IcarusII.Tests
             var withHistory = SaveBoundInfo.Parse(JsonValue.Parse(
                 "{\"saveKey\":\"3f2a\",\"existed\":true,\"messageCount\":2,\"history\":[" +
                 "{\"role\":\"user\",\"text\":\"上次的问题\",\"timestamp\":123}," +
-                "{\"role\":\"assistant\",\"text\":\"上次的回答\"}]}"));
+                "{\"role\":\"assistant\",\"text\":\"上次的回答\",\"gameTime\":\"08:42\"}]}"));
             Eq("save.bound history 条数", 2, withHistory.History.Count);
             Eq("history 第一条 role", "user", withHistory.History[0].Role);
             Eq("history 第一条 text", "上次的问题", withHistory.History[0].Text);
             Eq("history 第一条 timestamp", 123L, withHistory.History[0].Timestamp);
             Eq("history 第二条 role", "assistant", withHistory.History[1].Role);
+            Eq("history 第二条 gameTime", "08:42", withHistory.History[1].GameTime);
 
             var noBound = SaveBoundInfo.Parse(null);
             Eq("null 载荷的安全默认", 0, noBound.MessageCount);
             Check("null 载荷的 SaveKey 为空", string.IsNullOrEmpty(noBound.SaveKey));
+
+            // ---- 附录 A.10：回存回答游戏时间 ----
+            Eq("reply.time 类型名", "reply.time", Protocol.ReplyTime);
+            var replyTime = Protocol.BuildReplyTime("问题", "回答", "08:42");
+            Eq("reply.time prompt", "问题", replyTime["prompt"].AsString());
+            Eq("reply.time reply", "回答", replyTime["reply"].AsString());
+            Eq("reply.time gameTime", "08:42", replyTime["gameTime"].AsString());
 
             // ---- 附录 A.7：删除对话回合 ----
             Eq("history.delete 类型名", "history.delete", Protocol.HistoryDelete);
@@ -552,13 +572,14 @@ namespace IcarusII.Tests
             Eq("消息类型常量", "blueprint_card", Protocol.BlueprintCard);
 
             var card = BlueprintCardInfo.Parse(JsonValue.Parse(
-                "{\"path\":\"C:\\\\bp\\\\电磁涡轮 20.txt\",\"fileName\":\"电磁涡轮 20.txt\"," +
+                "{\"path\":\"C:\\\\bp\\\\IcarusII\\\\电磁涡轮 20.txt\",\"relPath\":\"IcarusII/电磁涡轮 20.txt\",\"fileName\":\"电磁涡轮 20.txt\"," +
                 "\"name\":\"电磁涡轮 20\",\"item\":\"电磁涡轮\",\"itemId\":1206,\"rate\":20," +
                 "\"buildings\":24,\"width\":12,\"height\":5,\"author\":\"自动生成\"," +
                 "\"version\":\"1.2.3\",\"attributes\":\"\",\"description\":\"测试\"," +
                 "\"source\":\"generated\",\"license\":\"CC BY-NC-SA 4.0\"," +
                 "\"repository\":\"https://github.com/DSPBluePrints/FactoryBluePrints\"}"));
 
+            Eq("relPath", "IcarusII/电磁涡轮 20.txt", card.RelPath);
             Eq("fileName", "电磁涡轮 20.txt", card.FileName);
             Eq("name", "电磁涡轮 20", card.Name);
             Eq("item", "电磁涡轮", card.Item);

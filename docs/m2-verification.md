@@ -60,7 +60,7 @@ scripts/install.sh --game-dir "/path/to/Dyson Sphere Program"
 ## 5. 离线回归（无需游戏）
 
 ```bash
-dotnet run --project tests/ProtocolTests        # 189 项
+dotnet run --project tests/ProtocolTests        # 252 项
 cd sidecar && npm test                          # config 82 + 协议 57 + 目录 8 + tools 19 + pi-tools 32
 ```
 

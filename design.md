@@ -495,6 +495,20 @@ AgentRoot (RectTransform, 默认 inactive)
 
 **渲染策略**
 
+- **消息条目的静态结构固定在 prefab**：`ChatWindow.prefab` 的 `example-reply` 里放了
+  思考块、工具容器、正文、蓝图卡片网格和底部（游戏时间 + 复制按钮）。运行期只克隆这个模板、
+  绑定文字/图标/显隐和点击回调；思考/工具/正文/卡片共享同一条回复容器，不再由 C# 拼静态节点。
+- **蓝图卡片是固定尺寸双列网格**：用户调整后为单张 400×130，实机正文宽度约 864px，
+  一行 2 张；窄窗口落 1 张。卡片用 `litter-panel-cc` 圆角面板 + 左侧强调条，左栏照游戏
+  蓝图浏览器的文件卡（`blueprint-file-220px` 100×110 底板 + 80px 物品图标 + 压在底板上的
+  35px 缩略图文字；缩略图文字用 `Name`/`shortDesc`，卡片标题用 `RelPath` 存放路径），
+  介绍超出 70px 固定高度由 `RectMask2D` 裁掉；取消独立“查看”按钮，整张卡片点击查看，
+  脚注直接显示 `作者 · 创建日期 · 版本`，只保留直接挂在内容右下角的 48×20“使用”按钮。
+  卡片网格左侧无 padding，卡片左边缘与思考块/正文/脚注左对齐；脚注时间只显示 `08:42`，
+  复制按钮为 16×16 的 `copy` 图标、不再带文字。
+- **历史脚注的游戏时间由 sidecar 持久化**：mod 在每轮 `message{final}` 后发
+  `reply.time{prompt, reply, gameTime}`；sidecar 按存档写 `reply-times.jsonl`，后续
+  `save.bound.history` 的 assistant 消息带可选 `gameTime`，mod 回放时用它填脚注。
 - 使用游戏自己的 `UnityEngine.UI.Text`（来自被 DSP 定制的 `UnityEngine.UI.dll`）。该程序集在 `UnityEngine.UI.Youthcat` 命名空间下提供了定制文本栈：
   - `TextLayoutLocale`：按语言提供字体替换对（`LanguageFontPair {oldFont, newFont}`）与字距/缩进参数 ⇒ **中文字体由游戏自动处理**，无需自带字体。
   - `TextIconMapping`：把文本标签映射为内嵌图标（`GetIconInString`）⇒ AI 回复里可直接内联物品/建筑图标。
@@ -1222,6 +1236,10 @@ icarus-ii/
 | **M4b 能算** | `kb_plan`：按目标产量计算机器数/电力/传送带；KB 增加 `building.assemblerRecipeType`，缓存换 `r2` 强制重导 | 机器数与游戏面板一致（base/mk2 档位）；缺建筑参数时降级为 1x 并 warning；见 [docs/m4b-verification.md](docs/m4b-verification.md) |
 | **M4c 能析** | `game_analyze_area`：范围聚合建筑/配方/装机产能/耗电/物流设施/电网 | 与目测数量一致；装机口径与实际产出分开陈述 |
 | **M4d 能编** | `run_script`：QuickJS-WASM 只读沙箱 + `dsp.call` 复用同一工具注册表；单文件内联 WASM | 脚本可批量取数并聚合；越权工具/超时/无宿主全局都有测试；SEA 打包后仍可运行 |
+| **M4g 能查外网** | `wiki_search` / `wiki_page`：中英 DSP Wiki，带来源链接 | 外部内容显式标注不可信；失败返回 `wiki_unavailable` |
+| **M4h 能取蓝图** | `blueprint_search` / `blueprint_info` / `blueprint_save`：社区蓝图仓库检索、格式体检、直接保存 | 带作者/仓库/许可署名；路径清洗；同名不覆盖 |
+| **M4i 能看卡片** | 协议 A.9 `blueprint_card` + 聊天窗数据驱动卡片 + 历史回放 | 生成/下载/复制后出现卡片；重进存档可回放；删除回合一起消失 |
+| **M4j 能出蓝图** | `blueprint_generate`：KB `kb_plan` 的真实机器数 → dsp-calc 布局 → 写入蓝图目录；`from` 起点、rows 拆阶段、超高产量拆多张、save.bind 被动档位 | 60/min 电磁涡轮 29 台机器/7 阶段；300/min→3 张、600/min→5 张；见 [docs/m4j-verification.md](docs/m4j-verification.md) |
 | **M4 能动手** | 确认 UI + 令牌门禁 + `focus_camera`/`place_marker`/`open_panel`/`set_research` + 撤销 | 拒绝确认时无任何副作用（重点测试） |
 | **M5 完善** | 错误处理全覆盖、i18n 结构、**打包流水线（cjs bundle + SEA 注入 + 双平台产物）+ 体积优化评估**、README/安装文档、性能调优 | 冷启动 < 2s；连续对话 30 轮无卡顿与内存增长；发布包在干净机器上零附加依赖可用 |
 | **M6 扩展**（可选） | 更多 L2 工具（配方/物流/蓝图）、`DshAcpRuntime`、Web 配置页 | — |

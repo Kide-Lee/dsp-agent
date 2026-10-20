@@ -53,6 +53,8 @@ export const MessageType = {
   ToolActivity: 'tool_activity',
   // M4i：蓝图卡片（附录 A.9）
   BlueprintCard: 'blueprint_card',
+  // 回存回答完成时的游戏时间（附录 A.10）
+  ReplyTime: 'reply.time',
   // M3：拉取供应商的可用模型目录 / 检测 Key
   ModelCatalog: 'model.catalog',
   ProviderTest: 'provider.test',
@@ -364,9 +366,43 @@ export function parsePromptPayload(payload: JsonObject): PromptPayload | null {
 
 // ---------------------------------------------------------------- 存档绑定（附录 A.6）
 
+export interface BlueprintTiers {
+  /** 0 = Mk.I / 1 = Mk.II / 2 = Mk.III */
+  assembler?: number;
+  /** 0 = 黄带 / 1 = 绿带 / 2 = 蓝带 */
+  belt?: number;
+  /** 0..3（分拣器 / 高速 / 极速 / 集装） */
+  inserter?: number;
+  piler?: boolean;
+  stacking?: boolean;
+}
+
 export interface SaveBindPayload {
   saveKey: string | null;
   saveName: string | null;
+  /** 可选：玩家已解锁的蓝图档位；缺失时 sidecar 用默认档。 */
+  blueprintTiers?: BlueprintTiers | null;
+}
+
+function clampTier(value: unknown, min: number, max: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return Math.max(min, Math.min(max, Math.floor(value)));
+}
+
+/** 解析可选的 `blueprintTiers`；非法/空对象返回 null，不阻断 save.bind。 */
+export function parseBlueprintTiers(value: unknown): BlueprintTiers | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const tiers: BlueprintTiers = {};
+  const assembler = clampTier(row['assembler'], 0, 2);
+  const belt = clampTier(row['belt'], 0, 2);
+  const inserter = clampTier(row['inserter'], 0, 3);
+  if (assembler !== undefined) tiers.assembler = assembler;
+  if (belt !== undefined) tiers.belt = belt;
+  if (inserter !== undefined) tiers.inserter = inserter;
+  if (typeof row['piler'] === 'boolean') tiers.piler = row['piler'];
+  if (typeof row['stacking'] === 'boolean') tiers.stacking = row['stacking'];
+  return Object.keys(tiers).length > 0 ? tiers : null;
 }
 
 /**
@@ -384,6 +420,7 @@ export function parseSaveBindPayload(payload: JsonObject): SaveBindPayload | nul
   return {
     saveKey: key === null ? null : key,
     saveName: typeof name === 'string' && name.length > 0 ? name : null,
+    blueprintTiers: parseBlueprintTiers(payload['blueprintTiers']),
   };
 }
 
@@ -397,6 +434,32 @@ export interface HistoryMessage {
    * 老客户端忽略该字段，行为不变。
    */
   cards?: BlueprintCardPayload[];
+  /** 该回答完成时的游戏时间 HH:mm（附录 A.6/A.10）。 */
+  gameTime?: string;
+}
+
+/** `reply.time` 载荷（附录 A.10）：mod 回存回答完成时的游戏时间。 */
+export interface ReplyTimePayload {
+  prompt: string;
+  reply?: string;
+  gameTime: string;
+}
+
+export function parseReplyTimePayload(payload: JsonObject): ReplyTimePayload | null {
+  const prompt = payload['prompt'];
+  const reply = payload['reply'];
+  const gameTime = payload['gameTime'];
+  if (typeof prompt !== 'string' || prompt.trim().length === 0) return null;
+  if (reply !== undefined && reply !== null && typeof reply !== 'string') return null;
+  if (typeof gameTime !== 'string') return null;
+  const time = gameTime.trim();
+  if (time.length === 0 || time.length > 16) return null;
+  const trimmedReply = typeof reply === 'string' ? reply.trim() : '';
+  return {
+    prompt: prompt.trim(),
+    ...(trimmedReply ? { reply: trimmedReply } : {}),
+    gameTime: time,
+  };
 }
 
 export function buildSaveBoundPayload(args: {
@@ -485,11 +548,13 @@ export function buildToolActivityPayload(args: ToolActivityPayload): JsonObject 
 
 // ---------------------------------------------------------------- 蓝图卡片（附录 A.9）
 
-export type BlueprintCardSource = 'generated' | 'downloaded' | 'copied';
+export type BlueprintCardSource = 'generated' | 'downloaded' | 'copied' | 'written';
 
 /** 蓝图卡片：所有字段都由工具结果推导，缺失就不发。 */
 export interface BlueprintCardPayload {
   fileName: string;
+  /** 相对蓝图根的路径（POSIX），例如 `IcarusII/a.txt`。 */
+  relPath?: string;
   path?: string;
   name?: string;
   item?: string;
@@ -511,6 +576,7 @@ export function buildBlueprintCardPayload(args: BlueprintCardPayload): JsonObjec
   const payload: JsonObject = { fileName: args.fileName };
   const optional: (keyof BlueprintCardPayload)[] = [
     'path',
+    'relPath',
     'name',
     'item',
     'itemId',

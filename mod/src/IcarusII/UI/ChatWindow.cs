@@ -146,8 +146,15 @@ namespace IcarusII.UI
             public GameObject Go;
             /// <summary>工具/思考块（删除整轮时一起移除）；普通消息为 null。</summary>
             public Block Block;
-            /// <summary>蓝图卡片数据（只有 <see cref="LineKind.Blueprint"/> 会填）。</summary>
-            public BlueprintCardInfo Card;
+            /// <summary>这条回复里的蓝图卡片（可多张，一行 2~3 张）。</summary>
+            public List<BlueprintCardInfo> Cards;
+
+            /// <summary>助手回复折叠后的思考正文；历史回放时用来重建思考块。</summary>
+            public string ThinkingText;
+            /// <summary>思考块收起时显示的摘要。</summary>
+            public string ThinkingSummary;
+            /// <summary>回复底部的游戏时间（创建时记录，历史回放不再取当前时间）。</summary>
+            public string Time;
         }
 
         private struct Item
@@ -159,6 +166,8 @@ namespace IcarusII.UI
             public int TurnId;
             /// <summary>来自 prefab 示例模板（保留它烘焙的字体/颜色），而不是代码兜底构建。</summary>
             public bool FromPrefab;
+            /// <summary>助手回复：prefab 回复模板的绑定结果；旧 prefab/裸文本为 null。</summary>
+            public ReplyView Reply;
         }
 
         /// <summary>chat-index 里的一条：一个用户提问 + 它的回答。</summary>
@@ -242,6 +251,7 @@ namespace IcarusII.UI
         private sealed class Block
         {
             public GameObject Go;
+            public Image Accent;
             public Text Chevron;
             public Text Title;
             public LayoutElement TitleLayout;
@@ -259,6 +269,59 @@ namespace IcarusII.UI
             /// <summary>工具块可选的截图节点（只有 game_capture_view 会填）。</summary>
             public RectTransform ImageRt;
             public ToolImageSprite ImageOwner;
+
+            /// <summary>这个块属于哪条回复；思考/工具块都挂在回复模板里，旧 prefab 为 null。</summary>
+            public ReplyView Reply;
+        }
+
+        /// <summary>
+        /// prefab 里 <c>example-reply</c> 的绑定结果。
+        ///
+        /// 节点结构（静态布局全部在 ChatWindow.prefab 里）：
+        ///   example-reply
+        ///   ├── thinking-block     折叠思考块
+        ///   ├── tools              工具块容器（tool-template 是克隆源）
+        ///   ├── body               助手正文
+        ///   ├── blueprint-cards    固定卡片网格（blueprint-card-template 是克隆源）
+        ///   └── footer             time + copy
+        ///
+        /// 运行期只改文字、显隐、图标和点击回调，不再补建/挪动静态节点。
+        /// </summary>
+        private sealed class ReplyView
+        {
+            public GameObject Go;
+            public Text Body;
+            public GameObject Footer;
+            public Text Time;
+            public Button Copy;
+            public Text CopyLabel;
+            public RectTransform ThinkingRoot;
+            public Block Thinking;
+            public RectTransform Tools;
+            public RectTransform ToolTemplate;
+            public RectTransform BlueprintCards;
+            public RectTransform CardTemplate;
+            public readonly List<CardView> CardViews = new List<CardView>();
+            public string CopyText = string.Empty;
+        }
+
+        /// <summary>一张固定尺寸蓝图卡片的绑定结果。</summary>
+        private sealed class CardView
+        {
+            public GameObject Go;
+            public BlueprintCardInfo Card;
+            public GameObject ThumbIconRoot;
+            public Image ThumbIcon;
+            public GameObject ThumbFallback;
+            public Text ThumbLabel;
+            public Text Name;
+            public Text Description;
+            public Text Meta;
+            public Button CardButton;
+            public Button ViewButton;
+            public Button UseButton;
+            public Text ViewLabel;
+            public Text UseLabel;
         }
 
         /// <summary>正在流式输出的那条消息（下标指向 _items）；-1 表示没有。</summary>
@@ -269,6 +332,8 @@ namespace IcarusII.UI
         // prefab 里的 example-* 示例就是消息模板：样式只在 prefab 定义一次，运行期克隆。
         private RectTransform _userTemplate;
         private RectTransform _assistantTemplate;
+        /// <summary>完整回复模板（思考块 + 工具容器 + 正文 + 蓝图卡片 + 时间/复制）。</summary>
+        private RectTransform _replyTemplate;
 
         // ---- chat-index：左侧提问索引 ----
         private RectTransform _chatIndex;
@@ -468,6 +533,7 @@ namespace IcarusII.UI
             _streamItem = -1;
             _userTemplate = null;
             _assistantTemplate = null;
+            _replyTemplate = null;
             _chatIndex = null;
             _chatIndexContent = null;
             _chatIndexTemplate = null;
@@ -1537,7 +1603,8 @@ namespace IcarusII.UI
         }
 
         /// <summary>追加一条带说话人前缀的消息（助手 / 工具输出）。</summary>
-        public void AppendLine(string speaker, string text)
+        /// <param name="gameTime">历史回放时的原始游戏时间；当场回答传 null。</param>
+        public void AppendLine(string speaker, string text, string gameTime = null)
         {
             if (text == null) return;
 
@@ -1545,7 +1612,7 @@ namespace IcarusII.UI
                 ? string.Empty
                 : $"<color=#{ColorUtility.ToHtmlStringRGB(_accent)}>{Escape(speaker)}</color>  ";
 
-            AddMessage(LineKind.Assistant, prefix + text);
+            AddMessage(LineKind.Assistant, prefix + text, gameTime);
             _awaitingResponse = false;
         }
 
@@ -1579,38 +1646,176 @@ namespace IcarusII.UI
         /// <summary>
         /// 在对话末尾追加一张蓝图卡片（协议附录 A.9）。
         ///
-        /// 这是**数据驱动的消息卡片**，与工具块/思考块同类：节点在运行期按数据创建，
-        /// 不新增 prefab 静态结构。sidecar 在本轮 final 消息之后才发，
-        /// 所以卡片天然排在整轮回答的末尾。
+        /// 新 prefab 里卡片被克隆到回复的 fixed-size 网格中，一行最多 3 张；
+        /// 旧 prefab 没有回复模板时仍走代码构建的兜底路径。
         /// </summary>
         public void AppendBlueprintCard(BlueprintCardInfo card)
         {
             if (card == null) return;
-
-            var line = new Line
-            {
-                Kind = LineKind.Blueprint,
-                Text = card.DisplayTitle,
-                TurnId = _currentTurnId,
-                Card = card,
-            };
+            if (string.IsNullOrEmpty(card.CreatedAt))
+                card.CreatedAt = DateTime.Now.ToString("yyyy-MM-dd");
 
             // 窗口还没 Create 时只记逻辑行；Create 末尾由 RebuildTranscript 补建。
             if (_content == null)
             {
-                _lines.Add(line);
+                _lines.Add(new Line
+                {
+                    Kind = LineKind.Blueprint,
+                    Text = card.DisplayTitle,
+                    TurnId = _currentTurnId,
+                    Cards = new List<BlueprintCardInfo> { card },
+                });
                 TrimHistory();
                 _dirty = true;
                 return;
             }
 
+            if (_replyTemplate != null)
+            {
+                var index = FindReplyItemForCard();
+                if (index >= 0 && index < _items.Count && _items[index].Reply != null)
+                {
+                    var item = _items[index];
+                    var cardView = AddCard(item.Reply, card);
+                    if (cardView != null)
+                    {
+                        if (_streamItem == index && _stream.Length == 0 && !_awaitingResponse && _thinking == null) _streamItem = -1;
+                        var lineIndex = FindLineIndex(item.Go);
+                        if (lineIndex >= 0)
+                        {
+                            var line = _lines[lineIndex];
+                            if (line.Cards == null) line.Cards = new List<BlueprintCardInfo>();
+                            line.Cards.Add(card);
+                            _lines[lineIndex] = line;
+                        }
+                        else
+                        {
+                            _lines.Add(new Line
+                            {
+                                Kind = LineKind.Assistant,
+                                Text = string.Empty,
+                                TurnId = _currentTurnId,
+                                Go = item.Go,
+                                Cards = new List<BlueprintCardInfo> { card },
+                                Time = GameClock(),
+                            });
+                        }
+                        TrimHistory();
+                        _dirty = true;
+                        ScrollToBottom();
+                        return;
+                    }
+                }
+            }
+
             var go = CreateBlueprintCard(card);
             if (go == null) return;
-            line.Go = go;
-            _lines.Add(line);
+            _lines.Add(new Line
+            {
+                Kind = LineKind.Blueprint,
+                Text = card.DisplayTitle,
+                TurnId = _currentTurnId,
+                Go = go,
+                Cards = new List<BlueprintCardInfo> { card },
+            });
             TrimHistory();
             _dirty = true;
             ScrollToBottom();
+        }
+
+        /// <summary>克隆 prefab 的固定卡片模板并绑定一张卡片。</summary>
+        private CardView AddCard(ReplyView reply, BlueprintCardInfo card)
+        {
+            if (reply == null || reply.CardTemplate == null || reply.BlueprintCards == null || card == null)
+                return null;
+
+            var go = UnityEngine.Object.Instantiate(reply.CardTemplate.gameObject, reply.BlueprintCards, false);
+            go.name = "blueprint-card-" + (++_itemSeq);
+            go.SetActive(true);
+            var view = BindCardView(go);
+            if (view == null)
+            {
+                UnityEngine.Object.Destroy(go);
+                return null;
+            }
+            reply.BlueprintCards.gameObject.SetActive(true);
+            view.Card = card;
+            ApplyCard(view, card);
+            reply.CardViews.Add(view);
+            return view;
+        }
+
+        private void AddCards(ReplyView reply, List<BlueprintCardInfo> cards)
+        {
+            if (reply == null || cards == null) return;
+            for (int i = 0; i < cards.Count; i++)
+            {
+                if (cards[i] != null) AddCard(reply, cards[i]);
+            }
+        }
+
+        /// <summary>绑定一张固定卡片：只查节点、接回调，不改固定布局。</summary>
+        private CardView BindCardView(GameObject go)
+        {
+            if (go == null) return null;
+            var t = go.transform;
+            var view = new CardView { Go = go };
+
+            var thumb = t.Find("thumb");
+            if (thumb != null)
+            {
+                var icon = thumb.Find("icon");
+                view.ThumbIconRoot = icon != null ? icon.gameObject : null;
+                view.ThumbIcon = icon != null ? icon.GetComponent<Image>() : null;
+                var fallback = thumb.Find("fallback");
+                view.ThumbFallback = fallback != null ? fallback.gameObject : null;
+                view.ThumbLabel = FindChildText(thumb, "label");
+            }
+
+            view.Name = FindChildText(t, "content/name");
+            view.Description = FindChildText(t, "content/desc-mask/description");
+            view.Meta = FindChildText(t, "content/meta");
+
+            // 新 prefab 取消了“查看”按钮，整张卡片就是查看入口。
+            view.CardButton = go.GetComponent<Button>();
+            if (view.CardButton != null)
+            {
+                view.CardButton.onClick.RemoveAllListeners();
+                view.CardButton.onClick.AddListener(() => RequestCardAction(view.Card, BlueprintCardAction.Inspect));
+            }
+
+            // 最新 prefab 把“使用”直接挂在 content 右下角；旧 prefab 在 actions 容器里。
+            var use = t.Find("content/use");
+            if (use == null) use = t.Find("content/actions/use");
+            if (use != null)
+            {
+                view.UseButton = use.GetComponent<Button>();
+                view.UseLabel = FindChildText(use, "label");
+            }
+
+            // 最新 prefab 已取消独立“查看”按钮，这里仅为旧 prefab 保留兼容。
+            var viewButton = t.Find("content/view");
+            if (viewButton == null) viewButton = t.Find("content/actions/view");
+            if (viewButton != null)
+            {
+                view.ViewButton = viewButton.GetComponent<Button>();
+                view.ViewLabel = FindChildText(viewButton, "label");
+            }
+            if (view.ViewLabel != null) view.ViewLabel.text = Strings.Get("blueprint.card.view");
+            if (view.UseLabel != null) view.UseLabel.text = Strings.Get("blueprint.card.paste");
+
+            // 旧 prefab 仍然有独立“查看”按钮时保持兼容。
+            if (view.ViewButton != null)
+            {
+                view.ViewButton.onClick.RemoveAllListeners();
+                view.ViewButton.onClick.AddListener(() => RequestCardAction(view.Card, BlueprintCardAction.Inspect));
+            }
+            if (view.UseButton != null)
+            {
+                view.UseButton.onClick.RemoveAllListeners();
+                view.UseButton.onClick.AddListener(() => RequestCardAction(view.Card, BlueprintCardAction.Paste));
+            }
+            return view;
         }
 
         /// <summary>
@@ -1878,6 +2083,7 @@ namespace IcarusII.UI
             if (source == "generated") return Strings.Get("blueprint.card.source.generated");
             if (source == "downloaded") return Strings.Get("blueprint.card.source.downloaded");
             if (source == "copied") return Strings.Get("blueprint.card.source.copied");
+            if (source == "written") return Strings.Get("blueprint.card.source.written");
             return null;
         }
 
@@ -1939,13 +2145,34 @@ namespace IcarusII.UI
                 return;
             }
 
+            ReplyView reply = null;
+            RectTransform toolsParent = null;
+            GameObject toolTemplate = null;
+            if (_replyTemplate != null)
+            {
+                reply = EnsureReplyForTurn();
+                if (reply != null && reply.Tools != null)
+                {
+                    toolsParent = reply.Tools;
+                    toolsParent.gameObject.SetActive(true);
+                    toolTemplate = reply.ToolTemplate != null ? reply.ToolTemplate.gameObject : null;
+                }
+                else
+                {
+                    reply = null;
+                }
+            }
+
             var block = CreateBlock("tool-block",
                 title: Strings.Get("tool.title", name ?? Strings.Get("tool.name")),
                 summary: Strings.Get("tool.running"),
                 body: BuildToolBody(argsText, null),
                 expanded: false,
                 // 与「思考」块同色：工具调用不该比思考更亮（5x 文字材质下白色会像发光）。
-                titleColor: _textDim);
+                titleColor: _textDim,
+                parent: toolsParent,
+                template: toolTemplate,
+                reply: reply);
             if (block == null) return;
 
             block.Args = argsText;
@@ -2087,16 +2314,40 @@ namespace IcarusII.UI
             if (_content == null) return;
             if (_thinking != null && _thinking.Go != null) return;
 
-            var block = CreateBlock("thinking-block",
-                title: Strings.Get("thinking.title.streaming"),
-                summary: string.Empty,
-                body: string.Empty,
-                expanded: true,
-                titleColor: _accent);
+            Block block = null;
+            ReplyView reply = null;
+            if (_replyTemplate != null)
+            {
+                reply = EnsureReplyForTurn();
+                if (reply != null && reply.ThinkingRoot != null)
+                {
+                    block = reply.Thinking;
+                    if (block == null)
+                    {
+                        block = BindReplyBlock(reply.ThinkingRoot.gameObject);
+                        reply.Thinking = block;
+                    }
+                    block.Reply = reply;
+                    reply.ThinkingRoot.gameObject.SetActive(true);
+                }
+            }
+
+            if (block == null)
+            {
+                block = CreateBlock("thinking-block",
+                    title: Strings.Get("thinking.title.streaming"),
+                    summary: string.Empty,
+                    body: string.Empty,
+                    expanded: true,
+                    titleColor: _accent);
+            }
             if (block == null) return;
 
+            SetBlock(block, Strings.Get("thinking.title.streaming"), string.Empty, string.Empty,
+                expanded: true, titleColor: _accent, rebuild: false);
             _thinking = block;
             _thinkingText.Length = 0;
+            _dirty = true;
         }
 
         /// <summary>追加一段思考增量（只更新块正文，不进聊天正文）。</summary>
@@ -2117,32 +2368,74 @@ namespace IcarusII.UI
         /// 结束思考块：收起并显示摘要。正文开始出现（或本轮结束/出错）时调用。
         /// 思考内容为空时把块整块移除，不留一个空壳。
         /// </summary>
-        public void EndThinking()
+        /// <param name="finalize">
+        /// true = 本轮已经结束（idle/final/error）：没有流式正文时把回复收尾，
+        /// 下一条消息不会复用同一块。正文即将开始时保持 false，让 BeginStream 复用。
+        /// </param>
+        public void EndThinking(bool finalize = false)
         {
             var block = _thinking;
             _thinking = null;
-            if (block == null) return;
+            if (block == null)
+            {
+                if (finalize && _stream.Length == 0) FinalizeIdleReply();
+                return;
+            }
 
             var text = _thinkingText.ToString().Trim();
             _thinkingText.Length = 0;
-            if (block.Go == null) return;
+            if (block.Go == null)
+            {
+                if (finalize && _stream.Length == 0) FinalizeIdleReply();
+                return;
+            }
 
             if (string.IsNullOrEmpty(text))
             {
-                RemoveBlock(block);
+                var reply = block.Reply;
+                if (reply != null && reply.ThinkingRoot != null)
+                {
+                    // prefab 节点保留：同一回合后续若又出 reasoning，直接复用这块，
+                    // 避免销毁后 ThinkingRoot 变成伪 null 只能退回代码补建。
+                    if (block.Body != null) block.Body.text = string.Empty;
+                    block.RawBody = string.Empty;
+                    if (block.Go != null) block.Go.SetActive(false);
+                }
+                else
+                {
+                    RemoveBlock(block);
+                }
+                if (finalize && _stream.Length == 0) FinalizeIdleReply();
                 return;
             }
 
             SetBlock(block, Strings.Get("thinking.title"), Summarize(text, 48), text,
                 expanded: false, titleColor: _textDim);
-            _lines.Add(new Line
+            if (block.Reply != null)
             {
-                Kind = LineKind.System,
-                Text = Strings.Get("thinking.title") + " " + block.Summary.text,
-                TurnId = _currentTurnId,
-                Go = block.Go,
-                Block = block,
-            });
+                var reply = block.Reply;
+                var lineIndex = FindLineIndex(reply.Go);
+                if (lineIndex >= 0)
+                {
+                    var line = _lines[lineIndex];
+                    line.ThinkingText = text;
+                    line.ThinkingSummary = block.Summary != null ? block.Summary.text : string.Empty;
+                    _lines[lineIndex] = line;
+                }
+            }
+            else
+            {
+                _lines.Add(new Line
+                {
+                    Kind = LineKind.System,
+                    Text = Strings.Get("thinking.title") + " " + block.Summary.text,
+                    TurnId = _currentTurnId,
+                    Go = block.Go,
+                    Block = block,
+                });
+            }
+
+            if (finalize && _stream.Length == 0) FinalizeIdleReply();
             TrimHistory();
             _dirty = true;
         }
@@ -2154,11 +2447,25 @@ namespace IcarusII.UI
         /// 极淡的青色底 + 左侧 2px 强调条 + 一行 header + 展开后的正文。
         /// </summary>
         private Block CreateBlock(string name, string title, string summary, string body,
-            bool expanded, Color titleColor)
+            bool expanded, Color titleColor, RectTransform parent = null, GameObject template = null,
+            ReplyView reply = null)
         {
             if (_content == null) return null;
 
-            var rootRt = UiFactory.Node(name, _content);
+            // 新 prefab：工具块直接克隆回复模板里的 tool-template，静态样式全部来自 prefab。
+            if (template != null && parent != null)
+            {
+                var clone = UnityEngine.Object.Instantiate(template, parent, false);
+                clone.name = name + "-" + (++_itemSeq);
+                clone.SetActive(true);
+                var prefabBlock = BindReplyBlock(clone);
+                prefabBlock.Reply = reply;
+                AddBlockItem(prefabBlock, insideReply: true);
+                SetBlock(prefabBlock, title, summary, body, expanded, titleColor, rebuild: false);
+                return prefabBlock;
+            }
+
+            var rootRt = UiFactory.Node(name, parent != null ? parent : _content);
             rootRt.anchorMin = new Vector2(0f, 1f);
             rootRt.anchorMax = new Vector2(1f, 1f);
             rootRt.pivot = new Vector2(0.5f, 1f);
@@ -2271,17 +2578,19 @@ namespace IcarusII.UI
             var block = new Block
             {
                 Go = rootRt.gameObject,
+                Accent = bar,
                 Chevron = chevron,
                 Title = titleText,
                 TitleLayout = titleLe,
                 Summary = summaryText,
                 Body = bodyText,
                 Expanded = expanded,
+                Reply = reply,
             };
             nativeHeader.onClick += _ => ToggleBlock(block);
 
             // 先入 _items（TrimHistory 才能按条数裁），再套内容。
-            AddBlockItem(block);
+            AddBlockItem(block, insideReply: reply != null);
             SetBlock(block, title, summary, body, expanded, titleColor, rebuild: false);
             return block;
         }
@@ -2290,9 +2599,13 @@ namespace IcarusII.UI
             bool expanded, Color titleColor, bool rebuild = true)
         {
             if (block == null || block.Go == null) return;
+            if (block.Title == null || block.Summary == null || block.Body == null || block.Chevron == null)
+                return;
 
             block.Title.text = title ?? string.Empty;
             block.Title.color = titleColor;
+            if (block.Accent != null)
+                block.Accent.color = new Color(titleColor.r, titleColor.g, titleColor.b, 0.5f);
 
             // 游戏改版 Text 的 preferredWidth 不可靠（中文标题会被算短），
             // 而 Text 在 rect 比实际排版窄时会压缩字形。这里按字符估宽：
@@ -2357,7 +2670,7 @@ namespace IcarusII.UI
         /// 把块挂进 _items。模型可能先流式输出一段“我先看看…”，再发起工具调用：
         /// 这时块要插在当前流式消息**之前**，保证顺序是 思考 → 工具 → 回答。
         /// </summary>
-        private void AddBlockItem(Block block)
+        private void AddBlockItem(Block block, bool insideReply = false)
         {
             if (block == null || block.Go == null) return;
 
@@ -2367,7 +2680,16 @@ namespace IcarusII.UI
                 Label = null,
                 Kind = LineKind.System,
                 FromPrefab = false,
+                Reply = block.Reply,
             };
+
+            // 回复模板里的工具块由层级顺序决定位置，不再插到 _streamItem 前面；
+            // _streamItem 始终指向 reply 本身。
+            if (insideReply)
+            {
+                _items.Add(item);
+                return;
+            }
 
             if (_streamItem >= 0 && _streamItem < _items.Count)
             {
@@ -2387,11 +2709,15 @@ namespace IcarusII.UI
         {
             if (block == null) return;
 
+            if (block.Reply != null && ReferenceEquals(block.Reply.Thinking, block))
+                block.Reply.Thinking = null;
+
             for (var i = _items.Count - 1; i >= 0; i--)
             {
                 if (!ReferenceEquals(_items[i].Go, block.Go)) continue;
                 _items.RemoveAt(i);
-                if (i < _streamItem) _streamItem--;
+                if (i == _streamItem) _streamItem = -1;
+                else if (i < _streamItem) _streamItem--;
                 break;
             }
 
@@ -2400,8 +2726,27 @@ namespace IcarusII.UI
                 if (ReferenceEquals(kv.Value, block)) deadKeys.Add(kv.Key);
             foreach (var key in deadKeys) _toolBlocks.Remove(key);
 
-            if (block.Go != null) UnityEngine.Object.Destroy(block.Go);
+            var reply = block.Reply;
+            if (block.Go != null)
+            {
+                block.Go.SetActive(false);
+                UnityEngine.Object.Destroy(block.Go);
+            }
             block.Go = null;
+            block.Reply = null;
+            HideToolsIfEmpty(reply);
+        }
+
+        private void HideToolsIfEmpty(ReplyView reply)
+        {
+            if (reply == null || reply.Tools == null) return;
+            for (int i = 0; i < reply.Tools.childCount; i++)
+            {
+                var child = reply.Tools.GetChild(i);
+                if (child == null || child == reply.ToolTemplate) continue;
+                if (child.gameObject.activeSelf) return;
+            }
+            reply.Tools.gameObject.SetActive(false);
         }
 
         /// <summary>
@@ -2918,8 +3263,21 @@ namespace IcarusII.UI
         /// <summary>开始一段流式回复；后续 delta 会填进同一条消息。</summary>
         public void BeginStream(string speaker)
         {
-            // 助手消息不显示说话人名字：prefab 里的样式就是裸文本（见 example-assistant-*）
+            // 助手消息不显示说话人名字：prefab 里的样式就是裸文本（见 example-reply/body）。
             _stream.Length = 0;
+            if (_replyTemplate != null)
+            {
+                var reply = EnsureReplyForTurn();
+                if (reply != null)
+                {
+                    if (reply.Body != null) reply.Body.text = string.Empty;
+                    if (reply.Footer != null) reply.Footer.SetActive(false);
+                    reply.CopyText = string.Empty;
+                    _dirty = true;
+                    return;
+                }
+            }
+
             _streamItem = CreateItem(LineKind.Assistant);
             if (_streamItem >= 0 && _streamItem < _items.Count && _items[_streamItem].Label != null)
                 _items[_streamItem].Label.text = string.Empty;
@@ -2939,21 +3297,261 @@ namespace IcarusII.UI
             {
                 var text = _stream.ToString();
                 var item = _items[_streamItem];
-                if (item.Label != null) item.Label.text = SanitizeRichText(text);
-                AttachReplyFooter(_streamItem, text);
-                _lines.Add(new Line
+                if (item.Reply != null)
                 {
-                    Kind = LineKind.Assistant,
-                    Text = text,
-                    TurnId = _currentTurnId,
-                    Go = item.Go,
-                });
+                    if (item.Reply.Body != null) item.Reply.Body.text = SanitizeRichText(text);
+                    var lineIndex = FindLineIndex(item.Go);
+                    var time = GameClock();
+                    if (lineIndex >= 0)
+                    {
+                        var line = _lines[lineIndex];
+                        line.Text = text;
+                        line.Time = time;
+                        _lines[lineIndex] = line;
+                    }
+                    else
+                    {
+                        _lines.Add(new Line
+                        {
+                            Kind = LineKind.Assistant,
+                            Text = text,
+                            TurnId = _currentTurnId,
+                            Go = item.Go,
+                            Time = time,
+                        });
+                    }
+                    ApplyReplyFooter(item.Reply, text, time);
+                }
+                else
+                {
+                    if (item.Label != null) item.Label.text = SanitizeRichText(text);
+                    AttachReplyFooter(_streamItem, text);
+                    _lines.Add(new Line
+                    {
+                        Kind = LineKind.Assistant,
+                        Text = text,
+                        TurnId = _currentTurnId,
+                        Go = item.Go,
+                        Time = GameClock(),
+                    });
+                }
             }
             _streamItem = -1;
             _stream.Length = 0;
             _awaitingResponse = false;
             TrimHistory();
             _dirty = true;
+        }
+
+        // ---------------------------------------------------------------- 回复模板绑定
+
+        /// <summary>
+        /// 创建（或复用）当前回合的回复条目。思考/工具/正文都落在同一个 reply 里，
+        /// 保证视觉顺序是 思考 → 工具 → 正文 → 蓝图卡片 → 时间/复制。
+        /// </summary>
+        private ReplyView EnsureReplyForTurn()
+        {
+            if (_content == null) return null;
+
+            if (_streamItem >= 0 && _streamItem < _items.Count &&
+                _items[_streamItem].Kind == LineKind.Assistant &&
+                _items[_streamItem].Reply != null &&
+                _items[_streamItem].TurnId == _currentTurnId)
+            {
+                return _items[_streamItem].Reply;
+            }
+
+            var index = CreateItem(LineKind.Assistant);
+            if (index < 0 || index >= _items.Count) return null;
+            _streamItem = index;
+            var item = _items[index];
+            if (FindLineIndex(item.Go) < 0)
+            {
+                _lines.Add(new Line
+                {
+                    Kind = LineKind.Assistant,
+                    Text = string.Empty,
+                    TurnId = item.TurnId,
+                    Go = item.Go,
+                    Time = GameClock(),
+                });
+            }
+            _dirty = true;
+            return item.Reply;
+        }
+
+        private int FindLineIndex(GameObject go)
+        {
+            if (go == null) return -1;
+            for (int i = _lines.Count - 1; i >= 0; i--)
+                if (ReferenceEquals(_lines[i].Go, go)) return i;
+            return -1;
+        }
+
+        private int FindReplyItemForCard()
+        {
+            if (_streamItem >= 0 && _streamItem < _items.Count &&
+                _items[_streamItem].Kind == LineKind.Assistant &&
+                _items[_streamItem].Reply != null &&
+                _items[_streamItem].TurnId == _currentTurnId)
+                return _streamItem;
+
+            for (int i = _items.Count - 1; i >= 0; i--)
+            {
+                if (_items[i].Kind == LineKind.Assistant && _items[i].Reply != null &&
+                    _items[i].TurnId == _currentTurnId)
+                    return i;
+            }
+            EnsureReplyForTurn();
+            return _streamItem;
+        }
+
+        /// <summary>把时间/复制按钮的数据写进 prefab 的 footer（只改文字与显隐）。</summary>
+        private void ApplyReplyFooter(ReplyView view, string rawText, string time)
+        {
+            if (view == null) return;
+            view.CopyText = rawText ?? string.Empty;
+            var hasText = !string.IsNullOrEmpty(rawText);
+            if (view.Footer != null) view.Footer.SetActive(hasText);
+            if (view.Time != null)
+                view.Time.text = string.IsNullOrEmpty(time) ? GameClock() : time;
+            if (view.CopyLabel != null) view.CopyLabel.text = Strings.Get("reply.copy");
+        }
+
+        /// <summary>把协议里的蓝图卡片数据填进一张固定卡片。</summary>
+        private void ApplyCard(CardView view, BlueprintCardInfo card)
+        {
+            if (view == null || card == null) return;
+
+            view.Card = card;
+            if (view.Name != null)
+                view.Name.text = SanitizeRichText(CardTitle(card));
+            if (view.Description != null)
+                view.Description.text = string.IsNullOrEmpty(card.Description)
+                    ? Strings.Get("blueprint.card.no_description")
+                    : SanitizeRichText(card.Description);
+            if (view.Meta != null)
+                view.Meta.text = BuildCardMeta(card);
+            if (view.ThumbLabel != null)
+            {
+                // 缩略图文字是蓝图数据里的 shortDesc（DisplayTitle），不是物品名；
+                // 与游戏 short-text 一样按纯文本显示，不过富文本。
+                var thumbText = card.DisplayTitle;
+                view.ThumbLabel.text = string.IsNullOrEmpty(thumbText)
+                    ? Strings.Get("blueprint.card.thumb")
+                    : thumbText;
+            }
+
+            var icon = ResolveBlueprintIcon(card);
+            if (view.ThumbIconRoot != null) view.ThumbIconRoot.SetActive(icon != null);
+            if (view.ThumbFallback != null) view.ThumbFallback.SetActive(icon == null);
+            if (view.ThumbIcon != null) view.ThumbIcon.sprite = icon;
+
+            var iconMapping = TryGetPreferredIconMapping();
+            AssignIconMapping(view.Name, iconMapping);
+            AssignIconMapping(view.Description, iconMapping);
+            // 缩略图文字与游戏 short-text 一样保持纯文本（rich=false），不挂图标表。
+        }
+
+        /// <summary>卡片标题显示蓝图存放路径（相对蓝图根），而不是缩略图文字。</summary>
+        private static string CardTitle(BlueprintCardInfo card)
+        {
+            var path = !string.IsNullOrEmpty(card.RelPath)
+                ? card.RelPath
+                : !string.IsNullOrEmpty(card.FileName)
+                    ? card.FileName
+                    : card.Path;
+            if (string.IsNullOrEmpty(path)) return card.DisplayTitle;
+            path = path.Replace('\\', '/').TrimStart('/');
+            if (path.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+                path = path.Substring(0, path.Length - 4);
+            return path;
+        }
+
+        /// <summary>卡片底部两行：作者/创建日期 + 版本号。</summary>
+        private static string BuildCardMeta(BlueprintCardInfo card)
+        {
+            var author = string.IsNullOrEmpty(card.Author)
+                ? Strings.Get("blueprint.card.unknown_author")
+                : card.Author;
+            var created = string.IsNullOrEmpty(card.CreatedAt)
+                ? Strings.Get("blueprint.card.unknown_date")
+                : card.CreatedAt;
+            var version = string.IsNullOrEmpty(card.Version)
+                ? Strings.Get("blueprint.card.unknown_version")
+                : card.Version;
+            // 脚注直接显示信息，不再带“作者/创建/版本”这些备注词。
+            return author + " · " + created + " · " + version;
+        }
+
+        private bool HasReplyContent(ReplyView view)
+        {
+            if (view == null) return false;
+            if (view.Body != null && !string.IsNullOrEmpty(view.Body.text)) return true;
+            if (view.CardViews.Count > 0) return true;
+            if (view.Thinking != null && view.Thinking.Go != null && view.Thinking.Go.activeSelf) return true;
+            if (view.Tools != null)
+            {
+                for (int i = 0; i < view.Tools.childCount; i++)
+                {
+                    var child = view.Tools.GetChild(i);
+                    if (child == null || child == view.ToolTemplate) continue;
+                    if (child.gameObject.activeSelf) return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>思考/工具结束后没有正文时，收尾并避免下一条消息复用同一个空回复。</summary>
+        private void FinalizeIdleReply()
+        {
+            if (_streamItem < 0 || _streamItem >= _items.Count) return;
+            var item = _items[_streamItem];
+            if (item.Reply == null)
+            {
+                _streamItem = -1;
+                _stream.Length = 0;
+                return;
+            }
+
+            var text = _stream.ToString();
+            if (!string.IsNullOrEmpty(text) && item.Reply.Body != null)
+                item.Reply.Body.text = SanitizeRichText(text);
+
+            var lineIndex = FindLineIndex(item.Go);
+            var time = GameClock();
+            if (lineIndex >= 0)
+            {
+                var line = _lines[lineIndex];
+                line.Text = text;
+                line.Time = string.IsNullOrEmpty(line.Time) ? time : line.Time;
+                _lines[lineIndex] = line;
+            }
+            ApplyReplyFooter(item.Reply, text, lineIndex >= 0 ? _lines[lineIndex].Time : time);
+
+            _streamItem = -1;
+            _stream.Length = 0;
+
+            if (!HasReplyContent(item.Reply)) RemoveReply(item.Reply);
+        }
+
+        private void RemoveReply(ReplyView view)
+        {
+            if (view == null) return;
+            RemoveItemsUnder(view.Go);
+            var lineIndex = FindLineIndex(view.Go);
+            if (lineIndex >= 0) _lines.RemoveAt(lineIndex);
+            if (view.Go != null) UnityEngine.Object.Destroy(view.Go);
+        }
+
+        private void RemoveBlockReference(Block block)
+        {
+            if (block == null) return;
+            if (ReferenceEquals(_thinking, block))
+            {
+                _thinking = null;
+                _thinkingText.Length = 0;
+            }
         }
 
         /// <summary>聊天记录是否为空（用于决定要不要显示欢迎语）。</summary>
@@ -2987,6 +3585,9 @@ namespace IcarusII.UI
             _dirty = true;
         }
 
+        /// <summary>给 Plugin 回存 reply.time 用；与脚注显示的是同一套 HH:mm。</summary>
+        public static string CurrentGameClock() => GameClock();
+
         private static string GameClock()
         {
             if (GameMain.data == null) return "--:--";
@@ -3017,9 +3618,17 @@ namespace IcarusII.UI
             button.onClick.AddListener(() => GUIUtility.systemCopyBuffer = copy);
         }
 
-        private void AddMessage(LineKind kind, string text)
+        private void AddMessage(LineKind kind, string text, string gameTime = null)
         {
-            var line = new Line { Kind = kind, Text = text, TurnId = _currentTurnId };
+            var line = new Line
+            {
+                Kind = kind,
+                Text = text,
+                TurnId = _currentTurnId,
+                Time = kind == LineKind.Assistant
+                    ? (string.IsNullOrEmpty(gameTime) ? GameClock() : gameTime)
+                    : null,
+            };
 
             // 窗口还没 Create 时只记逻辑行；Create 末尾用 RebuildTranscript 补建。
             // 否则会在 Canvas 之外建出一堆孤儿 Text，打开窗口后历史反而看不见。
@@ -3031,18 +3640,79 @@ namespace IcarusII.UI
                 return;
             }
 
+            // 非流式 final：如果本轮已经有一个只有思考块的回复，正文直接落进它，
+            // 不要另起一条消息，否则“思考 → 正文”会被拆成两段。
+            if (kind == LineKind.Assistant && _replyTemplate != null)
+            {
+                var existing = FindReplyItemForText();
+                if (existing >= 0 && existing < _items.Count && _items[existing].Reply != null)
+                {
+                    var replyItem = _items[existing];
+                    if (replyItem.Reply.Body != null)
+                        replyItem.Reply.Body.text = SanitizeRichText(text);
+                    line.Go = replyItem.Go;
+                    line.Time = string.IsNullOrEmpty(gameTime) ? GameClock() : gameTime;
+                    ApplyReplyFooter(replyItem.Reply, text, line.Time);
+                    var lineIndex = FindLineIndex(replyItem.Go);
+                    if (lineIndex >= 0)
+                    {
+                        var oldLine = _lines[lineIndex];
+                        line.ThinkingText = oldLine.ThinkingText;
+                        line.ThinkingSummary = oldLine.ThinkingSummary;
+                        line.Cards = oldLine.Cards;
+                        _lines[lineIndex] = line;
+                    }
+                    else
+                    {
+                        _lines.Add(line);
+                    }
+                    if (_streamItem == existing) _streamItem = -1;
+                    TrimHistory();
+                    _dirty = true;
+                    return;
+                }
+            }
+
             var index = CreateItem(kind);
             if (index >= 0 && index < _items.Count)
             {
-                line.Go = _items[index].Go;
-                if (_items[index].Label != null) _items[index].Label.text = SanitizeRichText(text);
-                FitBubbleWidth(_items[index].Go, text);
-                if (kind == LineKind.Assistant) AttachReplyFooter(index, text);
+                var item = _items[index];
+                line.Go = item.Go;
+                if (item.Reply != null)
+                {
+                    if (item.Reply.Body != null) item.Reply.Body.text = SanitizeRichText(text);
+                    ApplyReplyFooter(item.Reply, text, line.Time);
+                }
+                else
+                {
+                    if (item.Label != null) item.Label.text = SanitizeRichText(text);
+                    FitBubbleWidth(item.Go, text);
+                    if (kind == LineKind.Assistant) AttachReplyFooter(index, text);
+                }
             }
 
             _lines.Add(line);
             TrimHistory();
             _dirty = true;
+        }
+
+        private int FindReplyItemForText()
+        {
+            if (_streamItem >= 0 && _streamItem < _items.Count &&
+                _items[_streamItem].Kind == LineKind.Assistant &&
+                _items[_streamItem].Reply != null &&
+                _items[_streamItem].TurnId == _currentTurnId)
+                return _streamItem;
+
+            for (int i = _items.Count - 1; i >= 0; i--)
+            {
+                var item = _items[i];
+                if (item.Kind != LineKind.Assistant || item.Reply == null ||
+                    item.TurnId != _currentTurnId) continue;
+                if (item.Reply.Body == null || string.IsNullOrEmpty(item.Reply.Body.text))
+                    return i;
+            }
+            return -1;
         }
 
         /// <summary>窗口首次 Create 时，把此前已进入 _lines 的消息补建成可见项。</summary>
@@ -3058,10 +3728,51 @@ namespace IcarusII.UI
                 // 单条消息失败只丢掉这一条：建窗中途抛异常会让整个窗口打不开。
                 try
                 {
-                    // 蓝图卡片不是文本项：按数据重新建一张。
+                    // 蓝图卡片不是文本项：新 prefab 把它挂进本轮回复的固定卡片网格；
+                    // 旧 prefab 没有回复模板时仍按数据建一张独立卡片。
                     if (line.Kind == LineKind.Blueprint)
                     {
-                        line.Go = CreateBlueprintCard(line.Card);
+                        var cards = line.Cards;
+                        if (_replyTemplate != null && cards != null && cards.Count > 0)
+                        {
+                            var replyIndex = FindRebuiltReplyItem(line.TurnId);
+                            if (replyIndex >= 0)
+                            {
+                                var replyItem = _items[replyIndex];
+                                AddCards(replyItem.Reply, cards);
+                                var replyLineIndex = FindLineIndex(replyItem.Go);
+                                if (replyLineIndex >= 0)
+                                {
+                                    var replyLine = _lines[replyLineIndex];
+                                    if (replyLine.Cards == null) replyLine.Cards = new List<BlueprintCardInfo>();
+                                    for (int c = 0; c < cards.Count; c++)
+                                        if (cards[c] != null) replyLine.Cards.Add(cards[c]);
+                                    _lines[replyLineIndex] = replyLine;
+                                }
+                                _lines.RemoveAt(i);
+                                i--;
+                                continue;
+                            }
+
+                            var newIndex = CreateItem(LineKind.Assistant);
+                            if (newIndex >= 0 && newIndex < _items.Count)
+                            {
+                                var newItem = _items[newIndex];
+                                line.Kind = LineKind.Assistant;
+                                line.Text = string.Empty;
+                                line.Go = newItem.Go;
+                                line.Time = string.IsNullOrEmpty(line.Time) ? GameClock() : line.Time;
+                                _lines[i] = line;
+                                AddCards(newItem.Reply, cards);
+                                if (newItem.Reply != null && newItem.Reply.Body != null)
+                                    newItem.Reply.Body.text = string.Empty;
+                                ApplyReplyFooter(newItem.Reply, string.Empty, line.Time);
+                                continue;
+                            }
+                        }
+
+                        var fallbackCard = cards != null && cards.Count > 0 ? cards[0] : null;
+                        line.Go = CreateBlueprintCard(fallbackCard);
                         if (line.Go != null) _lines[i] = line;
                         continue;
                     }
@@ -3071,9 +3782,23 @@ namespace IcarusII.UI
                     var item = _items[index];
                     line.Go = item.Go;
                     _lines[i] = line;
-                    if (item.Label != null) item.Label.text = SanitizeRichText(line.Text);
-                    FitBubbleWidth(item.Go, line.Text);
-                    if (line.Kind == LineKind.Assistant) AttachReplyFooter(index, line.Text);
+
+                    if (item.Reply != null)
+                    {
+                        if (!string.IsNullOrEmpty(line.ThinkingText))
+                            RebuildThinking(item.Reply, line);
+                        AddCards(item.Reply, line.Cards);
+                        if (item.Reply.Body != null)
+                            item.Reply.Body.text = SanitizeRichText(line.Text);
+                        ApplyReplyFooter(item.Reply, line.Text, line.Time);
+                    }
+                    else
+                    {
+                        if (item.Label != null) item.Label.text = SanitizeRichText(line.Text);
+                        FitBubbleWidth(item.Go, line.Text);
+                        if (line.Kind == LineKind.Assistant) AttachReplyFooter(index, line.Text);
+                    }
+
                     if (line.Kind == LineKind.User && line.TurnId > 0)
                         UpdateTurnUserGo(line.TurnId, line.Go);
                 }
@@ -3087,6 +3812,32 @@ namespace IcarusII.UI
             TrimHistory();
             _dirty = true;
             ScrollToBottom();
+        }
+
+        private int FindRebuiltReplyItem(int turnId)
+        {
+            for (int i = _items.Count - 1; i >= 0; i--)
+            {
+                if (_items[i].Kind == LineKind.Assistant && _items[i].Reply != null &&
+                    _items[i].TurnId == turnId)
+                    return i;
+            }
+            return -1;
+        }
+
+        private void RebuildThinking(ReplyView reply, Line line)
+        {
+            if (reply == null || reply.ThinkingRoot == null) return;
+            if (reply.Thinking == null)
+            {
+                reply.Thinking = BindReplyBlock(reply.ThinkingRoot.gameObject);
+            }
+            reply.ThinkingRoot.gameObject.SetActive(true);
+            var summary = string.IsNullOrEmpty(line.ThinkingSummary)
+                ? Summarize(line.ThinkingText, 48)
+                : line.ThinkingSummary;
+            SetBlock(reply.Thinking, Strings.Get("thinking.title"), summary, line.ThinkingText,
+                expanded: false, titleColor: _textDim);
         }
 
         // ---------------------------------------------------------------- 提问索引（chat-index）
@@ -3435,16 +4186,22 @@ namespace IcarusII.UI
         /// </summary>
         private int CreateItem(LineKind kind)
         {
+            var replyTemplate = kind == LineKind.Assistant ? _replyTemplate : null;
             var template = kind == LineKind.User
                 ? _userTemplate
-                : kind == LineKind.Assistant ? _assistantTemplate : null;
+                : kind == LineKind.Assistant
+                    ? (replyTemplate != null ? replyTemplate : _assistantTemplate)
+                    : null;
 
             GameObject go;
+            ReplyView reply = null;
             if (template != null && _content != null)
             {
                 go = UnityEngine.Object.Instantiate(template.gameObject, _content, false);
                 go.name = "msg-" + (++_itemSeq);
                 go.SetActive(true);
+                if (replyTemplate != null && ReferenceEquals(template, replyTemplate))
+                    reply = BindReply(go);
             }
             else
             {
@@ -3452,7 +4209,7 @@ namespace IcarusII.UI
             }
 
             var fromPrefab = template != null && _content != null;
-            var label = go.GetComponentInChildren<Text>(true);
+            var label = reply != null ? reply.Body : go.GetComponentInChildren<Text>(true);
             if (label != null)
             {
                 ApplyBodyFont(label);
@@ -3476,8 +4233,98 @@ namespace IcarusII.UI
                 Kind = kind,
                 TurnId = _currentTurnId,
                 FromPrefab = fromPrefab,
+                Reply = reply,
             });
             return _items.Count - 1;
+        }
+
+        /// <summary>
+        /// 绑定 prefab 的 example-reply。只查节点、接回调，不改布局；
+        /// 思考/卡片/工具模板先隐藏，等对应数据到达再显示。
+        /// </summary>
+        private ReplyView BindReply(GameObject go)
+        {
+            var view = new ReplyView { Go = go };
+            var t = go.transform;
+            view.Body = FindChildText(t, "body");
+            // prefab 里的示例正文只是排版样板；运行期实例必须从空正文开始。
+            if (view.Body != null) view.Body.text = string.Empty;
+
+            view.ThinkingRoot = t.Find("thinking-block") as RectTransform;
+            if (view.ThinkingRoot != null)
+            {
+                view.Thinking = BindReplyBlock(view.ThinkingRoot.gameObject);
+                view.ThinkingRoot.gameObject.SetActive(false);
+            }
+
+            view.Tools = t.Find("tools") as RectTransform;
+            if (view.Tools != null)
+            {
+                view.ToolTemplate = view.Tools.Find("tool-template") as RectTransform;
+                if (view.ToolTemplate != null) view.ToolTemplate.gameObject.SetActive(false);
+                view.Tools.gameObject.SetActive(false);
+            }
+
+            var cards = t.Find("blueprint-cards") as RectTransform;
+            if (cards != null)
+            {
+                view.BlueprintCards = cards;
+                view.CardTemplate = cards.Find("blueprint-card-template") as RectTransform;
+                if (view.CardTemplate != null) view.CardTemplate.gameObject.SetActive(false);
+                cards.gameObject.SetActive(false);
+            }
+
+            var footer = t.Find("footer");
+            if (footer != null)
+            {
+                view.Footer = footer.gameObject;
+                view.Time = FindChildText(footer, "time");
+                view.Copy = footer.Find("copy") != null ? footer.Find("copy").GetComponent<Button>() : null;
+                view.CopyLabel = FindChildText(footer, "copy/label");
+                if (view.CopyLabel != null) view.CopyLabel.text = Strings.Get("reply.copy");
+                if (view.Copy != null)
+                {
+                    view.Copy.onClick.RemoveAllListeners();
+                    view.Copy.onClick.AddListener(() =>
+                    {
+                        if (!string.IsNullOrEmpty(view.CopyText))
+                            GUIUtility.systemCopyBuffer = view.CopyText;
+                    });
+                }
+                footer.gameObject.SetActive(false);
+            }
+            return view;
+        }
+
+        private Block BindReplyBlock(GameObject root)
+        {
+            var block = new Block { Go = root, Expanded = true };
+            var header = root.transform.Find("header");
+            block.Accent = root.transform.Find("accent") != null
+                ? root.transform.Find("accent").GetComponent<Image>()
+                : null;
+            if (header != null)
+            {
+                block.Chevron = FindChildText(header, "chevron");
+                block.Title = FindChildText(header, "title");
+                block.TitleLayout = block.Title != null ? block.Title.GetComponent<LayoutElement>() : null;
+                block.Summary = FindChildText(header, "summary");
+
+                var button = header.GetComponent<Button>();
+                var native = header.GetComponent<UIButton>();
+                if (native != null) native.onClick += _ => ToggleBlock(block);
+                else if (button != null) button.onClick.AddListener(() => ToggleBlock(block));
+            }
+            block.Body = FindChildText(root.transform, "body");
+            AssignIconMapping(block.Body, TryGetPreferredIconMapping());
+            return block;
+        }
+
+        private static Text FindChildText(Transform root, string path)
+        {
+            if (root == null) return null;
+            var t = root.Find(path);
+            return t != null ? t.GetComponent<Text>() : null;
         }
 
         private GameObject BuildPlainItem(LineKind kind)
@@ -3617,7 +4464,11 @@ namespace IcarusII.UI
             {
                 // 表对象有了但条目还没填充：先挂上，等条目就绪后再清理文本。
                 AssignIconMapping(_transcript, icons);
-                foreach (var item in _items) AssignIconMapping(item.Label, icons);
+                foreach (var item in _items)
+                {
+                    AssignIconMapping(item.Label, icons);
+                    EnsureReplyIconMappings(item.Reply, icons, false);
+                }
                 if (_thinking != null) AssignIconMapping(_thinking.Body, icons);
                 foreach (var block in _toolBlocks.Values) AssignIconMapping(block.Body, icons);
                 return;
@@ -3631,6 +4482,7 @@ namespace IcarusII.UI
             {
                 if (firstReady) ResanitizeLabel(item.Label);
                 AssignIconMapping(item.Label, icons);
+                EnsureReplyIconMappings(item.Reply, icons, firstReady);
             }
             if (_thinking != null)
             {
@@ -3641,6 +4493,23 @@ namespace IcarusII.UI
             {
                 if (firstReady) ResanitizeLabel(block.Body);
                 AssignIconMapping(block.Body, icons);
+            }
+        }
+
+        private void EnsureReplyIconMappings(ReplyView reply,
+            UnityEngine.UI.Youthcat.TextIconMapping icons, bool resanitize)
+        {
+            if (reply == null) return;
+            if (resanitize) ResanitizeLabel(reply.Body);
+            AssignIconMapping(reply.Body, icons);
+            if (reply.Thinking != null) AssignIconMapping(reply.Thinking.Body, icons);
+            for (int i = 0; i < reply.CardViews.Count; i++)
+            {
+                var card = reply.CardViews[i];
+                if (card == null) continue;
+                if (resanitize) ResanitizeLabel(card.Name);
+                AssignIconMapping(card.Name, icons);
+                AssignIconMapping(card.Description, icons);
             }
         }
 
@@ -3851,11 +4720,12 @@ namespace IcarusII.UI
             }
 
             var total = 0;
-            foreach (var l in _lines) total += l.Text != null ? l.Text.Length : 0;
+            foreach (var l in _lines) total += LineCharCount(l);
             while (_streamItem < 0 && total > MaxTranscriptChars && _lines.Count > 0)
             {
-                total -= _lines[0].Text != null ? _lines[0].Text.Length : 0;
                 RemoveOldestLine();
+                total = 0;
+                foreach (var l in _lines) total += LineCharCount(l);
             }
 
             PruneIndexTurns();
@@ -3887,25 +4757,78 @@ namespace IcarusII.UI
             RefreshIndexEmpty();
         }
 
+        private static int LineCharCount(Line line)
+        {
+            var count = line.Text != null ? line.Text.Length : 0;
+            if (!string.IsNullOrEmpty(line.ThinkingText)) count += line.ThinkingText.Length;
+            if (line.Cards != null)
+            {
+                for (int i = 0; i < line.Cards.Count; i++)
+                {
+                    var card = line.Cards[i];
+                    if (card != null && !string.IsNullOrEmpty(card.Description))
+                        count += card.Description.Length;
+                }
+            }
+            return count;
+        }
+
         private void RemoveOldestLine()
         {
             if (_lines.Count == 0) return;
             var line = _lines[0];
             if (line.Block != null) ForgetBlock(line.Block);
+
+            // 回复的子节点（工具块等）可能也有独立的 Line 条目；先按层级一起删掉，
+            // 否则根节点销毁后这些行还留在 _lines 里，索引会指向已消失的回合。
+            if (line.Kind == LineKind.Assistant && line.Go != null)
+            {
+                var root = line.Go.transform;
+                for (int i = _lines.Count - 1; i >= 1; i--)
+                {
+                    var other = _lines[i];
+                    if (other.Go == null) continue;
+                    if (ReferenceEquals(other.Go, line.Go) || other.Go.transform.IsChildOf(root))
+                    {
+                        if (other.Block != null) ForgetBlock(other.Block);
+                        _lines.RemoveAt(i);
+                    }
+                }
+            }
+
+            RemoveItemsUnder(line.Go);
             if (line.Go != null) UnityEngine.Object.Destroy(line.Go);
             _lines.RemoveAt(0);
-            RemoveItemByGo(line.Go);
         }
 
-        private void RemoveItemByGo(GameObject go)
+        private void RemoveItemsUnder(GameObject go)
         {
             if (go == null) return;
-            for (int i = 0; i < _items.Count; i++)
+            var root = go.transform;
+
+            var deadKeys = new List<string>();
+            foreach (var kv in _toolBlocks)
             {
-                if (_items[i].Go != go) continue;
+                var blockGo = kv.Value != null ? kv.Value.Go : null;
+                if (blockGo == null || ReferenceEquals(blockGo, go) || blockGo.transform.IsChildOf(root))
+                    deadKeys.Add(kv.Key);
+            }
+            foreach (var key in deadKeys) _toolBlocks.Remove(key);
+
+            for (int i = _items.Count - 1; i >= 0; i--)
+            {
+                var itemGo = _items[i].Go;
+                if (itemGo == null)
+                {
+                    _items.RemoveAt(i);
+                    if (_streamItem > i) _streamItem--;
+                    continue;
+                }
+                if (!ReferenceEquals(itemGo, go) && !itemGo.transform.IsChildOf(root)) continue;
+                if (_items[i].Reply != null) RemoveBlockReference(_items[i].Reply.Thinking);
                 _items.RemoveAt(i);
-                if (_streamItem > i) _streamItem--;
-                return;
+                if (_streamItem == i) _streamItem = -1;
+                else if (_streamItem > i) _streamItem--;
             }
         }
 
@@ -3925,7 +4848,11 @@ namespace IcarusII.UI
                 if (child.name == null || !child.name.StartsWith("example-")) continue;
                 seen.Add(child.gameObject);
 
-                if (_userTemplate == null && child.name.StartsWith("example-user"))
+                if (child.name == "example-reply")
+                {
+                    _replyTemplate = child as RectTransform;
+                }
+                else if (_userTemplate == null && child.name.StartsWith("example-user"))
                 {
                     var bubble = FindNamed(child, "bubble");
                     var le = bubble != null ? bubble.GetComponent<LayoutElement>() : null;
@@ -3954,14 +4881,16 @@ namespace IcarusII.UI
             {
                 if (_userTemplate != null && go.transform == _userTemplate) continue;
                 if (_assistantTemplate != null && go.transform == _assistantTemplate) continue;
+                if (_replyTemplate != null && go.transform == _replyTemplate) continue;
                 UnityEngine.Object.Destroy(go);
             }
 
             if (_userTemplate != null) _userTemplate.gameObject.SetActive(false);
             if (_assistantTemplate != null) _assistantTemplate.gameObject.SetActive(false);
+            if (_replyTemplate != null) _replyTemplate.gameObject.SetActive(false);
 
             Plugin.Log.LogInfo($"[UI] 消息模板：用户={( _userTemplate != null ? _userTemplate.name : "无（退化为裸文本）")}，"
-                               + $"助手={(_assistantTemplate != null ? _assistantTemplate.name : "无（退化为裸文本）")}");
+                               + $"助手={(_replyTemplate != null ? _replyTemplate.name : _assistantTemplate != null ? _assistantTemplate.name : "无（退化为裸文本）")}");
         }
 
         /// <summary>插件卸载时清理（Canvas 是顶层对象，不会被场景切换自动带走）。</summary>

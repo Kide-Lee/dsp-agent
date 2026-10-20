@@ -57,13 +57,24 @@ namespace IcarusII.I18n
             ["tool.args"] = "参数",
             ["tool.result"] = "结果",
 
+            // 助手回复底部（时间 + 复制）
+            ["reply.time"] = "游戏时间 {0}",
+            ["reply.copy"] = "复制",
+
             // 蓝图卡片（协议附录 A.9）
             ["blueprint.card.name"] = "蓝图",
-            ["blueprint.card.view"] = "查看详情",
-            ["blueprint.card.paste"] = "粘贴铺设",
+            ["blueprint.card.view"] = "查看",
+            ["blueprint.card.paste"] = "使用",
+            ["blueprint.card.meta.created"] = "创建 {0}",
+            ["blueprint.card.no_description"] = "暂无介绍",
+            ["blueprint.card.thumb"] = "蓝图",
+            ["blueprint.card.unknown_author"] = "未知作者",
+            ["blueprint.card.unknown_date"] = "未知日期",
+            ["blueprint.card.unknown_version"] = "未标注",
             ["blueprint.card.source.generated"] = "生成",
             ["blueprint.card.source.downloaded"] = "下载",
             ["blueprint.card.source.copied"] = "复制",
+            ["blueprint.card.source.written"] = "保存",
             ["blueprint.card.meta.rate"] = "产量 {0}/min",
             ["blueprint.card.meta.buildings"] = "{0} 台",
             ["blueprint.card.meta.size"] = "{0}×{1}",

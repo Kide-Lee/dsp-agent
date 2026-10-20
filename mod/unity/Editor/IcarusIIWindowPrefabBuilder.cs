@@ -442,7 +442,7 @@ namespace IcarusII.EditorTools
                 title.anchoredPosition = new Vector2(46f, -24f);
                 title.sizeDelta = new Vector2(145f, 36f);
                 var titleText = AddLabel(title, TitleFontSize, TitleColor, TextAnchor.MiddleLeft);
-                titleText.text = "伊卡洛斯·贰";
+                titleText.text = "工业机甲终端";
             }
 
             var status = Node("Status", header);

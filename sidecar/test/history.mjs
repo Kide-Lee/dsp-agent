@@ -166,5 +166,33 @@ console.log('── 4. 解绑 ──');
   check('解绑时 history=[]', bound?.payload?.history?.length === 0);
 }
 
+// ---- 5. reply.time 回存 ----
+console.log('── 5. reply.time ──');
+{
+  const calls = [];
+  const agent = makeAgent(history);
+  agent.recordReplyTime = (saveKey, prompt, reply, gameTime) => calls.push({ saveKey, prompt, reply, gameTime });
+  const { session } = await bind(agent, 'saveA');
+  session.handleFrame(Buffer.from(JSON.stringify({
+    v: 1,
+    id: 'm-1',
+    type: 'reply.time',
+    payload: { prompt: '问题', reply: '回答', gameTime: '08:42' },
+  })), false);
+  check('reply.time 调用 agent', calls.length === 1, JSON.stringify(calls));
+  check('reply.time saveKey', calls[0]?.saveKey === 'saveA');
+  check('reply.time prompt', calls[0]?.prompt === '问题');
+  check('reply.time reply', calls[0]?.reply === '回答');
+  check('reply.time gameTime', calls[0]?.gameTime === '08:42');
+
+  session.handleFrame(Buffer.from(JSON.stringify({
+    v: 1,
+    id: 'm-2',
+    type: 'reply.time',
+    payload: { prompt: '', gameTime: '09:00' },
+  })), false);
+  check('空 prompt 被忽略', calls.length === 1);
+}
+
 console.log(`\n${failed === 0 ? '✅' : '❌'} history 测试${failed === 0 ? '全部通过' : '有失败'}（${passed} 项，失败 ${failed}）`);
 process.exit(failed === 0 ? 0 : 1);

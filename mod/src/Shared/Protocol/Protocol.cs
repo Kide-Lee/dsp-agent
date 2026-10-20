@@ -66,6 +66,9 @@ namespace IcarusII.Common.Protocol
         /// <summary>sidecar → mod：蓝图卡片（附录 A.9，仅 UI）。</summary>
         public const string BlueprintCard = "blueprint_card";
 
+        /// <summary>mod → sidecar：回存回答完成时的游戏时间（附录 A.10）。</summary>
+        public const string ReplyTime = "reply.time";
+
         /// <summary>error.payload.code 的 M1 新增取值。</summary>
         public const string CodeInvalidKey = "invalid_key";
         public const string CodeUpstreamError = "upstream_error";
@@ -206,11 +209,12 @@ namespace IcarusII.Common.Protocol
         /// 必须**显式写出 null**，因为 sidecar 要靠"字段存在且为 null"
         /// 区分"解绑"与"没提这件事"。
         /// </summary>
-        public static JsonValue BuildSaveBind(string saveKey, string saveName)
+        public static JsonValue BuildSaveBind(string saveKey, string saveName, JsonValue blueprintTiers = null)
         {
             var p = JsonValue.NewObject();
             p.Set("saveKey", saveKey == null ? JsonValue.Null : JsonValue.Of(saveKey));
             if (!string.IsNullOrEmpty(saveName)) p.Set("saveName", saveName);
+            if (blueprintTiers != null && !blueprintTiers.IsNull) p.Set("blueprintTiers", blueprintTiers);
             return p;
         }
 
@@ -224,6 +228,16 @@ namespace IcarusII.Common.Protocol
             if (!string.IsNullOrEmpty(saveKey)) p.Set("saveKey", saveKey);
             p.Set("text", text ?? string.Empty);
             if (timestampMs > 0) p.Set("timestamp", timestampMs);
+            return p;
+        }
+
+        /// <summary>构造 reply.time 载荷（协议附录 A.10）。</summary>
+        public static JsonValue BuildReplyTime(string prompt, string reply, string gameTime)
+        {
+            var p = JsonValue.NewObject();
+            p.Set("prompt", prompt ?? string.Empty);
+            p.Set("reply", reply ?? string.Empty);
+            p.Set("gameTime", gameTime ?? string.Empty);
             return p;
         }
 
@@ -307,6 +321,8 @@ namespace IcarusII.Common.Protocol
     public sealed class BlueprintCardInfo
     {
         public string Path { get; private set; }
+        /// <summary>相对蓝图根的 POSIX 路径，例如 IcarusII/a.txt；老卡片为 null。</summary>
+        public string RelPath { get; private set; }
         public string FileName { get; private set; }
         public string Name { get; private set; }
         public string Item { get; private set; }
@@ -316,10 +332,12 @@ namespace IcarusII.Common.Protocol
         public int Width { get; private set; }
         public int Height { get; private set; }
         public string Author { get; private set; }
+        /// <summary>卡片本地创建日期（yyyy-MM-dd）；协议不传时由 UI/历史时间补。</summary>
+        public string CreatedAt { get; set; }
         public string Version { get; private set; }
         public string Attributes { get; private set; }
         public string Description { get; private set; }
-        /// <summary>`generated` | `downloaded` | `copied`；未知/缺失为 null。</summary>
+        /// <summary>`generated` | `downloaded` | `copied` | `written`；未知/缺失为 null。</summary>
         public string Source { get; private set; }
         public string License { get; private set; }
         public string Repository { get; private set; }
@@ -343,6 +361,7 @@ namespace IcarusII.Common.Protocol
             var r = new BlueprintCardInfo();
             if (payload == null || payload.IsNull) return r;
             r.Path = payload["path"].AsString(null);
+            r.RelPath = payload["relPath"].AsString(null);
             r.FileName = payload["fileName"].AsString(null);
             r.Name = payload["name"].AsString(null);
             r.Item = payload["item"].AsString(null);
@@ -389,6 +408,8 @@ namespace IcarusII.Common.Protocol
         public string Role { get; set; }
         public string Text { get; set; }
         public long Timestamp { get; set; }
+        /// <summary>回答完成时的游戏时间 HH:mm（附录 A.6/A.10，可选）。</summary>
+        public string GameTime { get; set; }
         /// <summary>该回答产出的蓝图卡片（附录 A.6/A.9，可选）。</summary>
         public List<BlueprintCardInfo> Cards { get; set; } = new List<BlueprintCardInfo>();
     }
@@ -429,6 +450,7 @@ namespace IcarusII.Common.Protocol
                         Role = role,
                         Text = text,
                         Timestamp = item["timestamp"].AsLong(0),
+                        GameTime = item["gameTime"].AsString(null),
                     };
                     var cards = item["cards"];
                     if (cards != null && cards.Count > 0)

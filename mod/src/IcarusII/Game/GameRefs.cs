@@ -334,5 +334,47 @@ namespace IcarusII.Game
             }
             return false;
         }
+
+        /// <summary>玩家已解锁的蓝图档位（0 起）。Available=false 表示存档未加载。</summary>
+        public struct BlueprintTierInfo
+        {
+            public bool Available;
+            public int Assembler;
+            public int Belt;
+            public int Inserter;
+            public bool Piler;
+            public bool Stacking;
+        }
+
+        private static readonly int[] BlueprintBelts = { 2001, 2002, 2003 };
+        private static readonly int[] BlueprintInserters = { 2011, 2012, 2013, 2014 };
+        private static readonly int[] BlueprintAssemblers = { 2303, 2304, 2305 };
+
+        /// <summary>
+        /// 读取已解锁的最高蓝图档位。只读，不碰存档；主线程调用。
+        /// 由 save.bind 被动上报给 sidecar，模型不需要再调用查询工具。
+        /// </summary>
+        public static BlueprintTierInfo CurrentBlueprintTiers()
+        {
+            var result = new BlueprintTierInfo();
+            var history = GameMain.history;
+            if (history == null) return result;
+
+            result.Available = true;
+            result.Assembler = Math.Max(0, HighestUnlocked(history, BlueprintAssemblers));
+            result.Belt = Math.Max(0, HighestUnlocked(history, BlueprintBelts));
+            result.Inserter = Math.Max(0, HighestUnlocked(history, BlueprintInserters));
+            // 2040 = 自动集装机；集装堆叠与它同一解锁条件。
+            result.Piler = history.ItemUnlocked(2040);
+            result.Stacking = result.Piler;
+            return result;
+        }
+
+        private static int HighestUnlocked(GameHistoryData history, int[] ids)
+        {
+            for (int i = ids.Length - 1; i >= 0; i--)
+                if (history.ItemUnlocked(ids[i])) return i;
+            return -1;
+        }
     }
 }

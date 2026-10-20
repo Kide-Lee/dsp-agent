@@ -13,6 +13,7 @@ import type { BlueprintCardPayload, BlueprintCardSource, HistoryMessage } from '
 export const BLUEPRINT_PRODUCING_TOOLS: readonly string[] = [
   'blueprint_generate',
   'blueprint_save',
+  'blueprint_fs',
   'game_copy_blueprint',
 ];
 
@@ -35,9 +36,10 @@ function num(value: unknown): number | undefined {
 
 function sourceFor(toolName: string, raw: unknown): BlueprintCardSource | undefined {
   const value = str(raw);
-  if (value === 'generated' || value === 'downloaded' || value === 'copied') return value;
+  if (value === 'generated' || value === 'downloaded' || value === 'copied' || value === 'written') return value;
   if (toolName === 'blueprint_generate') return 'generated';
   if (toolName === 'blueprint_save') return 'downloaded';
+  if (toolName === 'blueprint_fs') return 'written';
   if (toolName === 'game_copy_blueprint') return 'copied';
   return undefined;
 }
@@ -72,6 +74,8 @@ export function extractBlueprintCard(
   const path = rawPath ?? (dir ? join(dir, fileName) : undefined);
 
   const card: BlueprintCardPayload = { fileName };
+  const relPath = str(data['relPath']) ?? str(data['relativePath']);
+  if (relPath !== undefined) card.relPath = relPath;
   if (path !== undefined) card.path = path;
 
   const name = str(data['name']) ?? str(data['shortDesc']);
@@ -191,7 +195,7 @@ export function attachBlueprintCards(
 }
 
 /** history 里的 user 文本可能被截断（带省略号）；两种形态都要能对上。 */
-function promptMatchesHistory(historyText: string, prompt: string): boolean {
+export function promptMatchesHistory(historyText: string, prompt: string): boolean {
   if (historyText === prompt) return true;
   if (historyText.endsWith('…')) {
     const prefix = historyText.slice(0, -1);

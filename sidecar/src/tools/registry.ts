@@ -432,7 +432,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       label: '存为蓝图',
       description:
         '把指定的一批建筑（entityIds）存成游戏蓝图文件，复用游戏自己的复制逻辑，产物与游戏内复制同源。' +
-        '保存到游戏蓝图目录，打开蓝图界面即可看到；只写蓝图文件，不改游戏状态。',
+        '保存到游戏蓝图目录（默认 IcarusII/，可传 dir），打开蓝图界面即可看到；只写蓝图文件，不改游戏状态。',
       promptSnippet: '把一批建筑存成蓝图文件',
       promptGuidelines: [
         'Use game_copy_blueprint 当玩家说“把这片产线存成蓝图”时；id 来自 game_analyze_area / game_get_entities。',
@@ -443,6 +443,9 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         planetId: planetArg,
         entityIds: Type.Array(Type.Integer({ minimum: 1 }), { description: '要包含的建筑 id' }),
         name: Type.Optional(Type.String({ description: '蓝图文件名（不含 .txt），默认 IcarusII-时间戳' })),
+        dir: Type.Optional(
+          Type.String({ description: '保存目录（相对蓝图根，默认 IcarusII）；不存在会自动创建' }),
+        ),
       }),
       timeoutMs: 20000,
     }),

@@ -32,8 +32,10 @@ namespace IcarusII.EditorTools
         /// bundle 里的资源名仍然是 `IcarusIIWindow`（见 AssetName），mod 侧不用改。
         /// </summary>
         private const string PrefabPath = "Assets/IcarusII/ChatWindow.prefab";
+        private const string SpriteRoot = "Assets/Resources/UI/Textures/Sprites/";
         private const string SpriteDir = "Assets/Resources/UI/Textures/Sprites/Sci-fi/";
         private const string IconDir = "Assets/Resources/UI/Textures/Sprites/Icons/";
+        private const string ItemIconDir = "Assets/Resources/Icons/ItemRecipe/";
         private const string MaterialDir = "Assets/Resources/UI/Materials/";
         private const string OutputDir = "Build/IcarusIIBundle";
         private const string BundleName = "icarusii-ui";
@@ -101,6 +103,11 @@ namespace IcarusII.EditorTools
                 return Fail("聊天窗布局固化失败：" + PrefabPath);
             }
 
+            if (!IcarusIIReplyBuilder.Ensure(PrefabPath))
+            {
+                return Fail("回复模板构建失败：" + PrefabPath);
+            }
+
             Directory.CreateDirectory(OutputDir);
 
             var build = new AssetBundleBuild
@@ -123,6 +130,7 @@ namespace IcarusII.EditorTools
                     SpriteDir + "sci-fi-deco-1.png",
                     IconDir + "checkbox-on-2.png",
                     IconDir + "insert-icon-40.png",
+                    IconDir + "copy.png",
                     // 关闭/菜单按钮（照抄游戏窗口的 btn-box）
                     SpriteDir + "hex-bg-30.png",
                     SpriteDir + "hex-border-up-30.png",
@@ -131,6 +139,10 @@ namespace IcarusII.EditorTools
                     SpriteDir + "hex-btn-l-bg-30.png",
                     IconDir + "popup-menu-entry-icon-0.png",
                     SpriteDir + "litter-panel-cc.png",
+                    // 蓝图卡片左栏：照游戏蓝图浏览器的文件卡底图。
+                    SpriteRoot + "blueprint-file-220px.png",
+                    // 卡片缩略图的 prefab 示例图标（运行期会换成真实物品图标）。
+                    ItemIconDir + "belt-1.png",
                     MaterialDir + "widget-alpha-5x.mat",
                     MaterialDir + "widget-text-alpha-5x.mat",
                     MaterialDir + "widget-text-alpha-5x-thick.mat",
@@ -147,6 +159,7 @@ namespace IcarusII.EditorTools
                     "sci-fi-deco-1",
                     "checkbox-on-2",
                     "insert-icon-40",
+                    "copy",
                     "hex-bg-30",
                     "hex-border-up-30",
                     "close-x-m",
@@ -154,6 +167,8 @@ namespace IcarusII.EditorTools
                     "hex-btn-l-bg-30",
                     "popup-menu-entry-icon-0",
                     "litter-panel-cc",
+                    "blueprint-file-220px",
+                    "belt-1",
                     "widget-alpha-5x",
                     "widget-text-alpha-5x",
                     "widget-text-alpha-5x-thick",

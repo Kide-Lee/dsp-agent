@@ -30,6 +30,13 @@ namespace IcarusII.Game
         {
             if (card == null) return null;
 
+            // 新卡片带 relPath（可能是 IcarusII/xxx.txt），必须保留子目录。
+            if (!string.IsNullOrEmpty(card.RelPath))
+            {
+                var candidate = SafeCombineRoot(card.RelPath);
+                if (!string.IsNullOrEmpty(candidate)) return candidate;
+            }
+
             var name = SafeFileName(card.FileName);
             if (string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(card.Path))
                 name = SafeFileName(Path.GetFileName(card.Path));
@@ -175,6 +182,25 @@ namespace IcarusII.Game
         }
 
         /// <summary>只接受纯文件名，防止协议里的 fileName 带路径分隔符越出蓝图目录。</summary>
+        /// <summary>
+        /// 把卡片的 relPath 拼到游戏蓝图根；拒绝 ..、盘符与逃出根目录的路径。
+        /// 返回绝对路径（文件不存在也返回，由调用方报错）。
+        /// </summary>
+        private static string SafeCombineRoot(string relPath)
+        {
+            if (string.IsNullOrEmpty(relPath)) return null;
+            var normalized = relPath.Replace('\\', '/');
+            if (normalized.StartsWith("/") || normalized.Contains(":") || normalized.Contains("\0")) return null;
+            foreach (var part in normalized.Split('/'))
+            {
+                if (part == ".." || part == ".") return null;
+            }
+            var root = Path.GetFullPath(GameConfig.blueprintFolder);
+            var candidate = Path.GetFullPath(Path.Combine(root, normalized.Replace('/', Path.DirectorySeparatorChar)));
+            var prefix = root.EndsWith(Path.DirectorySeparatorChar.ToString()) ? root : root + Path.DirectorySeparatorChar;
+            return candidate.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? candidate : null;
+        }
+
         private static string SafeFileName(string raw)
         {
             if (string.IsNullOrEmpty(raw)) return null;

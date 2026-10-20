@@ -45,6 +45,7 @@ import {
   parseModelCatalogPayload,
   parsePromptPayload,
   parseProviderTestPayload,
+  parseReplyTimePayload,
   parseSaveBindPayload,
   parseToolResultPayload,
   serializeEnvelope,
@@ -281,6 +282,9 @@ export class Session {
         return;
       case MessageType.HistoryDelete:
         void this.handleHistoryDelete(env);
+        return;
+      case MessageType.ReplyTime:
+        this.handleReplyTime(env);
         return;
       case MessageType.ToolResult:
         this.handleToolResult(env);
@@ -610,10 +614,12 @@ export class Session {
       saveKey: bind.saveKey,
       saveName: bind.saveName,
       existed: known,
+      blueprintTiers: bind.blueprintTiers ?? null,
     });
 
     try {
       this.options.agent.onSaveChanged?.(bind.saveKey);
+      this.options.agent.onBlueprintTiers?.(bind.blueprintTiers ?? null);
     } catch (err) {
       this.logger.warn('切换存档会话失败', errorFields(err));
     }
@@ -751,6 +757,20 @@ export class Session {
       this.logger.error('agent 执行失败', errorFields(err));
       this.sendError('internal', 'agent failed', promptId);
     });
+  }
+
+  private handleReplyTime(env: import('./protocol.js').ParsedEnvelope): void {
+    const parsed = parseReplyTimePayload(env.payload);
+    if (!parsed) {
+      this.logger.warn('reply.time 载荷无效，已忽略', { promptId: env.id ?? null });
+      return;
+    }
+    this.options.agent.recordReplyTime?.(
+      this.boundSaveKey,
+      parsed.prompt,
+      parsed.reply ?? '',
+      parsed.gameTime,
+    );
   }
 
   // ---------------------------------------------------------------- 工具调用

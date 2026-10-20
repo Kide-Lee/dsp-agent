@@ -433,10 +433,24 @@ mod                                   sidecar
 ```json
 {
   "v": 1, "id": "m-11", "type": "save.bind",
-  "payload": { "saveKey": "3f2a91c4d8e05b17", "saveName": "我的档" }
+  "payload": {
+    "saveKey": "3f2a91c4d8e05b17",
+    "saveName": "我的档",
+    "blueprintTiers": {
+      "assembler": 2, "belt": 2, "inserter": 3,
+      "piler": true, "stacking": true
+    }
+  }
 }
 ```
 
+- `blueprintTiers`（可选，M4j+）：玩家当前**已解锁**的蓝图档位，供 sidecar 生成蓝图时默认使用，
+  不需要模型再调用查询工具。字段都可省略；缺失时 sidecar 退回安全档（base / 黄带 / 普通分拣器）。
+  - `assembler`: 0 = Mk.I / 1 = Mk.II / 2 = Mk.III
+  - `belt`: 0 = 黄带 / 1 = 绿带 / 2 = 蓝带
+  - `inserter`: 0..3（分拣器 / 高速 / 极速 / 集装）
+  - `piler` / `stacking`: 是否解锁自动集装机 / 集装堆叠
+  老 sidecar 忽略该字段；老 mod 不发，sidecar 用默认档。
 - `saveKey`：存档的**稳定标识**——同一个存档每次读取都必须得到同一个值。
   mod 由 `GameDesc.creationTime` 与 `GameDesc.seedKey64` 经 FNV-1a 64 派生为 16 位十六进制串。
   **刻意不包含 `GameData.gameName`**：那是玩家可改的名字，
@@ -465,6 +479,8 @@ mod                                   sidecar
   压缩摘要不会出现在这里。历史读取失败时为空数组，不阻断 `save.bound`。
 - `history` 的 `assistant` 消息可带可选的 `cards`（附录 A.9）：该回答产出的蓝图卡片，
   形如 `[{fileName, path, name, ...}]`。老客户端忽略该字段；mod 回放时在回答后重建卡片。
+- `history` 的 `assistant` 消息可带可选的 `gameTime`（字符串，`HH:mm`）：该回答完成时的
+  游戏时间。老 mod 忽略该字段；mod 回放时显示在脚注。
 
 #### 语义
 
@@ -557,7 +573,8 @@ mod                                   sidecar
 {
   "v": 1, "id": "s-80", "type": "blueprint_card",
   "payload": {
-    "path": "/home/me/Documents/Dyson Sphere Program/Blueprint/电磁涡轮 20.txt",
+    "path": "/home/me/Documents/Dyson Sphere Program/Blueprint/IcarusII/电磁涡轮 20.txt",
+    "relPath": "IcarusII/电磁涡轮 20.txt",
     "fileName": "电磁涡轮 20.txt",
     "name": "电磁涡轮 20",
     "item": "电磁涡轮",
@@ -582,21 +599,46 @@ mod                                   sidecar
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `fileName` | 是 | 蓝图文件名（含 `.txt`） |
+| `relPath` | 否 | 相对蓝图根的 POSIX 路径，例如 `IcarusII/x.txt`；**子目录卡片必须带它** |
 | `path` | 否 | sidecar 侧的绝对路径；**不保证** mod 能直接打开（Proton/Wine 路径可能不同） |
 | `name` | 否 | 蓝图标题（header 的 `shortDesc`） |
 | `item` / `itemId` / `rate` | 否 | 产物与目标产量（`blueprint_generate` 才有） |
 | `buildings` / `width` / `height` | 否 | 建筑数与占地（从蓝图二进制读出） |
 | `author` / `version` / `attributes` / `description` | 否 | 蓝图 header 元数据 |
-| `source` | 否 | `"generated"` \| `"downloaded"` \| `"copied"`，用于卡片角标 |
+| `source` | 否 | `"generated"` \| `"downloaded"` \| `"copied"` \| `"written"`，用于卡片角标 |
 | `license` / `repository` | 否 | 下载来源的许可与仓库，卡片可据此署名 |
 
 - 一次工具调用成功 → 一张卡片；一轮里调用多次就发多条，顺序与工具完成顺序一致。
 - 工具失败不发卡片。
-- mod 必须容忍字段缺失；`path` 打不开时应回退到
-  `GameConfig.blueprintFolder + fileName` 再尝试。
+- mod 必须容忍字段缺失；有 `relPath` 时优先 `GameConfig.blueprintFolder + relPath`
+  （并校验仍在根内），否则回退到 `GameConfig.blueprintFolder + fileName`。
 - sidecar 会把卡片按「用户提问原文」持久化，并在后续 `save.bound.history` 的
   assistant 消息上以可选 `cards` 字段带回；mod 回放时在回答后重建卡片。
   记录损坏/找不到对应回合时只是不回放，不影响历史文本。
+
+### A.10 `reply.time` — 回存每条回答的游戏时间（mod → sidecar）
+
+mod 收到 `message{final}` 并完成渲染后发送。sidecar 不回复；它按存档持久化一条
+「提问原文 → 游戏时间」记录，后续 `save.bound.history` 会把该时间挂到对应 assistant
+消息的 `gameTime` 字段上。
+
+```jsonc
+{
+  "v": 1, "id": "m-61", "type": "reply.time",
+  "payload": {
+    "prompt": "帮我看看这条日志里的过滤规则是什么？",
+    "reply": "日志里是 Filter: legacy……",
+    "gameTime": "08:42"
+  }
+}
+```
+
+- `prompt`：本轮用户提问原文，用于没有 `reply` 时回退匹配；过长时按 sidecar 存储上限截断。
+- `reply`（可选）：本轮 assistant 终稿原文。sidecar 优先按回答原文匹配，能区分
+  “继续”这类重复提问；过长时截断。
+- `gameTime`：`HH:mm`；没有游戏数据时 mod 可跳过不发。
+- sidecar 忽略空值/非法值，不因记录失败影响回答；同一提问/回答以最后一条记录为准。
+- 老 sidecar 忽略未知 `type`；老 mod 不发该消息，历史脚注退回显示 `--:--` 或当前时间。
 
 ---
 
@@ -679,8 +721,16 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 | `wiki_page` | 读取 Wiki 页面纯文本（自动重定向，≤8000 字） |
 | `blueprint_search` | 在线搜索 DSPBluePrints/FactoryBluePrints 的 `.txt` 蓝图路径（不打包内容） |
 | `blueprint_info` | 读取蓝图并做格式体检（header/base64+gzip/md5），带来源与许可 |
-| `blueprint_save` | 保存到游戏蓝图目录（Documents/Dyson Sphere Program/Blueprint），同名自动加序号 |
+| `blueprint_save` | 保存到游戏蓝图目录（默认 `IcarusII/`，可传 `dir`），同名自动加序号 |
+| `blueprint_fs` | 蓝图目录的受限虚拟文件系统：`pwd/cd/ls/cat/mkdir/write/rm/rmdir`；路径以蓝图根为 `/` |
+| `blueprint_generate` | 按知识库真实配方生成完整产线蓝图，保存到蓝图目录；单张总线容量不足时自动拆成多张 |
 
+- `blueprint_generate` 是 sidecar 本地工具，依赖已建立的 M3 知识库：
+  知识库未建立时返回 `kb_unavailable`；它先调用 `kb_plan` 的同一套配方展开，再交给 dsp-calc 布局。
+  返回值除 `fileName`/`path`/`buildings`/`width`/`height` 外，还带 `stages`（每阶段机器与产出）、
+  `raw`、`byproducts`、`warnings`、`validation`；产量超过单张混带总线容量时会返回
+  `tileCount` / `ratePerTile` / `tiles[]`（每张独立文件）。输入是社区别名时，结果带可选的
+  `alias: { input, resolved, source }`（source = curated/wiki/cache）；`from` 为实际使用的起点标签。
 - 全部由 sidecar 直接访问外网；失败显式返回 `wiki_unavailable` / `blueprint_unavailable`，
   不允许用模型记忆补内容。
 - 蓝图内容许可 **CC BY-NC-SA 4.0**：结果必须带 repository 与许可，回答需署名；
