@@ -499,6 +499,9 @@ AgentRoot (RectTransform, 默认 inactive)
   `loading`（运行中的思考/工具区）→ `thinking-block` / `tools`、正文、蓝图卡片网格和底部
   （游戏时间 + 复制按钮）。运行期只克隆这个模板、绑定文字/图标/显隐和点击回调；
   思考/工具/正文/卡片共享同一条回复容器，不再由 C# 拼静态节点。
+  `loading` 本身**不加左右 padding**（`spacing=6`），思考块/工具块的左边缘与正文、卡片、
+  脚注对齐；块的 10px padding 只影响块内文字。prefab 里保留一份思考块 + 工具块示例
+  （`tool-template` 可见）用于预览，运行期 `BindReply` 会把两者隐藏。
 - **每段思考各自一块**：一次提问里模型会「思考 → 工具 → 再思考 → …」。第一个思考块用
   prefab 里的 `thinking-block`；之后每段思考都**克隆** `thinking-block` 追加到 `tools`
   折叠块容器末尾（工具块也追加在这里），所以顺序始终是 思考 → 工具 → 思考 → …。

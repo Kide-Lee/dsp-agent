@@ -156,6 +156,9 @@ namespace IcarusII.EditorTools
         /// <summary>
         /// 运行中的思考/工具区。运行期：一出现思考/工具就显示；正文开始后
         /// 里面的块各自收起，整块区域没有可见内容时隐藏，不留空白间距。
+        ///
+        /// 不能给这一层加左右 padding：思考块/工具块的左边缘必须和正文、卡片、
+        /// 脚注对齐（块自己的 10px padding 只影响块内文字）。
         /// </summary>
         private static RectTransform BuildLoading(RectTransform reply, Font bold, Font body, Material material)
         {
@@ -166,8 +169,8 @@ namespace IcarusII.EditorTools
             loading.anchoredPosition = Vector2.zero;
             loading.sizeDelta = Vector2.zero;
             var vlg = loading.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(10, 10, 6, 6);
-            vlg.spacing = 2f;
+            vlg.padding = new RectOffset(0, 0, 0, 0);
+            vlg.spacing = 6f;
             vlg.childControlWidth = true;
             vlg.childControlHeight = true;
             vlg.childForceExpandWidth = true;
@@ -185,7 +188,7 @@ namespace IcarusII.EditorTools
         {
             var root = BuildBlockRoot(reply, "thinking-block", "思考中…");
             var block = BindBlockParts(root, bold, body, material, title: "思考中…", summary: "正在推理…",
-                bodyText: "思考内容示例：先确认玩家问的是日志过滤规则，再解释 legacy 过滤器的行为。");
+                bodyText: "示例：先确认玩家问的是哪条产线，再读取电力与产出，最后给出结论。");
             block.header.gameObject.SetActive(true);
             block.body.gameObject.SetActive(true);
             root.gameObject.SetActive(true);
@@ -211,8 +214,10 @@ namespace IcarusII.EditorTools
             var template = BuildBlockRoot(tools, "tool-template", "工具 · 示例");
             BindBlockParts(template, bold, body, material, title: "工具 · 示例",
                 summary: "读取中…",
-                bodyText: "参数\n示例参数\n\n结果\n示例结果");
-            template.gameObject.SetActive(false);
+                bodyText: "参数\n工具参数\n\n结果\n工具结果（完成后显示）");
+            // 模板保持可见，方便在 prefab 里直接看到 loading 的完整样子
+            // （思考块 + 工具块示例）；运行期 BindReply 会把 template 和 tools 一起隐藏。
+            template.gameObject.SetActive(true);
             return tools;
         }
 
