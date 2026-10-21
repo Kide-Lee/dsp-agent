@@ -128,6 +128,8 @@ namespace IcarusII.EditorTools
                     SpriteDir + "window-border-1.png",
                     SpriteDir + "window-glass-1.png",
                     SpriteDir + "sci-fi-deco-1.png",
+                    // loading 标题行的转圈图标（游戏自带的 loading 图）。
+                    SpriteDir + "loading-20.png",
                     IconDir + "checkbox-on-2.png",
                     IconDir + "insert-icon-40.png",
                     IconDir + "copy.png",

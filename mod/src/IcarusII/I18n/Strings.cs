@@ -49,6 +49,9 @@ namespace IcarusII.I18n
             ["thinking.level.off"] = "关闭",
             ["thinking.level.high"] = "高",
             ["thinking.level.max"] = "最高",
+            // loading 分组头：思考/工具运行中 → 已完成
+            ["loading.running"] = "终端运行中…",
+            ["loading.done"] = "已完成",
             ["tool.title"] = "工具 · {0}",
             ["tool.name"] = "工具",
             ["tool.running"] = "读取中…",

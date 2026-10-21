@@ -334,6 +334,7 @@ namespace IcarusII
                             _chat.EndStream();
                             _streaming = false;
                         }
+                        _chat.FinishTurn();
                         _chat.SetStatus(Strings.Get("status.ready"), OkColor);
                     }
                     else if (state == Protocol.StateRetrying)
@@ -471,6 +472,7 @@ namespace IcarusII
                     var code = payload["code"].AsString("unknown");
                     var message = payload["message"].AsString("");
                     _chat.EndThinking(finalize: true);
+                    _chat.FinishTurn();
                     _chat.AppendSystem($"⚠ 错误 [{code}] {message}");
                     if (_streaming)
                     {

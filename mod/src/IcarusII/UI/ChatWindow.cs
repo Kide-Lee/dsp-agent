@@ -320,10 +320,25 @@ namespace IcarusII.UI
             /// </summary>
             public readonly List<Block> Blocks = new List<Block>();
             /// <summary>
-            /// prefab 里名为 loading 的运行中区块（新结构把 thinking-block / tools 装在里面）。
-            /// 老 prefab 没有这一层时为 null。
+            /// prefab 里名为 loading 的运行中区块（新结构：header + content，
+            /// content 里才是 thinking-block / tools）。老 prefab 没有这一层时为 null。
             /// </summary>
             public RectTransform Loading;
+            /// <summary>loading 的标题行（点击展开/收起整个分组）。</summary>
+            public GameObject LoadingHeader;
+            /// <summary>loading 里承载思考/工具块的内容容器。</summary>
+            public RectTransform LoadingContent;
+            /// <summary>运行中的转圈图标（游戏自带的 loading 图）。</summary>
+            public Image LoadingSpinner;
+            /// <summary>运行期挂到转圈图标上的旋转组件。</summary>
+            public LoadingSpinner LoadingSpin;
+            /// <summary>完成后的展开/收起图标（▸ / ▾）。</summary>
+            public Text LoadingChevron;
+            public Text LoadingTitle;
+            /// <summary>loading 分组当前是否展开（内容可见）。</summary>
+            public bool LoadingExpanded = true;
+            /// <summary>思考/工具这一轮是否已结束（显示“已完成”）。</summary>
+            public bool LoadingDone;
             /// <summary>
             /// prefab 里名为 tools 的折叠块容器。工具块和“第二段及以后”的思考块都按创建顺序
             /// 追加到这里，视觉顺序才是 思考 → 工具 → 思考 → 工具 → 正文。
@@ -2452,22 +2467,123 @@ namespace IcarusII.UI
             return block;
         }
 
-        /// <summary>有思考/工具内容了：显示 prefab 里的运行中区块（新 prefab 才有这一层）。</summary>
-        private static void ShowReplyLoading(ReplyView reply)
+        // ---------------------------------------------------------------- loading 分组头
+
+        /// <summary>
+        /// 有新的思考/工具内容：显示 loading，并把分组头切到“终端运行中…” + 转圈。
+        /// 从“已完成”重新开始时自动展开内容；运行中新建块不会改变玩家手动收起的状态。
+        /// </summary>
+        private void ShowReplyLoading(ReplyView reply)
         {
             if (reply == null || reply.Loading == null) return;
+
             if (!reply.Loading.gameObject.activeSelf) reply.Loading.gameObject.SetActive(true);
+            if (reply.LoadingHeader != null && !reply.LoadingHeader.activeSelf)
+                reply.LoadingHeader.SetActive(true);
+
+            bool wasDone = reply.LoadingDone;
+            reply.LoadingDone = false;
+
+            if (reply.LoadingTitle != null)
+            {
+                reply.LoadingTitle.text = Strings.Get("loading.running");
+                reply.LoadingTitle.color = _accent;
+            }
+            if (reply.LoadingSpinner != null && !reply.LoadingSpinner.gameObject.activeSelf)
+                reply.LoadingSpinner.gameObject.SetActive(true);
+            if (reply.LoadingSpin != null) reply.LoadingSpin.enabled = true;
+            if (reply.LoadingChevron != null && reply.LoadingChevron.gameObject.activeSelf)
+                reply.LoadingChevron.gameObject.SetActive(false);
+
+            if (wasDone) ApplyLoadingExpanded(reply, true);
+        }
+
+        /// <summary>
+        /// 思考/工具这一轮结束：标题改成“已完成”，关掉转圈，显示展开图标并收起内容。
+        /// 没有产生过任何块时什么都不做（loading 保持隐藏）。
+        /// </summary>
+        private void MarkLoadingDone(ReplyView reply)
+        {
+            if (reply == null || reply.Loading == null) return;
+            if (!HasLoadingBlocks(reply))
+            {
+                HideReplyLoadingIfEmpty(reply);
+                return;
+            }
+
+            if (!reply.Loading.gameObject.activeSelf) reply.Loading.gameObject.SetActive(true);
+            if (reply.LoadingHeader != null && !reply.LoadingHeader.activeSelf)
+                reply.LoadingHeader.SetActive(true);
+
+            reply.LoadingDone = true;
+
+            if (reply.LoadingTitle != null)
+            {
+                reply.LoadingTitle.text = Strings.Get("loading.done");
+                reply.LoadingTitle.color = _textDim;
+            }
+            if (reply.LoadingSpin != null) reply.LoadingSpin.enabled = false;
+            if (reply.LoadingSpinner != null && reply.LoadingSpinner.gameObject.activeSelf)
+                reply.LoadingSpinner.gameObject.SetActive(false);
+            if (reply.LoadingChevron != null && !reply.LoadingChevron.gameObject.activeSelf)
+                reply.LoadingChevron.gameObject.SetActive(true);
+
+            ApplyLoadingExpanded(reply, false);
+            _dirty = true;
+        }
+
+        /// <summary>点 loading 标题行：展开/收起它下面的思考/工具块（运行中/已完成都可以点）。</summary>
+        private void ToggleLoadingGroup(ReplyView reply)
+        {
+            if (reply == null || reply.Loading == null) return;
+            if (reply.LoadingContent == null || ReferenceEquals(reply.LoadingContent, reply.Loading))
+                return;   // 老 prefab 没有独立的内容容器，没有可收起的范围
+
+            _suppressAutoScrollOnce = true;   // 与折叠块一致：收放时别把视图拽到底
+            _scrollBottomFrames = 0;
+            ApplyLoadingExpanded(reply, !reply.LoadingExpanded);
+            _dirty = true;
+        }
+
+        /// <summary>真正切换 content 的显隐，并同步展开/收起图标。</summary>
+        private void ApplyLoadingExpanded(ReplyView reply, bool expanded)
+        {
+            if (reply == null) return;
+            reply.LoadingExpanded = expanded;
+            if (reply.LoadingContent != null && !ReferenceEquals(reply.LoadingContent, reply.Loading)
+                && reply.LoadingContent.gameObject.activeSelf != expanded)
+            {
+                reply.LoadingContent.gameObject.SetActive(expanded);
+            }
+            if (reply.LoadingChevron != null) reply.LoadingChevron.text = ChevronFor(expanded);
+        }
+
+        /// <summary>这一轮是否产生过思考/工具块（块被 loading 收起时 activeSelf 仍为 true）。</summary>
+        private static bool HasLoadingBlocks(ReplyView reply)
+        {
+            if (reply == null) return false;
+            for (int i = 0; i < reply.ThinkingBlocks.Count; i++)
+            {
+                var block = reply.ThinkingBlocks[i];
+                if (block != null && block.Go != null && block.Go.activeSelf) return true;
+            }
+            if (reply.Tools != null)
+            {
+                for (int i = 0; i < reply.Tools.childCount; i++)
+                {
+                    var child = reply.Tools.GetChild(i);
+                    if (child == null || child == reply.ToolTemplate) continue;
+                    if (child.gameObject.activeSelf) return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>思考/工具都没了：把运行中区块整块隐藏，避免留下空白间距。</summary>
         private static void HideReplyLoadingIfEmpty(ReplyView reply)
         {
             if (reply == null || reply.Loading == null) return;
-            for (int i = 0; i < reply.Loading.childCount; i++)
-            {
-                var child = reply.Loading.GetChild(i);
-                if (child != null && child.gameObject.activeSelf) return;
-            }
+            if (HasLoadingBlocks(reply)) return;
             if (reply.Loading.gameObject.activeSelf) reply.Loading.gameObject.SetActive(false);
         }
 
@@ -2577,6 +2693,28 @@ namespace IcarusII.UI
         }
 
         /// <summary>
+        /// 本轮彻底结束（idle / 错误）：把当前回复的 loading 切成“已完成”并收起整组。
+        /// 不能在每条 assistant 消息的 final 就切——工具可能还在跑，后面还会有正文。
+        /// </summary>
+        public void FinishTurn()
+        {
+            MarkCurrentReplyLoadingDone();
+        }
+
+        /// <summary>本轮已经没有待完成的思考/工具：把当前回复的 loading 切成“已完成”。</summary>
+        private void MarkCurrentReplyLoadingDone()
+        {
+            for (int i = _items.Count - 1; i >= 0; i--)
+            {
+                var item = _items[i];
+                if (item.Kind != LineKind.Assistant || item.Reply == null) continue;
+                if (item.TurnId != _currentTurnId) continue;
+                MarkLoadingDone(item.Reply);
+                return;
+            }
+        }
+
+        /// <summary>
         /// 正文开始（或历史回答落地）时，把这一轮此前产生的思考块、工具块全部收起：
         /// 只留 header 的一行标题 + 摘要，玩家想细看可以自己点开。
         ///
@@ -2595,6 +2733,8 @@ namespace IcarusII.UI
                 SetBlock(block, block.Title.text, block.Summary.text, block.RawBody,
                     expanded: false, titleColor: block.Title.color, rebuild: false);
             }
+            // 正文都开始了 ⇒ 这一轮思考/工具已经结束：分组头切成“已完成”并收起。
+            MarkLoadingDone(reply);
             _dirty = true;
         }
 
@@ -3972,6 +4112,8 @@ namespace IcarusII.UI
                             AppendHistorySteps(item.Reply, line.Steps);
                         else if (line.Thinking != null && line.Thinking.Count > 0)
                             RebuildThinking(item.Reply, line);
+                        // 补建的都是已经结束的内容：loading 显示“已完成”并收起。
+                        if (item.Reply.Loading != null) MarkLoadingDone(item.Reply);
                         AddCards(item.Reply, line.Cards);
                         if (item.Reply.Body != null)
                             item.Reply.Body.text = SanitizeRichText(line.Text);
@@ -4071,6 +4213,8 @@ namespace IcarusII.UI
             }
 
             AppendHistorySteps(reply, message.Steps);
+            // 回放的是已经完成的回答：loading 直接显示“已完成”，内容收起。
+            if (reply.Loading != null) MarkLoadingDone(reply);
             if (reply.Body != null) reply.Body.text = SanitizeRichText(text);
             ApplyReplyFooter(reply, text, time);
 
@@ -4560,10 +4704,15 @@ namespace IcarusII.UI
             // prefab 里的示例正文只是排版样板；运行期实例必须从空正文开始。
             if (view.Body != null) view.Body.text = string.Empty;
 
-            // 新 prefab 把思考/工具放进 loading（运行中区块）；老 prefab 直接挂在回复下。
+            // 新 prefab：loading header + content（thinking-block / tools 在 content 里）；
+            // 旧 prefab：thinking-block / tools 直接挂在回复下。
             view.Loading = t.Find("loading") as RectTransform;
-            var thinkingRoot = view.Loading != null
-                ? view.Loading.Find("thinking-block") as RectTransform
+            var loadingContent = view.Loading != null
+                ? view.Loading.Find("content") as RectTransform
+                : null;
+            view.LoadingContent = loadingContent != null ? loadingContent : view.Loading;
+            var thinkingRoot = view.LoadingContent != null
+                ? view.LoadingContent.Find("thinking-block") as RectTransform
                 : null;
             view.ThinkingRoot = thinkingRoot != null ? thinkingRoot : t.Find("thinking-block") as RectTransform;
             if (view.ThinkingRoot != null)
@@ -4572,8 +4721,8 @@ namespace IcarusII.UI
                 view.ThinkingRoot.gameObject.SetActive(false);
             }
 
-            var toolsRoot = view.Loading != null
-                ? view.Loading.Find("tools") as RectTransform
+            var toolsRoot = view.LoadingContent != null
+                ? view.LoadingContent.Find("tools") as RectTransform
                 : null;
             view.Tools = toolsRoot != null ? toolsRoot : t.Find("tools") as RectTransform;
             if (view.Tools != null)
@@ -4582,7 +4731,16 @@ namespace IcarusII.UI
                 if (view.ToolTemplate != null) view.ToolTemplate.gameObject.SetActive(false);
                 view.Tools.gameObject.SetActive(false);
             }
-            if (view.Loading != null) view.Loading.gameObject.SetActive(false);
+
+            if (view.Loading != null)
+            {
+                BindLoadingHeader(view);
+                view.LoadingExpanded = true;
+                view.LoadingDone = false;
+                if (view.LoadingContent != null && !ReferenceEquals(view.LoadingContent, view.Loading))
+                    view.LoadingContent.gameObject.SetActive(true);
+                view.Loading.gameObject.SetActive(false);
+            }
 
             var cards = t.Find("blueprint-cards") as RectTransform;
             if (cards != null)
@@ -4613,6 +4771,45 @@ namespace IcarusII.UI
                 footer.gameObject.SetActive(false);
             }
             return view;
+        }
+
+        /// <summary>
+        /// 绑定 loading 的标题行：转圈图标、展开图标、标题，以及点击展开/收起。
+        /// 节点全部来自 prefab；运行期只挂旋转组件、接点击。
+        /// </summary>
+        private void BindLoadingHeader(ReplyView view)
+        {
+            if (view == null || view.Loading == null) return;
+            var header = view.Loading.Find("header");
+            if (header == null) return;
+
+            view.LoadingHeader = header.gameObject;
+            view.LoadingTitle = FindChildText(header, "title");
+            view.LoadingChevron = FindChildText(header, "chevron");
+
+            var spinnerTr = header.Find("spinner");
+            if (spinnerTr != null)
+            {
+                view.LoadingSpinner = spinnerTr.GetComponent<Image>();
+                var spin = spinnerTr.GetComponent<LoadingSpinner>();
+                if (spin == null) spin = spinnerTr.gameObject.AddComponent<LoadingSpinner>();
+                view.LoadingSpin = spin;
+            }
+
+            // 点击整行展开/收起：优先接游戏原生 UIButton（悬停/音效），否则退回 Unity Button。
+            var native = header.GetComponent<UIButton>();
+            var button = header.GetComponent<Button>();
+            if (native != null) native.onClick += _ => ToggleLoadingGroup(view);
+            else if (button != null) button.onClick.AddListener(() => ToggleLoadingGroup(view));
+
+            // 初始按“运行中”摆好；真正显示时 ShowReplyLoading / MarkLoadingDone 会重置。
+            if (view.LoadingTitle != null)
+            {
+                view.LoadingTitle.text = Strings.Get("loading.running");
+                view.LoadingTitle.color = _accent;
+            }
+            if (view.LoadingChevron != null) view.LoadingChevron.gameObject.SetActive(false);
+            if (view.LoadingSpinner != null) view.LoadingSpinner.gameObject.SetActive(true);
         }
 
         private Block BindReplyBlock(GameObject root)

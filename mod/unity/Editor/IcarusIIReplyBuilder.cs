@@ -65,17 +65,8 @@ namespace IcarusII.EditorTools
                 }
 
                 var old = content.Find(ReplyName);
-                if (old != null && !force)
-                {
-                    if (HasAllParts(old))
-                    {
-                        Debug.Log("[IcarusII] 回复模板已存在，跳过：" + prefabPath);
-                        return true;
-                    }
-                    Debug.LogWarning("[IcarusII] 回复模板结构不完整，重建：" + prefabPath);
-                }
-                if (old != null) Object.DestroyImmediate(old.gameObject);
 
+                // 先解析字体/材质：既用于从零构建，也用于给旧 loading 结构补 header/content。
                 var sample = content.Find("example-assistant") as RectTransform;
                 var title = root.transform.Find("panel-bg/title-text") as RectTransform;
                 var titleText = title != null ? title.GetComponent<Text>() : null;
@@ -97,6 +88,25 @@ namespace IcarusII.EditorTools
                     material = sampleText != null ? sampleText.material : null;
                 }
 
+                if (old != null && !force)
+                {
+                    // 旧结构（loading 里直接放 thinking-block/tools）只做加法：补 header/content，
+                    // 不重排、不覆盖用户已经调好的尺寸。
+                    if (EnsureLoadingParts(old, fontBold, material))
+                    {
+                        PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+                        AssetDatabase.Refresh();
+                        Debug.Log("[IcarusII] 已给 loading 补上 header/content：" + prefabPath);
+                    }
+                    if (HasAllParts(old))
+                    {
+                        Debug.Log("[IcarusII] 回复模板已存在，跳过：" + prefabPath);
+                        return true;
+                    }
+                    Debug.LogWarning("[IcarusII] 回复模板结构不完整，重建：" + prefabPath);
+                }
+                if (old != null) Object.DestroyImmediate(old.gameObject);
+
                 var reply = BuildReply(content, fontBold, fontBody, material);
                 // 和其它 example-* 一样保持 active，方便在 Unity 里直接看到完整回复；
                 // 运行期 CaptureTemplates 会在建窗时把它置为 inactive 并作为克隆源。
@@ -116,17 +126,60 @@ namespace IcarusII.EditorTools
 
         private static bool HasAllParts(Transform reply)
         {
-            // 新结构把思考/工具放进 loading 容器；旧模板直接挂在回复下，两种都认。
-            var hasThinking = reply.Find("loading/thinking-block") != null
+            // 新结构：loading/header + loading/content/{thinking-block,tools}；
+            // 旧模板：thinking-block / tools 直接挂在 loading 或回复下，两种都认。
+            var hasThinking = reply.Find("loading/content/thinking-block") != null
+                              || reply.Find("loading/thinking-block") != null
                               || reply.Find("thinking-block") != null;
-            var hasTools = reply.Find("loading/tools/tool-template") != null
+            var hasTools = reply.Find("loading/content/tools/tool-template") != null
+                           || reply.Find("loading/tools/tool-template") != null
                            || reply.Find("tools/tool-template") != null;
+            var loading = reply.Find("loading");
+            var loadingComplete = loading == null
+                                  || (loading.Find("header") != null && loading.Find("content") != null);
             return hasThinking
                 && hasTools
+                && loadingComplete
                 && reply.Find("body") != null
                 && reply.Find("blueprint-cards/blueprint-card-template") != null
                 && reply.Find("footer/time") != null
                 && reply.Find("footer/copy") != null;
+        }
+
+        /// <summary>
+        /// 只做加法：给已有的 loading 补 header/content，并把 thinking-block/tools 挪进 content。
+        /// 已有节点、尺寸、样式都不动。返回是否发生了修改。
+        /// </summary>
+        private static bool EnsureLoadingParts(Transform reply, Font bold, Material material)
+        {
+            var loading = reply.Find("loading") as RectTransform;
+            if (loading == null) return false;   // 旧结构：没有 loading 层，不需要 header
+
+            var header = loading.Find("header");
+            var content = loading.Find("content") as RectTransform;
+            if (header != null && content != null) return false;
+
+            var changed = false;
+            if (content == null)
+            {
+                content = BuildLoadingContent(loading);
+                var thinking = loading.Find("thinking-block");
+                var tools = loading.Find("tools");
+                if (thinking != null) thinking.SetParent(content, false);
+                if (tools != null) tools.SetParent(content, false);
+                changed = true;
+            }
+            if (header == null)
+            {
+                BuildLoadingHeader(loading, bold, material);
+                changed = true;
+            }
+
+            // header 在上、content 在下。
+            header = loading.Find("header");
+            if (header != null) header.SetSiblingIndex(0);
+            if (content != null) content.SetSiblingIndex(1);
+            return changed;
         }
 
         private static RectTransform BuildReply(RectTransform content, Font bold, Font body, Material material)
@@ -154,11 +207,14 @@ namespace IcarusII.EditorTools
         }
 
         /// <summary>
-        /// 运行中的思考/工具区。运行期：一出现思考/工具就显示；正文开始后
-        /// 里面的块各自收起，整块区域没有可见内容时隐藏，不留空白间距。
+        /// 运行中的思考/工具区。结构：
+        ///   loading
+        ///   ├── header   终端运行中… / 已完成 + loading 动画 + 展开图标（整行可点）
+        ///   └── content  thinking-block / tools
         ///
-        /// 不能给这一层加左右 padding：思考块/工具块的左边缘必须和正文、卡片、
-        /// 脚注对齐（块自己的 10px padding 只影响块内文字）。
+        /// 运行期：一出现思考/工具就显示；正文开始后 header 切成“已完成”并收起 content，
+        /// 点 header 展开/收起。不能给这一层加左右 padding：块的左边缘必须和正文、
+        /// 卡片、脚注对齐（块自己的 10px padding 只影响块内文字）。
         /// </summary>
         private static RectTransform BuildLoading(RectTransform reply, Font bold, Font body, Material material)
         {
@@ -177,9 +233,101 @@ namespace IcarusII.EditorTools
             vlg.childForceExpandHeight = false;
             vlg.childAlignment = TextAnchor.UpperLeft;
 
-            BuildThinking(loading, bold, body, material);
-            BuildTools(loading, bold, body, material);
+            BuildLoadingHeader(loading, bold, material);
+            var content = BuildLoadingContent(loading);
+            BuildThinking(content, bold, body, material);
+            BuildTools(content, bold, body, material);
             return loading;
+        }
+
+        /// <summary>loading 的标题行：转圈图标 + 标题 + 展开图标（整行可点）。</summary>
+        private static void BuildLoadingHeader(RectTransform loading, Font bold, Material material)
+        {
+            var header = NewRect("header", loading);
+            header.anchorMin = new Vector2(0f, 1f);
+            header.anchorMax = new Vector2(1f, 1f);
+            header.pivot = new Vector2(0.5f, 1f);
+            header.anchoredPosition = Vector2.zero;
+            header.sizeDelta = new Vector2(0f, 20f);
+            AddLayout(header, minHeight: 20f, preferredHeight: 20f);
+
+            var image = header.gameObject.AddComponent<Image>();
+            image.color = new Color(0f, 0f, 0f, 0f);
+            image.raycastTarget = true;
+
+            var hlg = header.gameObject.AddComponent<HorizontalLayoutGroup>();
+            hlg.padding = new RectOffset(0, 0, 0, 0);
+            hlg.spacing = 6f;
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = false;
+            hlg.childForceExpandHeight = false;
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+
+            var button = header.gameObject.AddComponent<Button>();
+            button.transition = Selectable.Transition.None;
+            button.targetGraphic = image;
+            var native = header.gameObject.AddComponent<UIButton>();
+            native.button = button;
+            var transition = new UIButton.Transition
+            {
+                target = image,
+                damp = 0.12f,
+                normalColor = image.color,
+                mouseoverColor = new Color(0.04f, 0.04f, 0.04f, 0f),
+                pressedColor = new Color(0.04f, 0.04f, 0.04f, 0f),
+                disabledColor = image.color,
+                mouseoverSize = 1f,
+                pressedSize = 1f,
+                highlightSizeMultiplier = 1f,
+                highlightColorMultiplier = 1f,
+                highlightAlphaMultiplier = 1f,
+            };
+            native.transitions = new[] { transition };
+
+            var spinner = NewRect("spinner", header);
+            AddLayout(spinner, minWidth: 16f, preferredWidth: 16f, minHeight: 16f, preferredHeight: 16f);
+            var spinnerImage = spinner.gameObject.AddComponent<Image>();
+            spinnerImage.sprite = AssetDatabase.LoadAssetAtPath<Sprite>(
+                "Assets/Resources/UI/Textures/Sprites/Sci-fi/loading-20.png");
+            spinnerImage.color = Accent;
+            spinnerImage.preserveAspect = true;
+            spinnerImage.raycastTarget = false;
+
+            var chevron = NewRect("chevron", header);
+            AddLayout(chevron, minWidth: 12f, preferredWidth: 12f);
+            var chevronText = AddLabel(chevron, bold, 11, TextDim, TextAnchor.MiddleCenter, material);
+            chevronText.text = "▸";
+            chevronText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            chevronText.verticalOverflow = VerticalWrapMode.Truncate;
+            chevron.gameObject.SetActive(false);
+
+            var title = NewRect("title", header);
+            var titleText = AddLabel(title, bold, 13, Accent, TextAnchor.MiddleLeft, material);
+            titleText.text = "终端运行中…";
+            titleText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            titleText.verticalOverflow = VerticalWrapMode.Truncate;
+            titleText.supportRichText = false;
+        }
+
+        /// <summary>loading 的内容容器（运行期整体展开/收起）。</summary>
+        private static RectTransform BuildLoadingContent(RectTransform loading)
+        {
+            var content = NewRect("content", loading);
+            content.anchorMin = new Vector2(0f, 1f);
+            content.anchorMax = new Vector2(1f, 1f);
+            content.pivot = new Vector2(0.5f, 1f);
+            content.anchoredPosition = Vector2.zero;
+            content.sizeDelta = Vector2.zero;
+            var vlg = content.gameObject.AddComponent<VerticalLayoutGroup>();
+            vlg.padding = new RectOffset(0, 0, 0, 0);
+            vlg.spacing = 6f;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            vlg.childAlignment = TextAnchor.UpperLeft;
+            return content;
         }
 
         // ---------------------------------------------------------------- 思考块
