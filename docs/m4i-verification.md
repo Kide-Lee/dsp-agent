@@ -26,6 +26,7 @@ dotnet run --project tests/ProtocolTests
 | # | 操作 | 期望 |
 | --- | --- | --- |
 | 1 | 让 AI「生成一张电磁涡轮 20/min 的产线蓝图」 | 回答末尾出现卡片；来源角标「生成」 |
+| 1b | 卡片出现的瞬间 | 输出区立刻贴底、滚动条下移，最新卡片完整露出，不用手动滚；关窗再开也停在最新一条 |
 | 2 | 卡片信息 | 有图标、名称、文件名、产量、建筑数、占地、作者/版本 |
 | 3 | 点「查看详情」 | 聊天窗关闭；蓝图浏览器打开并定位到蓝图目录；右侧 inspector 显示该文件 |
 | 4 | 点「粘贴铺设」 | 进入蓝图粘贴预览，可正常旋转/放置 |
@@ -42,6 +43,12 @@ dotnet run --project tests/ProtocolTests
 - 卡片是**数据驱动的消息卡片**，与工具块/思考块同一套做法：运行期按
   `blueprint_card` 载荷创建，不新增 prefab 静态节点，因此本需求**没有改
   `ChatWindow.prefab`、也不需要重打 UI AssetBundle**。
+- 卡片插进回复的网格后，内容高度要等 Canvas 布局重建才变大。直接设
+  `ScrollRect.verticalNormalizedPosition` 只能按旧高度算，滚动条会停在旧底部、
+  新卡片压在视口下面；流式文本每帧都会重贴所以看不出来，卡片只贴一次就会露馅。
+  因此插入/开窗后走 `ScrollToBottomAfterContentChange()`：先强制重建布局再贴底，
+  接下来两帧继续贴底兜底；Tick 里每次内容渲染后也补两帧贴底，
+  覆盖系统提示、非流式终稿这类“只改一次内容”的场景（折叠块展开/收起与索引跳转除外）。
 - 卡片动作在 `mod/src/IcarusII/Game/BlueprintActions.cs`：
   - 详情：`UIGame.OpenBlueprintBrowser()` → `SetCurrentDirectory(dir)` →
     `UIBlueprintInspector.SetBlueprint(bp, path)` → `_Open()`；

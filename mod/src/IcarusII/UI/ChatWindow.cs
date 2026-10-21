@@ -372,6 +372,16 @@ namespace IcarusII.UI
 
         private bool _dirty;
         private bool _suppressAutoScrollOnce;
+        /// <summary>
+        /// 内容变化后还需要继续贴底几帧。
+        ///
+        /// 一次性的内容变化（蓝图卡片、系统提示、非流式终稿）只在那一帧置一次
+        /// <see cref="_dirty"/>。内容高度要等这一帧的 Canvas 布局重建后才更新，
+        /// 当帧设 verticalNormalizedPosition 只能按旧高度算，滚动条会停在旧底部，
+        /// 之后又没有 dirty 帧来纠正。所以卡片插入/开窗时先强制重建一次布局，
+        /// 并在每次内容渲染后排两帧延迟贴底。
+        /// </summary>
+        private int _scrollBottomFrames;
         private int _fontSize;
         private int _maxLines;
 
@@ -547,6 +557,7 @@ namespace IcarusII.UI
             _suppressThinkingLevelEvent = false;
             _stream.Length = 0;
             _streamItem = -1;
+            _scrollBottomFrames = 0;
             _userTemplate = null;
             _assistantTemplate = null;
             _replyTemplate = null;
@@ -1474,7 +1485,9 @@ namespace IcarusII.UI
                 if (_autoFocusInput || _keyEntryMode) FocusInput();
                 EnsureThinkingComboText();
                 EnsureModelComboText();
-                ScrollToBottom();
+                // 刚 SetActive(true)，布局还没重建：直接贴底只能按旧高度算，
+                // 打开窗口时可能停在历史中间而不是最新一条（蓝图卡片尤其明显）。
+                ScrollToBottomAfterContentChange();
             }
             else
             {
@@ -1722,7 +1735,7 @@ namespace IcarusII.UI
                         }
                         TrimHistory();
                         _dirty = true;
-                        ScrollToBottom();
+                        ScrollToBottomAfterContentChange();
                         return;
                     }
                 }
@@ -1740,7 +1753,7 @@ namespace IcarusII.UI
             });
             TrimHistory();
             _dirty = true;
-            ScrollToBottom();
+            ScrollToBottomAfterContentChange();
         }
 
         /// <summary>克隆 prefab 的固定卡片模板并绑定一张卡片。</summary>
@@ -2727,6 +2740,7 @@ namespace IcarusII.UI
             // 不能在这里 ScrollToBottom，否则最后一块会被“钉住底部”，
             // 视觉上变成向上展开。
             _suppressAutoScrollOnce = true;
+            _scrollBottomFrames = 0;   // 也别让上一帧的延迟贴底把位置拽回去
             SetBlock(block, block.Title.text, block.Summary.text, block.RawBody,
                 expanded: !block.Expanded, titleColor: block.Title.color);
         }
@@ -4163,6 +4177,8 @@ namespace IcarusII.UI
             var contentHeight = _content.rect.height;
             var max = Mathf.Max(1f, contentHeight - viewportHeight);
             var itemTop = -itemRt.anchoredPosition.y;
+            // 玩家明确要定位到某个回合：别让延迟贴底把位置拽回底部。
+            _scrollBottomFrames = 0;
             _scroll.verticalNormalizedPosition = Mathf.Clamp01(1f - (itemTop - viewportHeight * 0.5f) / max);
         }
 
@@ -5083,7 +5099,25 @@ namespace IcarusII.UI
             if (_dirty)
             {
                 _dirty = false;
+                // 折叠块的展开/收起要保住当前滚动位置（见 ToggleBlock），
+                // 这里先把“本帧不自动贴底”记下来，别把延迟贴底也排进去。
+                bool keepScroll = _suppressAutoScrollOnce;
                 Render();
+
+                // 内容高度要等这一帧的 Canvas 布局重建后才会更新，
+                // 本帧设的 verticalNormalizedPosition 只能按旧高度算。
+                // 再贴两帧（下一帧布局已就绪），覆盖“只改一次内容”的场景：
+                // 蓝图卡片、系统提示、非流式终稿——它们之后不会再有 dirty 帧。
+                if (!keepScroll)
+                    _scrollBottomFrames = Mathf.Max(_scrollBottomFrames, 2);
+            }
+
+            // 一次性内容插入后继续贴底两帧（见 ScrollToBottomAfterContentChange）。
+            // 独立于 _dirty：卡片插入后不会再有 dirty 帧。
+            if (_scrollBottomFrames > 0)
+            {
+                _scrollBottomFrames--;
+                ScrollToBottom();
             }
 
             if (IsOpen) EnsureInputCharColorHeadroom();
@@ -5124,6 +5158,25 @@ namespace IcarusII.UI
             if (_scroll == null) return;
             // 0 = 底部。即使本帧布局还没刷新，下一帧再设一次即可收敛。
             _scroll.verticalNormalizedPosition = 0f;
+        }
+
+        /// <summary>
+        /// 一次性内容插入后的“立刻贴底”。
+        ///
+        /// 蓝图卡片是插进回复里的网格的：节点先建好，内容高度要等 Canvas 布局重建后
+        /// 才变大。此时直接设 verticalNormalizedPosition，ScrollRect 只能按旧高度算，
+        /// 滚动条停在旧底部，新卡片就压在视口下面（流式文本每帧都会重贴，所以没这问题；
+        /// 卡片只贴一次，之后没有 dirty 帧来纠正）。
+        ///
+        /// 处理：先强制重建布局再贴底；之后两帧继续贴底，兜住网格/文字晚一帧才定高的
+        /// 情况（ContentSizeFitter 的二次收敛）。
+        /// </summary>
+        private void ScrollToBottomAfterContentChange()
+        {
+            if (_scroll == null) return;
+            RebuildLayout();
+            ScrollToBottom();
+            _scrollBottomFrames = 2;
         }
 
         // ---------------------------------------------------------------- 首次配置
