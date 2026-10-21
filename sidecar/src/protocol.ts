@@ -424,11 +424,38 @@ export function parseSaveBindPayload(payload: JsonObject): SaveBindPayload | nul
   };
 }
 
+/** 历史回答里的一条思考步骤（协议附录 A.6 的 `steps`）。 */
+export interface HistoryThinkingStep {
+  kind: 'thinking';
+  text: string;
+}
+
+/** 历史回答里的一次工具调用（协议附录 A.6 的 `steps`）。 */
+export interface HistoryToolStep {
+  kind: 'tool';
+  name: string;
+  /** 工具参数（JSON 文本，已截断）。 */
+  args?: string;
+  /** 是否成功；缺省 = 会话里没有结果记录（回答被中断）。 */
+  ok?: boolean;
+  /** 结果摘要（单行、已截断）。 */
+  summary?: string;
+  /** 展开后的完整结果（已截断）。 */
+  detail?: string;
+}
+
+export type HistoryStep = HistoryThinkingStep | HistoryToolStep;
+
 /** `save.bound.history` 的一条可回放消息（M2.7，UI 历史恢复用）。 */
 export interface HistoryMessage {
   role: 'user' | 'assistant';
   text: string;
   timestamp?: number;
+  /**
+   * 该回答之前产生的思考/工具步骤，按发生顺序（附录 A.6，M4k+）。
+   * 只在 assistant 消息上出现；老客户端忽略该字段。
+   */
+  steps?: HistoryStep[];
   /**
    * 该回答产出的蓝图卡片（附录 A.9）；只在 assistant 消息上出现。
    * 老客户端忽略该字段，行为不变。

@@ -403,6 +403,60 @@ namespace IcarusII.Common.Protocol
         }
     }
 
+    /// <summary>
+    /// 历史回答里的一条思考/工具步骤（协议附录 A.6 的 <c>steps</c>）。
+    ///
+    /// sidecar 从 pi 会话记录里按发生顺序提取：思考块和工具调用会夹在正文之前，
+    /// mod 回放时逐条重建成折叠块（默认收起），玩家点开仍能看到原文。
+    /// </summary>
+    public sealed class HistoryStepInfo
+    {
+        /// <summary><c>thinking</c> = 思考段；<c>tool</c> = 一次工具调用。</summary>
+        public string Kind { get; set; }
+        /// <summary>思考正文（<c>thinking</c>）。</summary>
+        public string Text { get; set; }
+        /// <summary>工具名（<c>tool</c>），由 UI 层映射成中文短名。</summary>
+        public string Name { get; set; }
+        /// <summary>工具参数（<c>tool</c>，已由 sidecar 截断）。</summary>
+        public string Args { get; set; }
+        /// <summary>
+        /// 工具是否成功（<c>tool</c>）。null = 会话里没有对应结果
+        /// （回答被中断 / 存档关闭），回放时显示为“读取中…”。
+        /// </summary>
+        public bool? Ok { get; set; }
+        public string Summary { get; set; }
+        public string Detail { get; set; }
+
+        public static HistoryStepInfo Parse(JsonValue value)
+        {
+            if (value == null || !value.IsObject) return null;
+            var kind = value["kind"].AsString(null);
+            if (kind == "thinking")
+            {
+                var text = value["text"].AsString(null);
+                if (string.IsNullOrEmpty(text)) return null;
+                return new HistoryStepInfo { Kind = kind, Text = text };
+            }
+            if (kind == "tool")
+            {
+                var name = value["name"].AsString(null);
+                if (string.IsNullOrEmpty(name)) return null;
+                var rawOk = value["ok"];
+                var ok = rawOk != null && !rawOk.IsNull ? (bool?)rawOk.AsBool(false) : null;
+                return new HistoryStepInfo
+                {
+                    Kind = kind,
+                    Name = name,
+                    Args = value["args"].AsString(null),
+                    Ok = ok,
+                    Summary = value["summary"].AsString(null),
+                    Detail = value["detail"].AsString(null),
+                };
+            }
+            return null;
+        }
+    }
+
     public sealed class HistoryMessageInfo
     {
         public string Role { get; set; }
@@ -412,6 +466,11 @@ namespace IcarusII.Common.Protocol
         public string GameTime { get; set; }
         /// <summary>该回答产出的蓝图卡片（附录 A.6/A.9，可选）。</summary>
         public List<BlueprintCardInfo> Cards { get; set; } = new List<BlueprintCardInfo>();
+        /// <summary>
+        /// 该回答之前产生的思考/工具步骤，按发生顺序（附录 A.6，可选）。
+        /// 老 sidecar 不带这个字段时为空列表。
+        /// </summary>
+        public List<HistoryStepInfo> Steps { get; set; } = new List<HistoryStepInfo>();
     }
 
     /// <summary>存档绑定结果（协议附录 A.6）。</summary>
@@ -460,6 +519,16 @@ namespace IcarusII.Common.Protocol
                             var card = BlueprintCardInfo.Parse(cards[c]);
                             if (card != null && (!string.IsNullOrEmpty(card.FileName) || !string.IsNullOrEmpty(card.Path)))
                                 info.Cards.Add(card);
+                        }
+                    }
+                    // 思考/工具步骤：老 sidecar 不发送，空数组即可。
+                    var steps = item["steps"];
+                    if (steps != null && steps.Count > 0)
+                    {
+                        for (int s = 0; s < steps.Count; s++)
+                        {
+                            var step = HistoryStepInfo.Parse(steps[s]);
+                            if (step != null) info.Steps.Add(step);
                         }
                     }
                     r.History.Add(info);

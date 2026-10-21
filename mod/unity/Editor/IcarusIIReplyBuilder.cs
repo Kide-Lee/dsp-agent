@@ -8,14 +8,16 @@ namespace IcarusII.EditorTools
     /// 在手工维护的 ChatWindow.prefab 里补齐**完整回复模板**：
     ///
     ///   example-reply
-    ///   ├── thinking-block   折叠思考块（accent/header/chevron/title/summary/body）
-    ///   ├── tools            工具块容器（内含 tool-template）
+    ///   ├── loading          运行中的思考/工具区（VLG，空的时候由运行期隐藏）
+    ///   │   ├── thinking-block   折叠思考块（accent/header/chevron/title/summary/body）
+    ///   │   └── tools            工具块容器（内含 tool-template）
     ///   ├── body             助手正文
     ///   ├── blueprint-card   蓝图卡片（header/icon/texts/source/meta/desc/actions）
     ///   └── footer           time + copy 按钮
     ///
     /// 运行期 ChatWindow 只克隆这个模板并绑定数据，不再用代码拼静态布局。
     /// 幂等：已存在 example-reply 时直接跳过；要重做请传 force=true。
+    /// 兼容旧结构：thinking-block / tools 直接挂在 example-reply 下也算完整。
     /// </summary>
     public static class IcarusIIReplyBuilder
     {
@@ -114,8 +116,13 @@ namespace IcarusII.EditorTools
 
         private static bool HasAllParts(Transform reply)
         {
-            return reply.Find("thinking-block") != null
-                && reply.Find("tools/tool-template") != null
+            // 新结构把思考/工具放进 loading 容器；旧模板直接挂在回复下，两种都认。
+            var hasThinking = reply.Find("loading/thinking-block") != null
+                              || reply.Find("thinking-block") != null;
+            var hasTools = reply.Find("loading/tools/tool-template") != null
+                           || reply.Find("tools/tool-template") != null;
+            return hasThinking
+                && hasTools
                 && reply.Find("body") != null
                 && reply.Find("blueprint-cards/blueprint-card-template") != null
                 && reply.Find("footer/time") != null
@@ -139,12 +146,37 @@ namespace IcarusII.EditorTools
             vlg.childForceExpandHeight = false;
             vlg.childAlignment = TextAnchor.UpperLeft;
 
-            BuildThinking(reply, bold, body, material);
-            BuildTools(reply, bold, body, material);
+            BuildLoading(reply, bold, body, material);
             BuildBody(reply, body, material);
             BuildBlueprintCards(reply, bold, body, material);
             BuildFooter(reply, bold, material);
             return reply;
+        }
+
+        /// <summary>
+        /// 运行中的思考/工具区。运行期：一出现思考/工具就显示；正文开始后
+        /// 里面的块各自收起，整块区域没有可见内容时隐藏，不留空白间距。
+        /// </summary>
+        private static RectTransform BuildLoading(RectTransform reply, Font bold, Font body, Material material)
+        {
+            var loading = NewRect("loading", reply);
+            loading.anchorMin = new Vector2(0f, 1f);
+            loading.anchorMax = new Vector2(1f, 1f);
+            loading.pivot = new Vector2(0.5f, 1f);
+            loading.anchoredPosition = Vector2.zero;
+            loading.sizeDelta = Vector2.zero;
+            var vlg = loading.gameObject.AddComponent<VerticalLayoutGroup>();
+            vlg.padding = new RectOffset(10, 10, 6, 6);
+            vlg.spacing = 2f;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            vlg.childAlignment = TextAnchor.UpperLeft;
+
+            BuildThinking(loading, bold, body, material);
+            BuildTools(loading, bold, body, material);
+            return loading;
         }
 
         // ---------------------------------------------------------------- 思考块

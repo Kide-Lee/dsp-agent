@@ -155,6 +155,11 @@ namespace IcarusII.UI
             /// 历史回放时按这个列表逐块重建。
             /// </summary>
             public List<ThinkingSegment> Thinking;
+            /// <summary>
+            /// 历史回放用：这一轮助手回答产生过的思考/工具步骤（协议 A.6 的 steps）。
+            /// 窗口没建好时先记在这里，Create 后由 RebuildTranscript 逐块补建。
+            /// </summary>
+            public List<HistoryStepInfo> Steps;
             /// <summary>回复底部的游戏时间（创建时记录，历史回放不再取当前时间）。</summary>
             public string Time;
         }
@@ -309,6 +314,16 @@ namespace IcarusII.UI
             public Block Thinking;
             /// <summary>本回复已经用过的思考块（按出现顺序）。</summary>
             public readonly List<Block> ThinkingBlocks = new List<Block>();
+            /// <summary>
+            /// 本回复创建的全部折叠块（思考 + 工具 + 历史回放的步骤），按创建顺序。
+            /// 正文开始时统一收起，因此不能只按“当前思考块/工具字典”去找。
+            /// </summary>
+            public readonly List<Block> Blocks = new List<Block>();
+            /// <summary>
+            /// prefab 里名为 loading 的运行中区块（新结构把 thinking-block / tools 装在里面）。
+            /// 老 prefab 没有这一层时为 null。
+            /// </summary>
+            public RectTransform Loading;
             /// <summary>
             /// prefab 里名为 tools 的折叠块容器。工具块和“第二段及以后”的思考块都按创建顺序
             /// 追加到这里，视觉顺序才是 思考 → 工具 → 思考 → 工具 → 正文。
@@ -2432,7 +2447,28 @@ namespace IcarusII.UI
             if (block == null) return null;
             block.Reply = reply;
             reply.ThinkingBlocks.Add(block);
+            if (!reply.Blocks.Contains(block)) reply.Blocks.Add(block);
+            ShowReplyLoading(reply);
             return block;
+        }
+
+        /// <summary>有思考/工具内容了：显示 prefab 里的运行中区块（新 prefab 才有这一层）。</summary>
+        private static void ShowReplyLoading(ReplyView reply)
+        {
+            if (reply == null || reply.Loading == null) return;
+            if (!reply.Loading.gameObject.activeSelf) reply.Loading.gameObject.SetActive(true);
+        }
+
+        /// <summary>思考/工具都没了：把运行中区块整块隐藏，避免留下空白间距。</summary>
+        private static void HideReplyLoadingIfEmpty(ReplyView reply)
+        {
+            if (reply == null || reply.Loading == null) return;
+            for (int i = 0; i < reply.Loading.childCount; i++)
+            {
+                var child = reply.Loading.GetChild(i);
+                if (child != null && child.gameObject.activeSelf) return;
+            }
+            if (reply.Loading.gameObject.activeSelf) reply.Loading.gameObject.SetActive(false);
         }
 
         /// <summary>容器里是否有可见子节点（模板节点是 inactive，不算）。</summary>
@@ -2498,6 +2534,7 @@ namespace IcarusII.UI
                     if (block.Body != null) block.Body.text = string.Empty;
                     block.RawBody = string.Empty;
                     if (block.Go != null) block.Go.SetActive(false);
+                    HideReplyLoadingIfEmpty(reply);
                 }
                 else
                 {
@@ -2539,6 +2576,28 @@ namespace IcarusII.UI
             _dirty = true;
         }
 
+        /// <summary>
+        /// 正文开始（或历史回答落地）时，把这一轮此前产生的思考块、工具块全部收起：
+        /// 只留 header 的一行标题 + 摘要，玩家想细看可以自己点开。
+        ///
+        /// 不能只收当前思考块：工具块可能因为失败/截图被自动展开，
+        /// 玩家自己点开的块也要在正文出现后回到收起态。
+        /// </summary>
+        private void CollapseReplyBlocks(ReplyView reply)
+        {
+            if (reply == null) return;
+            for (int i = 0; i < reply.Blocks.Count; i++)
+            {
+                var block = reply.Blocks[i];
+                if (block == null || block.Go == null) continue;
+                if (ReferenceEquals(block, _thinking)) continue;   // 正在流式输出的块由 EndThinking 收尾
+                if (!block.Go.activeSelf || !block.Expanded) continue;
+                SetBlock(block, block.Title.text, block.Summary.text, block.RawBody,
+                    expanded: false, titleColor: block.Title.color, rebuild: false);
+            }
+            _dirty = true;
+        }
+
         // ---------------------------------------------------------------- 折叠块实现
 
         /// <summary>
@@ -2559,6 +2618,11 @@ namespace IcarusII.UI
                 clone.SetActive(true);
                 var prefabBlock = BindReplyBlock(clone);
                 prefabBlock.Reply = reply;
+                if (reply != null)
+                {
+                    reply.Blocks.Add(prefabBlock);
+                    ShowReplyLoading(reply);
+                }
                 AddBlockItem(prefabBlock, insideReply: true);
                 SetBlock(prefabBlock, title, summary, body, expanded, titleColor, rebuild: false);
                 return prefabBlock;
@@ -2689,6 +2753,11 @@ namespace IcarusII.UI
             nativeHeader.onClick += _ => ToggleBlock(block);
 
             // 先入 _items（TrimHistory 才能按条数裁），再套内容。
+            if (reply != null)
+            {
+                reply.Blocks.Add(block);
+                ShowReplyLoading(reply);
+            }
             AddBlockItem(block, insideReply: reply != null);
             SetBlock(block, title, summary, body, expanded, titleColor, rebuild: false);
             return block;
@@ -2834,6 +2903,7 @@ namespace IcarusII.UI
             block.Go = null;
             block.Reply = null;
             HideToolsIfEmpty(reply);
+            HideReplyLoadingIfEmpty(reply);
         }
 
         private void HideToolsIfEmpty(ReplyView reply)
@@ -3369,6 +3439,8 @@ namespace IcarusII.UI
                 var reply = EnsureReplyForTurn();
                 if (reply != null)
                 {
+                    // 正文开始：把这一轮之前的思考块、工具块全部收起。
+                    CollapseReplyBlocks(reply);
                     if (reply.Body != null) reply.Body.text = string.Empty;
                     if (reply.Footer != null) reply.Footer.SetActive(false);
                     reply.CopyText = string.Empty;
@@ -3656,7 +3728,11 @@ namespace IcarusII.UI
                 _thinkingText.Length = 0;
             }
             var reply = block.Reply;
-            if (reply != null) reply.ThinkingBlocks.Remove(block);
+            if (reply != null)
+            {
+                reply.ThinkingBlocks.Remove(block);
+                reply.Blocks.Remove(block);
+            }
         }
 
         /// <summary>聊天记录是否为空（用于决定要不要显示欢迎语）。</summary>
@@ -3753,6 +3829,8 @@ namespace IcarusII.UI
                 if (existing >= 0 && existing < _items.Count && _items[existing].Reply != null)
                 {
                     var replyItem = _items[existing];
+                    // 正文落地：收起这一轮的思考块/工具块（与流式正文同一规则）。
+                    CollapseReplyBlocks(replyItem.Reply);
                     if (replyItem.Reply.Body != null)
                         replyItem.Reply.Body.text = SanitizeRichText(text);
                     line.Go = replyItem.Go;
@@ -3889,7 +3967,10 @@ namespace IcarusII.UI
 
                     if (item.Reply != null)
                     {
-                        if (line.Thinking != null && line.Thinking.Count > 0)
+                        // 历史回放：steps 里有思考+工具的完整顺序；实时回合只有 Thinking。
+                        if (line.Steps != null && line.Steps.Count > 0)
+                            AppendHistorySteps(item.Reply, line.Steps);
+                        else if (line.Thinking != null && line.Thinking.Count > 0)
                             RebuildThinking(item.Reply, line);
                         AddCards(item.Reply, line.Cards);
                         if (item.Reply.Body != null)
@@ -3948,6 +4029,123 @@ namespace IcarusII.UI
                 SetBlock(block, Strings.Get("thinking.title"), summary, segment.Text,
                     expanded: false, titleColor: _textDim);
             }
+        }
+
+        // ---------------------------------------------------------------- 历史回放
+
+        /// <summary>
+        /// 回放一条历史助手回答（`save.bound.history`，协议 A.6）。
+        ///
+        /// 顺序与实时一致：先按 <c>steps</c> 逐条重建思考块/工具块（全部收起），
+        /// 再落正文与脚注；蓝图卡片由调用方在这之后追加。
+        /// 窗口还没建好时只记逻辑行，Create 后由 <see cref="RebuildTranscript"/> 补建。
+        /// </summary>
+        public void AppendHistoryReply(HistoryMessageInfo message)
+        {
+            if (message == null) return;
+            var text = message.Text ?? string.Empty;
+            var time = string.IsNullOrEmpty(message.GameTime) ? "--:--" : message.GameTime;
+
+            if (_content == null)
+            {
+                _lines.Add(new Line
+                {
+                    Kind = LineKind.Assistant,
+                    Text = text,
+                    TurnId = _currentTurnId,
+                    Time = time,
+                    Steps = message.Steps,
+                });
+                _awaitingResponse = false;
+                TrimHistory();
+                _dirty = true;
+                return;
+            }
+
+            // 老 prefab 没有回复模板：退回裸文本，与实时路径一致。
+            var reply = _replyTemplate != null ? EnsureReplyForTurn() : null;
+            if (reply == null)
+            {
+                AppendLine(Strings.Get("agent"), text, time);
+                return;
+            }
+
+            AppendHistorySteps(reply, message.Steps);
+            if (reply.Body != null) reply.Body.text = SanitizeRichText(text);
+            ApplyReplyFooter(reply, text, time);
+
+            var lineIndex = FindLineIndex(reply.Go);
+            if (lineIndex >= 0)
+            {
+                var line = _lines[lineIndex];
+                line.Text = text;
+                line.Time = time;
+                line.Steps = message.Steps;
+                _lines[lineIndex] = line;
+            }
+
+            _streamItem = -1;
+            _stream.Length = 0;
+            _awaitingResponse = false;
+            TrimHistory();
+            _dirty = true;
+        }
+
+        /// <summary>按顺序重建历史回答里的思考块/工具块（都保持收起态）。</summary>
+        private void AppendHistorySteps(ReplyView reply, List<HistoryStepInfo> steps)
+        {
+            if (reply == null || steps == null || steps.Count == 0) return;
+
+            for (int i = 0; i < steps.Count; i++)
+            {
+                var step = steps[i];
+                if (step == null) continue;
+
+                if (step.Kind == "thinking")
+                {
+                    if (string.IsNullOrEmpty(step.Text)) continue;
+                    var block = EnsureThinkingBlock(reply);
+                    if (block == null) continue;
+                    SetBlock(block, Strings.Get("thinking.title"), Summarize(step.Text, 48), step.Text,
+                        expanded: false, titleColor: _textDim, rebuild: false);
+                }
+                else if (step.Kind == "tool")
+                {
+                    AppendHistoryToolBlock(reply, step);
+                }
+            }
+        }
+
+        /// <summary>历史里的一个工具块：复用实时工具块的外观，但不再进 _toolBlocks。</summary>
+        private void AppendHistoryToolBlock(ReplyView reply, HistoryStepInfo step)
+        {
+            if (reply == null || step == null || string.IsNullOrEmpty(step.Name)) return;
+
+            var label = ToolNames.Label(step.Name);
+            var title = Strings.Get("tool.title", label);
+            var ok = step.Ok;
+            var result = string.IsNullOrEmpty(step.Summary)
+                ? (ok == true ? Strings.Get("tool.ok")
+                    : ok == false ? Strings.Get("tool.failed") : Strings.Get("tool.running"))
+                : step.Summary;
+            var summary = Summarize(result, 64);
+            var body = BuildToolBody(step.Args, step.Detail ?? step.Summary);
+
+            if (reply.Tools != null) reply.Tools.gameObject.SetActive(true);
+            var block = CreateBlock("tool-block", title, summary, body,
+                expanded: false,
+                // 与实时一致：失败用警示色，其余用暗色。
+                titleColor: ok == false ? WarnColor : _textDim,
+                parent: reply.Tools,
+                template: reply.ToolTemplate != null ? reply.ToolTemplate.gameObject : null,
+                reply: reply);
+            if (block == null) return;
+
+            block.Args = step.Args;
+            block.ToolName = step.Name;
+            // 不单独记 Line：工具块是回复的子节点，随回复一起裁剪/删除；
+            // 而且 RebuildTranscript 正在遍历 _lines，这里再插入会让同一轮被重复补建。
+            // 思考/工具正文已经算在回复行的 Steps 里（LineCharCount）。
         }
 
         // ---------------------------------------------------------------- 提问索引（chat-index）
@@ -4362,20 +4560,29 @@ namespace IcarusII.UI
             // prefab 里的示例正文只是排版样板；运行期实例必须从空正文开始。
             if (view.Body != null) view.Body.text = string.Empty;
 
-            view.ThinkingRoot = t.Find("thinking-block") as RectTransform;
+            // 新 prefab 把思考/工具放进 loading（运行中区块）；老 prefab 直接挂在回复下。
+            view.Loading = t.Find("loading") as RectTransform;
+            var thinkingRoot = view.Loading != null
+                ? view.Loading.Find("thinking-block") as RectTransform
+                : null;
+            view.ThinkingRoot = thinkingRoot != null ? thinkingRoot : t.Find("thinking-block") as RectTransform;
             if (view.ThinkingRoot != null)
             {
                 view.Thinking = BindReplyBlock(view.ThinkingRoot.gameObject);
                 view.ThinkingRoot.gameObject.SetActive(false);
             }
 
-            view.Tools = t.Find("tools") as RectTransform;
+            var toolsRoot = view.Loading != null
+                ? view.Loading.Find("tools") as RectTransform
+                : null;
+            view.Tools = toolsRoot != null ? toolsRoot : t.Find("tools") as RectTransform;
             if (view.Tools != null)
             {
                 view.ToolTemplate = view.Tools.Find("tool-template") as RectTransform;
                 if (view.ToolTemplate != null) view.ToolTemplate.gameObject.SetActive(false);
                 view.Tools.gameObject.SetActive(false);
             }
+            if (view.Loading != null) view.Loading.gameObject.SetActive(false);
 
             var cards = t.Find("blueprint-cards") as RectTransform;
             if (cards != null)
@@ -4883,6 +5090,16 @@ namespace IcarusII.UI
                 {
                     var text = line.Thinking[i].Text;
                     if (!string.IsNullOrEmpty(text)) count += text.Length;
+                }
+            }
+            if (line.Steps != null)
+            {
+                for (int i = 0; i < line.Steps.Count; i++)
+                {
+                    var step = line.Steps[i];
+                    if (step == null) continue;
+                    if (!string.IsNullOrEmpty(step.Text)) count += step.Text.Length;
+                    if (!string.IsNullOrEmpty(step.Detail)) count += step.Detail.Length;
                 }
             }
             if (line.Cards != null)

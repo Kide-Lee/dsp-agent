@@ -478,7 +478,13 @@ mod                                   sidecar
                "existed": true, "messageCount": 2,
                "history": [
                  { "role": "user", "text": "上次的问题", "timestamp": 1760000000000 },
-                 { "role": "assistant", "text": "上次的回答" }
+                 { "role": "assistant", "text": "上次的回答",
+                   "steps": [
+                     { "kind": "thinking", "text": "先看整体产量…" },
+                     { "kind": "tool", "name": "game_get_production",
+                       "args": "{\"item\":\"iron\"}", "ok": true,
+                       "summary": "铁矿 30/min", "detail": "…" }
+                   ] }
                ] }
 }
 ```
@@ -486,12 +492,23 @@ mod                                   sidecar
 - `existed`：该存档此前是否已有对话（`false` = 新建）
 - `messageCount`：本次带回的历史消息条数
 - `history`：最近最多 40 条 `user` / `assistant` 的可见文本（单条最多 4000 字符），
-  只用于 mod **回放聊天窗**，不进入模型上下文；工具调用、工具结果、思考块和
-  压缩摘要不会出现在这里。历史读取失败时为空数组，不阻断 `save.bound`。
+  只用于 mod **回放聊天窗**，不进入模型上下文；压缩摘要不会出现在这里。
+  历史读取失败时为空数组，不阻断 `save.bound`。
 - `history` 的 `assistant` 消息可带可选的 `cards`（附录 A.9）：该回答产出的蓝图卡片，
   形如 `[{fileName, path, name, ...}]`。老客户端忽略该字段；mod 回放时在回答后重建卡片。
 - `history` 的 `assistant` 消息可带可选的 `gameTime`（字符串，`HH:mm`）：该回答完成时的
   游戏时间。老 mod 忽略该字段；mod 回放时显示在脚注。
+- `history` 的 `assistant` 消息可带可选的 `steps`：**该回答之前**的思考块与工具调用，
+  按发生顺序排列（M4k+）。一次提问里模型可能「思考 → 工具 → 再思考 → …」，
+  sidecar 从 pi 会话记录里把这些中间步骤收拢到最终回答上。
+  - `kind: "thinking"`：`{ "kind": "thinking", "text": "…" }`
+  - `kind: "tool"`：`{ "kind": "tool", "name": "…", "args": "…", "ok": true,
+    "summary": "…", "detail": "…" }`；`args`/`summary`/`detail` 可省略，
+    `ok` 缺省表示会话里没有结果记录（回答被中断）。
+  - 上限（防止单帧超过 §1 的 8 MiB）：单条回答最多 60 步；思考 4000 字符、
+    工具参数 600、结果摘要 160、结果详情 2000；所有历史消息的 `steps` 合计约 2 MiB。
+  - 老 mod 忽略该字段；新 mod 回放时按顺序重建为**收起态**的思考块/工具块，
+    玩家点开仍能看到原文。
 
 #### 语义
 

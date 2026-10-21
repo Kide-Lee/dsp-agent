@@ -599,36 +599,7 @@ namespace IcarusII
             }
         }
 
-        private static string ToolLabel(string name)
-        {
-            switch (name)
-            {
-                case "game_get_overview": return "存档概览";
-                case "game_get_player": return "玩家状态";
-                case "game_get_planet": return "行星状态";
-                case "game_get_power": return "电力状态";
-                case "game_get_research": return "研究状态";
-                case "game_get_production": return "实际产出";
-                case "game_get_entity": return "建筑详情";
-                case "game_get_entities": return "建筑列表";
-                case "game_get_progress": return "进度阶段";
-                case "game_capture_view": return "截图";
-                case "game_analyze_area": return "产线分析";
-                case "game_render_layout": return "布局图";
-                case "game_copy_blueprint": return "存为蓝图";
-                case "game_trace_line": return "产线拓扑";
-                case "game_get_planets": return "星球一览";
-                case "game_get_logistics": return "星际物流";
-                // sidecar 本地工具（tool_activity 卡片用）
-                case "kb_search": return "知识库检索";
-                case "kb_get": return "知识库查询";
-                case "kb_recipe_tree": return "配方树";
-                case "kb_plan": return "量化计算";
-                case "run_script": return "脚本";
-                case "game_export_prototypes": return "建立知识库";
-                default: return string.IsNullOrEmpty(name) ? "工具" : name;
-            }
-        }
+        private static string ToolLabel(string name) => ToolNames.Label(name);
 
         // ---------------------------------------------------------------- UI
 
@@ -971,8 +942,8 @@ namespace IcarusII
                             }
                             else
                             {
-                                _chat.AppendLine(Strings.Get("agent"), message.Text,
-                                    string.IsNullOrEmpty(message.GameTime) ? "--:--" : message.GameTime);
+                                // 回答连同它之前的思考/工具步骤一起还原（协议 A.6 steps）。
+                                _chat.AppendHistoryReply(message);
                                 // 蓝图卡片跟在该回答后面，与实时收到的顺序一致。
                                 if (message.Cards != null)
                                 {

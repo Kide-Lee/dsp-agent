@@ -127,6 +127,109 @@ const many = extractHistoryMessages(
 );
 check('只取最近 N 条', many.length === 3 && many[0]?.text === 'm7' && many[2]?.text === 'm9', JSON.stringify(many));
 
+// ---- 1b. 思考/工具步骤随回答回放（附录 A.6 steps）----
+console.log('── 1b. 思考/工具步骤 ──');
+const withSteps = extractHistoryMessages([
+  { type: 'message', message: { role: 'user', content: '查一下产量', timestamp: 1 } },
+  {
+    type: 'message',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: '先看整体' },
+        { type: 'toolCall', id: 't1', name: 'game_get_overview', arguments: { x: 1 } },
+        { type: 'toolCall', id: 't2', name: 'kb_plan', arguments: {} },
+      ],
+      timestamp: 2,
+    },
+  },
+  {
+    type: 'message',
+    message: {
+      role: 'toolResult', toolCallId: 't1', toolName: 'game_get_overview', isError: false,
+      content: [{ type: 'text', text: '结果 A\n第二行' }],
+    },
+  },
+  {
+    type: 'message',
+    message: {
+      role: 'toolResult', toolCallId: 't2', toolName: 'kb_plan', isError: true,
+      content: [{ type: 'text', text: '失败原因' }],
+    },
+  },
+  {
+    type: 'message',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: '再核对' },
+        { type: 'toolCall', id: 't3', name: 'game_get_production', arguments: { item: 'iron' } },
+      ],
+      timestamp: 3,
+    },
+  },
+  {
+    type: 'message',
+    message: {
+      role: 'toolResult', toolCallId: 't3', toolName: 'game_get_production', isError: false,
+      content: [{ type: 'text', text: '产量 30' }],
+    },
+  },
+  {
+    type: 'message',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: '得出答案' }, { type: 'text', text: '产量是 30' }],
+      timestamp: 4,
+    },
+  },
+]);
+
+check('中间步骤不单独成消息', withSteps.length === 2, JSON.stringify(withSteps));
+const steps = withSteps[1]?.steps ?? [];
+check('步骤按发生顺序附加到最终回答', steps.length === 6, JSON.stringify(steps));
+check('第一段是思考', steps[0]?.kind === 'thinking' && steps[0]?.text === '先看整体');
+check('工具参数序列化', steps[1]?.kind === 'tool' && steps[1]?.name === 'game_get_overview' && steps[1]?.args === '{"x":1}');
+check('空参数工具不带 args', steps[2]?.kind === 'tool' && steps[2]?.args === undefined);
+check('结果回填 ok/summary/detail', steps[1]?.ok === true
+  && steps[1]?.summary === '结果 A 第二行' && steps[1]?.detail === '结果 A\n第二行', JSON.stringify(steps[1]));
+check('失败结果 ok=false', steps[2]?.ok === false, JSON.stringify(steps[2]));
+check('第二轮思考也在列表里', steps[3]?.kind === 'thinking' && steps[3]?.text === '再核对');
+check('收尾思考在正文之前', steps[5]?.kind === 'thinking' && steps[5]?.text === '得出答案');
+check('user 消息不带 steps', withSteps[0]?.steps === undefined);
+
+const interrupted = extractHistoryMessages([
+  { type: 'message', message: { role: 'user', content: 'hi' } },
+  {
+    type: 'message',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'toolCall', id: 'tx', name: 'game_get_entity', arguments: {} },
+        { type: 'text', text: '抱歉' },
+      ],
+    },
+  },
+]);
+check('没有结果的工具不带 ok', interrupted[1]?.steps?.[0]?.ok === undefined, JSON.stringify(interrupted[1]?.steps));
+
+const bigResult = extractHistoryMessages([
+  { type: 'message', message: { role: 'user', content: 'big' } },
+  { type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'b1', name: 'run_script', arguments: { a: 1 } }, { type: 'text', text: 'done' }] } },
+  { type: 'message', message: { role: 'toolResult', toolCallId: 'b1', toolName: 'run_script', isError: false, content: [{ type: 'text', text: 'y'.repeat(5000) }] } },
+]);
+check('工具详情截断到 2000', bigResult[1]?.steps?.[0]?.detail === `${'y'.repeat(2000)}…`,
+  String(bigResult[1]?.steps?.[0]?.detail?.length));
+
+const abortedTurn = extractHistoryMessages([
+  { type: 'message', message: { role: 'user', content: '第一问' } },
+  { type: 'message', message: { role: 'assistant', content: [{ type: 'thinking', thinking: '没答完' }] } },
+  { type: 'message', message: { role: 'user', content: '第二问' } },
+  { type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: '这次答了' }] } },
+]);
+check('中断回合的步骤不串到下一轮', abortedTurn.length === 3 && abortedTurn[2]?.steps === undefined,
+  JSON.stringify(abortedTurn));
+
 // ---- 2. save.bound 带历史 ----
 console.log('── 2. save.bound.history ──');
 const history = [

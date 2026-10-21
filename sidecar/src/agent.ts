@@ -57,6 +57,8 @@ import type {
   ConfigView,
   ErrorCode,
   HistoryMessage,
+  HistoryStep,
+  HistoryToolStep,
   JsonObject,
   ModelCatalogEntry,
   ModelCatalogResult,
@@ -201,8 +203,14 @@ function contentText(content: unknown): string {
 /**
  * 把 pi 的 SessionEntry[] 投影成 UI 可回放的消息。
  *
- * 只保留 user/assistant 的文本；工具调用、工具结果、思考块、压缩摘要都不回放，
- * 避免把内部上下文暴露到聊天窗。只取最近 `maxMessages` 条，单条 `maxText` 字符。
+ * - user / assistant 的可见文本：最多 `maxMessages` 条、单条 `maxText` 字符；
+ * - assistant 顺带带上它之前的思考块和工具调用（`steps`，附录 A.6）：
+ *   一次提问里会有多个 assistant 步骤（思考+工具、再思考+工具…，最后一段带正文），
+ *   中间那些没有正文的步骤先攒着，等最终回答落地时按发生顺序一起挂上去；
+ * - 工具结果按 toolCallId 回填到对应的 `steps[]`；没有结果的（回答被中断）不填 ok；
+ * - 压缩/分支摘要照旧不回放。
+ *
+ * 数据全部来自会话记录，不再额外落盘；旧会话（没有工具记录字段）也能读。
  */
 export function extractHistoryMessages(
   entries: readonly unknown[],
@@ -210,6 +218,10 @@ export function extractHistoryMessages(
   maxText = 4000,
 ): HistoryMessage[] {
   const out: HistoryMessage[] = [];
+  // 当前提问里还没落地的思考/工具步骤；遇到下一条 user 消息时丢弃（那一轮没有正文）。
+  let pending: HistoryStep[] = [];
+  const toolSteps = new Map<string, HistoryToolStep>();
+
   for (const raw of entries) {
     if (!raw || typeof raw !== 'object') continue;
     const entry = raw as {
@@ -219,26 +231,154 @@ export function extractHistoryMessages(
         role?: unknown;
         content?: unknown;
         timestamp?: unknown;
+        toolCallId?: unknown;
+        isError?: unknown;
       };
     };
     if (entry.type !== 'message' || !entry.message) continue;
-    const role = entry.message.role;
-    if (role !== 'user' && role !== 'assistant') continue;
+    const message = entry.message;
+    const role = message.role;
 
-    const text = contentText(entry.message.content).trim();
-    if (!text) continue;
+    if (role === 'user') {
+      pending = [];
+      toolSteps.clear();
+      const text = contentText(message.content).trim();
+      if (!text) continue;
+      out.push({ role: 'user', text: clipHistoryText(text, maxText), ...timestampOf(entry) });
+      continue;
+    }
 
-    const clipped = text.length > maxText ? `${text.slice(0, maxText)}…` : text;
-    const rawTs =
-      typeof entry.message.timestamp === 'number'
-        ? entry.message.timestamp
-        : typeof entry.timestamp === 'string'
-          ? Date.parse(entry.timestamp)
-          : NaN;
-    const timestamp = Number.isFinite(rawTs) ? rawTs : undefined;
-    out.push({ role, text: clipped, ...(timestamp !== undefined ? { timestamp } : {}) });
+    if (role === 'assistant') {
+      const blocks = Array.isArray(message.content) ? message.content : [];
+      const textParts: string[] = [];
+      for (const block of blocks) {
+        if (!block || typeof block !== 'object') continue;
+        const item = block as {
+          type?: unknown;
+          text?: unknown;
+          thinking?: unknown;
+          id?: unknown;
+          name?: unknown;
+          arguments?: unknown;
+        };
+        if (item.type === 'text' && typeof item.text === 'string') {
+          textParts.push(item.text);
+        } else if (item.type === 'thinking' && typeof item.thinking === 'string') {
+          const thinking = item.thinking.trim();
+          if (thinking) {
+            pending.push({ kind: 'thinking', text: clipHistoryText(thinking, HISTORY_THINKING_MAX) });
+          }
+        } else if (item.type === 'toolCall') {
+          const step: HistoryToolStep = {
+            kind: 'tool',
+            name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : 'tool',
+          };
+          const args = toolArgsText(item.arguments);
+          if (args) step.args = args;
+          pending.push(step);
+          if (typeof item.id === 'string' && item.id) toolSteps.set(item.id, step);
+        }
+      }
+
+      const finalText = textParts.join('\n').trim();
+      if (!finalText) continue; // 中间步骤：等最后一段带正文的回答一起回放
+
+      const history: HistoryMessage = {
+        role: 'assistant',
+        text: clipHistoryText(finalText, maxText),
+        ...timestampOf(entry),
+      };
+      if (pending.length > 0) {
+        history.steps = pending;
+        pending = [];
+      }
+      out.push(history);
+      // toolSteps 保留到下一条 user 消息：结果可能在回答之后才写进会话。
+      continue;
+    }
+
+    if (role === 'toolResult') {
+      const callId = typeof message.toolCallId === 'string' ? message.toolCallId : '';
+      const step = callId ? toolSteps.get(callId) : undefined;
+      if (!step) continue;
+      toolSteps.delete(callId);
+      step.ok = message.isError !== true;
+      const result = contentText(message.content).trim();
+      if (result) {
+        step.summary = clipHistoryText(result.replace(/\s+/g, ' ').trim(), HISTORY_TOOL_SUMMARY_MAX);
+        step.detail = clipHistoryText(result, HISTORY_TOOL_DETAIL_MAX);
+      }
+    }
   }
-  return out.slice(-maxMessages);
+
+  const recent = out.slice(-maxMessages);
+  trimHistorySteps(recent);
+  return recent;
+}
+
+/** 单条回答最多回放的步骤数（正常一轮 1~30 个，超出的只保留最近的）。 */
+const HISTORY_MAX_STEPS = 60;
+const HISTORY_THINKING_MAX = 4000;
+const HISTORY_TOOL_ARGS_MAX = 600;
+const HISTORY_TOOL_SUMMARY_MAX = 160;
+const HISTORY_TOOL_DETAIL_MAX = 2000;
+/** 所有历史消息 steps 的总字符预算，避免一帧超过协议 8 MiB 上限。 */
+const HISTORY_STEPS_BUDGET = 2 * 1024 * 1024;
+
+function clipHistoryText(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function toolArgsText(args: unknown): string | undefined {
+  if (args === undefined || args === null) return undefined;
+  let text: string;
+  try {
+    text = JSON.stringify(args);
+  } catch {
+    return undefined;
+  }
+  if (!text || text === '{}' || text === 'null') return undefined;
+  return clipHistoryText(text, HISTORY_TOOL_ARGS_MAX);
+}
+
+function timestampOf(entry: {
+  timestamp?: unknown;
+  message?: { timestamp?: unknown };
+}): { timestamp?: number } {
+  const rawTs =
+    typeof entry.message?.timestamp === 'number'
+      ? entry.message.timestamp
+      : typeof entry.timestamp === 'string'
+        ? Date.parse(entry.timestamp)
+        : NaN;
+  return Number.isFinite(rawTs) ? { timestamp: rawTs } : {};
+}
+
+/** 步骤太多/太大时从**最旧**的回答开始丢，保住最近几轮。 */
+function trimHistorySteps(messages: HistoryMessage[]): void {
+  for (const message of messages) {
+    if (message.steps && message.steps.length > HISTORY_MAX_STEPS) {
+      message.steps = message.steps.slice(-HISTORY_MAX_STEPS);
+    }
+  }
+  let total = 0;
+  for (const message of messages) total += stepsChars(message);
+  for (let i = 0; i < messages.length && total > HISTORY_STEPS_BUDGET; i++) {
+    const message = messages[i]!;
+    if (!message.steps || message.steps.length === 0) continue;
+    total -= stepsChars(message);
+    delete message.steps;
+  }
+}
+
+function stepsChars(message: HistoryMessage): number {
+  if (!message.steps) return 0;
+  let total = 0;
+  for (const step of message.steps) {
+    if (step.kind === 'thinking') total += step.text.length;
+    else total += (step.args?.length ?? 0) + (step.detail?.length ?? 0) + (step.summary?.length ?? 0);
+  }
+  return total;
 }
 
 // ---------------------------------------------------------------- echo

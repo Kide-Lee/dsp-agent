@@ -450,6 +450,26 @@ namespace IcarusII.Tests
             Eq("history 第二条 role", "assistant", withHistory.History[1].Role);
             Eq("history 第二条 gameTime", "08:42", withHistory.History[1].GameTime);
 
+            // save.bound.history 的可选 steps（附录 A.6，M4k+）
+            var withSteps = SaveBoundInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"3f2a\",\"history\":[" +
+                "{\"role\":\"user\",\"text\":\"查产量\"}," +
+                "{\"role\":\"assistant\",\"text\":\"30/min\",\"steps\":[" +
+                "{\"kind\":\"thinking\",\"text\":\"先看整体\"}," +
+                "{\"kind\":\"tool\",\"name\":\"game_get_production\",\"args\":\"{}\",\"ok\":true,\"summary\":\"30/min\",\"detail\":\"细节\"}," +
+                "{\"kind\":\"tool\",\"name\":\"run_script\",\"ok\":false}," +
+                "{\"kind\":\"tool\",\"name\":\"game_get_entity\"}," +
+                "{\"kind\":\"weird\"}]}]}"));
+            Eq("回答带 4 个步骤（未知 kind 忽略）", 4, withSteps.History[1].Steps.Count);
+            Eq("步骤一 kind", "thinking", withSteps.History[1].Steps[0].Kind);
+            Eq("步骤一 text", "先看整体", withSteps.History[1].Steps[0].Text);
+            Eq("步骤二工具名", "game_get_production", withSteps.History[1].Steps[1].Name);
+            Eq("步骤二 ok", true, withSteps.History[1].Steps[1].Ok);
+            Eq("步骤二 summary", "30/min", withSteps.History[1].Steps[1].Summary);
+            Eq("步骤三失败", false, withSteps.History[1].Steps[2].Ok);
+            Check("步骤四没有结果记录", withSteps.History[1].Steps[3].Ok == null);
+            Eq("user 消息没有步骤", 0, withSteps.History[0].Steps.Count);
+
             var noBound = SaveBoundInfo.Parse(null);
             Eq("null 载荷的安全默认", 0, noBound.MessageCount);
             Check("null 载荷的 SaveKey 为空", string.IsNullOrEmpty(noBound.SaveKey));
