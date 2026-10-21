@@ -11,7 +11,7 @@ namespace IcarusII.I18n
     {
         private static readonly Dictionary<string, string> ZhCn = new Dictionary<string, string>
         {
-            ["title"] = "伊卡洛斯·贰",
+            ["title"] = "工业机甲终端",
             ["status.connecting"] = "连接中…",
             ["status.handshaking"] = "握手中…",
             ["status.ready"] = "就绪",

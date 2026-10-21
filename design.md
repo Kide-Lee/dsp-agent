@@ -478,7 +478,7 @@ AgentRoot (RectTransform, 默认 inactive)
 ├─ Backdrop            Image (半透明遮罩, 点击=关闭, 可选)
 └─ Panel               Image (九宫格, 仿游戏面板)
    ├─ TitleBar
-   │   ├─ Title        Text      "Icarus II"
+   │   ├─ Title        Text      "工业机甲终端"（字体/颜色/字号 = prefab 设计稿）
    │   ├─ StatusDot    Image     连接/思考状态
    │   └─ CloseButton  UIButton
    ├─ MessageScroll    ScrollRect
@@ -495,6 +495,9 @@ AgentRoot (RectTransform, 默认 inactive)
 
 **渲染策略**
 
+- **窗口标题以 prefab 为准**：`panel-bg/title-text` 里已经写了字的标题是设计稿——
+  运行期不改文字，也**不参与**正文字体替换和 `FontScale` 缩放，字体/颜色/字号完全按
+  prefab；只有标题为空时才填 `Strings.Get("title")`（「工业机甲终端」）。
 - **消息条目的静态结构固定在 prefab**：`ChatWindow.prefab` 的 `example-reply` 里放了
   `loading`（运行中的思考/工具区）→ `thinking-block` / `tools`、正文、蓝图卡片网格和底部
   （游戏时间 + 复制按钮）。运行期只克隆这个模板、绑定文字/图标/显隐和点击回调；

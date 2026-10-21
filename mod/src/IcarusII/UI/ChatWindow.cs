@@ -102,6 +102,9 @@ namespace IcarusII.UI
         private Image _headerImage;
         private Image _inputImage;
         private Text _statusText;
+        private Text _titleText;
+        /// <summary>标题文字来自 prefab（设计稿）：字体/字号/材质/颜色都不许运行期改。</summary>
+        private bool _titleFromPrefab;
         private Text _transcript;
         private ScrollRect _scroll;
         private InputField _input;
@@ -582,6 +585,8 @@ namespace IcarusII.UI
             _panel = null;
             _content = null;
             _statusText = null;
+            _titleText = null;
+            _titleFromPrefab = false;
             _transcript = null;
             _scroll = null;
             _input = null;
@@ -1014,9 +1019,12 @@ namespace IcarusII.UI
             _panel.gameObject.AddComponent<ClickToFocus>().Target = this;
 
             // 文案走本地化。标题：prefab 里已经写了字的就**尊重它**（例如手工外框里写了
-            // 「伊卡洛斯终端」），只有空标题才填本地化的默认标题。
+            // 「工业机甲终端」），只有空标题才填本地化的默认标题。
             var title = FindText(panel, "Header/Title", "Header/title-text", "panel-bg/title-text", "title-text");
-            if (title != null && string.IsNullOrEmpty(title.text)) title.text = Strings.Get("title");
+            var authoredTitle = title != null && !string.IsNullOrEmpty(title.text);
+            if (title != null && !authoredTitle) title.text = Strings.Get("title");
+            _titleText = title;
+            _titleFromPrefab = authoredTitle;
             // 输入框提示**尊重 prefab 里写的文案**，运行期不改它。
             // （key 录入态会临时换成 key.placeholder，退出时还原成这里记下的原文。）
             var placeholder = input.transform.Find("Placeholder");
@@ -1029,10 +1037,14 @@ namespace IcarusII.UI
             // 字体：prefab 里填的是内置 Arial 占位（原生字体 SAIRAB/SAIRASB 不含中文），
             // 这里**无条件**换成游戏当前语言的字体——中文能不能显示全靠这一步。
             // 字号按 prefab 里烘焙的值整体缩放，尊重你在 Unity 里的排版。
+            //
+            // 例外：prefab 里已经写了字的标题。标题的字体、字号、颜色完全按 prefab 来
+            // （用户就是照 prefab 的设计稿调的），不参与正文字体替换和 FontScale。
             var scale = Mathf.Max(0.5f, config.FontScale);
             _bodyFont = font;
             foreach (var t in panelGo.GetComponentsInChildren<Text>(true))
             {
+                if (_titleFromPrefab && ReferenceEquals(t, _titleText)) continue;
                 if (font != null) t.font = font;
                 if (!Mathf.Approximately(scale, 1f))
                 {
@@ -1328,7 +1340,10 @@ namespace IcarusII.UI
             if (style.Font != null)
             {
                 foreach (var t in _root.GetComponentsInChildren<Text>(true))
+                {
+                    if (_titleFromPrefab && ReferenceEquals(t, _titleText)) continue;
                     ApplyBodyFont(t);
+                }
             }
 
             // 正文与状态栏的文字颜色（聊天内容配色，不是窗口外观）。
@@ -5064,6 +5079,8 @@ namespace IcarusII.UI
             foreach (var t in _root.GetComponentsInChildren<Text>(true))
             {
                 if (t == null) continue;
+                // 标题是 prefab 里的设计稿：材质/泛光也按 prefab，不套聊天正文的柔化材质。
+                if (_titleFromPrefab && ReferenceEquals(t, _titleText)) continue;
                 var thick = _input != null && t.transform.IsChildOf(_input.transform);
                 GameTextStyle.Apply(t, thick);
             }
