@@ -338,6 +338,9 @@ namespace IcarusII
                     }
                     else if (state == Protocol.StateRetrying)
                     {
+                        // 重试意味着上一条助手消息作废：把它的思考块收尾，
+                        // 重试产生的推理另起一块，避免两段推理混在同一个块里。
+                        _chat.EndThinking();
                         _chat.SetStatus("重试中…", WarnColor);
                     }
                     break;

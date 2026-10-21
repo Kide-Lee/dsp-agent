@@ -149,12 +149,21 @@ namespace IcarusII.UI
             /// <summary>这条回复里的蓝图卡片（可多张，一行 2~3 张）。</summary>
             public List<BlueprintCardInfo> Cards;
 
-            /// <summary>助手回复折叠后的思考正文；历史回放时用来重建思考块。</summary>
-            public string ThinkingText;
-            /// <summary>思考块收起时显示的摘要。</summary>
-            public string ThinkingSummary;
+            /// <summary>
+            /// 助手回复里的思考块，按出现顺序一段一个。一次提问里模型可能
+            /// 思考 → 工具 → 再思考 → …，每段都是独立的折叠块；
+            /// 历史回放时按这个列表逐块重建。
+            /// </summary>
+            public List<ThinkingSegment> Thinking;
             /// <summary>回复底部的游戏时间（创建时记录，历史回放不再取当前时间）。</summary>
             public string Time;
+        }
+
+        /// <summary>一段思考正文 + 收起时的一行摘要。</summary>
+        private struct ThinkingSegment
+        {
+            public string Text;
+            public string Summary;
         }
 
         private struct Item
@@ -279,8 +288,8 @@ namespace IcarusII.UI
         ///
         /// 节点结构（静态布局全部在 ChatWindow.prefab 里）：
         ///   example-reply
-        ///   ├── thinking-block     折叠思考块
-        ///   ├── tools              工具块容器（tool-template 是克隆源）
+        ///   ├── thinking-block     第一个折叠思考块（同时是后续思考块的克隆模板）
+        ///   ├── tools              折叠块容器（tool-template 是克隆源；后续思考块也按顺序挂这里）
         ///   ├── body               助手正文
         ///   ├── blueprint-cards    固定卡片网格（blueprint-card-template 是克隆源）
         ///   └── footer             time + copy
@@ -296,7 +305,14 @@ namespace IcarusII.UI
             public Button Copy;
             public Text CopyLabel;
             public RectTransform ThinkingRoot;
+            /// <summary>ThinkingRoot 的绑定结果（第一次思考时直接用它）。</summary>
             public Block Thinking;
+            /// <summary>本回复已经用过的思考块（按出现顺序）。</summary>
+            public readonly List<Block> ThinkingBlocks = new List<Block>();
+            /// <summary>
+            /// prefab 里名为 tools 的折叠块容器。工具块和“第二段及以后”的思考块都按创建顺序
+            /// 追加到这里，视觉顺序才是 思考 → 工具 → 思考 → 工具 → 正文。
+            /// </summary>
             public RectTransform Tools;
             public RectTransform ToolTemplate;
             public RectTransform BlueprintCards;
@@ -1628,6 +1644,10 @@ namespace IcarusII.UI
         {
             if (text == null) return;
 
+            // 新提问属于新回合：上一轮若还在流式思考，先把它收尾，
+            // 否则新回合的推理会续写进上一个思考块。
+            if (_thinking != null) EndThinking();
+
             _currentTurnId = ++_nextTurnId;
             _awaitingResponse = true;
             AddMessage(LineKind.User, text);
@@ -2308,28 +2328,23 @@ namespace IcarusII.UI
             SetThinkingLevel(level, notify: false);
         }
 
-        /// <summary>开始一个思考块（第一条 reasoning delta 到达时调用）。</summary>
+        /// <summary>
+        /// 开始一段思考块（每条 reasoning 流的第一条 delta 到达时调用）。
+        ///
+        /// 一次提问里模型可能「思考 → 工具 → 再思考 → …」。每段思考必须是**独立**的折叠块，
+        /// 并且按出现顺序排在工具块之间；否则所有推理都会挤进第一个块里
+        /// （实测：第二段推理会把第一段覆盖掉，而且位置永远停在整个回复的最上方）。
+        /// </summary>
         public void BeginThinking()
         {
             if (_content == null) return;
             if (_thinking != null && _thinking.Go != null) return;
 
             Block block = null;
-            ReplyView reply = null;
             if (_replyTemplate != null)
             {
-                reply = EnsureReplyForTurn();
-                if (reply != null && reply.ThinkingRoot != null)
-                {
-                    block = reply.Thinking;
-                    if (block == null)
-                    {
-                        block = BindReplyBlock(reply.ThinkingRoot.gameObject);
-                        reply.Thinking = block;
-                    }
-                    block.Reply = reply;
-                    reply.ThinkingRoot.gameObject.SetActive(true);
-                }
+                var reply = EnsureReplyForTurn();
+                block = EnsureThinkingBlock(reply);
             }
 
             if (block == null)
@@ -2350,6 +2365,75 @@ namespace IcarusII.UI
             _dirty = true;
         }
 
+        /// <summary>
+        /// 取一个“当前段”的思考块：
+        ///   1. 本回复还没用过思考块 → 直接用 prefab 里现成的 thinking-block；
+        ///   2. 已经有过思考块 → 克隆 prefab 的 thinking-block，追加到按顺序排列的折叠块容器，
+        ///      这样它落在上一段工具块之后，顺序是 思考 → 工具 → 思考 → …
+        ///
+        /// 只克隆 prefab 节点、只追加内容，不修改任何静态布局。
+        /// </summary>
+        private Block EnsureThinkingBlock(ReplyView reply)
+        {
+            if (reply == null || reply.ThinkingRoot == null) return null;
+
+            Block block;
+            if (reply.ThinkingBlocks.Count == 0 && !HasVisibleChild(reply.Tools))
+            {
+                block = reply.Thinking;
+                if (block == null || block.Go == null)
+                {
+                    block = BindReplyBlock(reply.ThinkingRoot.gameObject);
+                    reply.Thinking = block;
+                }
+                reply.ThinkingRoot.gameObject.SetActive(true);
+            }
+            else
+            {
+                // 顺序：追加到折叠块容器的最后（工具块也追加在这里）。
+                var parent = reply.Tools != null
+                    ? (Transform)reply.Tools
+                    : reply.ThinkingRoot.parent;
+                var clone = UnityEngine.Object.Instantiate(reply.ThinkingRoot.gameObject, parent, false);
+                clone.name = "thinking-block-" + (++_itemSeq);
+                clone.SetActive(true);
+                if (reply.Tools != null)
+                {
+                    reply.Tools.gameObject.SetActive(true);
+                    // Instantiate 已经放在末尾；保持顺序显式化，避免以后改动破坏它。
+                    clone.transform.SetAsLastSibling();
+                }
+                else if (reply.ThinkingBlocks.Count > 0)
+                {
+                    // 旧 prefab 没有容器：插在上一块后面，别跑到正文/脚注下面。
+                    var last = reply.ThinkingBlocks[reply.ThinkingBlocks.Count - 1];
+                    if (last != null && last.Go != null)
+                    {
+                        int anchor = last.Go.transform.GetSiblingIndex();
+                        clone.transform.SetSiblingIndex(anchor + 1);
+                    }
+                }
+                block = BindReplyBlock(clone);
+            }
+
+            if (block == null) return null;
+            block.Reply = reply;
+            reply.ThinkingBlocks.Add(block);
+            return block;
+        }
+
+        /// <summary>容器里是否有可见子节点（模板节点是 inactive，不算）。</summary>
+        private static bool HasVisibleChild(RectTransform parent)
+        {
+            if (parent == null) return false;
+            for (int i = 0; i < parent.childCount; i++)
+            {
+                var child = parent.GetChild(i);
+                if (child != null && child.gameObject.activeSelf) return true;
+            }
+            return false;
+        }
+
         /// <summary>追加一段思考增量（只更新块正文，不进聊天正文）。</summary>
         public void AppendThinkingDelta(string delta)
         {
@@ -2365,7 +2449,7 @@ namespace IcarusII.UI
         }
 
         /// <summary>
-        /// 结束思考块：收起并显示摘要。正文开始出现（或本轮结束/出错）时调用。
+        /// 结束当前思考块：收起并显示摘要。正文开始出现、发起工具调用，或本轮结束/出错时调用。
         /// 思考内容为空时把块整块移除，不留一个空壳。
         /// </summary>
         /// <param name="finalize">
@@ -2393,7 +2477,8 @@ namespace IcarusII.UI
             if (string.IsNullOrEmpty(text))
             {
                 var reply = block.Reply;
-                if (reply != null && reply.ThinkingRoot != null)
+                if (reply != null && reply.ThinkingRoot != null
+                    && ReferenceEquals(block.Go, reply.ThinkingRoot.gameObject))
                 {
                     // prefab 节点保留：同一回合后续若又出 reasoning，直接复用这块，
                     // 避免销毁后 ThinkingRoot 变成伪 null 只能退回代码补建。
@@ -2409,7 +2494,8 @@ namespace IcarusII.UI
                 return;
             }
 
-            SetBlock(block, Strings.Get("thinking.title"), Summarize(text, 48), text,
+            var summary = Summarize(text, 48);
+            SetBlock(block, Strings.Get("thinking.title"), summary, text,
                 expanded: false, titleColor: _textDim);
             if (block.Reply != null)
             {
@@ -2418,8 +2504,8 @@ namespace IcarusII.UI
                 if (lineIndex >= 0)
                 {
                     var line = _lines[lineIndex];
-                    line.ThinkingText = text;
-                    line.ThinkingSummary = block.Summary != null ? block.Summary.text : string.Empty;
+                    if (line.Thinking == null) line.Thinking = new List<ThinkingSegment>();
+                    line.Thinking.Add(new ThinkingSegment { Text = text, Summary = summary });
                     _lines[lineIndex] = line;
                 }
             }
@@ -2428,7 +2514,7 @@ namespace IcarusII.UI
                 _lines.Add(new Line
                 {
                     Kind = LineKind.System,
-                    Text = Strings.Get("thinking.title") + " " + block.Summary.text,
+                    Text = Strings.Get("thinking.title") + " " + summary,
                     TurnId = _currentTurnId,
                     Go = block.Go,
                     Block = block,
@@ -2709,8 +2795,7 @@ namespace IcarusII.UI
         {
             if (block == null) return;
 
-            if (block.Reply != null && ReferenceEquals(block.Reply.Thinking, block))
-                block.Reply.Thinking = null;
+            if (block.Reply != null) RemoveBlockReference(block);
 
             for (var i = _items.Count - 1; i >= 0; i--)
             {
@@ -3489,7 +3574,11 @@ namespace IcarusII.UI
             if (view == null) return false;
             if (view.Body != null && !string.IsNullOrEmpty(view.Body.text)) return true;
             if (view.CardViews.Count > 0) return true;
-            if (view.Thinking != null && view.Thinking.Go != null && view.Thinking.Go.activeSelf) return true;
+            for (int i = 0; i < view.ThinkingBlocks.Count; i++)
+            {
+                var block = view.ThinkingBlocks[i];
+                if (block != null && block.Go != null && block.Go.activeSelf) return true;
+            }
             if (view.Tools != null)
             {
                 for (int i = 0; i < view.Tools.childCount; i++)
@@ -3552,6 +3641,8 @@ namespace IcarusII.UI
                 _thinking = null;
                 _thinkingText.Length = 0;
             }
+            var reply = block.Reply;
+            if (reply != null) reply.ThinkingBlocks.Remove(block);
         }
 
         /// <summary>聊天记录是否为空（用于决定要不要显示欢迎语）。</summary>
@@ -3657,8 +3748,7 @@ namespace IcarusII.UI
                     if (lineIndex >= 0)
                     {
                         var oldLine = _lines[lineIndex];
-                        line.ThinkingText = oldLine.ThinkingText;
-                        line.ThinkingSummary = oldLine.ThinkingSummary;
+                        line.Thinking = oldLine.Thinking;
                         line.Cards = oldLine.Cards;
                         _lines[lineIndex] = line;
                     }
@@ -3785,7 +3875,7 @@ namespace IcarusII.UI
 
                     if (item.Reply != null)
                     {
-                        if (!string.IsNullOrEmpty(line.ThinkingText))
+                        if (line.Thinking != null && line.Thinking.Count > 0)
                             RebuildThinking(item.Reply, line);
                         AddCards(item.Reply, line.Cards);
                         if (item.Reply.Body != null)
@@ -3825,19 +3915,25 @@ namespace IcarusII.UI
             return -1;
         }
 
+        /// <summary>按记录顺序把一次回复里的多段思考逐块重建（每段一个折叠块）。</summary>
         private void RebuildThinking(ReplyView reply, Line line)
         {
             if (reply == null || reply.ThinkingRoot == null) return;
-            if (reply.Thinking == null)
+            if (line.Thinking == null) return;
+
+            for (int i = 0; i < line.Thinking.Count; i++)
             {
-                reply.Thinking = BindReplyBlock(reply.ThinkingRoot.gameObject);
+                var segment = line.Thinking[i];
+                if (string.IsNullOrEmpty(segment.Text)) continue;
+
+                var block = EnsureThinkingBlock(reply);
+                if (block == null) return;
+                var summary = string.IsNullOrEmpty(segment.Summary)
+                    ? Summarize(segment.Text, 48)
+                    : segment.Summary;
+                SetBlock(block, Strings.Get("thinking.title"), summary, segment.Text,
+                    expanded: false, titleColor: _textDim);
             }
-            reply.ThinkingRoot.gameObject.SetActive(true);
-            var summary = string.IsNullOrEmpty(line.ThinkingSummary)
-                ? Summarize(line.ThinkingText, 48)
-                : line.ThinkingSummary;
-            SetBlock(reply.Thinking, Strings.Get("thinking.title"), summary, line.ThinkingText,
-                expanded: false, titleColor: _textDim);
         }
 
         // ---------------------------------------------------------------- 提问索引（chat-index）
@@ -4502,7 +4598,12 @@ namespace IcarusII.UI
             if (reply == null) return;
             if (resanitize) ResanitizeLabel(reply.Body);
             AssignIconMapping(reply.Body, icons);
-            if (reply.Thinking != null) AssignIconMapping(reply.Thinking.Body, icons);
+            for (int i = 0; i < reply.ThinkingBlocks.Count; i++)
+            {
+                var thinking = reply.ThinkingBlocks[i];
+                if (thinking == null) continue;
+                AssignIconMapping(thinking.Body, icons);
+            }
             for (int i = 0; i < reply.CardViews.Count; i++)
             {
                 var card = reply.CardViews[i];
@@ -4760,7 +4861,14 @@ namespace IcarusII.UI
         private static int LineCharCount(Line line)
         {
             var count = line.Text != null ? line.Text.Length : 0;
-            if (!string.IsNullOrEmpty(line.ThinkingText)) count += line.ThinkingText.Length;
+            if (line.Thinking != null)
+            {
+                for (int i = 0; i < line.Thinking.Count; i++)
+                {
+                    var text = line.Thinking[i].Text;
+                    if (!string.IsNullOrEmpty(text)) count += text.Length;
+                }
+            }
             if (line.Cards != null)
             {
                 for (int i = 0; i < line.Cards.Count; i++)
@@ -4825,7 +4933,12 @@ namespace IcarusII.UI
                     continue;
                 }
                 if (!ReferenceEquals(itemGo, go) && !itemGo.transform.IsChildOf(root)) continue;
-                if (_items[i].Reply != null) RemoveBlockReference(_items[i].Reply.Thinking);
+                var reply = _items[i].Reply;
+                if (reply != null)
+                {
+                    for (int b = reply.ThinkingBlocks.Count - 1; b >= 0; b--)
+                        RemoveBlockReference(reply.ThinkingBlocks[b]);
+                }
                 _items.RemoveAt(i);
                 if (_streamItem == i) _streamItem = -1;
                 else if (_streamItem > i) _streamItem--;

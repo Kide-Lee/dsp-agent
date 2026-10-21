@@ -75,7 +75,8 @@ capability → `ready.tools`、tool_call→tool_result 往返、超时、断线�
 | 下拉框默认值 | 显示「高」；`icarus-ii.cfg` 的 `[Agent] ThinkingLevel=high` |
 | 选「高」/「最高」 | 窗口发 `config.set{thinkingLevel}`；sidecar `config.json` 落盘；下一次回答前重建 pi session |
 | 上游请求 | 开启后带 `thinking:{type:"enabled"}`；关闭后带 `thinking:{type:"disabled"}`（`sidecar/test/pi-tools.mjs` 已断言） |
-| 思考块 | 流式时展开显示推理；正文开始时自动收起，标题行显示一行摘要；点标题行可重新展开 |
+| 思考块 | 流式时展开显示推理；正文开始或发起工具调用时自动收起，标题行显示一行摘要；点标题行可重新展开 |
+| 多段思考 | 一次提问里「思考 → 工具 → 再思考 → …」每段各自一块，按发生顺序插在工具块之间；不会全部挤进第一块，旧内容也不会被新一段覆盖 |
 | 工具块 | 与思考块同款折叠样式；读取中显示「读取中…」，完成后摘要显示结果；失败自动展开 |
 | 断线改档 | 本地 `icarus-ii.cfg` 记住选择；重连后补发 `config.set` |
 | 空思考 | 模型没有输出 reasoning 时不留下空块 |
