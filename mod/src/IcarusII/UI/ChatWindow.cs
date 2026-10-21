@@ -182,6 +182,10 @@ namespace IcarusII.UI
             public bool FromPrefab;
             /// <summary>助手回复：prefab 回复模板的绑定结果；旧 prefab/裸文本为 null。</summary>
             public ReplyView Reply;
+            /// <summary>用户消息：气泡下面的 footer（只有时间 + 复制）。</summary>
+            public GameObject Footer;
+            public Text FooterTime;
+            public Button FooterCopy;
         }
 
         /// <summary>chat-index 里的一条：一个用户提问 + 它的回答。</summary>
@@ -349,6 +353,10 @@ namespace IcarusII.UI
             public RectTransform CardTemplate;
             public readonly List<CardView> CardViews = new List<CardView>();
             public string CopyText = string.Empty;
+            /// <summary>这段回复属于哪一轮（footer 的刷新按钮用它找回提问）。</summary>
+            public int TurnId;
+            /// <summary>footer 的刷新按钮（只有最后一轮可见）。</summary>
+            public Button Refresh;
         }
 
         /// <summary>一张固定尺寸蓝图卡片的绑定结果。</summary>
@@ -1681,9 +1689,16 @@ namespace IcarusII.UI
         /// </summary>
         public event Action<string, long> TurnDeleted;
 
+        /// <summary>
+        /// 玩家点了某条回答 footer 的刷新：窗口已经把这一轮的助手侧清空，
+        /// Plugin 先把旧回合从会话里删掉（A.7），再用同一句提问重新发 prompt。
+        /// </summary>
+        public event Action<string, long> RegenerateRequested;
+
         /// <summary>追加一条用户消息（渲染成气泡，样式来自 prefab 的 example-user-*）。</summary>
         /// <param name="timestampMs">历史回放时带上的时间戳；当场提问传 0。</param>
-        public void AppendUser(string text, long timestampMs = 0)
+        /// <param name="gameTime">历史回放的游戏时间（HH:mm）；空则用当前游戏时间。</param>
+        public void AppendUser(string text, long timestampMs = 0, string gameTime = null)
         {
             if (text == null) return;
 
@@ -1693,7 +1708,7 @@ namespace IcarusII.UI
 
             _currentTurnId = ++_nextTurnId;
             _awaitingResponse = true;
-            AddMessage(LineKind.User, text);
+            AddMessage(LineKind.User, text, gameTime);
             AddTurn(_currentTurnId, text, timestampMs);
         }
 
@@ -3727,6 +3742,33 @@ namespace IcarusII.UI
             if (view.Time != null)
                 view.Time.text = string.IsNullOrEmpty(time) ? GameClock() : time;
             if (view.CopyLabel != null) view.CopyLabel.text = Strings.Get("reply.copy");
+            UpdateReplyRefreshAvailability();
+        }
+
+        /// <summary>
+        /// 刷新按钮只给**最后一轮**回答：会话是线性的，重新推理中间一轮会把新回答追加到末尾、
+        /// 还会改变后续上下文，语义不对。
+        /// </summary>
+        private void UpdateReplyRefreshAvailability()
+        {
+            int last = -1;
+            for (int i = _items.Count - 1; i >= 0; i--)
+            {
+                if (_items[i].Kind == LineKind.Assistant && _items[i].Reply != null)
+                {
+                    last = i;
+                    break;
+                }
+            }
+
+            for (int i = 0; i < _items.Count; i++)
+            {
+                var item = _items[i];
+                if (item.Kind != LineKind.Assistant || item.Reply == null || item.Reply.Refresh == null) continue;
+                bool show = i == last;
+                if (item.Reply.Refresh.gameObject.activeSelf != show)
+                    item.Reply.Refresh.gameObject.SetActive(show);
+            }
         }
 
         /// <summary>把协议里的蓝图卡片数据填进一张固定卡片。</summary>
@@ -3946,9 +3988,11 @@ namespace IcarusII.UI
                 Kind = kind,
                 Text = text,
                 TurnId = _currentTurnId,
-                Time = kind == LineKind.Assistant
-                    ? (string.IsNullOrEmpty(gameTime) ? GameClock() : gameTime)
-                    : null,
+                // 用户消息也要显示时间（footer）：当场提问记当前游戏时间，
+                // 历史回放用 sidecar 带回来的 gameTime。
+                Time = kind == LineKind.System
+                    ? null
+                    : (string.IsNullOrEmpty(gameTime) ? GameClock() : gameTime),
             };
 
             // 窗口还没 Create 时只记逻辑行；Create 末尾用 RebuildTranscript 补建。
@@ -4010,6 +4054,7 @@ namespace IcarusII.UI
                     if (item.Label != null) item.Label.text = SanitizeRichText(text);
                     FitBubbleWidth(item.Go, text);
                     if (kind == LineKind.Assistant) AttachReplyFooter(index, text);
+                    else if (kind == LineKind.User) ApplyUserFooter(index, text, line.Time);
                 }
             }
 
@@ -4124,6 +4169,7 @@ namespace IcarusII.UI
                         if (item.Label != null) item.Label.text = SanitizeRichText(line.Text);
                         FitBubbleWidth(item.Go, line.Text);
                         if (line.Kind == LineKind.Assistant) AttachReplyFooter(index, line.Text);
+                        else if (line.Kind == LineKind.User) ApplyUserFooter(index, line.Text, line.Time);
                     }
 
                     if (line.Kind == LineKind.User && line.TurnId > 0)
@@ -4564,6 +4610,8 @@ namespace IcarusII.UI
 
             RefreshIndexSelection();
             RefreshIndexEmpty();
+            // 删掉的如果是最后一轮，刷新按钮要回到新的最后一轮回答上。
+            UpdateReplyRefreshAvailability();
             _dirty = true;
             Plugin.Log.LogInfo($"[索引] 已从窗口删除回合 {turnId}");
 
@@ -4576,6 +4624,85 @@ namespace IcarusII.UI
             {
                 Plugin.Log.LogWarning($"[索引] 通知 sidecar 删除回合失败：{ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 点回答 footer 的刷新：只允许重新推理**最后一轮**（会话是线性的）。
+        /// 保留用户气泡、索引行和回合号，只清掉这一轮的助手内容；
+        /// 真正「删旧回合 + 重发提问」由 Plugin 完成（A.7 + prompt）。
+        /// </summary>
+        private void RequestRegenerate(ReplyView view)
+        {
+            if (view == null) return;
+            if (_streamItem >= 0 || _awaitingResponse || _thinking != null) return;
+
+            // 只有最后一轮有刷新按钮（UpdateReplyRefreshAvailability），这里再兜一次。
+            if (_turns.Count == 0 || view.TurnId != _turns[_turns.Count - 1].Id) return;
+
+            TurnEntry entry = null;
+            for (int i = 0; i < _turns.Count; i++)
+            {
+                if (_turns[i].Id == view.TurnId) { entry = _turns[i]; break; }
+            }
+            if (entry == null || string.IsNullOrEmpty(entry.Text)) return;
+
+            RemoveAssistantSide(view.TurnId);
+
+            // 用户气泡还在，重新回答前先进入「等待响应」，避免索引删除/再次刷新。
+            _awaitingResponse = true;
+            _dirty = true;
+            Plugin.Log.LogInfo($"[刷新] 重新推理回合 {view.TurnId}：{ShortText(entry.Text)}");
+
+            try
+            {
+                RegenerateRequested?.Invoke(entry.Text, entry.Timestamp);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[刷新] 通知 sidecar 重新推理失败：{ex.Message}");
+            }
+            finally
+            {
+                // 会话里这条 user 消息会被重新写成新的时间戳；索引删除改走文本回退，
+                // 否则下次删这一轮会拿旧时间戳去匹配、删不掉。
+                entry.Timestamp = 0;
+            }
+        }
+
+        /// <summary>只清掉某一轮的助手侧（回复、思考/工具块、卡片、脚注），保留用户气泡与索引行。</summary>
+        private void RemoveAssistantSide(int turnId)
+        {
+            _streamItem = -1;
+            _thinking = null;
+            _thinkingText.Length = 0;
+            _stream.Length = 0;
+            _toolBlocks.Clear();
+
+            for (int i = _lines.Count - 1; i >= 0; i--)
+            {
+                var line = _lines[i];
+                if (line.TurnId != turnId || line.Kind == LineKind.User) continue;
+                if (line.Block != null) ForgetBlock(line.Block);
+                if (line.Go != null) UnityEngine.Object.Destroy(line.Go);
+                _lines.RemoveAt(i);
+            }
+
+            for (int i = _items.Count - 1; i >= 0; i--)
+            {
+                var item = _items[i];
+                if (item.TurnId != turnId || item.Kind == LineKind.User) continue;
+                if (item.Go != null) UnityEngine.Object.Destroy(item.Go);
+                _items.RemoveAt(i);
+            }
+
+            UpdateReplyRefreshAvailability();
+        }
+
+        private static string ShortText(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return string.Empty;
+            var t = text.Replace('\n', ' ');
+            return t.Length <= 24 ? t : t.Substring(0, 24) + "…";
         }
 
         private void ForgetBlock(Block block)
@@ -4663,7 +4790,24 @@ namespace IcarusII.UI
             }
 
             var fromPrefab = template != null && _content != null;
-            var label = reply != null ? reply.Body : go.GetComponentInChildren<Text>(true);
+
+            Text label = null;
+            if (reply != null)
+            {
+                label = reply.Body;
+            }
+            else if (kind == LineKind.User)
+            {
+                // 用户气泡的正文固定在 bubble/text；不能笼统取第一个 Text——
+                // footer 里的时间也是 Text。
+                label = FindChildText(go.transform, "bubble/text");
+                if (label == null) label = go.GetComponentInChildren<Text>(true);
+            }
+            else
+            {
+                label = go.GetComponentInChildren<Text>(true);
+            }
+
             if (label != null)
             {
                 ApplyBodyFont(label);
@@ -4680,7 +4824,7 @@ namespace IcarusII.UI
                 AssignIconMapping(label, TryGetPreferredIconMapping());
             }
 
-            _items.Add(new Item
+            var item = new Item
             {
                 Go = go,
                 Label = label,
@@ -4688,8 +4832,46 @@ namespace IcarusII.UI
                 TurnId = _currentTurnId,
                 FromPrefab = fromPrefab,
                 Reply = reply,
-            });
+            };
+            if (kind == LineKind.User && fromPrefab) BindUserFooter(ref item, go);
+            _items.Add(item);
             return _items.Count - 1;
+        }
+
+        /// <summary>绑定用户气泡下的 footer：只有时间 + 复制按钮。</summary>
+        private void BindUserFooter(ref Item item, GameObject go)
+        {
+            if (go == null) return;
+            var footer = go.transform.Find("footer");
+            if (footer == null) return;
+
+            item.Footer = footer.gameObject;
+            item.FooterTime = FindChildText(footer, "time");
+            var copyTr = footer.Find("copy");
+            item.FooterCopy = copyTr != null ? copyTr.GetComponent<Button>() : null;
+            footer.gameObject.SetActive(false);   // 等正文落地再显示
+        }
+
+        /// <summary>填用户消息的 footer：时间 + 复制当前气泡文本。</summary>
+        private void ApplyUserFooter(int index, string text, string time)
+        {
+            if (index < 0 || index >= _items.Count) return;
+            var item = _items[index];
+            if (item.Footer == null) return;
+
+            item.Footer.SetActive(!string.IsNullOrEmpty(text));
+            if (item.FooterTime != null)
+                item.FooterTime.text = string.IsNullOrEmpty(time) ? GameClock() : time;
+            if (item.FooterCopy != null)
+            {
+                var copy = text ?? string.Empty;
+                item.FooterCopy.onClick.RemoveAllListeners();
+                item.FooterCopy.onClick.AddListener(() =>
+                {
+                    if (!string.IsNullOrEmpty(copy)) GUIUtility.systemCopyBuffer = copy;
+                });
+            }
+            _items[index] = item;
         }
 
         /// <summary>
@@ -4768,8 +4950,18 @@ namespace IcarusII.UI
                             GUIUtility.systemCopyBuffer = view.CopyText;
                     });
                 }
+
+                var refresh = footer.Find("refresh");
+                view.Refresh = refresh != null ? refresh.GetComponent<Button>() : null;
+                if (view.Refresh != null)
+                {
+                    view.Refresh.onClick.RemoveAllListeners();
+                    view.Refresh.onClick.AddListener(() => RequestRegenerate(view));
+                    view.Refresh.gameObject.SetActive(false);   // 由 UpdateReplyRefreshAvailability 决定
+                }
                 footer.gameObject.SetActive(false);
             }
+            view.TurnId = _currentTurnId;
             return view;
         }
 

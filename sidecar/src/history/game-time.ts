@@ -47,9 +47,11 @@ export function attachGameTimes(
 
     // 最近的前一条 user 消息；有它时同时校验提问，避免相同回答串到别的回合。
     let promptText: string | null = null;
+    let userIndex = -1;
     for (let j = i - 1; j >= 0; j--) {
       if (messages[j]?.role === 'user') {
         promptText = messages[j]!.text;
+        userIndex = j;
         break;
       }
     }
@@ -68,6 +70,11 @@ export function attachGameTimes(
     const record = pending[found]!;
     used.add(found);
     messages[i] = { ...message, gameTime: record.gameTime };
+    // 用户气泡下面的 footer 也要显示时间；历史里只有回答完成时的游戏时间，
+    // 拿它近似提问时间（同一回合内）。
+    if (userIndex >= 0 && !messages[userIndex]!.gameTime) {
+      messages[userIndex] = { ...messages[userIndex]!, gameTime: record.gameTime };
+    }
   }
 
   // 2) 提问回退：只挂到该轮最后一条回答，且不覆盖已匹配的回答。
@@ -95,12 +102,14 @@ export function attachGameTimes(
     if (assistantIndex < 0) continue;
 
     const target = messages[assistantIndex]!;
-    if (target.gameTime) {
-      used.add(matched);
-      continue;
-    }
+    const gameTime = pending[matched]!.gameTime;
     used.add(matched);
-    messages[assistantIndex] = { ...target, gameTime: pending[matched]!.gameTime };
+    if (!message.gameTime) {
+      messages[i] = { ...message, gameTime };
+    }
+    if (!target.gameTime) {
+      messages[assistantIndex] = { ...target, gameTime };
+    }
   }
 
   return messages;

@@ -70,6 +70,9 @@ namespace IcarusII
         /// <summary>请求 id → 用户提问原文；final 到达时用来回存该回答的游戏时间。</summary>
         private readonly Dictionary<string, string> _promptById = new Dictionary<string, string>(StringComparer.Ordinal);
 
+        /// <summary>history.delete 请求 id → 重新推理的提问原文（删除成功后重发 prompt）。</summary>
+        private readonly Dictionary<string, string> _regenerateDeleteId = new Dictionary<string, string>(StringComparer.Ordinal);
+
         /// <summary>当前存档标识（null = 主菜单）。</summary>
         private string _saveKey;
 
@@ -110,6 +113,7 @@ namespace IcarusII
                 _chat.ThinkingLevelChanged += OnThinkingLevelChanged;
                 _chat.ModelSelectionChanged += OnModelSelectionChanged;
                 _chat.TurnDeleted += OnTurnDeleted;
+                _chat.RegenerateRequested += OnRegenerateRequested;
                 _chat.BlueprintCardActionRequested += OnBlueprintCardAction;
                 // 注意：_client 尚未创建（它在后台的 PrepareSidecar 里才 new），
                 // 所以它的 ConfigChanged 必须在创建之后再订阅。
@@ -285,10 +289,12 @@ namespace IcarusII
                         break;
                     case ConnectionState.Backoff:
                         _tools.CancelAll("连接退避");
+                        _regenerateDeleteId.Clear();
                         _chat.SetStatus(Strings.Get("status.backoff") + " " + detail, WarnColor);
                         break;
                     default:
                         _tools.CancelAll("连接断开");
+                        _regenerateDeleteId.Clear();
                         _chat.SetStatus(Strings.Get("status.disconnected"), null);
                         break;
                 }
@@ -379,6 +385,34 @@ namespace IcarusII
                 case Protocol.HistoryDeleted:
                 {
                     var info = HistoryDeletedInfo.Parse(payload);
+
+                    // 刷新按钮的「删旧回合 → 重发提问」流程。
+                    string regenerateText;
+                    if (!string.IsNullOrEmpty(replyTo) && _regenerateDeleteId.TryGetValue(replyTo, out regenerateText))
+                    {
+                        _regenerateDeleteId.Remove(replyTo);
+                        if (info == null || !info.Ok)
+                        {
+                            var reason = info == null || string.IsNullOrEmpty(info.Error) ? "未知错误" : info.Error;
+                            _chat.AppendSystem("重新推理失败（无法删除旧回答：" + reason + "）。");
+                            _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+                            break;
+                        }
+
+                        _streaming = false;
+                        var regenerateId = _client != null ? _client.SendPrompt(regenerateText) : null;
+                        if (regenerateId == null)
+                        {
+                            _chat.AppendSystem("重新推理失败（连接未就绪）。");
+                            _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+                            break;
+                        }
+                        _promptById[regenerateId] = regenerateText;
+                        _chat.SetStatus(Strings.Get("status.thinking"), AccentColor);
+                        Log.LogInfo($"[刷新] 已删除旧回合，重新发送提问：{regenerateId}");
+                        break;
+                    }
+
                     if (info != null && !info.Ok)
                     {
                         var reason = string.IsNullOrEmpty(info.Error) ? "未知错误" : info.Error;
@@ -743,6 +777,31 @@ namespace IcarusII
             Log.LogInfo($"[索引] 已请求 sidecar 删除回合：{id}");
         }
 
+        /// <summary>
+        /// 玩家点了回答 footer 的刷新：先让 sidecar 把旧回合从会话里删掉（A.7），
+        /// 成功后再用同一句提问重新发 prompt，这样模型上下文里不会留旧答案。
+        /// </summary>
+        private void OnRegenerateRequested(string text, long timestampMs)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            if (_client == null || _client.State != ConnectionState.Ready)
+            {
+                _chat.AppendSystem("重新推理失败（连接未就绪）。");
+                return;
+            }
+
+            var saveKey = GameRefs.CurrentSaveKey();
+            var id = _client.SendHistoryDelete(saveKey, text, timestampMs);
+            if (id == null)
+            {
+                _chat.AppendSystem("重新推理失败（连接状态已变化）。");
+                return;
+            }
+            _regenerateDeleteId[id] = text;
+            _chat.SetStatus(Strings.Get("status.regenerating"), AccentColor);
+            Log.LogInfo($"[刷新] 请求删除旧回合后重新推理：{id}");
+        }
+
         private void OnThinkingLevelChanged(string level)
         {
             if (!PluginConfig.IsValidThinkingLevel(level)) return;
@@ -940,7 +999,7 @@ namespace IcarusII
                         {
                             if (message.Role == "user")
                             {
-                                _chat.AppendUser(message.Text, message.Timestamp);
+                                _chat.AppendUser(message.Text, message.Timestamp, message.GameTime);
                             }
                             else
                             {

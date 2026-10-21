@@ -28,7 +28,8 @@ console.log('── 回答游戏时间挂载 ──');
   ]);
   check('第一轮时间', attached[1].gameTime === '08:42', JSON.stringify(attached[1]));
   check('第二轮时间', attached[3].gameTime === '09:10', JSON.stringify(attached[3]));
-  check('不挂到 user 消息', !attached[0].gameTime && !attached[2].gameTime);
+  check('user 消息也带时间（气泡 footer 用）', attached[0].gameTime === '08:42' && attached[2].gameTime === '09:10',
+    JSON.stringify(attached));
 }
 
 {
@@ -37,6 +38,7 @@ console.log('── 回答游戏时间挂载 ──');
     [{ prompt: '很长的问题，后面还有很多很多字', gameTime: '10:00' }],
   );
   check('截断的提问也能匹配', attached[1].gameTime === '10:00');
+  check('截断的提问 user 也带上时间', attached[0].gameTime === '10:00');
 }
 
 {
@@ -53,6 +55,7 @@ console.log('── 回答游戏时间挂载 ──');
   check('挂到整轮最后一条回答', attached[2].gameTime === '11:11');
   check('不挂到中间过程', attached[1].gameTime === undefined);
   check('不越过下一轮', attached[4].gameTime === undefined);
+  check('提问回退时 user 也带时间', attached[0].gameTime === '11:11');
 }
 
 {
@@ -70,6 +73,8 @@ console.log('── 回答游戏时间挂载 ──');
   );
   check('重复提问按回答匹配第一轮', attached[1].gameTime === '12:00', JSON.stringify(attached[1]));
   check('重复提问按回答匹配第二轮', attached[3].gameTime === '12:05', JSON.stringify(attached[3]));
+  check('重复提问 user 也各归各的时间', attached[0].gameTime === '12:00' && attached[2].gameTime === '12:05',
+    JSON.stringify(attached));
 }
 
 {
@@ -97,6 +102,7 @@ console.log('── 回答游戏时间挂载 ──');
     ],
   );
   check('同一提问以最后一条记录为准', attached[1].gameTime === '14:05');
+  check('重试时 user 也用最后一条记录', attached[0].gameTime === '14:05');
 }
 
 {

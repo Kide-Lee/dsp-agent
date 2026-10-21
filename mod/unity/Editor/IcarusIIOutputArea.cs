@@ -16,8 +16,8 @@ namespace IcarusII.EditorTools
     ///       ├── viewport             Mask(Show Mask Graphic=false) + Image(内置 UIMask)
     ///       │   └── content          VerticalLayoutGroup + ContentSizeFitter(纵向 PreferredSize)
     ///       │       ├── example-assistant-1   裸文本，无边框（助手消息样式）
-    ///       │       ├── example-user-1        ┐ 气泡：bg + border 两层
-    ///       │       ├── example-assistant-2   │ 由 HorizontalLayoutGroup 整行右对齐
+    ///       │       ├── example-user-1        ┐ 气泡：bg + border 两层 + footer（时间/复制）
+    ///       │       ├── example-assistant-2   │ 由 VerticalLayoutGroup 整行右对齐
     ///       │       └── example-user-2        ┘
     ///       └── Scrollbar Vertical   6 宽，Handle 上下各 3 留白
     ///
@@ -76,6 +76,7 @@ namespace IcarusII.EditorTools
         private static readonly Color BubbleBorderColor = Rgba(0xA7, 0xE9, 0xFF, 0x40);       // 圆角描边
         private static readonly Color BubbleTextColor = Rgba(0xFF, 0xFF, 0xFF, 0xE6);         // 气泡里的字
         private static readonly Color AssistantTextColor = Rgba(0xFF, 0xFF, 0xFF, 0xB3);      // 助手正文
+        private static readonly Color FooterTimeColor = Rgba(0x8F, 0xA3, 0xB8, 0xFF);         // footer 时间
         private const int MessageFontSize = 14;
         private const float BubblePaddingX = 12f;
         private const float BubblePaddingY = 8f;
@@ -83,6 +84,7 @@ namespace IcarusII.EditorTools
         private const string PanelSpritePath = "Third Party/UIComponents/Resources/Textures/GUIPanel.png";
         private const string FrameSpritePath = "Third Party/UIComponents/Resources/Textures/GUIFrame_thin.png";
         private const string BorderMaterialPath = "Resources/UI/Materials/widget-alpha-5x.mat";
+        private const string CopyIconPath = "Resources/UI/Textures/Sprites/Icons/copy.png";
 
 
         [MenuItem("Icarus II/Add Output Scroll Area (在 output 里加滚动区)")]
@@ -313,15 +315,16 @@ namespace IcarusII.EditorTools
         /// </summary>
         private static void BuildUserBubble(RectTransform content, string name, string text, float maxWidth)
         {
-            // 整行容器：把气泡推到右边
+            // 整行容器：气泡在上、footer 在下，都靠右
             var row = Node(name, content);
-            var hlg = row.gameObject.AddComponent<HorizontalLayoutGroup>();
-            hlg.childControlWidth = true;
-            hlg.childControlHeight = true;
-            hlg.childForceExpandWidth = false;     // 气泡按自身 preferredWidth，不拉满整行
-            hlg.childForceExpandHeight = false;
-            hlg.childAlignment = TextAnchor.MiddleRight;
-            hlg.padding = new RectOffset(0, 0, 0, 0);
+            var rowVlg = row.gameObject.AddComponent<VerticalLayoutGroup>();
+            rowVlg.childControlWidth = true;
+            rowVlg.childControlHeight = true;
+            rowVlg.childForceExpandWidth = false;     // 气泡按自身 preferredWidth，不拉满整行
+            rowVlg.childForceExpandHeight = false;
+            rowVlg.childAlignment = TextAnchor.UpperRight;
+            rowVlg.padding = new RectOffset(0, 0, 0, 0);
+            rowVlg.spacing = 2f;
 
             // 气泡本体：宽度由 LayoutElement 封顶，高度由 VLG 按文本算
             var bubble = Node("bubble", row);
@@ -362,6 +365,52 @@ namespace IcarusII.EditorTools
 
             var label = AddMessageLabel(bubble, text, BubbleTextColor);
             label.alignment = TextAnchor.UpperLeft;
+
+            // footer：只有复制 + 时间（顺序与助手回复的 footer 一致）
+            var footer = Node("footer", row);
+            var footerHlg = footer.gameObject.AddComponent<HorizontalLayoutGroup>();
+            footerHlg.padding = new RectOffset(0, 0, 0, 0);
+            footerHlg.spacing = 8f;
+            footerHlg.childControlWidth = true;
+            footerHlg.childControlHeight = true;
+            footerHlg.childForceExpandWidth = false;
+            footerHlg.childForceExpandHeight = false;
+            footerHlg.childAlignment = TextAnchor.MiddleRight;
+
+            var copy = Node("copy", footer);
+            var copyLe = copy.gameObject.AddComponent<LayoutElement>();
+            copyLe.minWidth = 16f;
+            copyLe.preferredWidth = 16f;
+            copyLe.minHeight = 16f;
+            copyLe.preferredHeight = 16f;
+            var copyImg = copy.gameObject.AddComponent<Image>();
+            copyImg.sprite = AssetDatabase.LoadAssetAtPath<Sprite>(CopyIconPath);
+            copyImg.color = new Color(1f, 1f, 1f, 0.70f);
+            copyImg.raycastTarget = true;
+            var copyButton = copy.gameObject.AddComponent<Button>();
+            copyButton.targetGraphic = copyImg;
+            copyButton.transition = Selectable.Transition.ColorTint;
+            var colors = copyButton.colors;
+            colors.normalColor = Color.white;
+            colors.highlightedColor = new Color(1.25f, 1.25f, 1.25f, 1f);
+            colors.pressedColor = new Color(0.82f, 0.82f, 0.82f, 1f);
+            colors.selectedColor = Color.white;
+            colors.disabledColor = new Color(0.5f, 0.5f, 0.5f, 0.5f);
+            colors.colorMultiplier = 1f;
+            colors.fadeDuration = 0.08f;
+            copyButton.colors = colors;
+
+            var time = Node("time", footer);
+            var timeLe = time.gameObject.AddComponent<LayoutElement>();
+            timeLe.preferredWidth = 30f;
+            timeLe.minHeight = 18f;
+            timeLe.preferredHeight = 18f;
+            var timeText = AddMessageLabel(time, "08:42", FooterTimeColor);
+            timeText.fontSize = 12;
+            timeText.alignment = TextAnchor.MiddleLeft;
+            timeText.supportRichText = false;
+            timeText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            timeText.verticalOverflow = VerticalWrapMode.Truncate;
         }
 
         /// <summary>

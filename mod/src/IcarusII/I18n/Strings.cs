@@ -15,6 +15,7 @@ namespace IcarusII.I18n
             ["status.connecting"] = "连接中…",
             ["status.handshaking"] = "握手中…",
             ["status.ready"] = "就绪",
+            ["status.regenerating"] = "重新推理…",
             ["status.thinking"] = "思考中…",
             ["status.tools"] = "调用工具…",
             ["status.backoff"] = "重连中…",

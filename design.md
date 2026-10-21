@@ -526,9 +526,15 @@ AgentRoot (RectTransform, 默认 inactive)
   脚注直接显示 `作者 · 创建日期 · 版本`，只保留直接挂在内容右下角的 48×20“使用”按钮。
   卡片网格左侧无 padding，卡片左边缘与思考块/正文/脚注左对齐；脚注时间只显示 `08:42`，
   复制按钮为 16×16 的 `copy` 图标、不再带文字。
+- **每条消息都有脚注**：助手脚注是「时间 + 复制 + 刷新」；用户气泡下面是「时间 + 复制」
+  （右对齐、只有这两项）。复制按钮拷的都是该条消息的原文。
+  刷新只出现在**最后一轮**回答上（会话是线性的，重开中间一轮会改变上下文顺序）：
+  点击后窗口清掉这一轮的助手侧、保留用户气泡与索引行，Plugin 先发 `history.delete`
+  删掉旧回合（A.7），成功后再用同一句提问发 `prompt`；这样模型上下文里不会残留旧答案。
 - **历史脚注的游戏时间由 sidecar 持久化**：mod 在每轮 `message{final}` 后发
   `reply.time{prompt, reply, gameTime}`；sidecar 按存档写 `reply-times.jsonl`，后续
-  `save.bound.history` 的 assistant 消息带可选 `gameTime`，mod 回放时用它填脚注。
+  `save.bound.history` 的 assistant 消息带可选 `gameTime`，mod 回放时用它填脚注；
+  user 消息也带同一个时间，用来填用户气泡下面的脚注。
 - 使用游戏自己的 `UnityEngine.UI.Text`（来自被 DSP 定制的 `UnityEngine.UI.dll`）。该程序集在 `UnityEngine.UI.Youthcat` 命名空间下提供了定制文本栈：
   - `TextLayoutLocale`：按语言提供字体替换对（`LanguageFontPair {oldFont, newFont}`）与字距/缩进参数 ⇒ **中文字体由游戏自动处理**，无需自带字体。
   - `TextIconMapping`：把文本标签映射为内嵌图标（`GetIconInString`）⇒ AI 回复里可直接内联物品/建筑图标。

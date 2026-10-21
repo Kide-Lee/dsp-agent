@@ -497,7 +497,10 @@ mod                                   sidecar
 - `history` 的 `assistant` 消息可带可选的 `cards`（附录 A.9）：该回答产出的蓝图卡片，
   形如 `[{fileName, path, name, ...}]`。老客户端忽略该字段；mod 回放时在回答后重建卡片。
 - `history` 的 `assistant` 消息可带可选的 `gameTime`（字符串，`HH:mm`）：该回答完成时的
-  游戏时间。老 mod 忽略该字段；mod 回放时显示在脚注。
+  游戏时间。老 mod 忽略该字段；mod 回放时显示在回答脚注。
+- `history` 的 `user` 消息也可带同一个可选的 `gameTime`：用于回放用户气泡下面的脚注
+  （只有时间 + 复制）。sidecar 用同一回合记录的时间近似提问时间；没有记录时省略，
+  mod 退回到当前游戏时间。
 - `history` 的 `assistant` 消息可带可选的 `steps`：**该回答之前**的思考块与工具调用，
   按发生顺序排列（M4k+）。一次提问里模型可能「思考 → 工具 → 再思考 → …」，
   sidecar 从 pi 会话记录里把这些中间步骤收拢到最终回答上。
