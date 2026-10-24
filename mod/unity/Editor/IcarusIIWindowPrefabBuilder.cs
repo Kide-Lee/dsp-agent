@@ -54,7 +54,7 @@ namespace IcarusII.EditorTools
     /// scroll-view   贴 tool-bar 上方     ScrollRect + Image 无贴图 Sliced #0000008F
     /// viewport                           Mask + 内置 UIMask 贴图（Show Mask Graphic=false）
     /// content                           普通 RectTransform，高 40
-    /// InputField    content 的顶对齐子节点（高 2000，就是滚动内容）
+    /// InputField    content 的顶对齐子节点（运行期随输入文字增高，就是滚动内容）
     /// input                             挂 InputField + Image（无贴图 #FFFFFF00）
     /// Placeholder   Text '待办事项' SAIRASB 14 #FFFFFF74 左上
     /// Text          Text ''        SAIRAR  14 #FFFFFF52 左上，材质 widget-text-alpha-5x-thick
@@ -626,14 +626,14 @@ namespace IcarusII.EditorTools
             content.anchorMax = new Vector2(1f, 1f);
             content.pivot = new Vector2(0.5f, 1f);
             content.anchoredPosition = Vector2.zero;
-            content.sizeDelta = new Vector2(0f, 40f);  // 原生 content 高 40
+            content.sizeDelta = new Vector2(0f, 63f);  // 与输入栏最小可视高度一致；运行期按文字增高
 
             var fieldHolder = Node("InputField", content);
             fieldHolder.anchorMin = new Vector2(0f, 1f);
             fieldHolder.anchorMax = new Vector2(1f, 1f);
             fieldHolder.pivot = new Vector2(0.5f, 1f);
             fieldHolder.anchoredPosition = Vector2.zero;
-            fieldHolder.sizeDelta = new Vector2(-8f, 2000f);   // 原生 sd=(-8,2000)
+            fieldHolder.sizeDelta = new Vector2(-8f, 63f);    // 运行期与 content 同步增高
 
             var input = Node("input", fieldHolder);
             Stretch(input);
@@ -677,7 +677,7 @@ namespace IcarusII.EditorTools
             scrollRect.viewport = viewport;
             scrollRect.content = content;
             scrollRect.verticalScrollbar = BuildScrollbar(scrollView);
-            scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport;
+            scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
             scrollRect.verticalScrollbarSpacing = 0f;
             return scrollView;
         }

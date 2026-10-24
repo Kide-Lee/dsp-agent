@@ -6,6 +6,7 @@
  * 这里不依赖 pi / WebSocket，测试可以直接断言。
  */
 
+import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { BlueprintCardPayload, BlueprintCardSource, HistoryMessage } from '../protocol.js';
 
@@ -121,6 +122,60 @@ export function extractBlueprintCard(
   if (repository !== undefined) card.repository = repository;
 
   return card;
+}
+
+/** 归一化蓝图相对路径，便于比较 `blueprint_fs` 的删除结果。 */
+function normalizeRelPath(value: string | undefined): string {
+  if (!value) return '';
+  return value.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+}
+
+/**
+ * `blueprint_fs rm/rmdir` 成功后，把本轮里同路径的卡片从待发队列移除。
+ *
+ * 只靠文件存在性过滤不够：`game_copy_blueprint` 的 path 是游戏侧路径，
+ * sidecar 可能 stat 不到；但 relPath 是两边一致的，可以精确匹配。
+ */
+export function dropDeletedBlueprintCards(
+  cards: BlueprintCardPayload[],
+  result: unknown,
+): BlueprintCardPayload[] {
+  const envelope = asRecord(result);
+  if (!envelope) return cards;
+  const details = asRecord(envelope['details']) ?? envelope;
+  if (details['removed'] !== true) return cards;
+
+  const removedRel = normalizeRelPath(str(details['relPath']));
+  const removedPath = str(details['path']);
+  const directory = details['directory'] === true;
+  if (!removedRel && !removedPath) return cards;
+
+  return cards.filter((card) => {
+    const cardRel = normalizeRelPath(card.relPath);
+    if (removedRel) {
+      if (directory) {
+        if (cardRel === removedRel || cardRel.startsWith(`${removedRel}/`)) return false;
+      } else if (cardRel === removedRel) {
+        return false;
+      }
+    }
+    if (removedPath && card.path && card.path === removedPath) return false;
+    return true;
+  });
+}
+
+/**
+ * 卡片对应的蓝图文件是否还在。
+ *
+ * AI 可以在同一轮里先生成蓝图、再调用 `blueprint_fs rm/rmdir` 删掉它；
+ * 这时不能只凭 `run.cards` 发卡片，否则历史里会出现一张已经不存在的蓝图。
+ * mod 侧的 `game_copy_blueprint` 路径来自游戏（Proton/Windows），sidecar
+ * 不一定能直接 stat，保持原样，避免误删有效卡片。
+ */
+export function blueprintCardFileExists(card: BlueprintCardPayload): boolean {
+  if (!card.path) return true;
+  if (card.source === 'copied') return true;
+  return existsSync(card.path);
 }
 
 // ---------------------------------------------------------------- 历史回放（附录 A.6/A.9）

@@ -69,6 +69,21 @@ namespace IcarusII.EditorTools
             Build();
         }
 
+        /// <summary>
+        /// 批处理入口：重做工具列表（会删除并重建 input/tool-menu），再打包。
+        /// 只有明确要覆盖用户在 Unity 里调过的工具列表样式时才用。
+        /// </summary>
+        public static void RebuildToolMenuAndBuild()
+        {
+            if (!IcarusIIToolMenuBuilder.Ensure(PrefabPath, true))
+            {
+                Fail("工具列表重建失败：" + PrefabPath);
+                if (Application.isBatchMode) EditorApplication.Exit(1);
+                return;
+            }
+            Build();
+        }
+
         /// <summary>批处理入口。</summary>
         public static void Build()
         {
@@ -108,6 +123,12 @@ namespace IcarusII.EditorTools
                 return Fail("回复模板构建失败：" + PrefabPath);
             }
 
+            // 输入框上方的工具列表（M4l）。只做加法：已存在时不动用户调好的布局。
+            if (!IcarusIIToolMenuBuilder.Ensure(PrefabPath))
+            {
+                return Fail("工具列表构建失败：" + PrefabPath);
+            }
+
             Directory.CreateDirectory(OutputDir);
 
             var build = new AssetBundleBuild
@@ -131,7 +152,11 @@ namespace IcarusII.EditorTools
                     // loading 标题行的转圈图标（游戏自带的 loading 图）。
                     SpriteDir + "loading-20.png",
                     IconDir + "checkbox-on-2.png",
+                    IconDir + "checkbox-on.png",
+                    IconDir + "checkbox-off.png",
                     IconDir + "insert-icon-40.png",
+                    // 输入工具条的“工具列表”按钮图标
+                    IconDir + "sandbox-tools-icon-256.png",
                     IconDir + "copy.png",
                     // 关闭/菜单按钮（照抄游戏窗口的 btn-box）
                     SpriteDir + "hex-bg-30.png",
@@ -160,7 +185,10 @@ namespace IcarusII.EditorTools
                     "window-glass-1",
                     "sci-fi-deco-1",
                     "checkbox-on-2",
+                    "checkbox-on",
+                    "checkbox-off",
                     "insert-icon-40",
+                    "sandbox-tools-icon-256",
                     "copy",
                     "hex-bg-30",
                     "hex-border-up-30",

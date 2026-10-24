@@ -16,8 +16,49 @@ namespace IcarusII.Game
     /// </summary>
     internal static class GameRefs
     {
-        /// <summary>游戏版本。TODO(M1)：改为运行时从游戏读取，避免与游戏更新脱节。</summary>
-        public const string GameVersion = "0.10.30.3100";
+        /// <summary>
+        /// 游戏版本，格式为 `0.10.35.29151`（第四段是构建号，可能是五位数）。
+        ///
+        /// `GameConfig.gameVersion` 只带前三段，第四段在 `GameConfig.build`；直接硬编码
+        /// 会随游戏更新脱节，也会让生成蓝图 header 的版本号少一位。
+        /// </summary>
+        private const string FallbackGameVersion = "0.10.35.29151";
+
+        private static string _gameVersion;
+
+        public static string GameVersion
+        {
+            get
+            {
+                if (!string.IsNullOrEmpty(_gameVersion)) return _gameVersion;
+
+                try
+                {
+                    var version = GameConfig.gameVersion;
+                    if (version != null)
+                    {
+                        // 游戏的 Version.ToString() 只有前三段；Build 取实例字段或
+                        // GameConfig.build（游戏启动时从 Updates/Versions.txt 读出）。
+                        var build = version.Build > 0 ? version.Build : GameConfig.build;
+                        if (build > 0)
+                        {
+                            _gameVersion = version.Major.ToString(CultureInfo.InvariantCulture) + "."
+                                + version.Minor.ToString(CultureInfo.InvariantCulture) + "."
+                                + version.Release.ToString(CultureInfo.InvariantCulture) + "."
+                                + build.ToString(CultureInfo.InvariantCulture);
+                            return _gameVersion;
+                        }
+                    }
+                }
+                catch
+                {
+                    // 游戏初始化早期 GameConfig 可能还没就绪；下面用 fallback。
+                }
+
+                _gameVersion = FallbackGameVersion;
+                return _gameVersion;
+            }
+        }
 
         /// <summary>
         /// 游戏是否处于可交互的运行状态。

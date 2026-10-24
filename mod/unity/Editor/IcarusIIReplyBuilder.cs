@@ -695,11 +695,11 @@ namespace IcarusII.EditorTools
 
             var time = NewRect("time", footer);
             var timeLe = time.gameObject.AddComponent<LayoutElement>();
-            timeLe.preferredWidth = 30f;
+            timeLe.preferredWidth = 45f;
             timeLe.minHeight = 18f;
             timeLe.preferredHeight = 18f;
             var timeText = AddLabel(time, bold, 12, TextDim, TextAnchor.MiddleLeft, material);
-            timeText.text = "08:42";
+            timeText.text = "08:42:00";
             timeText.horizontalOverflow = HorizontalWrapMode.Overflow;
             timeText.verticalOverflow = VerticalWrapMode.Truncate;
 

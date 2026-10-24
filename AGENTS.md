@@ -238,7 +238,7 @@ scripts/package.sh
 
 ### 5.2 Node / sidecar
 
-- Node ≥20，ESM/TypeScript；pi SDK 版本固定，不要随意升级。
+- Node ≥22.19（pi 1.4 要求），ESM/TypeScript；pi SDK 版本固定，不要随意升级。
 - 协议类型、工具 schema、配置迁移必须有离线测试。
 - sidecar 只监听 `127.0.0.1`；握手 token 从运行期文件读取，不写日志。
 - 会话/历史按存档隔离；不要跨存档复用上下文。

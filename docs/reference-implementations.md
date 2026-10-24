@@ -5,7 +5,7 @@
 
 ---
 
-## 1. pi 官方示例（版本匹配 0.82.1，优先读）
+## 1. pi 官方示例（版本匹配 1.4.0，优先读）
 
 都在本地依赖里，路径以 `sidecar/node_modules/@earendil-works/pi-coding-agent/` 为根：
 
@@ -34,11 +34,11 @@
 | 包 | 信号 | 可借鉴 | 注意 |
 | --- | --- | --- | --- |
 | [`@gotgenes/pi-permission-system`](https://github.com/gotgenes/pi-packages) | 261★，MIT，持续更新 | **在 agent 启动前隐藏被禁工具**；allow / ask / deny；通配符规则；MCP/skill 也纳入同一策略 | 是 `MasuRii/pi-permission-system` 的 fork，配置格式已分叉；面向较新 pi |
-| [`pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter) | 1595★，MIT | 用**一个 ~200 token 的代理工具**按需发现 MCP 服务；服务懒启动、空闲 10 分钟停止 | 其 README 指出 pi 0.99 起已内置 MCP；我们仍钉 0.82.1，不要直接装 |
+| [`pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter) | 1595★，MIT | 用**一个 ~200 token 的代理工具**按需发现 MCP 服务；服务懒启动、空闲 10 分钟停止 | 其 README 指出 pi 0.99 起已内置 MCP；我们已升到 1.4.0，但 SDK 默认不加载 MCP，也不需要，不要直接装 |
 | [`pi-mcp-extension`](https://github.com/irahardianto/pi-mcp-extension) | 10★，MIT，CI 齐全 | 多传输、分页 `tools/list`、`tools/list_changed` 热刷新、取消传播、重连退避、稳定工具名、子进程 PID 回收 | 星数少，但当"桥接生命周期"参考足够；不必引入 MCP 本身 |
 | [`@juicesharp/rpiv-ask-user-question`](https://github.com/juicesharp/rpiv-mono) | 900★（monorepo），MIT | 最多 4 个问题、带选项的结构化提问，答案以结构化数据回填 | 终端 UI，我们的 `ask_user` 要映射到游戏窗口 |
 
-**版本提醒**：社区包普遍面向 pi 0.99+；本项目固定 `0.82.1`（`design.md` §7.2）。把它们当**源码参考**，不要直接 `pi install` 进 sidecar。
+**版本提醒**：社区包普遍面向 pi 0.99+；本项目固定 `1.4.0`（`design.md` §7.2）。把它们当**源码参考**，不要直接 `pi install` 进 sidecar。
 
 ---
 

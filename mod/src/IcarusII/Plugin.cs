@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 using BepInEx;
 using BepInEx.Logging;
@@ -32,7 +33,7 @@ namespace IcarusII
     {
         public const string Guid = "icarus-ii";
         public const string PluginName = "Icarus II";
-        public const string PluginVersion = "0.3.1";
+        public const string PluginVersion = "0.3.2";
 
         /// <summary>每帧用于处理后台线程回调的时间预算（毫秒）。</summary>
         private const int MainThreadBudgetMs = 4;
@@ -73,14 +74,31 @@ namespace IcarusII
         /// <summary>history.delete 请求 id → 重新推理的提问原文（删除成功后重发 prompt）。</summary>
         private readonly Dictionary<string, string> _regenerateDeleteId = new Dictionary<string, string>(StringComparer.Ordinal);
 
+        /// <summary>M4m：调试直调请求 id → 请求信息（!tool）。</summary>
+        private readonly Dictionary<string, DebugRequest> _debugById = new Dictionary<string, DebugRequest>(StringComparer.Ordinal);
+
         /// <summary>当前存档标识（null = 主菜单）。</summary>
         private string _saveKey;
 
         /// <summary>sidecar 内部工具调用（知识库导出）：不显示工具卡，只回结果。</summary>
         private readonly HashSet<string> _internalCalls = new HashSet<string>(StringComparer.Ordinal);
 
+        /// <summary>当前等待玩家作答的 ask_user；同一时刻只允许一个。</summary>
+        private sealed class PendingAsk
+        {
+            public string CallId;
+            public float Deadline;
+        }
+        private PendingAsk _pendingAsk;
+
+        /// <summary>写操作确认令牌（sidecar 生成、mod 校验、单次使用）。</summary>
+        private readonly ConfirmationService _confirmation = new ConfirmationService();
+
         /// <summary>当前存档标识是否已经同步给服务端。</summary>
         private bool _saveSynced;
+
+        /// <summary>每个存档只扫描一次旧标记，避免每帧遍历 markerPool。</summary>
+        private bool _markersSanitized;
 
         /// <summary>已经回放过历史的存档；同一存档重连时不重复粘贴历史。</summary>
         private string _historyReplayedFor;
@@ -113,8 +131,12 @@ namespace IcarusII
                 _chat.ThinkingLevelChanged += OnThinkingLevelChanged;
                 _chat.ModelSelectionChanged += OnModelSelectionChanged;
                 _chat.TurnDeleted += OnTurnDeleted;
+                _chat.CompactionUndoRequested += OnCompactionUndoRequested;
                 _chat.RegenerateRequested += OnRegenerateRequested;
                 _chat.BlueprintCardActionRequested += OnBlueprintCardAction;
+                _chat.AskCompleted += OnAskCompleted;
+                _chat.AskCancelled += OnAskCancelled;
+                _chat.ConfirmationChosen += OnConfirmationChosen;
                 // 注意：_client 尚未创建（它在后台的 PrepareSidecar 里才 new），
                 // 所以它的 ConfigChanged 必须在创建之后再订阅。
                 // 这里曾经写成 _client.ConfigChanged += ...，直接 NullReference，
@@ -178,6 +200,14 @@ namespace IcarusII
             }
 
             _chat.Tick();
+            if (_uiInitialized && !_markersSanitized && GameRefs.IsInGame)
+            {
+                var fixedMarkers = MarkerSanitizer.FixAll(Log);
+                if (fixedMarkers >= 0) _markersSanitized = true;
+            }
+
+            CheckAskTimeout();
+            CheckConfirmTimeout();
             TryApplyGameStyle();
 
             if (_config.DebugLogGate && Time.frameCount % 60 == 0)
@@ -229,6 +259,8 @@ namespace IcarusII
 
         private void OnDestroy()
         {
+            try { CancelPendingAsk("插件卸载", Protocol.CodeCancelled); } catch { /* ignore */ }
+            try { CancelPendingConfirm("插件卸载"); _confirmation.Clear(); CameraFocusOverride.Clear(); } catch { /* ignore */ }
             try { _chat?.Destroy(); } catch (Exception ex) { Log?.LogWarning($"清理 UI 失败：{ex.Message}"); }
             try { _tools?.CancelAll("插件卸载"); } catch { /* ignore */ }
             try { _client?.Stop(); } catch (Exception ex) { Log?.LogWarning($"停止客户端失败：{ex.Message}"); }
@@ -289,12 +321,21 @@ namespace IcarusII
                         break;
                     case ConnectionState.Backoff:
                         _tools.CancelAll("连接退避");
+                        CancelPendingAsk("连接退避", Protocol.CodeToolUnavailable);
+                        CancelPendingConfirm("连接退避");
                         _regenerateDeleteId.Clear();
+                        CancelPendingDebug();
+                        _chat.ClearToolCatalog();
                         _chat.SetStatus(Strings.Get("status.backoff") + " " + detail, WarnColor);
                         break;
                     default:
                         _tools.CancelAll("连接断开");
+                        CancelPendingAsk("连接断开", Protocol.CodeToolUnavailable);
+                        CancelPendingConfirm("连接断开");
+                        WriteActionStack.Clear();
                         _regenerateDeleteId.Clear();
+                        CancelPendingDebug();
+                        _chat.ClearToolCatalog();
                         _chat.SetStatus(Strings.Get("status.disconnected"), null);
                         break;
                 }
@@ -317,6 +358,7 @@ namespace IcarusII
                 {
                     var model = payload["agent"]["model"].AsString("?");
                     var session = payload["sessionId"].AsString("?");
+                    ApplyToolCatalog(payload);
                     _chat.AppendSystem($"已连接 sidecar（会话 {Short(session)}，模型 {model}）");
                     break;
                 }
@@ -349,6 +391,12 @@ namespace IcarusII
                         // 重试产生的推理另起一块，避免两段推理混在同一个块里。
                         _chat.EndThinking();
                         _chat.SetStatus("重试中…", WarnColor);
+                    }
+                    else if (state == Protocol.StateCompacting)
+                    {
+                        // 压缩可能要几秒到几十秒；给玩家明确反馈，避免看起来像卡死。
+                        _chat.EndThinking();
+                        _chat.SetStatus(Strings.Get("status.compacting"), WarnColor);
                     }
                     break;
                 }
@@ -400,7 +448,9 @@ namespace IcarusII
                         }
 
                         _streaming = false;
-                        var regenerateId = _client != null ? _client.SendPrompt(regenerateText) : null;
+                        var regenerateId = _client != null
+                            ? _client.SendPrompt(regenerateText, null, _chat.GetRequiredTool(regenerateText))
+                            : null;
                         if (regenerateId == null)
                         {
                             _chat.AppendSystem("重新推理失败（连接未就绪）。");
@@ -417,6 +467,44 @@ namespace IcarusII
                     {
                         var reason = string.IsNullOrEmpty(info.Error) ? "未知错误" : info.Error;
                         _chat.AppendSystem("删除未写入会话（" + reason + "）；重进存档可能仍会出现这条对话。");
+                    }
+                    break;
+                }
+
+                case Protocol.ContextCompacted:
+                {
+                    var info = ContextCompactedInfo.Parse(payload);
+                    if (info != null)
+                    {
+                        // 压缩可能发生在流式回答中途：AppendCompaction 会收尾半截正文，
+                        // 下一次 text delta 需要重新 BeginStream。
+                        _streaming = false;
+                        _chat.AppendCompaction(
+                            info.Summary,
+                            info.Timestamp,
+                            info.CompactionId,
+                            info.TokensBefore,
+                            info.EstimatedTokensAfter);
+                    }
+                    break;
+                }
+
+                case Protocol.HistoryCompactionUndone:
+                {
+                    var info = HistoryCompactionUndoneInfo.Parse(payload);
+                    if (info != null && info.Ok)
+                    {
+                        _chat.RemoveCompaction(info.CompactionId);
+                        _chat.AppendSystem(Strings.Get("chat.compaction.undone"));
+                        _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+                    }
+                    else
+                    {
+                        var reason = info == null || string.IsNullOrEmpty(info.Error)
+                            ? "未知错误"
+                            : info.Error;
+                        _chat.AppendSystem(Strings.Get("chat.compaction.failed", reason));
+                        _chat.SetStatus(Strings.Get("status.ready"), OkColor);
                     }
                     break;
                 }
@@ -496,8 +584,16 @@ namespace IcarusII
                     break;
                 }
 
+                case Protocol.ConfirmRequest:
+                    OnConfirmRequest(payload);
+                    break;
+
                 case Protocol.ToolCall:
                     OnToolCall(payload, replyTo);
+                    break;
+
+                case Protocol.ToolDebugResult:
+                    OnToolDebugResult(payload, replyTo);
                     break;
 
                 case Protocol.Error:
@@ -505,6 +601,18 @@ namespace IcarusII
                     if (!string.IsNullOrEmpty(replyTo)) _promptById.Remove(replyTo);
                     var code = payload["code"].AsString("unknown");
                     var message = payload["message"].AsString("");
+
+                    // 调试直调的 error（debug_disabled / bad_request / internal）只回调试块，
+                    // 不要走普通错误提示，也不要 EndThinking/FinishTurn。
+                    if (!string.IsNullOrEmpty(replyTo)
+                        && _debugById.TryGetValue(replyTo, out var debug))
+                    {
+                        _debugById.Remove(replyTo);
+                        _chat.AppendDebugResult($"[调试] {debug.Name}\n错误：[{code}] {message}");
+                        _chat.SetStatus(Strings.Get("status.ready"), WarnColor);
+                        break;
+                    }
+
                     _chat.EndThinking(finalize: true);
                     _chat.FinishTurn();
                     _chat.AppendSystem($"⚠ 错误 [{code}] {message}");
@@ -531,6 +639,23 @@ namespace IcarusII
                 return;
             }
 
+            // 交互问答不是游戏工具：在进入 GameToolDispatcher 前拦截。
+            if (call.Name == Protocol.ToolAskUser || call.Name == Protocol.ToolUiAskUser)
+            {
+                HandleAskCall(call);
+                return;
+            }
+
+            // 写操作双重门禁的 mod 侧：没有侧车确认产生的一次性令牌，绝不执行。
+            if ((call.Risk > 0 || IsWriteToolName(call.Name)) &&
+                !_confirmation.TryConsume(call, out var confirmError))
+            {
+                _client?.SendToolResult(call.CallId, false, JsonValue.Null,
+                    confirmError, "写操作缺少有效的玩家确认令牌", JsonValue.NewObject());
+                _chat?.SetStatus(Strings.Get("status.ready"), WarnColor);
+                return;
+            }
+
             if (call.Internal)
             {
                 _internalCalls.Add(call.CallId);
@@ -546,6 +671,7 @@ namespace IcarusII
             {
                 _client?.SendToolResult(call.CallId, false, JsonValue.Null,
                     Protocol.CodeToolUnavailable, "工具执行器尚未初始化", null);
+                _internalCalls.Remove(call.CallId);
                 if (!call.Internal && _chat != null && _chat.Created)
                     _chat.FinishToolCard(call.CallId, ToolLabel(call.Name), false, "工具执行器尚未初始化");
                 return;
@@ -553,6 +679,199 @@ namespace IcarusII
 
             var immediate = _tools.Begin(call.CallId, call.Name, call.Args, call.TimeoutMs);
             if (immediate != null) OnToolDone(immediate);
+        }
+
+        /// <summary>
+        /// ask_user：把问题交给聊天窗的 choose 面板，等待 AskCompleted/AskCancelled。
+        /// 同一时刻只允许一个 pending ask；结果仍走 tool_result，不新增协议帧。
+        /// </summary>
+        private void HandleAskCall(ToolCallInfo call)
+        {
+            if (_pendingAsk != null)
+            {
+                SendAskError(call.CallId, Protocol.CodeBusy, "已有一个提问正在等待玩家回答");
+                return;
+            }
+            if (!AskArgs.TryParse(call.Args, out var questions, out var error))
+            {
+                SendAskError(call.CallId, Protocol.CodeInvalidArgs, error);
+                return;
+            }
+
+            EnsureUi();
+            if (!_uiInitialized || _chat == null || !_chat.Created)
+            {
+                SendAskError(call.CallId, Protocol.CodeNotInGame, "聊天窗尚未就绪");
+                return;
+            }
+
+            _chat.SetOpen(true);
+            if (!_chat.ShowAsk(questions))
+            {
+                SendAskError(call.CallId, Protocol.CodeToolUnavailable, "作答面板不可用或已有一个问题");
+                return;
+            }
+
+            _pendingAsk = new PendingAsk
+            {
+                CallId = call.CallId,
+                Deadline = Time.realtimeSinceStartup + call.TimeoutMs / 1000f,
+            };
+            _chat.SetStatus(Strings.Get("ask.waiting"), AccentColor);
+        }
+
+        private static bool IsWriteToolName(string name)
+        {
+            return name == Protocol.ToolFocusCamera || name == Protocol.ToolPlaceMarker
+                || name == Protocol.ToolOpenPanel || name == Protocol.ToolSetResearch;
+        }
+
+        /// <summary>sidecar 请求写操作确认：用 choose 的 question/explain + 红拒绝/蓝同意。</summary>
+        private void OnConfirmRequest(JsonValue payload)
+        {
+            var request = ConfirmRequestInfo.Parse(payload);
+            if (request == null)
+            {
+                Log.LogWarning("[confirm] confirm_request 载荷无效");
+                return;
+            }
+            EnsureUi();
+            if (!_uiInitialized || _chat == null || !_chat.Created)
+            {
+                SendConfirmResult(request, false);
+                return;
+            }
+            if (!_confirmation.TryRegister(request, out var error))
+            {
+                SendConfirmResult(request, false);
+                Log.LogWarning($"[confirm] 无法登记确认请求：{error}");
+                return;
+            }
+            if (!_chat.ShowConfirmation(request.Title, request.Body))
+            {
+                _confirmation.TryResolve(request.RequestId, false, out _);
+                SendConfirmResult(request, false);
+                return;
+            }
+            _chat.SetStatus(Strings.Get("confirm.waiting"), AccentColor);
+            Log.LogInfo($"[confirm] 等待玩家确认 {request.Tool} callId={request.CallId}");
+        }
+
+        private void OnConfirmationChosen(bool accepted)
+        {
+            var request = _confirmation.Current;
+            if (request == null) return;
+            if (!_confirmation.TryResolve(request.RequestId, accepted, out var resolved)) return;
+            SendConfirmResult(resolved, accepted);
+            _chat?.SetStatus(Strings.Get("status.ready"), accepted ? OkColor : WarnColor);
+        }
+
+        private void SendConfirmResult(ConfirmRequestInfo request, bool accepted)
+        {
+            if (request == null || _client == null) return;
+            var payload = JsonValue.NewObject();
+            payload.Set("requestId", request.RequestId);
+            payload.Set("decision", accepted ? "allow" : "deny");
+            payload.Set("token", request.Token);
+            _client.Send(Protocol.ConfirmResult, payload);
+        }
+
+        private void CancelPendingConfirm(string reason)
+        {
+            var request = _confirmation.Current;
+            if (request == null) return;
+            _confirmation.TryResolve(request.RequestId, false, out _);
+            SendConfirmResult(request, false);
+            _chat?.CancelAsk();
+            _chat?.SetStatus(Strings.Get("status.ready"), WarnColor);
+            Log.LogInfo($"[confirm] 取消确认：{reason}");
+        }
+
+        private void CheckConfirmTimeout()
+        {
+            var expired = _confirmation.Expire();
+            if (expired == null) return;
+            SendConfirmResult(expired, false);
+            _chat?.CancelAsk();
+            _chat?.SetStatus(Strings.Get("status.ready"), WarnColor);
+        }
+
+        private void OnAskCompleted(List<AskAnswer> answers)
+        {
+            var pending = _pendingAsk;
+            if (pending == null) return;
+            _pendingAsk = null;
+            _client?.SendToolResult(pending.CallId, true, BuildAskAnswers(answers),
+                null, null, JsonValue.NewObject());
+            _chat?.SetStatus(Strings.Get("status.ready"), OkColor);
+        }
+
+        private void OnAskCancelled()
+        {
+            var pending = _pendingAsk;
+            if (pending == null) return;
+            _pendingAsk = null;
+            _client?.SendToolResult(pending.CallId, false, JsonValue.Null,
+                Protocol.CodeCancelled, "玩家取消了提问", JsonValue.NewObject());
+            _chat?.SetStatus(Strings.Get("status.ready"), OkColor);
+        }
+
+        /// <summary>断线/换档/超时：先收起 UI，再按指定错误码结束 pending 调用。</summary>
+        private void CancelPendingAsk(string reason, string code)
+        {
+            var pending = _pendingAsk;
+            if (pending == null) return;
+            _pendingAsk = null;
+            _chat?.CancelAsk();
+            _client?.SendToolResult(pending.CallId, false, JsonValue.Null, code, reason,
+                JsonValue.NewObject());
+            _chat?.SetStatus(Strings.Get("status.ready"), OkColor);
+        }
+
+        private void CheckAskTimeout()
+        {
+            if (_pendingAsk == null) return;
+            if (Time.realtimeSinceStartup < _pendingAsk.Deadline) return;
+            CancelPendingAsk("等待玩家回答超时", Protocol.CodeTimeout);
+        }
+
+        private void SendAskError(string callId, string code, string message)
+        {
+            if (string.IsNullOrEmpty(callId)) return;
+            _client?.SendToolResult(callId, false, JsonValue.Null, code, message, JsonValue.NewObject());
+            Log.LogWarning($"[ask] {code}: {message}");
+        }
+
+        private static JsonValue BuildAskAnswers(List<AskAnswer> answers)
+        {
+            var array = JsonValue.NewArray();
+            if (answers != null)
+            {
+                foreach (var answer in answers)
+                {
+                    if (answer == null) continue;
+                    var item = JsonValue.NewObject();
+                    item.Set("index", answer.Index);
+                    item.Set("question", answer.Prompt ?? string.Empty);
+                    item.Set("answer", answer.Skipped ? JsonValue.Null : JsonValue.Of(answer.Answer ?? string.Empty));
+                    item.Set("optionIndex", answer.OptionIndex);
+                    item.Set("custom", answer.Custom);
+                    item.Set("skipped", answer.Skipped);
+
+                    var values = JsonValue.NewArray();
+                    foreach (var value in answer.Answers) values.Add(value ?? string.Empty);
+                    item.Set("answers", values);
+
+                    var indexes = JsonValue.NewArray();
+                    foreach (var index in answer.OptionIndexes) indexes.Add(index);
+                    item.Set("optionIndexes", indexes);
+                    array.Add(item);
+                }
+            }
+
+            var data = JsonValue.NewObject();
+            data.Set("answers", array);
+            return data;
         }
 
         private void OnToolDone(GameToolOutcome outcome)
@@ -778,6 +1097,28 @@ namespace IcarusII
         }
 
         /// <summary>
+        /// 玩家点了压缩记录行的删除：请求 sidecar 真正删掉 compaction entry（A.11）。
+        /// UI 不先删；成功后由 history.compaction_undone 回调移除并恢复灰色区间。
+        /// </summary>
+        private void OnCompactionUndoRequested(string compactionId)
+        {
+            if (_client == null || _client.State != ConnectionState.Ready)
+            {
+                _chat.AppendSystem("撤销压缩失败（连接未就绪）。");
+                return;
+            }
+            var saveKey = GameRefs.CurrentSaveKey();
+            var id = _client.SendHistoryUndoCompaction(saveKey, compactionId);
+            if (id == null)
+            {
+                _chat.AppendSystem("撤销压缩失败（连接状态已变化）。");
+                return;
+            }
+            _chat.SetStatus(Strings.Get("status.undoing"), WarnColor);
+            Log.LogInfo($"[压缩] 已请求撤销压缩：{id}（{compactionId}）");
+        }
+
+        /// <summary>
         /// 玩家点了回答 footer 的刷新：先让 sidecar 把旧回合从会话里删掉（A.7），
         /// 成功后再用同一句提问重新发 prompt，这样模型上下文里不会留旧答案。
         /// </summary>
@@ -920,6 +1261,11 @@ namespace IcarusII
             var key = GameRefs.CurrentSaveKey();
             if (key != _saveKey)
             {
+                CancelPendingAsk("存档切换", Protocol.CodeCancelled);
+                CancelPendingConfirm("存档切换");
+                WriteActionStack.Clear();
+                CameraFocusOverride.Clear();
+                _markersSanitized = false;
                 _tools?.CancelAll("存档切换", OnToolDone);
                 _tools?.ClearCache();
                 _saveKey = key;
@@ -997,7 +1343,12 @@ namespace IcarusII
                         if (message == null || string.IsNullOrEmpty(message.Text)) continue;
                         try
                         {
-                            if (message.Role == "user")
+                            if (message.Kind == "compaction")
+                            {
+                                // 压缩记录：插一条特殊对话串，并把之前的历史标灰（A.11）。
+                                _chat.AppendCompaction(message);
+                            }
+                            else if (message.Role == "user")
                             {
                                 _chat.AppendUser(message.Text, message.Timestamp, message.GameTime);
                             }
@@ -1125,9 +1476,304 @@ namespace IcarusII
             _chat.SetOpen(false);
         }
 
+        /// <summary>
+        /// ready.payload.toolCatalog（M4l）→ 聊天窗工具列表。
+        /// 老 sidecar 不带 toolCatalog 时回退到 tools 名 + 本地短名。
+        /// </summary>
+        private void ApplyToolCatalog(JsonValue payload)
+        {
+            if (_chat == null) return;
+
+            var items = new List<ToolMenuItem>();
+            var catalog = payload["toolCatalog"];
+            if (catalog.IsArray)
+            {
+                foreach (var entry in catalog.Items)
+                {
+                    var name = entry["name"].AsString("");
+                    if (string.IsNullOrEmpty(name)) continue;
+                    items.Add(new ToolMenuItem
+                    {
+                        Name = name,
+                        Label = entry["label"].AsString(ToolNames.Label(name)),
+                        Description = entry["description"].AsString(""),
+                        Debuggable = entry["debuggable"].AsBool(false),
+                    });
+                }
+            }
+
+            if (items.Count == 0)
+            {
+                var tools = payload["tools"];
+                if (tools.IsArray)
+                {
+                    foreach (var entry in tools.Items)
+                    {
+                        var name = entry.AsString("");
+                        if (string.IsNullOrEmpty(name)) continue;
+                        items.Add(new ToolMenuItem
+                        {
+                            Name = name,
+                            Label = ToolNames.Label(name),
+                            Description = "",
+                            Debuggable = false,
+                        });
+                    }
+                }
+            }
+
+            _chat.SetToolCatalog(items);
+            Log.LogInfo($"[工具] 工具列表已更新：{items.Count} 个（{(catalog.IsArray ? "toolCatalog" : "tools 兜底")}）");
+        }
+
+        // ---------------------------------------------------------------- 调试直调（M4m）
+
+        private sealed class DebugRequest
+        {
+            public string Name;
+            public string Args;
+        }
+
+        /// <summary>
+        /// 输入框调试命令：
+        ///   !tools                 列出工具目录
+        ///   !tool &lt;name&gt; &lt;json&gt;   直接执行一个只读工具
+        ///
+        /// 命中后完全不经过 prompt/AI，结果只作为系统调试块显示，不写会话历史。
+        /// </summary>
+        private bool TryHandleDebugCommand(string text)
+        {
+            var trimmed = (text ?? string.Empty).Trim();
+            if (!trimmed.StartsWith("!", StringComparison.Ordinal)) return false;
+
+            if (string.Equals(trimmed, "!tools", StringComparison.OrdinalIgnoreCase))
+            {
+                ShowDebugTools();
+                return true;
+            }
+
+            if (!trimmed.StartsWith("!tool", StringComparison.OrdinalIgnoreCase)) return false;
+            if (trimmed.Length > 5 && !char.IsWhiteSpace(trimmed[5])) return false;
+
+            var rest = trimmed.Length > 5 ? trimmed.Substring(5).Trim() : string.Empty;
+            if (rest.Length == 0)
+            {
+                _chat.AppendDebugResult(
+                    "[调试] 用法：\n" +
+                    "  !tools\n" +
+                    "  !tool <工具名> <JSON 参数>\n" +
+                    "例如：!tool game_get_power {}");
+                return true;
+            }
+
+            string name;
+            string argsText;
+            var split = rest.IndexOfAny(new[] { ' ', '\t', '\r', '\n' });
+            if (split < 0)
+            {
+                name = rest;
+                argsText = "{}";
+            }
+            else
+            {
+                name = rest.Substring(0, split).Trim();
+                argsText = rest.Substring(split + 1).Trim();
+                if (argsText.Length == 0) argsText = "{}";
+            }
+            if (name.StartsWith("/", StringComparison.Ordinal)) name = name.Substring(1);
+            if (string.IsNullOrEmpty(name) || name.Length > 128)
+            {
+                _chat.AppendDebugResult("[调试] 工具名不能为空，且不能超过 128 个字符。");
+                return true;
+            }
+
+            JsonValue args;
+            if (!JsonValue.TryParse(argsText, out args) || args == null || !args.IsObject)
+            {
+                _chat.AppendDebugResult($"[调试] 参数必须是 JSON 对象：\n{argsText}");
+                return true;
+            }
+
+            if (_client == null || _client.State != ConnectionState.Ready)
+            {
+                _chat.AppendDebugResult("[调试] 尚未连接到 sidecar，请求未发送。");
+                return true;
+            }
+            if (_promptById.Count > 0 || _streaming)
+            {
+                _chat.AppendDebugResult("[调试] 当前正在回答，等本轮结束后再执行。");
+                return true;
+            }
+            if (_debugById.Count > 0)
+            {
+                _chat.AppendDebugResult("[调试] 已有一个调试请求在跑，等它返回后再执行。");
+                return true;
+            }
+
+            var id = _client.SendToolDebug(name, args);
+            if (id == null)
+            {
+                _chat.AppendDebugResult("[调试] 发送失败（连接状态已变化）。");
+                return true;
+            }
+
+            _debugById[id] = new DebugRequest { Name = name, Args = args.ToJson() };
+            _chat.AppendDebugResult($"[调试] {name}\n参数：{args.ToJson()}\n等待返回…");
+            _chat.SetStatus("调试中…", AccentColor);
+            return true;
+        }
+
+        private void ShowDebugTools()
+        {
+            var items = _chat != null ? _chat.GetToolCatalog() : new List<ToolMenuItem>();
+            var sb = new StringBuilder();
+            sb.AppendLine($"[调试] 工具目录（{items.Count}）");
+            if (items.Count == 0)
+            {
+                sb.AppendLine("（尚未收到 ready.payload.toolCatalog；连接成功后会自动刷新）");
+            }
+            else
+            {
+                foreach (var item in items)
+                {
+                    sb.Append(item.Name).Append(" — ").Append(item.Label);
+                    if (!item.Debuggable) sb.Append("（不可调试）");
+                    sb.AppendLine();
+                }
+            }
+            _chat.AppendDebugResult(sb.ToString().TrimEnd());
+        }
+
+        private void OnToolDebugResult(JsonValue payload, string replyTo)
+        {
+            var info = ToolDebugResultInfo.Parse(payload);
+            if (info == null)
+            {
+                _chat.AppendDebugResult("[调试] 收到无法解析的 tool_debug_result。");
+                return;
+            }
+
+            DebugRequest request = null;
+            if (!string.IsNullOrEmpty(replyTo)) _debugById.TryGetValue(replyTo, out request);
+            if (!string.IsNullOrEmpty(replyTo)) _debugById.Remove(replyTo);
+
+            var tool = string.IsNullOrEmpty(info.Tool)
+                ? (request != null ? request.Name : "?")
+                : info.Tool;
+            var sb = new StringBuilder();
+            sb.Append("[调试] ").Append(tool)
+                .Append(" · ").Append(info.DurationMs).Append("ms · ")
+                .Append(info.Ok ? "成功" : "失败");
+            if (!string.IsNullOrEmpty(info.Source) && info.Source != "unknown")
+                sb.Append(" · ").Append(info.Source == "game" ? "游戏侧" : "sidecar");
+            sb.AppendLine();
+
+            if (request != null && !string.IsNullOrEmpty(request.Args))
+                sb.Append("参数：").Append(Clip(request.Args, 2000)).AppendLine();
+
+            if (!string.IsNullOrEmpty(info.ErrorCode) || !string.IsNullOrEmpty(info.ErrorMessage))
+            {
+                sb.Append("错误：[")
+                    .Append(string.IsNullOrEmpty(info.ErrorCode) ? "unknown" : info.ErrorCode)
+                    .Append("] ")
+                    .Append(Clip(info.ErrorMessage ?? string.Empty, 2000))
+                    .AppendLine();
+            }
+
+            sb.AppendLine("返回值：");
+            var detailsText = info.Details != null && (info.Details.IsObject || info.Details.IsArray)
+                ? PrettyJson(info.Details, 0)
+                : info.DetailsText();
+            sb.AppendLine(Clip(detailsText, 12000));
+
+            if (!string.IsNullOrEmpty(info.Content))
+            {
+                sb.AppendLine("模型可见：");
+                sb.AppendLine(Clip(info.Content, 4000));
+            }
+
+            if (info.ImageBytes > 0)
+            {
+                sb.Append("图片：").Append(info.ImageMimeType ?? "image")
+                    .Append(" ").Append(info.ImageWidth).Append("×").Append(info.ImageHeight)
+                    .Append(" · ").Append(info.ImageBytes).AppendLine(" bytes（base64 已省略）");
+            }
+
+            if (info.Truncated) sb.AppendLine("（结果已截断）");
+
+            _chat.AppendDebugResult(sb.ToString().TrimEnd());
+            _chat.SetStatus(info.Ok ? Strings.Get("status.ready") : "调试失败", info.Ok ? OkColor : WarnColor);
+        }
+
+        private static string Clip(string value, int max)
+        {
+            if (string.IsNullOrEmpty(value)) return string.Empty;
+            return value.Length <= max ? value : value.Substring(0, max) + "…（截断）";
+        }
+
+        /// <summary>
+        /// 调试结果里的原始 JSON 缩进展示。只处理 JsonValue 已解析的对象/数组；
+        /// 字符串（例如 sidecar 截断后的 details）原样返回。
+        /// </summary>
+        private static string PrettyJson(JsonValue value, int indent)
+        {
+            if (value == null || value.IsNull) return "null";
+
+            if (value.IsObject)
+            {
+                if (value.Count == 0) return "{}";
+                var pad = new string(' ', indent);
+                var childPad = new string(' ', indent + 2);
+                var sb = new StringBuilder();
+                sb.Append("{\n");
+                var first = true;
+                foreach (var pair in value.Members)
+                {
+                    if (!first) sb.Append(",\n");
+                    first = false;
+                    sb.Append(childPad)
+                        .Append(JsonValue.Of(pair.Key).ToJson())
+                        .Append(": ")
+                        .Append(PrettyJson(pair.Value, indent + 2));
+                }
+                sb.Append('\n').Append(pad).Append('}');
+                return sb.ToString();
+            }
+
+            if (value.IsArray)
+            {
+                if (value.Count == 0) return "[]";
+                var pad = new string(' ', indent);
+                var childPad = new string(' ', indent + 2);
+                var sb = new StringBuilder();
+                sb.Append("[\n");
+                var first = true;
+                foreach (var item in value.Items)
+                {
+                    if (!first) sb.Append(",\n");
+                    first = false;
+                    sb.Append(childPad).Append(PrettyJson(item, indent + 2));
+                }
+                sb.Append('\n').Append(pad).Append(']');
+                return sb.ToString();
+            }
+
+            return value.ToJson();
+        }
+
+        private void CancelPendingDebug()
+        {
+            if (_debugById.Count == 0) return;
+            _debugById.Clear();
+            _chat?.AppendDebugResult("[调试] 连接断开，未完成的调试请求已取消。");
+        }
+
         private void OnUserSubmitted(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return;
+
+            // M4m：调试命令在 AppendUser 之前拦截，不进入 AI/会话历史。
+            if (_config != null && _config.DebugToolConsole && TryHandleDebugCommand(text)) return;
 
             _chat.AppendUser(text);   // 用户消息走气泡样式
 
@@ -1138,7 +1784,8 @@ namespace IcarusII
             }
 
             _streaming = false;
-            var id = _client.SendPrompt(text);
+            var requiredTool = _chat.GetRequiredTool(text);
+            var id = _client.SendPrompt(text, null, requiredTool);
             if (id == null)
             {
                 _chat.AppendSystem("发送失败（连接状态已变化）。");

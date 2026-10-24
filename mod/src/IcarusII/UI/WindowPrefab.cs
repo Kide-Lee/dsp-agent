@@ -66,6 +66,36 @@ namespace IcarusII.UI
             }
         }
 
+        /// <summary>
+        /// 精确按 Sprite 子资源名加载。bundle 里可能有同名纹理/多个 Sprite
+        /// （如 checkbox-on 与 checkbox-on-2），不能只用 LoadAsset&lt;Sprite&gt;(name)。
+        /// </summary>
+        public static Sprite LoadSprite(string spriteName)
+        {
+            if (string.IsNullOrEmpty(spriteName)) return null;
+            try
+            {
+                Load();
+                if (_bundle == null) return null;
+                var sprites = _bundle.LoadAllAssets<Sprite>();
+                if (sprites == null) return null;
+                Sprite byName = null;
+                foreach (var sprite in sprites)
+                {
+                    if (sprite == null) continue;
+                    if (sprite.name == spriteName) return sprite;
+                    if (byName == null && sprite.texture != null && sprite.texture.name == spriteName)
+                        byName = sprite;
+                }
+                return byName;
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"[UI] 从 bundle 加载 Sprite {spriteName} 失败：{ex.Message}");
+                return null;
+            }
+        }
+
         private static GameObject Load()
         {
             if (_attempted) return _prefab;

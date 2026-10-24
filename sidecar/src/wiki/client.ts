@@ -74,8 +74,15 @@ function stripHtml(text: string): string {
     .trim();
 }
 
-function pageUrl(base: string, title: string): string {
-  return `${base}/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`;
+/**
+ * 页面 URL。biligame 的 DSP wiki 使用 `/dsp/<页面名>`；
+ * 如果拼成 `/dsp/wiki/<页面名>`，站点会 301 到 `/dsp/Wiki/<页面名>`，
+ * 玩家看到的就是带 `/Wiki/` 的错误地址。英文 dsp-wiki 仍是标准 `/wiki/`。
+ */
+export function pageUrl(base: string, title: string): string {
+  const slug = encodeURIComponent(title.replace(/ /g, '_'));
+  if (base.toLowerCase().includes('wiki.biligame.com')) return `${base}/${slug}`;
+  return `${base}/wiki/${slug}`;
 }
 
 export class WikiClient {

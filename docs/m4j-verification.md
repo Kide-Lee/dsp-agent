@@ -32,7 +32,7 @@ cd sidecar && npm test
 `wiki-alias.mjs`（15 项）验证：蓝马达/绿马达/白糖等 curated 命中、Wiki insource + `|别称=`
 解析、缓存命中不再联网、多候选不猜、Wiki 不可用时不阻断。
 
-`blueprint.mjs`（42 项）验证：`blueprint_save` 默认写入 `IcarusII/`、可写子目录、
+`blueprint.mjs`（53 项）验证：`blueprint_save` 默认写入 `IcarusII/`、可写子目录、
 同名自动加序号、坏蓝图不落盘。
 
 `pi-tools.mjs`（46 项）还验证：`blueprint_generate` 真实落盘后，卡片在 final message 之后、

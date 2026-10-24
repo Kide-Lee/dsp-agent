@@ -18,7 +18,7 @@
 
 **关键决策**（详见 §3）：
 
-1. **不自研 agent loop**，直接复用 `@earendil-works/pi-coding-agent` 的 SDK（已在本机核实：v0.82.1）。它一次性提供 Provider 抽象（OpenAI 兼容 + Anthropic Messages）、工具调用循环、流式事件、会话持久化、压缩/重试/中止，以及**可阻塞的工具调用钩子 + 用户确认 UI**——正好覆盖本项目全部需求。
+1. **不自研 agent loop**，直接复用 `@earendil-works/pi-coding-agent` 的 SDK（2026-10-23 升级到 v1.4.0）。它一次性提供 Provider 抽象（OpenAI 兼容 + Anthropic Messages）、工具调用循环、流式事件、会话持久化、压缩/重试/中止，以及**可阻塞的工具调用钩子 + 用户确认 UI**——正好覆盖本项目全部需求。
 2. **禁用全部内置工具**（`bash`/`read`/`write`/`edit`）。游戏内聊天窗口绝不能获得 shell 与文件系统权限。只注册我们自己的工具。
 3. **信息按需获取**：不预先把存档状态塞进上下文；所有游戏数据、LDB 知识、Wiki 都由 AI 主动调用工具拉取。
 4. **写操作双重门禁**：sidecar 侧的确认钩子 + mod 侧的一次性确认令牌，缺一不可。
@@ -69,7 +69,7 @@
 | 运行平台 | Linux + Proton | `steamapps/compatdata/1366540/pfx` 存在；`config_info` = `Proton Experimental` / `11.0-100` |
 | Wine 前缀 | `steamapps/compatdata/1366540/pfx` | 上文 |
 | Node.js | `v24.18.0`（`/home/kidelee/.local/bin/node`） | `node --version` |
-| 已装可复用件 | `pi` (`@earendil-works/pi-coding-agent` v0.82.1)、`dsh` v0.2.0-rc.2、`bwiki-mcp` v0.3.0 | 全局 `node_modules` |
+| 已装可复用件 | `pi`（全局 CLI v0.82.1；sidecar 依赖 v1.4.0）、`dsh` v0.2.0-rc.2、`bwiki-mcp` v0.3.0 | 全局 `node_modules` + sidecar 本地依赖 |
 
 ### 2.1 由环境推导出的硬约束
 
@@ -527,8 +527,23 @@ AgentRoot (RectTransform, 默认 inactive)
   35px 缩略图文字；缩略图文字用 `Name`/`shortDesc`，卡片标题用 `RelPath` 存放路径），
   介绍超出 70px 固定高度由 `RectMask2D` 裁掉；取消独立“查看”按钮，整张卡片点击查看，
   脚注直接显示 `作者 · 创建日期 · 版本`，只保留直接挂在内容右下角的 48×20“使用”按钮。
-  卡片网格左侧无 padding，卡片左边缘与思考块/正文/脚注左对齐；脚注时间只显示 `08:42`，
-  复制按钮为 16×16 的 `copy` 图标、不再带文字。
+  卡片网格左侧无 padding，卡片左边缘与思考块/正文/脚注左对齐；脚注时间只显示 `08:42:00`，
+  复制按钮为 16×16 的 `copy` 图标、不再带文字。sidecar 在本轮 `blueprint_fs rm/rmdir`
+  删掉已生成蓝图时会撤回待发卡片，避免历史里出现已不存在的文件。
+- **工具列表是 prefab 里的 popup**（M4l）：`input/tool-menu` 固定在输入框上方，
+  包含背景/边框/header/`ScrollRect` + `viewport/content`/`tool-row-template`/empty/footer。
+  运行期只按 `ready.payload.toolCatalog` 克隆行、填 label/命令/简介，并做筛选/高亮/滚动；
+  不新增静态节点、不改 RectTransform。点击 `tool-btn` 或输入 `/` 打开；`↑↓` 选择、
+  `Enter` 插入 `/工具名 `、`Esc` 关闭。选择后发送 `prompt.requiredTool`，sidecar
+  把本轮 active tools 限制为该工具、要求模型至少调用一次；没调用会纠正一次，仍失败则
+  回 `error{code:"tool_required"}`，不静默给出普通回答。
+  图标选择器和文字颜色选择器也复用 `tool-menu` 的左下角锚点（输入框上沿、左对齐），
+  不再按工具条按钮的位置向左/向上摆放。
+- **调试直调**（M4m）：输入框 `!tools` / `!tool <工具名> <JSON>`；mod 发 `tool_debug`，
+  sidecar 不建 pi 会话、不调 LLM，直接执行只读白名单工具并回 `tool_debug_result`。
+  游戏工具内部仍走 `tool_call`，但标 `internal=true`，mod 不画普通工具卡；结果由
+  `tool_debug_result` 作为系统调试块显示，不写对话历史。开关为 `DebugToolConsole=true`
+  + sidecar `--debug-tools`，写文件/脚本类工具不在白名单。
 - **每条消息都有脚注**：助手脚注是「时间 + 复制 + 刷新」；用户气泡下面是「时间 + 复制」
   （右对齐、只有这两项）。复制按钮拷的都是该条消息的原文。
   刷新只出现在**最后一轮**回答上（会话是线性的，重开中间一轮会改变上下文顺序）：
@@ -542,7 +557,7 @@ AgentRoot (RectTransform, 默认 inactive)
   - `TextLayoutLocale`：按语言提供字体替换对（`LanguageFontPair {oldFont, newFont}`）与字距/缩进参数 ⇒ **中文字体由游戏自动处理**，无需自带字体。
   - `TextIconMapping`：把文本标签映射为内嵌图标（`GetIconInString`）⇒ AI 回复里可直接内联物品/建筑图标。
   - `TextEventTrigger` / `TextTriggerBounds`：文本区间级触发器 ⇒ 支持"点击回复中的物品名 → 打开该物品详情"。
-- 首期只做**纯文本 + 有限富文本**（UGUI 支持的 `<b>`/`<color>`/`<size>`）。Markdown 只做轻量转换：标题→加粗行、列表→`•`、代码块→等宽+底色行。**不**引入第三方 Markdown 渲染器（避免字体缺失与 token 成本）。
+- 输出富文本由 `mod/src/Shared/Text/GameRichText.cs` 编译：外层用标准 Markdown，游戏样式用一小撮内联 HTML（`color/size/tint/box/sqrt/sup/sub/i/a/icon`），裸游戏标签只作为游戏输出，不作为输入解析；Markdown 表格由 `SplitTables` 切成独立 Text 段，用游戏 `tableColWidths/tableRowHeights` 做真表格；网页链接使用 900000–999999 的顺序 ID，点击打开外部浏览器（失败时复制 URL）；科技链接使用 1000–9999，输出 `dsp://tech/<iconTag>`（如 `dsp://tech/dcx`），点击打开科技树并定位、展开对应科技；配方链接使用 10000–19999，输出 `dsp://recipe/<itemIconTag>`，点击打开合成器并选中对应物品主配方；成就链接使用 20000–21000，输出 `dsp://achievement/<id>`，点击打开成就页并定位条目；裸 `http(s)://...` 也自动转成网页链接（代码除外）；块级排版在标题/段落/列表组/引用/代码块/分隔线之间保留一个空行，连续空行折叠；段落内单换行按 Markdown 软换行合并（中文不加空格、英文补空格），行尾两空格/反斜杠作为硬换行。详细映射见 `docs/rich-text-output-plan.md`；**不**引入第三方 Markdown 渲染器。
 - 流式显示：`stream.delta` 到达即追加到当前气泡；渲染节流到**每帧最多一次**（避免逐字触发重建布局）。
 - 历史上限：内存中保留最近 N 条（默认 200），更早的由 sidecar 会话文件承载，可通过"打开完整历史"分页拉取。
 
@@ -616,6 +631,7 @@ HotkeyRequireNoBuildTool = true   ; R 在建造模式下让位给"旋转建筑"�
 Language = auto          ; auto | zh-CN | en-US
 Streaming = true
 LogLevel = Info
+DebugToolConsole = false   ; !tool 调试直调；sidecar 需 --debug-tools
 
 [Sidecar]
 LaunchMode = spawnExe    ; spawnExe(推荐) | connectOnly | spawnNode | spawnBinary
@@ -654,7 +670,7 @@ AllowWikiFetch = true
 
 ### 7.1 进程与启动
 
-**技术栈**：Node 20+、TypeScript ESM、`fastify`（HTTP，用于健康检查/配置/未来 Web UI）+ `ws`（WebSocket）、`zod`（协议与工具参数校验）。
+**技术栈**：Node 22.19+、TypeScript ESM、`fastify`（HTTP，用于健康检查/配置/未来 Web UI）+ `ws`（WebSocket）、`zod`（协议与工具参数校验）。
 
 #### 7.1.1 零额外依赖分发：自包含单文件可执行（**已验证**）
 
@@ -664,7 +680,7 @@ AllowWikiFetch = true
 
 ```bash
 esbuild src/index.ts \
-  --bundle --platform=node --format=cjs --target=node20 --minify \
+  --bundle --platform=node --format=cjs --target=node22 --minify \
   --external:@mariozechner/clipboard \
   --define:import.meta.url=import_meta_url \
   --banner:js="const import_meta_url = require('url').pathToFileURL(__filename).href;" \
@@ -809,7 +825,7 @@ import {
      > `contextWindow` / `maxTokens` 为保守占位值。**本机无法访问 `api-docs.deepseek.com`（DNS 被拦）**，未能在设计阶段核实当前实际数值；首次配置自检时应从端点探测或由玩家覆盖，实现时以官方文档为准。
    - **默认模型：`deepseek-v4-flash`**。理由：价格档位最低（$0.14/$0.28 每 M token），
      适合"按 token 扣能量"的设计——单位算力的成本越低，玩家的资源消耗曲线越好调。
-   - **模型清单已实测修正**（M1）：pi `0.82.1` 内置的 DeepSeek 目录为
+   - **模型清单已实测修正**（M1，升级前的 pi `0.82.1`）：内置的 DeepSeek 目录为
      `deepseek-v4-flash` 与 `deepseek-v4-pro`，**不存在** `deepseek-chat` /
      `deepseek-reasoner`。设计初稿依据的是旧版 DeepSeek API 命名，已作废。
      两者均为 `reasoning: true`、上下文 1,000,000、最大输出 384,000。
@@ -832,7 +848,7 @@ import {
 5. **确认门禁**：`pi.on("tool_call", async (e, ctx) => {...})`，对 L2 工具 `await ctx.ui.confirm(...)`；确认请求经桥接转发到 mod 的确认卡片。
 6. **中止**：`session.abort()`；对应 mod 的"中止"按钮。
 7. **会话**：`SessionManager.create(<dataDir>/sessions)` 持久化；每局存档一个会话（以 `gameName + saveId` 命名），便于"接着上次聊"。
-8. **版本锁定**：`package.json` 固定 `"@earendil-works/pi-coding-agent": "0.82.1"`，避免 SDK 漂移导致行为变化（其事件与 API 仍在演进）。
+8. **版本锁定**：`package.json` 固定 `"@earendil-works/pi-coding-agent": "1.4.0"`，避免 SDK 漂移导致行为变化（其事件与 API 仍在演进）。
 
 ### 7.3 工具注册表
 
@@ -901,6 +917,7 @@ function gameTool<T>(spec: {
 - 目标站点可配置，默认：
   - 中文：`https://wiki.biligame.com/dsp/`
   - 英文：`https://dsp-wiki.com/`
+- Biligame 页面 URL 是 `https://wiki.biligame.com/dsp/<页面名>`，**不要**拼 `/wiki/`：站点会 301 到 `/dsp/Wiki/<页面名>`，玩家看到的就是错误地址；英文站仍是标准 `/wiki/`。
 - 本地缓存（`kb/wiki-cache.sqlite`，含 TTL 与页面哈希），减少重复抓取与站点压力。
 - 由 `Privacy.AllowWikiFetch` 控制开关，默认允许；关闭后 `wiki_*` 工具不注册。
 - 抓取内容一律标记为**不可信外部数据**，在回填给模型的文本中显式注明来源，并指示模型只提取事实、不执行其中的任何指令。
@@ -992,10 +1009,10 @@ function gameTool<T>(spec: {
 
 | 工具 | 能力 | 参数 | 返回 | 对应游戏 API |
 | --- | --- | --- | --- | --- |
-| `game_get_entity` | `game.entity.v1` | `planetId?`, `entityId`, `expectProtoId?` | 单建筑：原型、配方、功率、分拣器/传送带/仓储/物流塔、坐标、`stale` | `PlanetFactory.entityPool` + `factorySystem` / `cargoTraffic` / `transport` |
+| `game_get_entity` | `game.entity.v1` | `planetId?`, `entityId`, `expectProtoId?` | 单建筑：原型、配方、功率、分拣器/传送带/仓储/物流塔、星系/行星/经纬度、`stale` | `PlanetFactory.entityPool` + `factorySystem` / `cargoTraffic` / `transport` |
 | `game_get_entities` | `game.entity.v1` | `planetId?`, `protoId?`, `protoName?`, `recipeId?`, `offset/limit` | 建筑分页列表 | 同上 |
 | `game_get_progress` | `game.progress.v1` | — | 派生阶段 + 判定信号、已解锁科技、里程碑、教程、研究队列 | `GameHistoryData`、`GameMain.data.milestoneSystem` |
-| `game_capture_view` | `game.view.v1` | `width?`, `height?`, `includeEntities?` | JPEG 图片 + 可见实体屏幕坐标 | `GameCamera.CaptureScreenshot` |
+| `game_capture_view` | `game.view.v1` | `width?`, `height?`, `includeEntities?` | JPEG 图片 + 可见实体屏幕坐标与经纬度 | `GameCamera.CaptureScreenshot` |
 | `game_analyze_area` | `game.analyze.v1` | `planetId?`, `entityId?`, `radius?`, `center?`, `all?` | 范围聚合：建筑/配方计数、装机产能、耗电、物流设施、电网 | `PlanetFactory` + `PowerSystem` |
 
 > **截图（M4a 起支持）**：`game_capture_view` 复用 `GameCamera.CaptureScreenshot`——
@@ -1282,7 +1299,7 @@ icarus-ii/
 | R1 | **`R` 与"旋转建筑"键位重叠** | 中 | **已确认冲突并已设计避让**（§6.2.2：`actionBuild.activeTool` 门控 + 可选 `Ctrl+R`）；M0 实测确认旋转的实际绑键与是否还有第三个动作占用裸 `R` |
 | R2 | **Proton 下 sidecar 自动启动** | 中 | **已解决**：随包分发 Windows 自包含 exe（PE），Wine 内 `Process.Start` 直接可拉起（§7.1.2）；`connectOnly` + systemd 作为备选。Windows 产物的 Wine 冒烟测试留 M0 |
 | R3 | **游戏更新导致 API 失效** | 高 | 只依赖已核实的公开类型/成员；避免 Harmony 补丁；版本不匹配时降级为只读并提示 |
-| R4 | **pi SDK 版本演进** | 中 | 锁定 `0.82.1`；`AgentRuntime` 抽象隔离，必要时可切 dsh ACP |
+| R4 | **pi SDK 版本演进** | 中 | 锁定 `1.4.0`；`AgentRuntime` 抽象隔离，必要时可切 dsh ACP |
 | R5 | **大存档状态采集体积** | 中 | 强制聚合 + 分页 + 结果上限；sidecar 统一裁剪；FTS/缓存 |
 | R6 | **LDB 导出体积与时间** | 低 | **已实现**：只导出必要字段、分帧/分块、按 `gameVersion+locale` 缓存；全量 ~750KB，实测离线生成/索引通过 |
 | R7 | **L2 写操作的真实撤销能力** | 高 | **因关闭了写前自动存档，此风险上升**：逐个工具确认撤销语义，无法撤销的工具一律不实现；每个 L2 确认卡必须显式标注"可撤销/不可撤销" |
@@ -1357,16 +1374,16 @@ DSP `0.10.30.3100` + Proton 的 `LogOutput.log`。
 
 **harness（本机已装，已读文档核实）**
 
-- `@earendil-works/pi-coding-agent` v0.82.1：`createAgentSession()`、`defineTool()`、`session.subscribe()`、`ModelRuntime`、`SessionManager`、`SettingsManager`、`DefaultResourceLoader`、`runRpcMode`。
+- `@earendil-works/pi-coding-agent` v1.4.0：`createAgentSession()`、`defineTool()`、`session.subscribe()`、`ModelRuntime`、`SessionManager`、`SettingsManager`、`DefaultResourceLoader`、`runRpcMode`。
 - `docs/models.md` 明确支持 `{"api": "openai-completions", "baseUrl": ...}` 接入 Ollama / LM Studio / vLLM 等；`docs/providers.md` 支持 Anthropic 原生与 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `auth.json`。
 - `docs/extensions.md`：`pi.on("tool_call", …)` **可阻塞**，`return { block: true, reason }`；`ctx.ui.confirm/select/input/notify`；`noTools: "builtin"` 保留自定义工具并关闭内置工具。
-- `docs/usage.md` 明确：**pi 不含内置 MCP**、子代理、权限弹窗、plan mode ⇒ 这些若需要须自行扩展或改用 dsh。
+- `docs/usage.md` 明确：**pi CLI 1.4 内置 MCP**，但 SDK 默认不加载 codemode/MCP/tool_search；本项目不需要，继续保持不加载。子代理、权限弹窗、plan mode 仍需自行扩展或改用 dsh。
 - `@deepseek-ai/dsh` v0.2.0-rc.2：`--profile sdk` / `--profile acp` 以子进程 + JSON-RPC/ACP 暴露；有 `dsh-mcp-client`。作为备选运行时。
 - 另装 `bwiki-mcp` v0.3.0（MediaWiki MCP server），可在切到 dsh 时直接复用。
 
 **打包可行性（本机实测，非推测）**
 
-- `esbuild --bundle --platform=node --format=cjs --target=node20 --minify` 打包 `@earendil-works/pi-coding-agent` 的 SDK 入口：成功，**7.1MB 单文件**（未压缩 13.7MB）。
+- `esbuild --bundle --platform=node --format=cjs --target=node22 --minify` 打包 `@earendil-works/pi-coding-agent` 的 SDK 入口：成功，**8.5MB 单文件**（升级到 1.4.0 后实测；0.82.1 时为 7.1MB）。
 - 在**空目录**（无 `node_modules`、无任何外部文件）中运行该 bundle：成功加载 pi SDK（`createAgentSession` / `defineTool` / `ModelRuntime` 均为 function）。
 - bundle 内**无原生 `.node` 依赖**：`pi-tui` 的 `win32-console-mode.node` / `darwin-modifiers.node` 均为平台守卫 + `cjsRequire` + `try/catch`（源码注释明确说明"Dynamic require so non-Windows and bundled/browser paths never load the native helper"）；`utils/clipboard-native.js` 用 `createRequire` + `try/catch`，且在 Linux 无 `DISPLAY`/`WAYLAND_DISPLAY` 时直接跳过。唯一外部项 `@mariozechner/clipboard` 为可选（失败返回 `null`）。
 - `TextIconMapping` 依赖的 `@silvia-odwyer/photon-node` 是 WASM，已 base64 内嵌进 bundle。

@@ -18,9 +18,23 @@ namespace IcarusII.I18n
             ["status.regenerating"] = "重新推理…",
             ["status.thinking"] = "思考中…",
             ["status.tools"] = "调用工具…",
+            ["status.compacting"] = "整理上下文中…",
+            ["status.undoing"] = "撤销压缩…",
             ["status.backoff"] = "重连中…",
             ["status.disconnected"] = "未连接",
             ["input.placeholder"] = "按 Enter 或点击此处输入…",
+            // 工具列表（点击 tool-btn 或输入 / 时出现）
+            ["tool.menu.title"] = "工具",
+            ["tool.menu.hint"] = "输入 / 筛选 · 选择后本轮强制调用",
+            ["tool.menu.footer"] = "↑↓ 选择 · Enter 插入 · Esc 关闭",
+            ["tool.menu.empty"] = "没有匹配的工具",
+            ["tool.menu.loading"] = "正在连接 sidecar…",
+            ["tool.menu.required"] = "本轮强制调用：{0}",
+            // 交互问答（choose）
+            ["ask.next"] = "下一个",
+            ["ask.submit"] = "提交",
+            ["ask.waiting"] = "等待你的回答…",
+            ["confirm.waiting"] = "等待你的确认…",
             ["key.placeholder"] = "粘贴 DeepSeek API Key 后回车…",
             ["key.prompt"] =
                 "尚未配置 API Key。请把 DeepSeek 的 API Key 粘贴到下面并回车。\n" +
@@ -36,6 +50,11 @@ namespace IcarusII.I18n
             ["welcome"] = "我是伊卡洛斯·贰。可以问我《戴森球计划》的机制、产线排布、或者卡住了该先修什么。",
             ["chat.index.empty"] = "暂无提问",
             ["chat.index.delete.tip"] = "删除",
+            ["chat.index.undo.compaction.tip"] = "撤销压缩",
+            ["chat.compaction.label"] = "自动压缩上下文",
+            ["chat.compaction.empty"] = "（本次压缩没有生成摘要）",
+            ["chat.compaction.undone"] = "已撤销压缩；如果上下文再次超限，会重新压缩。",
+            ["chat.compaction.failed"] = "撤销压缩失败（{0}）。",
             ["hint.disconnected"] = "未连接到 sidecar。请检查 BepInEx 日志，或改用 LaunchMode=connectOnly 自行启动。",
             ["hint.conflict"] = "提示：{0}",
             ["settings.tip.title"] = "设置",
@@ -64,6 +83,8 @@ namespace IcarusII.I18n
             // 助手回复底部（时间 + 复制）
             ["reply.time"] = "游戏时间 {0}",
             ["reply.copy"] = "复制",
+            ["reply.link.opening"] = "正在浏览器中打开链接…",
+            ["reply.link.open_failed"] = "无法打开浏览器，链接已复制到剪贴板",
 
             // 蓝图卡片（协议附录 A.9）
             ["blueprint.card.name"] = "蓝图",

@@ -158,6 +158,94 @@ namespace IcarusII.Game.Tools
             return obj;
         }
 
+        /// <summary>
+        /// 建筑/玩家的位置必须用“星系 + 行星 + 经纬度”表达：世界坐标会随行星
+        /// 自转/公转变化，存档回放和跨工具引用都会失效。pos 是行星局部坐标。
+        /// </summary>
+        public static JsonValue Location(PlanetData planet, Vector3 pos)
+        {
+            var obj = JsonValue.NewObject();
+            if (planet == null)
+            {
+                obj.Set("latitude", 0.0);
+                obj.Set("longitude", 0.0);
+                obj.Set("altitude", 0.0);
+                return obj;
+            }
+
+            var star = planet.star;
+            obj.Set("starId", star != null ? star.id : 0);
+            obj.Set("starName", star != null ? (star.displayName ?? string.Empty) : string.Empty);
+            obj.Set("planetId", planet.id);
+            obj.Set("planetName", planet.displayName ?? string.Empty);
+
+            var n = pos.sqrMagnitude > 0.000001f ? pos.normalized : Vector3.up;
+            var latitude = Mathf.Asin(Mathf.Clamp(n.y, -1f, 1f)) * Mathf.Rad2Deg;
+            var longitude = Mathf.Atan2(n.x, -n.z) * Mathf.Rad2Deg;
+            obj.Set("latitude", Round(latitude, 3));
+            obj.Set("longitude", Round(longitude, 3));
+            obj.Set("altitude", Round(pos.magnitude - planet.realRadius, 1));
+
+            try
+            {
+                Maths.GetLatitudeLongitude(pos, out var latd, out var latf,
+                    out var logd, out var logf, out var north, out var south, out var west, out var east);
+                obj.Set("latitudeText", latd.ToString("00", CultureInfo.InvariantCulture) + "°"
+                    + latf.ToString("00", CultureInfo.InvariantCulture) + "′"
+                    + (north ? "N" : (south ? "S" : "")));
+                obj.Set("longitudeText", logd.ToString("000", CultureInfo.InvariantCulture) + "°"
+                    + logf.ToString("00", CultureInfo.InvariantCulture) + "′"
+                    + (east ? "E" : (west ? "W" : "")));
+            }
+            catch
+            {
+                // 坐标文本只是辅助；公式结果仍可用。
+            }
+            return obj;
+        }
+
+        /// <summary>经纬度 → 行星局部坐标；用于让输入参数也能接受经纬度。</summary>
+        public static Vector3 PositionFromLatLon(PlanetData planet, double latitude, double longitude, double altitude)
+        {
+            var lat = latitude * Mathf.Deg2Rad;
+            var lon = longitude * Mathf.Deg2Rad;
+            var radius = (planet != null ? planet.realRadius : 0f) + (float)altitude;
+            var x = Mathf.Cos((float)lat) * Mathf.Sin((float)lon);
+            var y = Mathf.Sin((float)lat);
+            var z = -Mathf.Cos((float)lat) * Mathf.Cos((float)lon);
+            return new Vector3(x, y, z) * radius;
+        }
+
+        public static void SetLocation(JsonValue obj, PlanetData planet, Vector3 pos, string key = "location")
+        {
+            if (obj == null) return;
+            obj.Set(key, Location(planet, pos));
+        }
+
+        /// <summary>
+        /// 读取 center/position 参数：优先 latitude+longitude，旧 x/y/z 仅作兼容。
+        /// </summary>
+        public static bool TryReadPoint(PlanetData planet, JsonValue obj, out Vector3 pos)
+        {
+            pos = Vector3.zero;
+            if (obj == null || !obj.IsObject) return false;
+            var lat = obj["latitude"];
+            var lon = obj["longitude"];
+            if (lat != null && lon != null && !lat.IsNull && !lon.IsNull)
+            {
+                var alt = obj["altitude"] != null ? obj["altitude"].AsDouble(0) : 0.0;
+                pos = PositionFromLatLon(planet, lat.AsDouble(0), lon.AsDouble(0), alt);
+                return true;
+            }
+            var x = obj["x"];
+            var y = obj["y"];
+            var z = obj["z"];
+            if (x == null || y == null || z == null) return false;
+            pos = new Vector3((float)x.AsDouble(0), (float)y.AsDouble(0), (float)z.AsDouble(0));
+            return true;
+        }
+
+
         public static PlanetData ResolvePlanet(JsonValue args)
         {
             var id = args["planetId"].AsInt(0);
@@ -264,7 +352,7 @@ namespace IcarusII.Game.Tools
 
             var player = gameData != null ? gameData.mainPlayer : null;
             var playerObj = JsonValue.NewObject();
-            if (player != null) playerObj.Set("position", GameToolFormat.Vec3(player.position));
+            if (player != null) GameToolFormat.SetLocation(playerObj, gameData.localPlanet, player.position);
             data.Set("player", playerObj);
 
             var mode = JsonValue.NewObject();
@@ -326,7 +414,7 @@ namespace IcarusII.Game.Tools
                     : 0);
             }
             data.Set("mecha", mechaObj);
-            data.Set("position", GameToolFormat.Vec3(player.position));
+            GameToolFormat.SetLocation(data, GameMain.localPlanet, player.position);
 
             var items = new List<JsonValue>();
             var package = player.package;

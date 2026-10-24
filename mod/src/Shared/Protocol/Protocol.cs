@@ -60,6 +60,17 @@ namespace IcarusII.Common.Protocol
         /// <summary>sidecar → mod：删除结果。</summary>
         public const string HistoryDeleted = "history.deleted";
 
+        // ---- 上下文压缩（协议附录 A.11）----
+
+        /// <summary>sidecar → mod：一次上下文压缩完成；只给 UI，不进入模型上下文。</summary>
+        public const string ContextCompacted = "context.compacted";
+
+        /// <summary>mod → sidecar：撤销最近一次上下文压缩。</summary>
+        public const string HistoryUndoCompaction = "history.undo_compaction";
+
+        /// <summary>sidecar → mod：撤销压缩结果。</summary>
+        public const string HistoryCompactionUndone = "history.compaction_undone";
+
         /// <summary>sidecar → mod：本地工具的可视化事件（附录 A.8，仅 UI）。</summary>
         public const string ToolActivity = "tool_activity";
 
@@ -84,6 +95,14 @@ namespace IcarusII.Common.Protocol
         /// <summary>mod → sidecar：工具执行结果（replyTo = callId）。</summary>
         public const string ToolResult = "tool_result";
 
+        // ---- M4m 增量：调试直调（不经过 AI）----
+
+        /// <summary>mod → sidecar：输入框 !tool 的调试直调请求。</summary>
+        public const string ToolDebug = "tool_debug";
+
+        /// <summary>sidecar → mod：调试直调的原始结果（replyTo = 请求 id）。</summary>
+        public const string ToolDebugResult = "tool_debug_result";
+
         /// <summary>mod 声明的只读游戏工具能力。</summary>
         public const string CapabilityGameRead = "game.read.v1";
 
@@ -99,6 +118,42 @@ namespace IcarusII.Common.Protocol
         /// <summary>mod 声明的区域分析能力（game_analyze_area）。</summary>
         public const string CapabilityGameAnalyze = "game.analyze.v1";
 
+        /// <summary>mod 支持游戏内结构化提问（ask_user，附录 B.1.4）。</summary>
+        public const string CapabilityUiAsk = "ui.ask.v1";
+
+        /// <summary>mod 支持写操作（附录 B.1.5）：确认令牌 + 写工具。</summary>
+        public const string CapabilityGameWrite = "game.write.v1";
+
+        /// <summary>sidecar → mod：请求玩家确认一次写操作。</summary>
+        public const string ConfirmRequest = "confirm_request";
+
+        /// <summary>mod → sidecar：玩家确认结果。</summary>
+        public const string ConfirmResult = "confirm_result";
+
+        public const string ToolFocusCamera = "game_focus_camera";
+        public const string ToolPlaceMarker = "game_place_marker";
+        public const string ToolOpenPanel = "game_open_panel";
+        public const string ToolSetResearch = "game_set_research";
+        public const string ToolUndoLastWrite = "game_undo_last_write";
+
+        /// <summary>确认请求默认有效期（设计 §9.3）。</summary>
+        public const int ConfirmTimeoutMs = 60000;
+
+        /// <summary>
+        /// 交互工具名：sidecar 通过 tool_call 要求 mod 弹出选择题。
+        /// 与 Pi 社区的 `pi-ask-user` 包保持同名；mod 在进入 GameToolDispatcher 前拦截。
+        /// </summary>
+        public const string ToolAskUser = "ask_user";
+
+        /// <summary>旧名兼容：早期实现使用 ui_ask_user，继续接受。</summary>
+        public const string ToolUiAskUser = "ui_ask_user";
+
+        /// <summary>ask 工具允许的最长等待（玩家阅读/输入时间）。</summary>
+        public const int AskTimeoutMs = 600000;
+
+        /// <summary>mod 支持 Markdown + 小型 HTML 子集的输出富文本（可选）。</summary>
+        public const string CapabilityRichTextV2 = "ui.richtext.v2";
+
         /// <summary>tool_result.error.code 的 M2 取值。</summary>
         public const string CodeToolNotFound = "tool_not_found";
         public const string CodeToolUnavailable = "tool_unavailable";
@@ -107,6 +162,15 @@ namespace IcarusII.Common.Protocol
         public const string CodeTimeout = "timeout";
         public const string CodeBusy = "busy";
         public const string CodeCancelled = "cancelled";
+        public const string CodeDebugDisabled = "debug_disabled";
+        public const string CodeDebugNotAllowed = "debug_not_allowed";
+
+        /// <summary>M4l：prompt.requiredTool 指定的工具本轮没有被调用。</summary>
+        public const string CodeToolRequired = "tool_required";
+        public const string CodeConfirmationRequired = "confirmation_required";
+        public const string CodeConfirmationInvalid = "confirmation_invalid";
+        public const string CodeConfirmationExpired = "confirmation_expired";
+        public const string CodeConfirmationDenied = "confirmation_denied";
 
         // status.state 取值
         public const string StateIdle = "idle";
@@ -174,11 +238,13 @@ namespace IcarusII.Common.Protocol
             return p;
         }
 
-        public static JsonValue BuildPrompt(string text, string conversationId)
+        public static JsonValue BuildPrompt(string text, string conversationId, string requiredTool = null)
         {
             var p = JsonValue.NewObject();
             p.Set("text", text ?? string.Empty);
             if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
+            // M4l：玩家用 /<工具名> 指定本轮必须调用的工具。空值不写，老端忽略。
+            if (!string.IsNullOrEmpty(requiredTool)) p.Set("requiredTool", requiredTool);
             return p;
         }
 
@@ -228,6 +294,27 @@ namespace IcarusII.Common.Protocol
             if (!string.IsNullOrEmpty(saveKey)) p.Set("saveKey", saveKey);
             p.Set("text", text ?? string.Empty);
             if (timestampMs > 0) p.Set("timestamp", timestampMs);
+            return p;
+        }
+
+        /// <summary>
+        /// 构造 `history.undo_compaction` 载荷（附录 A.11）。
+        /// `compactionId` 为空表示撤销最近一次压缩。
+        /// </summary>
+        public static JsonValue BuildHistoryUndoCompaction(string saveKey, string compactionId)
+        {
+            var p = JsonValue.NewObject();
+            if (!string.IsNullOrEmpty(saveKey)) p.Set("saveKey", saveKey);
+            if (!string.IsNullOrEmpty(compactionId)) p.Set("compactionId", compactionId);
+            return p;
+        }
+
+        /// <summary>构造 tool_debug 载荷（M4m）。参数必须是 JSON 对象。</summary>
+        public static JsonValue BuildToolDebug(string name, JsonValue args)
+        {
+            var p = JsonValue.NewObject();
+            p.Set("name", name ?? string.Empty);
+            p.Set("args", args ?? JsonValue.NewObject());
             return p;
         }
 
@@ -308,6 +395,61 @@ namespace IcarusII.Common.Protocol
             r.Ok = payload["ok"].AsBool(false);
             r.Summary = payload["summary"].AsString(null);
             r.Detail = payload["detail"].AsString(null);
+            return r;
+        }
+    }
+
+    /// <summary>`tool_debug_result` 的解析结果（M4m）。字段缺失一律容忍。</summary>
+    public sealed class ToolDebugResultInfo
+    {
+        public bool Ok { get; private set; }
+        public string Tool { get; private set; }
+        public string Source { get; private set; }
+        public long DurationMs { get; private set; }
+        public string Content { get; private set; }
+        public JsonValue Details { get; private set; }
+        public bool Truncated { get; private set; }
+        public string ErrorCode { get; private set; }
+        public string ErrorMessage { get; private set; }
+
+        public string ImageMimeType { get; private set; }
+        public int ImageWidth { get; private set; }
+        public int ImageHeight { get; private set; }
+        public long ImageBytes { get; private set; }
+
+        public string DetailsText()
+        {
+            if (Details == null || Details.IsNull) return "null";
+            return Details.IsString ? Details.AsString() : Details.ToJson();
+        }
+
+        public static ToolDebugResultInfo Parse(JsonValue payload)
+        {
+            var r = new ToolDebugResultInfo();
+            if (payload == null || payload.IsNull) return r;
+            r.Ok = payload["ok"].AsBool(false);
+            r.Tool = payload["tool"].AsString(string.Empty);
+            r.Source = payload["source"].AsString("unknown");
+            r.DurationMs = payload["durationMs"].AsLong(0);
+            r.Content = payload["content"].AsString(string.Empty);
+            r.Details = payload["details"];
+            r.Truncated = payload["truncated"].AsBool(false);
+
+            var error = payload["error"];
+            if (error != null && error.IsObject)
+            {
+                r.ErrorCode = error["code"].AsString(null);
+                r.ErrorMessage = error["message"].AsString(null);
+            }
+
+            var image = payload["image"];
+            if (image != null && image.IsObject)
+            {
+                r.ImageMimeType = image["mimeType"].AsString(null);
+                r.ImageWidth = image["width"].AsInt(0);
+                r.ImageHeight = image["height"].AsInt(0);
+                r.ImageBytes = image["bytes"].AsLong(0);
+            }
             return r;
         }
     }
@@ -403,6 +545,58 @@ namespace IcarusII.Common.Protocol
         }
     }
 
+    /// <summary>`context.compacted` 的解析结果（附录 A.11）。</summary>
+    public sealed class ContextCompactedInfo
+    {
+        public string Summary { get; private set; }
+        public string CompactionId { get; private set; }
+        public long Timestamp { get; private set; }
+        public int TokensBefore { get; private set; }
+        public int EstimatedTokensAfter { get; private set; }
+        public string Reason { get; private set; }
+
+        public static ContextCompactedInfo Parse(JsonValue payload)
+        {
+            if (payload == null || payload.IsNull) return null;
+            var summary = payload["summary"].AsString(null);
+            if (string.IsNullOrEmpty(summary)) return null;
+            var r = new ContextCompactedInfo
+            {
+                Summary = summary,
+                CompactionId = payload["compactionId"].AsString(null),
+                Timestamp = payload["timestamp"].AsLong(0),
+                TokensBefore = payload["tokensBefore"].AsInt(0),
+                EstimatedTokensAfter = payload["estimatedTokensAfter"].AsInt(0),
+                Reason = payload["reason"].AsString(null),
+            };
+            return r;
+        }
+    }
+
+    /// <summary>`history.compaction_undone` 的解析结果（附录 A.11）。</summary>
+    public sealed class HistoryCompactionUndoneInfo
+    {
+        public string SaveKey { get; private set; }
+        public string CompactionId { get; private set; }
+        public bool Ok { get; private set; }
+        public int Removed { get; private set; }
+        public string Error { get; private set; }
+        public bool MayRecompact { get; private set; }
+
+        public static HistoryCompactionUndoneInfo Parse(JsonValue payload)
+        {
+            var r = new HistoryCompactionUndoneInfo();
+            if (payload == null || payload.IsNull) return r;
+            r.SaveKey = payload["saveKey"].AsString(null);
+            r.CompactionId = payload["compactionId"].AsString(null);
+            r.Ok = payload["ok"].AsBool(false);
+            r.Removed = payload["removed"].AsInt(0);
+            r.Error = payload["error"].AsString(null);
+            r.MayRecompact = payload["mayRecompact"].AsBool(false);
+            return r;
+        }
+    }
+
     /// <summary>
     /// 历史回答里的一条思考/工具步骤（协议附录 A.6 的 <c>steps</c>）。
     ///
@@ -462,8 +656,18 @@ namespace IcarusII.Common.Protocol
         public string Role { get; set; }
         public string Text { get; set; }
         public long Timestamp { get; set; }
-        /// <summary>回答完成时的游戏时间 HH:mm（附录 A.6/A.10，可选）。</summary>
+        /// <summary>回答完成时的游戏时间 HH:mm:ss（附录 A.6/A.10，可选）。</summary>
         public string GameTime { get; set; }
+        /// <summary>
+        /// `compaction` = 上下文压缩记录（附录 A.11）；普通回答为 null。
+        /// 老 sidecar 不发送该字段。
+        /// </summary>
+        public string Kind { get; set; }
+        /// <summary>压缩记录对应的 compaction entry id（撤销时用，可选）。</summary>
+        public string CompactionId { get; set; }
+        /// <summary>压缩前/后的估算 token（只用于展示）。</summary>
+        public int TokensBefore { get; set; }
+        public int EstimatedTokensAfter { get; set; }
         /// <summary>该回答产出的蓝图卡片（附录 A.6/A.9，可选）。</summary>
         public List<BlueprintCardInfo> Cards { get; set; } = new List<BlueprintCardInfo>();
         /// <summary>
@@ -510,6 +714,10 @@ namespace IcarusII.Common.Protocol
                         Text = text,
                         Timestamp = item["timestamp"].AsLong(0),
                         GameTime = item["gameTime"].AsString(null),
+                        Kind = item["kind"].AsString(null),
+                        CompactionId = item["compactionId"].AsString(null),
+                        TokensBefore = item["tokensBefore"].AsInt(0),
+                        EstimatedTokensAfter = item["estimatedTokensAfter"].AsInt(0),
                     };
                     var cards = item["cards"];
                     if (cards != null && cards.Count > 0)
@@ -788,6 +996,10 @@ namespace IcarusII.Common.Protocol
         public int TimeoutMs { get; private set; }
         /// <summary>sidecar 内部调用（如知识库导出），UI 不显示工具卡。</summary>
         public bool Internal { get; private set; }
+        /// <summary>写操作的确认令牌；risk &gt; 0 时必需。</summary>
+        public string ConfirmToken { get; private set; }
+        /// <summary>确认时绑定的参数哈希；与令牌一起校验参数未被替换。</summary>
+        public string ConfirmArgsHash { get; private set; }
 
         public static ToolCallInfo Parse(JsonValue payload, string replyTo)
         {
@@ -803,9 +1015,11 @@ namespace IcarusII.Common.Protocol
             var args = payload["args"];
             if (!args.IsObject) args = JsonValue.NewObject();
 
-            var timeout = payload["timeoutMs"].AsInt(8000);
+            var isAsk = name == Protocol.ToolAskUser || name == Protocol.ToolUiAskUser;
+            var timeout = payload["timeoutMs"].AsInt(isAsk ? Protocol.AskTimeoutMs : 8000);
             if (timeout < 500) timeout = 500;
-            if (timeout > 30000) timeout = 30000;
+            var maxTimeout = isAsk ? Protocol.AskTimeoutMs : 30000;
+            if (timeout > maxTimeout) timeout = maxTimeout;
 
             return new ToolCallInfo
             {
@@ -815,7 +1029,51 @@ namespace IcarusII.Common.Protocol
                 Risk = payload["risk"].AsInt(0),
                 TimeoutMs = timeout,
                 Internal = payload["internal"].AsBool(false),
+                ConfirmToken = payload["confirmToken"].AsString(null),
+                ConfirmArgsHash = payload["confirmArgsHash"].AsString(null),
             };
         }
     }
+
+
+    /// <summary>sidecar → mod 的写操作确认请求（协议附录 A.12）。</summary>
+    public sealed class ConfirmRequestInfo
+    {
+        public string RequestId { get; private set; }
+        public string CallId { get; private set; }
+        public string Tool { get; private set; }
+        public string ArgsHash { get; private set; }
+        public string Token { get; private set; }
+        public string Title { get; private set; }
+        public string Body { get; private set; }
+        public int Risk { get; private set; }
+        public int TimeoutMs { get; private set; }
+
+        public static ConfirmRequestInfo Parse(JsonValue payload)
+        {
+            if (payload == null || !payload.IsObject) return null;
+            var requestId = payload["requestId"].AsString(null);
+            var callId = payload["callId"].AsString(null);
+            var tool = payload["tool"].AsString(null);
+            var token = payload["token"].AsString(null);
+            if (string.IsNullOrEmpty(requestId) || string.IsNullOrEmpty(callId) ||
+                string.IsNullOrEmpty(tool) || string.IsNullOrEmpty(token)) return null;
+            var timeout = payload["timeoutMs"].AsInt(Protocol.ConfirmTimeoutMs);
+            if (timeout < 500) timeout = 500;
+            if (timeout > Protocol.ConfirmTimeoutMs) timeout = Protocol.ConfirmTimeoutMs;
+            return new ConfirmRequestInfo
+            {
+                RequestId = requestId,
+                CallId = callId,
+                Tool = tool,
+                ArgsHash = payload["argsHash"].AsString(string.Empty),
+                Token = token,
+                Title = payload["title"].AsString("确认操作"),
+                Body = payload["body"].AsString(string.Empty),
+                Risk = payload["risk"].AsInt(1),
+                TimeoutMs = timeout,
+            };
+        }
+    }
+
 }

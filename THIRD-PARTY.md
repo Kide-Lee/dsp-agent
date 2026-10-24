@@ -5,7 +5,7 @@
 | 组件 | 用途 | 许可证 | 分发方式 |
 | --- | --- | --- | --- |
 | [BepInEx](https://github.com/BepInEx/BepInEx) 5.4.17（构建期参考程序集） | mod 加载器（doorstop 代理 + Harmony） | LGPL-2.1 | **不随包分发**，由玩家自行安装；`scripts/fetch-deps.sh` 仅用于开发期拉取参考程序集 |
-| [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`) | Agent 运行时（Provider 抽象、工具调用循环、会话管理） | MIT | 经 esbuild 打包进 sidecar 可执行文件（M1 起） |
+| [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent` 1.4.0) | Agent 运行时（Provider 抽象、工具调用循环、会话管理） | MIT | 经 esbuild 打包进 sidecar 可执行文件（M1 起） |
 | [Node.js](https://nodejs.org/) | sidecar 运行时 | MIT | 以 SEA（Single Executable Application）形式**内嵌**进 `icarus-ii-sidecar.exe` |
 | [ws](https://github.com/websockets/ws) | sidecar 的 WebSocket 服务端 | MIT | 打包进 sidecar |
 | [typebox](https://github.com/sinclairzx81/typebox) | 工具参数 JSON Schema（M2 起） | MIT | 打包进 sidecar |

@@ -3,6 +3,28 @@ using System;
 namespace IcarusII.UI
 {
     /// <summary>
+    /// 工具列表的一项（来自 ready.payload.toolCatalog；老服务端用 tools + 本地短名兜底）。
+    /// 只做展示/筛选，不参与工具执行。
+    /// </summary>
+    internal sealed class ToolMenuItem
+    {
+        public string Name;
+        public string Label;
+        public string Description;
+        /// <summary>M4m：sidecar 的调试只读白名单标记；老目录缺省为 true。</summary>
+        public bool Debuggable = true;
+
+        public bool Matches(string query)
+        {
+            if (string.IsNullOrEmpty(query)) return true;
+            if (Name != null && Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (Label != null && Label.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (Description != null && Description.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            return false;
+        }
+    }
+
+    /// <summary>
     /// 工具名 → 聊天窗里显示的中文短名。
     ///
     /// 实时工具块（Plugin 收到 tool_call/tool_activity）和历史回放（save.bound.history
@@ -47,6 +69,13 @@ namespace IcarusII.UI
                 case "blueprint_fs": return "蓝图文件";
                 case "wiki_search": return "百科检索";
                 case "wiki_page": return "百科页面";
+                case "ask_user":
+                case "ui_ask_user": return "向玩家提问";
+                case "game_focus_camera": return "移动视角";
+                case "game_place_marker": return "新建标记";
+                case "game_open_panel": return "打开面板";
+                case "game_set_research": return "切换研究";
+                case "game_undo_last_write": return "撤销写操作";
                 default: return name;
             }
         }

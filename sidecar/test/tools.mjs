@@ -15,6 +15,7 @@
 import { Session } from '../dist/session.js';
 import { GameToolHost } from '../dist/tools/host.js';
 import { toolNamesForCapabilities } from '../dist/tools/registry.js';
+import { createAskTool, UI_ASK_TOOL_NAME, UI_ASK_TOOL_NAME_ALIASES } from '../dist/tools/ask.js';
 
 let passed = 0;
 let failed = 0;
@@ -75,21 +76,25 @@ async function waitFor(predicate, timeoutMs = 1500, label = 'condition') {
 }
 
 function makeAgent(host, callOptions = {}, opts = {}) {
-  const state = { result: null, calls: 0 };
+  const state = { result: null, calls: 0, requiredTool: undefined };
   const agent = {
     info: { provider: 'test', model: 'test', available: true },
     onClientCapabilities(caps) {
       host.setCapabilities(caps);
     },
-    async run(_text, promptId, emit) {
+    toolCatalog() {
+      return [{ name: 'game_get_overview', label: '存档概览', description: '测试目录项' }];
+    },
+    async run(_text, promptId, emit, requiredTool) {
       state.calls += 1;
+      state.requiredTool = requiredTool ?? null;
       if (opts.activity) emit.toolActivity?.(opts.activity);
       host.bind(emit);
       try {
         state.result = await emit.callTool(
           callOptions.name ?? 'game_get_overview',
           callOptions.args ?? {},
-          { timeoutMs: callOptions.timeoutMs ?? 800 },
+          { timeoutMs: callOptions.timeoutMs ?? 800, risk: callOptions.risk ?? 0 },
         );
       } finally {
         host.unbind(emit);
@@ -131,12 +136,31 @@ async function run() {
     check('六个只读 + 四个 kb + 两个 wiki + 五个蓝图 + 脚本', tools.length === 18, JSON.stringify(tools));
     check('包含 game_get_production', tools.includes('game_get_production'));
     check('包含 kb_search / kb_get / kb_recipe_tree / kb_plan', ['kb_search', 'kb_get', 'kb_recipe_tree', 'kb_plan'].every((name) => tools.includes(name)));
+    const catalog = ready?.payload?.toolCatalog ?? [];
+    check('ready.toolCatalog 由 agent 提供', catalog.length === 1 && catalog[0].label === '存档概览', JSON.stringify(catalog));
 
     const empty = makeSession();
     empty.session.handleFrame(Buffer.from(JSON.stringify(hello([]))), false);
     const emptyReady = empty.socket.frames.find((f) => f.type === 'ready');
     const emptyTools = emptyReady?.payload?.tools ?? [];
     check('无 game 能力时仍声明 kb/wiki/blueprint/脚本', emptyTools.length === 12 && emptyTools.every((name) => name.startsWith('kb_') || name.startsWith('wiki_') || name.startsWith('blueprint_') || name === 'run_script'));
+  }
+
+  console.log('── 1b. prompt.requiredTool 透传给 agent ──');
+  {
+    const { session, state } = makeSession({ callOptions: { timeoutMs: 80 } });
+    session.handleFrame(Buffer.from(JSON.stringify(hello())), false);
+    session.handleFrame(
+      Buffer.from(JSON.stringify({
+        v: 1,
+        id: 'm-2',
+        type: 'prompt',
+        payload: { text: '/game_get_overview 测试', requiredTool: 'game_get_overview' },
+      })),
+      false,
+    );
+    await waitFor(() => state.requiredTool !== undefined);
+    check('agent.run 收到 requiredTool', state.requiredTool === 'game_get_overview', String(state.requiredTool));
   }
 
   console.log('── 2. tool_call → tool_result 往返 ──');
@@ -297,6 +321,171 @@ async function run() {
     check('phase 透传', frame?.payload?.phase === 'start');
     check('name 透传', frame?.payload?.name === 'kb_plan');
     check('args 透传', frame?.payload?.args === '{"rate":20}');
+  }
+
+  console.log('── 8. ask_user 工具目录 ──');
+  {
+    const names = toolNamesForCapabilities(['ui.ask.v1']);
+    check('声明 ui.ask.v1 时广告 ask_user', names.includes(UI_ASK_TOOL_NAME));
+    const without = toolNamesForCapabilities([]);
+    check('未声明能力时不广告 ask_user', !without.includes(UI_ASK_TOOL_NAME));
+    check('保留 ui_ask_user 旧名别名', UI_ASK_TOOL_NAME_ALIASES.includes('ui_ask_user'));
+    const ask = createAskTool(new GameToolHost());
+    check('ask 工具名', ask.name === UI_ASK_TOOL_NAME);
+    check('ask 工具 label', ask.label === '向玩家提问');
+    check('ask 参数是 object', ask.parameters?.type === 'object');
+  }
+
+  console.log('── 9. ask_user 长超时往返 ──');
+  {
+    const { socket, session, state } = makeSession({
+      callOptions: {
+        name: 'ask_user',
+        args: {
+          questions: [
+            { question: '今晚想吃什么？', options: [{ title: '火锅' }, { title: '烧烤' }] },
+            { question: '几点吃？', options: [{ title: '六点' }, { title: '七点' }], allowMultiple: true },
+          ],
+        },
+        timeoutMs: 600000,
+      },
+    });
+    session.handleFrame(Buffer.from(JSON.stringify(hello(['game.read.v1', 'ui.ask.v1']))), false);
+    session.handleFrame(
+      Buffer.from(JSON.stringify({ v: 1, id: 'm-90', type: 'prompt', payload: { text: '问我' } })),
+      false,
+    );
+
+    const gotCall = await waitFor(() => socket.frames.some((f) => f.type === 'tool_call'));
+    check('发出 ask_user', gotCall);
+    const call = socket.frames.find((f) => f.type === 'tool_call');
+    check('ask_user 名', call?.payload?.name === 'ask_user');
+    check('ask_user timeout=600000', call?.payload?.timeoutMs === 600000, String(call?.payload?.timeoutMs));
+
+    const answers = {
+      v: 1,
+      id: 'm-91',
+      type: 'tool_result',
+      replyTo: call?.payload?.callId,
+      payload: {
+        callId: call?.payload?.callId,
+        ok: true,
+        data: {
+          answers: [
+            { index: 0, question: '今晚想吃什么？', answer: '火锅', optionIndex: 0,
+              answers: ['火锅'], optionIndexes: [0], custom: false, skipped: false },
+            { index: 1, question: '几点吃？', answer: null, optionIndex: -1,
+              answers: [], optionIndexes: [], custom: false, skipped: true },
+          ],
+        },
+        error: null,
+        meta: {},
+      },
+    };
+    session.handleFrame(Buffer.from(JSON.stringify(answers)), false);
+    await waitFor(() => state.result !== null);
+    check('ask_user 结果 ok', state.result?.ok === true);
+    check('ask_user 答案数', state.result?.data?.answers?.length === 2);
+  }
+
+
+  console.log('── 10. 写操作 confirm_request + 一次性令牌 ──');
+  {
+    const { socket, session, state } = makeSession({
+      callOptions: {
+        name: 'game_open_panel',
+        args: { panel: 'inventory' },
+        risk: 1,
+        timeoutMs: 800,
+      },
+    });
+    session.handleFrame(
+      Buffer.from(JSON.stringify(hello(['game.read.v1', 'game.write.v1']))),
+      false,
+    );
+    session.handleFrame(
+      Buffer.from(JSON.stringify({ v: 1, id: 'm-100', type: 'prompt', payload: { text: '打开背包' } })),
+      false,
+    );
+
+    const gotConfirm = await waitFor(() =>
+      socket.frames.some((f) => f.type === 'confirm_request'),
+    );
+    check('写操作先发 confirm_request', gotConfirm);
+    const confirm = socket.frames.find((f) => f.type === 'confirm_request');
+    check('confirm_request 带 tool', confirm?.payload?.tool === 'game_open_panel');
+    check('confirm_request 带 token', typeof confirm?.payload?.token === 'string' && confirm.payload.token.length > 20);
+    check('confirm_request 带 argsHash', typeof confirm?.payload?.argsHash === 'string');
+    check('确认前没有 tool_call', !socket.frames.some((f) => f.type === 'tool_call'));
+
+    session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-101',
+          type: 'confirm_result',
+          payload: {
+            requestId: confirm?.payload?.requestId,
+            decision: 'allow',
+            token: confirm?.payload?.token,
+          },
+        }),
+      ),
+      false,
+    );
+
+    const gotCall = await waitFor(() => socket.frames.some((f) => f.type === 'tool_call'));
+    check('确认后发 tool_call', gotCall);
+    const call = socket.frames.find((f) => f.type === 'tool_call');
+    check('tool_call risk=1', call?.payload?.risk === 1);
+    check('tool_call 带 confirmToken', call?.payload?.confirmToken === confirm?.payload?.token);
+    check('tool_call 带 confirmArgsHash', call?.payload?.confirmArgsHash === confirm?.payload?.argsHash);
+
+    session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-102',
+          type: 'tool_result',
+          replyTo: call?.payload?.callId,
+          payload: { callId: call?.payload?.callId, ok: true, data: { display: '已打开背包' }, error: null, meta: {} },
+        }),
+      ),
+      false,
+    );
+    await waitFor(() => state.result !== null);
+    check('写工具结果回传', state.result?.ok === true);
+  }
+
+  console.log('── 11. 拒绝确认不执行 ──');
+  {
+    const { socket, session, state } = makeSession({
+      callOptions: { name: 'game_set_research', args: { techId: 1 }, risk: 2, timeoutMs: 800 },
+    });
+    session.handleFrame(
+      Buffer.from(JSON.stringify(hello(['game.read.v1', 'game.write.v1']))),
+      false,
+    );
+    session.handleFrame(
+      Buffer.from(JSON.stringify({ v: 1, id: 'm-110', type: 'prompt', payload: { text: '切研究' } })),
+      false,
+    );
+    const confirm = await waitFor(() => socket.frames.some((f) => f.type === 'confirm_request')) &&
+      socket.frames.find((f) => f.type === 'confirm_request');
+    session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-111',
+          type: 'confirm_result',
+          payload: { requestId: confirm?.payload?.requestId, decision: 'deny', token: confirm?.payload?.token },
+        }),
+      ),
+      false,
+    );
+    await waitFor(() => state.result !== null);
+    check('拒绝后返回 confirmation_denied', state.result?.error?.code === 'confirmation_denied');
+    check('拒绝后没有 tool_call', !socket.frames.some((f) => f.type === 'tool_call'));
   }
 
   console.log();

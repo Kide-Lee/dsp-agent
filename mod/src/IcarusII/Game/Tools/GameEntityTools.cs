@@ -211,7 +211,7 @@ namespace IcarusII.Game.Tools
             data.Set("protoName", EntityToolUtil.ProtoName(entity.protoId));
             data.Set("iconTag", GameToolFormat.ItemIconTag(entity.protoId));
             data.Set("category", EntityToolUtil.Category(entity));
-            data.Set("pos", EntityToolUtil.Vec3(entity.pos));
+            GameToolFormat.SetLocation(data, planet, entity.pos);
             data.Set("yaw", GameToolFormat.Round(entity.rot.eulerAngles.y, 1));
             data.Set("power", EntityToolUtil.PowerOf(factory, entity));
 
@@ -787,7 +787,7 @@ namespace IcarusII.Game.Tools
                 row.Set("protoName", EntityToolUtil.ProtoName(entity.protoId));
                 row.Set("iconTag", GameToolFormat.ItemIconTag(entity.protoId));
                 row.Set("category", EntityToolUtil.Category(entity));
-                row.Set("pos", EntityToolUtil.Vec3(entity.pos));
+                GameToolFormat.SetLocation(row, planet, entity.pos);
                 row.Set("yaw", GameToolFormat.Round(entity.rot.eulerAngles.y, 1));
 
                 if (entity.assemblerId > 0 && system != null && system.assemblerPool != null &&
@@ -1040,7 +1040,7 @@ namespace IcarusII.Game.Tools
                     cam.transform.position = center + up * (float)heightMeters;
                     cam.transform.rotation = Quaternion.LookRotation(-up, Quaternion.AngleAxis((float)yaw, up) * forward);
                     cam.fieldOfView = (float)fov;
-                    cameraInfo.Set("center", EntityToolUtil.Vec3(center));
+                    cameraInfo.Set("center", GameToolFormat.Location(GameMain.localPlanet, center));
                     cameraInfo.Set("centerSource", centerSource);
                     cameraInfo.Set("height", GameToolFormat.Round(heightMeters, 1));
                     cameraInfo.Set("yaw", GameToolFormat.Round(yaw, 0));
@@ -1119,7 +1119,7 @@ namespace IcarusII.Game.Tools
                 }
             }
             data.Set("camera", info);
-            if (includeEntities) data.Set("visibleEntities", MarkRows(marks, outWidth, outHeight));
+            if (includeEntities) data.Set("visibleEntities", MarkRows(marks, outWidth, outHeight, gameData.localPlanet));
             if (annotate)
             {
                 data.Set("annotated", true);
@@ -1143,13 +1143,10 @@ namespace IcarusII.Game.Tools
                 return planet.factory.entityPool[entityId].pos;
             }
             var center = args["center"];
-            if (center != null && center.IsObject)
+            if (GameToolFormat.TryReadPoint(planet, center, out var explicitCenter))
             {
                 source = "explicit";
-                return new Vector3(
-                    (float)center["x"].AsDouble(0),
-                    (float)center["y"].AsDouble(0),
-                    (float)center["z"].AsDouble(0));
+                return explicitCenter;
             }
             source = "player";
             return gameData.mainPlayer != null ? gameData.mainPlayer.position : Vector3.zero;
@@ -1192,7 +1189,7 @@ namespace IcarusII.Game.Tools
                 var camera = GameCamera.main;
                 if (camera == null) return info;
                 var position = camera.transform.position;
-                info.Set("position", EntityToolUtil.Vec3(position));
+                info.Set("location", GameToolFormat.Location(GameMain.localPlanet, position));
                 info.Set("forward", EntityToolUtil.Vec3(camera.transform.forward));
                 info.Set("fov", GameToolFormat.Round(camera.fieldOfView, 1));
             }
@@ -1212,6 +1209,7 @@ namespace IcarusII.Game.Tools
             public string Category;
             public int X;
             public int Y;
+            public Vector3 Pos;
             public float Distance;
         }
 
@@ -1257,13 +1255,14 @@ namespace IcarusII.Game.Tools
                     Category = EntityToolUtil.Category(entity),
                     X = (int)Math.Round(viewport.x * width),
                     Y = (int)Math.Round((1f - viewport.y) * height),
+                    Pos = entity.pos,
                     Distance = candidates[i].Key,
                 });
             }
             return marks;
         }
 
-        private static JsonValue MarkRows(List<VisibleMark> marks, int width, int height)
+        private static JsonValue MarkRows(List<VisibleMark> marks, int width, int height, PlanetData planet)
         {
             var rows = JsonValue.NewArray();
             foreach (var mark in marks)
@@ -1275,6 +1274,7 @@ namespace IcarusII.Game.Tools
                 row.Set("category", mark.Category);
                 row.Set("x", mark.X);
                 row.Set("y", mark.Y);
+                row.Set("location", GameToolFormat.Location(planet, mark.Pos));
                 row.Set("distance", GameToolFormat.Round(mark.Distance, 1));
                 rows.Add(row);
             }
@@ -1442,10 +1442,10 @@ namespace IcarusII.Game.Tools
                 return new GameToolJobResult { Data = data };
             }
 
-            var center = ResolveCenter(factory, seed, centerArg, out var centerSource);
+            var center = ResolveCenter(planet, factory, seed, centerArg, out var centerSource);
             var area = JsonValue.NewObject();
             area.Set("mode", all ? "planet" : "sphere");
-            area.Set("center", EntityToolUtil.Vec3(center));
+            area.Set("center", GameToolFormat.Location(planet, center));
             area.Set("centerSource", centerSource);
             if (!all) area.Set("radius", GameToolFormat.Round(radius, 1));
             data.Set("area", area);
@@ -1541,7 +1541,7 @@ namespace IcarusII.Game.Tools
                     row.Set("protoId", entity.protoId);
                     row.Set("protoName", EntityToolUtil.ProtoName(entity.protoId));
                     row.Set("category", category);
-                    row.Set("pos", EntityToolUtil.Vec3(entity.pos));
+                    GameToolFormat.SetLocation(row, planet, entity.pos);
                     if (entity.assemblerId > 0 && factory.factorySystem != null &&
                         factory.factorySystem.assemblerPool != null &&
                         entity.assemblerId < factory.factorySystem.assemblerPool.Length)
@@ -1605,7 +1605,7 @@ namespace IcarusII.Game.Tools
             return new GameToolJobResult { Data = data };
         }
 
-        private static Vector3 ResolveCenter(PlanetFactory factory, int seed, JsonValue centerArg,
+        private static Vector3 ResolveCenter(PlanetData planet, PlanetFactory factory, int seed, JsonValue centerArg,
             out string source)
         {
             if (EntityToolUtil.HasEntity(factory, seed))
@@ -1618,13 +1618,10 @@ namespace IcarusII.Game.Tools
                 }
             }
 
-            if (centerArg != null && centerArg.IsObject)
+            if (GameToolFormat.TryReadPoint(planet, centerArg, out var center))
             {
                 source = "explicit";
-                return new Vector3(
-                    (float)centerArg["x"].AsDouble(0),
-                    (float)centerArg["y"].AsDouble(0),
-                    (float)centerArg["z"].AsDouble(0));
+                return center;
             }
 
             var player = GameMain.data != null ? GameMain.data.mainPlayer : null;
@@ -1725,7 +1722,7 @@ namespace IcarusII.Game.Tools
             int width = Math.Max(8, Math.Min(MaxWidth, (int)Math.Ceiling(radius * 2 / cellSize)));
             int height = Math.Max(6, Math.Min(MaxHeight, (int)Math.Ceiling(radius * 2 / cellSize)));
 
-            var center = ResolveCenter(factory, args, out var centerSource);
+            var center = ResolveCenter(planet, factory, args, out var centerSource);
             var originX = center.x - width * cellSize * 0.5;
             var originZ = center.z - height * cellSize * 0.5;
 
@@ -1786,9 +1783,7 @@ namespace IcarusII.Game.Tools
             data.Set("width", width);
             data.Set("height", height);
             data.Set("cellSize", GameToolFormat.Round(cellSize, 2));
-            data.Set("origin", JsonValue.NewObject());
-            data["origin"].Set("x", GameToolFormat.Round(originX, 1));
-            data["origin"].Set("z", GameToolFormat.Round(originZ, 1));
+            data.Set("origin", GameToolFormat.Location(planet, new Vector3((float)originX, center.y, (float)originZ)));
             data["origin"].Set("centerSource", centerSource);
             data.Set("legend", legend);
             data.Set("orientation", "上=+Z，左=-X；每个字符代表一个 cellSize 米方格");
@@ -1796,7 +1791,7 @@ namespace IcarusII.Game.Tools
             return new GameToolJobResult { Data = data };
         }
 
-        private static Vector3 ResolveCenter(PlanetFactory factory, JsonValue args, out string source)
+        private static Vector3 ResolveCenter(PlanetData planet, PlanetFactory factory, JsonValue args, out string source)
         {
             var entityId = args["entityId"].AsInt(0);
             if (entityId > 0 && entityId < factory.entityPool.Length)
@@ -1809,13 +1804,10 @@ namespace IcarusII.Game.Tools
                 }
             }
             var center = args["center"];
-            if (center != null && center.IsObject)
+            if (GameToolFormat.TryReadPoint(planet, center, out var explicitCenter))
             {
                 source = "explicit";
-                return new Vector3(
-                    (float)center["x"].AsDouble(0),
-                    (float)center["y"].AsDouble(0),
-                    (float)center["z"].AsDouble(0));
+                return explicitCenter;
             }
             source = "player";
             var player = GameMain.data != null ? GameMain.data.mainPlayer : null;

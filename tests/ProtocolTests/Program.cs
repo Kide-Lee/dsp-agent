@@ -46,6 +46,9 @@ namespace IcarusII.Tests
             Section("蓝图卡片");
             BlueprintCardTests();
 
+            Section("富文本输出");
+            RichTextTests.Run();
+
             Console.WriteLine();
             if (_failures == 0)
             {
@@ -218,6 +221,51 @@ namespace IcarusII.Tests
             Eq("信封 id", "m-1", env["id"].AsString());
             Eq("信封 payload.text", "你好", env["payload"]["text"].AsString());
             Check("无 replyTo 时不写该字段", !env.Has("replyTo"));
+            Check("无 requiredTool 时不写该字段", !env["payload"].Has("requiredTool"));
+
+            var forced = Protocol.BuildPrompt("/game_get_power 电够吗", null, "game_get_power");
+            Eq("requiredTool 写入", "game_get_power", forced["requiredTool"].AsString());
+            Eq("requiredTool 不改变原文", "/game_get_power 电够吗", forced["text"].AsString());
+
+            // ---- M4m：调试直调 ----
+            Eq("tool_debug 类型名", "tool_debug", Protocol.ToolDebug);
+            Eq("tool_debug_result 类型名", "tool_debug_result", Protocol.ToolDebugResult);
+            var debugPayload = Protocol.BuildToolDebug(
+                "game_get_power", JsonValue.Parse(@"{""planetId"": 1}"));
+            Eq("tool_debug name", "game_get_power", debugPayload["name"].AsString());
+            Eq("tool_debug args.planetId", 1L, debugPayload["args"]["planetId"].AsLong());
+
+            var debugInfo = ToolDebugResultInfo.Parse(JsonValue.Parse(
+                @"{
+                    ""ok"": true,
+                    ""tool"": ""game_get_power"",
+                    ""source"": ""game"",
+                    ""durationMs"": 42,
+                    ""content"": ""model text"",
+                    ""details"": { ""ok"": true, ""data"": { ""demandKw"": 12.5 } },
+                    ""error"": null,
+                    ""truncated"": false,
+                    ""image"": { ""mimeType"": ""image/jpeg"", ""width"": 1280, ""height"": 720, ""bytes"": 3456 }
+                }"));
+            Check("tool_debug_result ok", debugInfo.Ok);
+            Eq("tool_debug_result tool", "game_get_power", debugInfo.Tool);
+            Eq("tool_debug_result source", "game", debugInfo.Source);
+            Eq("tool_debug_result duration", 42L, debugInfo.DurationMs);
+            Eq("tool_debug_result content", "model text", debugInfo.Content);
+            Check("tool_debug_result details 可读", debugInfo.DetailsText().Contains("demandKw"));
+            Eq("tool_debug_result 图片宽", 1280, debugInfo.ImageWidth);
+            Eq("tool_debug_result 图片字节", 3456L, debugInfo.ImageBytes);
+            Check("tool_debug_result 未截断", !debugInfo.Truncated);
+
+            var debugFail = ToolDebugResultInfo.Parse(JsonValue.Parse(
+                @"{
+                    ""ok"": false,
+                    ""tool"": ""run_script"",
+                    ""error"": { ""code"": ""debug_not_allowed"", ""message"": ""not allowed"" }
+                }"));
+            Check("tool_debug_result 失败", !debugFail.Ok);
+            Eq("tool_debug_result 错误码", "debug_not_allowed", debugFail.ErrorCode);
+            Eq("tool_debug_result 缺字段安全默认", "null", ToolDebugResultInfo.Parse(null).DetailsText());
 
             var withReply = Protocol.Envelope(Protocol.Pong, Protocol.BuildPing(123), "s-1", "m-9");
             Eq("replyTo 存在", "m-9", withReply["replyTo"].AsString());
@@ -506,6 +554,46 @@ namespace IcarusII.Tests
             Eq("history.deleted 失败原因", "busy", deletedFail.Error);
             Eq("history.deleted 缺字段安全默认", 0, HistoryDeletedInfo.Parse(null).Removed);
 
+            // ---- 附录 A.11：压缩记录与撤销 ----
+            Eq("context.compacted 类型名", "context.compacted", Protocol.ContextCompacted);
+            Eq("history.undo_compaction 类型名", "history.undo_compaction", Protocol.HistoryUndoCompaction);
+            Eq("history.compaction_undone 类型名", "history.compaction_undone", Protocol.HistoryCompactionUndone);
+
+            var undo = Protocol.BuildHistoryUndoCompaction("3f2a", "c1");
+            Eq("undo.compaction saveKey", "3f2a", undo["saveKey"].AsString());
+            Eq("undo.compaction id", "c1", undo["compactionId"].AsString());
+            var undoLatest = Protocol.BuildHistoryUndoCompaction(null, null);
+            Check("撤销最近一次不写 compactionId", !undoLatest.Has("compactionId"));
+            Check("无 saveKey 时不写 saveKey", !undoLatest.Has("saveKey"));
+
+            var compacted = ContextCompactedInfo.Parse(JsonValue.Parse(
+                "{\"summary\":\"摘要\",\"compactionId\":\"c1\",\"timestamp\":1760000000000,"
+                + "\"tokensBefore\":96000,\"estimatedTokensAfter\":24000,\"reason\":\"threshold\"}"));
+            Eq("context.compacted summary", "摘要", compacted.Summary);
+            Eq("context.compacted id", "c1", compacted.CompactionId);
+            Eq("context.compacted tokensBefore", 96000, compacted.TokensBefore);
+            Eq("context.compacted tokensAfter", 24000, compacted.EstimatedTokensAfter);
+            Check("空 summary 解析为 null", ContextCompactedInfo.Parse(JsonValue.Parse("{\"summary\":\"\"}")) == null);
+
+            var undone = HistoryCompactionUndoneInfo.Parse(JsonValue.Parse(
+                "{\"compactionId\":\"c1\",\"ok\":true,\"removed\":1,\"mayRecompact\":true}"));
+            Check("compaction_undone ok", undone.Ok);
+            Eq("compaction_undone id", "c1", undone.CompactionId);
+            Eq("compaction_undone removed", 1, undone.Removed);
+            Check("compaction_undone mayRecompact", undone.MayRecompact);
+            Eq("compaction_undone 缺字段安全默认", 0, HistoryCompactionUndoneInfo.Parse(null).Removed);
+
+            var withCompaction = SaveBoundInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"3f2a\",\"history\":[" +
+                "{\"role\":\"user\",\"text\":\"旧问题\"}," +
+                "{\"role\":\"assistant\",\"kind\":\"compaction\",\"text\":\"旧对话摘要\"," +
+                "\"compactionId\":\"c1\",\"tokensBefore\":1000,\"estimatedTokensAfter\":200}]}"));
+            Eq("压缩记录条数", 2, withCompaction.History.Count);
+            Eq("压缩记录 kind", "compaction", withCompaction.History[1].Kind);
+            Eq("压缩记录 id", "c1", withCompaction.History[1].CompactionId);
+            Eq("压缩记录 tokensBefore", 1000, withCompaction.History[1].TokensBefore);
+            Eq("压缩记录 tokensAfter", 200, withCompaction.History[1].EstimatedTokensAfter);
+
             // ---- 附录 A.8：本地工具可视化 ----
             Eq("tool_activity 类型名", "tool_activity", Protocol.ToolActivity);
             var act = ToolActivityInfo.Parse(JsonValue.Parse(
@@ -551,6 +639,37 @@ namespace IcarusII.Tests
             var clamped = ToolCallInfo.Parse(
                 JsonValue.Parse("{\"callId\":\"c\",\"name\":\"x\",\"timeoutMs\":999999}"), null);
             Eq("timeout 上限被钳制", 30000, clamped.TimeoutMs);
+
+            Eq("ask 能力名", "ui.ask.v1", Protocol.CapabilityUiAsk);
+            Eq("ask 工具名", "ask_user", Protocol.ToolAskUser);
+            Eq("ask 旧名别名", "ui_ask_user", Protocol.ToolUiAskUser);
+            Eq("ask 超时常量", 600000, Protocol.AskTimeoutMs);
+            Eq("write 能力名", "game.write.v1", Protocol.CapabilityGameWrite);
+            Eq("写工具名", "game_set_research", Protocol.ToolSetResearch);
+            Eq("确认超时常量", 60000, Protocol.ConfirmTimeoutMs);
+
+            var confirm = ConfirmRequestInfo.Parse(JsonValue.Parse(
+                "{\"requestId\":\"confirm_1\",\"callId\":\"call_1\",\"tool\":\"game_open_panel\"," +
+                "\"argsHash\":\"h\",\"token\":\"t\",\"title\":\"打开面板？\",\"body\":\"inventory\"," +
+                "\"risk\":1,\"timeoutMs\":60000}"));
+            Eq("confirm requestId", "confirm_1", confirm?.RequestId);
+            Eq("confirm callId", "call_1", confirm?.CallId);
+            Eq("confirm tool", "game_open_panel", confirm?.Tool);
+            Eq("confirm risk", 1, confirm?.Risk);
+            var writeCall = ToolCallInfo.Parse(JsonValue.Parse(
+                "{\"callId\":\"call_1\",\"name\":\"game_open_panel\",\"risk\":1," +
+                "\"confirmToken\":\"t\",\"confirmArgsHash\":\"h\"}"), null);
+            Eq("写调用 token", "t", writeCall?.ConfirmToken);
+            Eq("写调用 argsHash", "h", writeCall?.ConfirmArgsHash);
+            var askClamped = ToolCallInfo.Parse(
+                JsonValue.Parse("{\"callId\":\"c\",\"name\":\"ask_user\",\"timeoutMs\":999999}"), null);
+            Eq("ask timeout 放宽到 600000", 600000, askClamped.TimeoutMs);
+            var askDefault = ToolCallInfo.Parse(
+                JsonValue.Parse("{\"callId\":\"c\",\"name\":\"ask_user\"}"), null);
+            Eq("ask 缺省 timeout 也用 600000", 600000, askDefault.TimeoutMs);
+            var askLegacy = ToolCallInfo.Parse(
+                JsonValue.Parse("{\"callId\":\"c\",\"name\":\"ui_ask_user\",\"timeoutMs\":999999}"), null);
+            Eq("ask 旧名 timeout 也放宽", 600000, askLegacy.TimeoutMs);
 
             var meta = JsonValue.NewObject();
             meta.Set("gameTick", 123);
@@ -647,13 +766,13 @@ namespace IcarusII.Tests
 
         // ---------------------------------------------------------------- 小测试框架
 
-        private static void Section(string name)
+        internal static void Section(string name)
         {
             Console.WriteLine();
             Console.WriteLine($"── {name} ──");
         }
 
-        private static void Check(string name, bool ok)
+        internal static void Check(string name, bool ok)
         {
             _checks++;
             if (ok)
@@ -667,7 +786,7 @@ namespace IcarusII.Tests
             }
         }
 
-        private static void Eq<T>(string name, T expected, T actual)
+        internal static void Eq<T>(string name, T expected, T actual)
         {
             _checks++;
             if (EqualityComparer<T>.Default.Equals(expected, actual))

@@ -132,7 +132,7 @@ namespace IcarusII.Game.Tools
                 row.Set("protoName", EntityToolUtil.ProtoName(entity.protoId));
                 row.Set("category", EntityToolUtil.Category(entity));
                 row.Set("depth", depths[id]);
-                row.Set("pos", EntityToolUtil.Vec3(entity.pos));
+                GameToolFormat.SetLocation(row, planet, entity.pos);
                 nodes.Add(row);
             }
 

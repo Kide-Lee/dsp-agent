@@ -6,10 +6,13 @@
  * dir+fileName 拼路径、source 推断。协议见 docs/protocol-v1.md 附录 A.9。
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   extractBlueprintCard,
+  blueprintCardFileExists,
+  dropDeletedBlueprintCards,
   attachBlueprintCards,
   compactBlueprintCard,
   BLUEPRINT_PRODUCING_TOOLS,
@@ -176,7 +179,38 @@ console.log('\n── 6. 历史副本截断 ──');
   check('数字字段保留', compact.itemId === 1204 && compact.rate === 20);
 }
 
-console.log('\n── 7. 构建产物存在 ──');
+console.log('\n── 7. 生成后被删除的蓝图不发卡 ──');
+{
+  const dir = mkdtempSync(join(tmpdir(), 'icarus-card-'));
+  const path = join(dir, 'a.txt');
+  writeFileSync(path, 'blueprint');
+  check('文件存在时保留卡片', blueprintCardFileExists({ fileName: 'a.txt', path, source: 'generated' }));
+  unlinkSync(path);
+  check('文件被删后丢弃卡片', !blueprintCardFileExists({ fileName: 'a.txt', path, source: 'generated' }));
+  check('copied 路径可能是游戏侧路径，保持卡片', blueprintCardFileExists({ fileName: 'a.txt', path, source: 'copied' }));
+  check('没有 path 时不误删', blueprintCardFileExists({ fileName: 'a.txt', source: 'generated' }));
+  rmSync(dir, { recursive: true, force: true });
+}
+
+console.log('\n── 8. 删除蓝图后撤回待发卡片 ──');
+{
+  const cards = [
+    { fileName: 'a.txt', relPath: 'IcarusII/a.txt', path: '/bp/IcarusII/a.txt' },
+    { fileName: 'b.txt', relPath: 'IcarusII/b.txt', path: '/bp/IcarusII/b.txt' },
+  ];
+  const rm = dropDeletedBlueprintCards(cards, { details: { removed: true, relPath: 'IcarusII/a.txt' } });
+  check('rm 只撤回对应卡片', rm.length === 1 && rm[0]?.fileName === 'b.txt', JSON.stringify(rm));
+  const rmdir = dropDeletedBlueprintCards(cards, {
+    details: { removed: true, directory: true, relPath: 'IcarusII' },
+  });
+  check('rmdir 撤回目录下卡片', rmdir.length === 0, JSON.stringify(rmdir));
+  const failed = dropDeletedBlueprintCards(cards, { details: { removed: false, relPath: 'IcarusII/a.txt' } });
+  check('未删除时不动卡片', failed.length === 2);
+  const noRel = dropDeletedBlueprintCards(cards, { details: { removed: true, path: '/bp/IcarusII/a.txt' } });
+  check('按绝对 path 也能撤回', noRel.length === 1 && noRel[0]?.fileName === 'b.txt');
+}
+
+console.log('\n── 9. 构建产物存在 ──');
 check('dist/blueprint/card.js 已构建', existsSync(new URL('../dist/blueprint/card.js', import.meta.url)));
 
 console.log(`\n${failed === 0 ? '✅' : '❌'} blueprint-card 测试${failed === 0 ? '全部通过' : '失败'}（${passed} 项，失败 ${failed}）`);

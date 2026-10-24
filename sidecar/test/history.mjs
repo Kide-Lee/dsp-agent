@@ -116,6 +116,19 @@ check('user 文本', extracted[0]?.role === 'user' && extracted[0]?.text === '�
 check('assistant 文本块拼接，忽略 thinking', extracted[1]?.role === 'assistant' && extracted[1]?.text === '你好，\n世界');
 check('timestamp 来自 message', extracted[1]?.timestamp === 2);
 
+const withCompaction = extractHistoryMessages([
+  { type: 'message', timestamp: '2026-01-01T00:00:00Z', message: { role: 'user', content: '旧问题', timestamp: 1 } },
+  {
+    type: 'compaction', id: 'c1', timestamp: '2026-01-01T00:00:02Z',
+    summary: '之前的对话摘要', tokensBefore: 1000, estimatedTokensAfter: 200,
+  },
+  { type: 'message', timestamp: '2026-01-01T00:00:03Z', message: { role: 'user', content: '新问题', timestamp: 3 } },
+]);
+check('压缩记录被回放', withCompaction.length === 3, JSON.stringify(withCompaction));
+check('压缩记录 kind', withCompaction[1]?.kind === 'compaction');
+check('压缩记录摘要', withCompaction[1]?.text === '之前的对话摘要');
+check('压缩记录 id/token', withCompaction[1]?.compactionId === 'c1' && withCompaction[1]?.tokensBefore === 1000 && withCompaction[1]?.estimatedTokensAfter === 200);
+
 const clipped = extractHistoryMessages([
   { type: 'message', message: { role: 'user', content: 'x'.repeat(30) } },
 ], 10, 10);
@@ -295,6 +308,34 @@ console.log('── 5. reply.time ──');
     payload: { prompt: '', gameTime: '09:00' },
   })), false);
   check('空 prompt 被忽略', calls.length === 1);
+}
+
+// ---- 6. 撤销压缩 ----
+console.log('── 6. history.undo_compaction ──');
+{
+  const calls = [];
+  const agent = makeAgent(history);
+  agent.undoCompaction = async (saveKey, compactionId) => {
+    calls.push({ saveKey, compactionId });
+    return { ok: true, removed: 1, compactionId: compactionId ?? 'c1', mayRecompact: true };
+  };
+  const { socket, session } = await bind(agent, 'saveA');
+  session.handleFrame(Buffer.from(JSON.stringify({
+    v: 1,
+    id: 'm-3',
+    type: 'history.undo_compaction',
+    payload: { compactionId: 'c1' },
+  })), false);
+  for (let i = 0; i < 100 && !socket.frames.some((f) => f.type === 'history.compaction_undone'); i++) {
+    await delay(2);
+  }
+  const res = socket.frames.find((f) => f.type === 'history.compaction_undone');
+  check('撤销压缩回复', Boolean(res), JSON.stringify(socket.frames.map((f) => f.type)));
+  check('撤销压缩 replyTo', res?.replyTo === 'm-3');
+  check('撤销压缩 ok', res?.payload?.ok === true);
+  check('撤销压缩 compactionId', res?.payload?.compactionId === 'c1');
+  check('撤销压缩 mayRecompact', res?.payload?.mayRecompact === true);
+  check('撤销压缩调用 agent', calls.length === 1 && calls[0]?.saveKey === 'saveA' && calls[0]?.compactionId === 'c1');
 }
 
 console.log(`\n${failed === 0 ? '✅' : '❌'} history 测试${failed === 0 ? '全部通过' : '有失败'}（${passed} 项，失败 ${failed}）`);

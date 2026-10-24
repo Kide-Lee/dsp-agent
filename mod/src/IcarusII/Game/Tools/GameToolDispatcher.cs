@@ -116,6 +116,18 @@ namespace IcarusII.Game.Tools
             Register(new TraceLineTool());
             Register(new PlanetsTool());
             Register(new LogisticsTool());
+            Register(new FocusCameraTool());
+            Register(new PlaceMarkerTool());
+            Register(new OpenPanelTool());
+            Register(new SetResearchTool());
+            Register(new UndoLastWriteTool());
+        }
+
+        private static bool IsWriteTool(string name)
+        {
+            return name == "game_focus_camera" || name == "game_place_marker"
+                || name == "game_open_panel" || name == "game_set_research"
+                || name == "game_undo_last_write";
         }
 
         private void Register(IGameToolHandler handler)
@@ -155,7 +167,8 @@ namespace IcarusII.Game.Tools
             var now = NowMs();
 
             // 知识库导出是一次性快照：不走 5 秒缓存，避免换语言/换版本后拿到旧数据。
-            var useCache = name != "game_export_prototypes" && name != "game_export_text";
+            var useCache = name != "game_export_prototypes" && name != "game_export_text"
+                && !IsWriteTool(name);
             CachedResult cached;
             if (useCache && _cache.TryGetValue(cacheKey, out cached) &&
                 cached.SaveKey == saveKey &&
@@ -266,7 +279,8 @@ namespace IcarusII.Game.Tools
                     call.StartTick, GameMain.gameTick, false);
                 _log?.LogInfo($"[tool] 完成 {call.Name} callId={call.CallId} elapsed={elapsed}ms"
                     + " truncated=" + (result.Truncated ? "true" : "false"));
-                if (call.Name != "game_export_prototypes" && call.Name != "game_export_text")
+                if (call.Name != "game_export_prototypes" && call.Name != "game_export_text"
+                    && !IsWriteTool(call.Name))
                 {
                     _cache[call.CacheKey] = new CachedResult
                     {

@@ -49,13 +49,19 @@
   "payload": {
     "token": "…",                 // string，必填
     "modVersion": "0.1.0",        // string
-    "gameVersion": "0.10.30.3100",// string
+    "gameVersion": "0.10.35.29151",// string
     "gameLanguage": "zh-CN",      // string，来自 Localization
-    "capabilities": ["ui.chat"],  // string[]，mod 侧已实现的工具域
+    "capabilities": ["ui.chat"],  // string[]，mod 侧已实现的工具域/UI 能力
     "saveKey": "a1b2c3…"          // string|null，当前存档指纹；未进入存档时为 null
   }
 }
 ```
+
+`capabilities` 里的未知项必须被忽略。除工具域外，当前还有：
+
+- `ui.richtext.v2`：mod 的输出渲染支持 Markdown + 小型 HTML 子集（`color/size/tint/box/sqrt/sup/sub/i/a/icon`）。sidecar 可据此选用新版格式提示词；没有该能力时继续用旧的“只用游戏标签”提示。
+- `ui.ask.v1`：mod 支持 `ask_user` 交互问答（玩家在游戏窗口里选择/输入答案）。sidecar 据此注册问答工具；老 mod 不会看到该工具。
+- `game.write.v1`：mod 支持写操作确认与一次性令牌；sidecar 据此注册 `game_focus_camera` / `game_place_marker` / `game_open_panel` / `game_set_research`。老 mod 不会看到这些工具。
 
 ### 4.2 `ready` — sidecar → mod
 
@@ -67,10 +73,22 @@
     "protocol": 1,
     "sessionId": "sess_…",
     "agent": { "provider": "deepseek", "model": "deepseek-chat", "available": true },
-    "tools": ["game.get_overview", "…"]   // 本次连接注册的工具名
+    "tools": ["game.get_overview", "…"],  // 本次连接注册的工具名
+    // 可选（M4l）：工具目录，供聊天窗的“/ 工具列表”展示。老 mod 忽略。
+    "toolCatalog": [
+      {
+        "name": "game_get_overview",        // 模型可见名（也是 / 命令名）
+        "label": "存档概览",                 // 显示名
+        "description": "读取当前存档、星球、时间与玩家位置的概览",
+        "debuggable": true                  // 可选（M4m）：!tool 调试直调是否允许
+      }
+    ]
   }
 }
 ```
+
+`toolCatalog` 是 `tools` 的**可读元数据**，不改变 `tools` 的既有语义；
+老服务端不返回时，mod 回退到 `tools` + 本地 `ToolNames.Label` 显示。
 
 ### 4.3 `status` — sidecar → mod
 
@@ -87,10 +105,66 @@
 
 ```jsonc
 { "v":1, "id":"m-2", "type":"prompt",
-  "payload": { "text": "怎么提高产量？", "conversationId": "sess_…" } }
+  "payload": {
+    "text": "怎么提高产量？",
+    "conversationId": "sess_…",
+    "requiredTool": "game_get_production"   // 可选（M4l）
+  } }
 ```
 
 `conversationId` 可选；缺省表示使用连接当前会话。
+
+`requiredTool` 可选（M4l）：玩家在输入框里用 `/<工具名>` 指定“本轮必须调用这个工具”。
+- 取值是 `ready.payload.tools` 里的模型可见工具名；缺省或 `null` 表示不强制。
+- 服务端必须在本轮至少看到一次该工具的调用；没调用时先重试一次，仍失败则回
+  `error{code:"tool_required"}`，不得静默返回普通回答。
+- `text` **保留**玩家输入的 `/工具名` 前缀（对话历史与 UI 显示一致）；
+  服务端只把它当作命令，不要求模型回答斜杠本身。
+- 老 mod 不传该字段；服务端可从 `text` 开头的 `/<工具名>` 推断，保持兼容。
+
+### 4.4.1 `tool_debug` / `tool_debug_result` — 调试直调（M4m）
+
+供开发者在输入框里手动执行一个工具，**完全不经过 AI / pi 会话 / prompt 历史**。
+
+```jsonc
+// mod → sidecar
+{ "v":1, "id":"d-1", "type":"tool_debug",
+  "payload": { "name": "game_get_power", "args": { "planetId": 1 } } }
+
+// sidecar → mod
+{ "v":1, "id":"s-9", "type":"tool_debug_result", "replyTo":"d-1",
+  "payload": {
+    "ok": true,
+    "tool": "game_get_power",
+    "source": "game",                 // game | local | unknown
+    "durationMs": 42,
+    "content": "……模型可见的格式化文本……",
+    "details": { "ok": true, "data": { }, "meta": { } },  // 原始返回
+    "error": null,
+    "truncated": false,
+    "image": null                     // 有截图时只给 mimeType/width/height/bytes
+  } }
+```
+
+- `args` 必须是 JSON 对象（≤64 KiB）；payload 结构非法返回 `error{code:"bad_request"}`，
+  按工具 TypeBox schema 校验失败返回 `tool_debug_result.ok=false` + `error.code="invalid_args"`。
+- 游戏工具内部仍走 `tool_call` / `tool_result`，但 `tool_call.payload.internal=true`，
+  mod 不显示普通工具卡；结果统一由 `tool_debug_result` 展示。
+- 本地工具（`kb_*` / `wiki_*` / `blueprint_search` / `blueprint_info`）在 sidecar 内直接执行，不经过 mod。
+- 不创建 pi 会话、不调用 LLM、不需要 API Key、不写入对话历史；与 prompt 共用串行链，
+  忙时排队执行。
+- `details` 里的图片 `data`（base64）会被剥离，只保留 `image` 元数据；超长结果截断并置
+  `truncated=true`。
+- 开关双重门禁：mod 配置 `General/DebugToolConsole=true`，sidecar 以 `--debug-tools` 启动；
+  未开启时 sidecar 返回 `error{code:"debug_disabled"}`。
+- **只读白名单**：`game_get_*` / `game_analyze_area` / `game_capture_view` /
+  `game_render_layout` / `game_trace_line` / `game_get_planets` / `game_get_logistics`、
+  `kb_*`、`wiki_*`、`blueprint_search`、`blueprint_info`。
+  不包含 `game_copy_blueprint`、`blueprint_save`、`blueprint_generate`、`blueprint_fs`、
+  `run_script`（写文件/可间接写文件）；调用它们时 `tool_debug_result.ok=false`，
+  `error.code="debug_not_allowed"`。
+- mod 侧命令：`!tools` 列出工具目录；`!tool <name> <json>` 发起调试直调。
+  命令在 `AppendUser` 之前拦截，不进入普通对话气泡或历史。
 
 ### 4.5 `stream` — sidecar → mod
 
@@ -143,6 +217,13 @@
 | `bad_request` | 信封或 payload 结构非法 |
 | `agent_unavailable` | LLM/模型不可用（M1+） |
 | `tool_failed` | 工具执行失败（M1+） |
+| `tool_required` | `prompt.requiredTool` 指定的工具在本轮没有被调用（M4l） |
+| `debug_disabled` | `tool_debug` 未开启（sidecar 未带 `--debug-tools`，M4m） |
+| `debug_not_allowed` | 工具不在调试只读白名单（M4m） |
+| `confirmation_required` | 写工具缺少一次性确认令牌（M4） |
+| `confirmation_invalid` | 令牌无效/已使用/参数不匹配（M4） |
+| `confirmation_expired` | 确认令牌已过期（M4） |
+| `confirmation_denied` | 玩家拒绝确认，未执行（M4） |
 | `internal` | 未分类内部错误 |
 
 ### 4.9 预留（M0 不实现，仅占位以免 v1 被破坏）
@@ -182,6 +263,7 @@ mod                                   sidecar
 2. **加消息类型**：同版本内允许（接收方必须忽略未知 `type`）。
 3. **改字段语义 / 删字段**：必须提升 `v`。
 4. sidecar 与 mod 的版本可以独立演进，但都必须声明并校验 `v`。
+5. **新增能力串**：允许；接收方必须忽略不认识的 `capabilities` 项，不得因此报错或关闭连接。
 
 ---
 
@@ -492,11 +574,16 @@ mod                                   sidecar
 - `existed`：该存档此前是否已有对话（`false` = 新建）
 - `messageCount`：本次带回的历史消息条数
 - `history`：最近最多 40 条 `user` / `assistant` 的可见文本（单条最多 4000 字符），
-  只用于 mod **回放聊天窗**，不进入模型上下文；压缩摘要不会出现在这里。
+  只用于 mod **回放聊天窗**，不进入模型上下文。压缩记录会作为
+  `kind:"compaction"` 的 assistant 消息回放（附录 A.11）；老 mod 会把它当普通回答显示。
   历史读取失败时为空数组，不阻断 `save.bound`。
+- `history` 的 `assistant` 消息可带可选的 `kind:"compaction"`（附录 A.11）：
+  这是一条上下文压缩记录，`text` 是摘要；同时带 `compactionId` / `tokensBefore` /
+  `estimatedTokensAfter`（均可选）。mod 应把它渲染成“自动压缩上下文”对话串，
+  并把这条记录之前的回合标灰、禁止单独删除。老 mod 忽略 `kind`，按普通 assistant 显示。
 - `history` 的 `assistant` 消息可带可选的 `cards`（附录 A.9）：该回答产出的蓝图卡片，
   形如 `[{fileName, path, name, ...}]`。老客户端忽略该字段；mod 回放时在回答后重建卡片。
-- `history` 的 `assistant` 消息可带可选的 `gameTime`（字符串，`HH:mm`）：该回答完成时的
+- `history` 的 `assistant` 消息可带可选的 `gameTime`（字符串，`HH:mm:ss`）：该回答完成时的
   游戏时间。老 mod 忽略该字段；mod 回放时显示在回答脚注。
 - `history` 的 `user` 消息也可带同一个可选的 `gameTime`：用于回放用户气泡下面的脚注
   （只有时间 + 复制）。sidecar 用同一回合记录的时间近似提问时间；没有记录时省略，
@@ -563,11 +650,12 @@ mod                                   sidecar
 
 - 成功时 `removed` 是删掉的会话条目数（通常 user + assistant，可能含工具消息）。
 - 失败时 `ok=false`，`error` 为 `busy`（正在回答）、`no_save`、`turn_not_found`、
-  `unsupported_session`（会话含压缩/分支，拒绝改写）、`io_error` 之一。
+  `unsupported_session`（会话含压缩/分支/上下文中编辑，拒绝改写）、`io_error` 之一。
 - 成功后 sidecar 会**丢弃当前内存会话**，下一次 `prompt` 从改写后的文件重建上下文，
   因此被删回合不会继续进入模型上下文。
 - 实现是线性会话重写：保留条目按原顺序重新串成 `parentId` 链；
-  含 `compaction` / `branch_summary` 的会话拒绝删除（避免破坏上下文树）。
+  含 `compaction` / `branch_summary` / `context_edit` 的会话拒绝删除（避免破坏上下文树）。
+  已压缩的回合要撤销请走附录 A.11 的 `history.undo_compaction`，不要用 `history.delete`。
 
 ### A.8 `tool_activity` — sidecar 本地工具的可视化（M4f）
 
@@ -641,6 +729,8 @@ mod                                   sidecar
 
 - 一次工具调用成功 → 一张卡片；一轮里调用多次就发多条，顺序与工具完成顺序一致。
 - 工具失败不发卡片。
+- 同一轮里如果 `blueprint_fs rm/rmdir` 删掉了已经生成的蓝图，sidecar 会撤回待发卡片，
+  不写历史；mod 不应假设收到卡片时文件一定还在。
 - mod 必须容忍字段缺失；有 `relPath` 时优先 `GameConfig.blueprintFolder + relPath`
   （并校验仍在根内），否则回退到 `GameConfig.blueprintFolder + fileName`。
 - sidecar 会把卡片按「用户提问原文」持久化，并在后续 `save.bound.history` 的
@@ -659,7 +749,7 @@ mod 收到 `message{final}` 并完成渲染后发送。sidecar 不回复；它�
   "payload": {
     "prompt": "帮我看看这条日志里的过滤规则是什么？",
     "reply": "日志里是 Filter: legacy……",
-    "gameTime": "08:42"
+    "gameTime": "08:42:00"
   }
 }
 ```
@@ -667,9 +757,129 @@ mod 收到 `message{final}` 并完成渲染后发送。sidecar 不回复；它�
 - `prompt`：本轮用户提问原文，用于没有 `reply` 时回退匹配；过长时按 sidecar 存储上限截断。
 - `reply`（可选）：本轮 assistant 终稿原文。sidecar 优先按回答原文匹配，能区分
   “继续”这类重复提问；过长时截断。
-- `gameTime`：`HH:mm`；没有游戏数据时 mod 可跳过不发。
+- `gameTime`：`HH:mm:ss`；没有游戏数据时 mod 可跳过不发。
 - sidecar 忽略空值/非法值，不因记录失败影响回答；同一提问/回答以最后一条记录为准。
 - 老 sidecar 忽略未知 `type`；老 mod 不发该消息，历史脚注退回显示 `--:--` 或当前时间。
+
+### A.11 `context.compacted` / `history.undo_compaction` — 压缩记录与撤销
+
+pi 的自动压缩完成后，sidecar 把摘要作为一条**只给 UI** 的记录发给 mod，并提供
+“撤销最近一次压缩”的请求。压缩记录和撤销都不改变模型可见的普通消息格式；
+摘要不会作为 user/assistant 消息写进会话。
+
+#### `context.compacted`（sidecar → mod）
+
+```jsonc
+{
+  "v": 1, "id": "s-71", "type": "context.compacted",
+  "payload": {
+    "summary": "## Goal\n…",
+    "compactionId": "a1b2c3d4",
+    "timestamp": 1760000000000,
+    "tokensBefore": 96000,
+    "estimatedTokensAfter": 24000,
+    "reason": "threshold"
+  }
+}
+```
+
+- `summary`：pi 生成的压缩摘要；mod 作为一条 assistant 记录渲染。
+- `compactionId`：pi compaction entry id；事件刚发生时可能缺省，撤销时可省略。
+- `timestamp`：压缩完成时间（毫秒）；mod 用本地时间生成 `[HH:mm:ss]`。
+- `tokensBefore` / `estimatedTokensAfter`：可选，只用于展示。
+- `reason`：`manual` | `threshold` | `overflow`，可选。
+- mod 收到后插入一条“`[HH:mm:ss] 自动压缩上下文`”记录，并把它之前的回合标灰、
+  禁止单独删除；老 mod 忽略未知 `type`。
+
+压缩期间 sidecar 还会发 `status{state:"compacting"}`；mod 应显示“整理上下文中…”。
+
+#### `history.undo_compaction`（mod → sidecar）
+
+```jsonc
+{
+  "v": 1, "id": "m-72", "type": "history.undo_compaction",
+  "payload": { "saveKey": "3f2a91c4d8e05b17", "compactionId": "a1b2c3d4" }
+}
+```
+
+- `compactionId` 可省略：省略表示撤销最近一次压缩。
+- 只允许撤销**最近一次**压缩（LIFO）；指定更早的压缩返回 `not_latest`。
+- 目标不存在返回 `not_found`；正在回答返回 `busy`；会话无法安全改写返回
+  `unsupported_session`；写盘失败返回 `io_error`。
+
+#### `history.compaction_undone`（sidecar → mod）
+
+```jsonc
+{
+  "v": 1, "id": "s-73", "type": "history.compaction_undone",
+  "replyTo": "m-72",
+  "payload": {
+    "saveKey": "3f2a91c4d8e05b17",
+    "compactionId": "a1b2c3d4",
+    "ok": true,
+    "removed": 1,
+    "error": null,
+    "mayRecompact": true
+  }
+}
+```
+
+- 成功：sidecar 已从会话文件删除 compaction entry，旧消息重新进入模型上下文；
+  mod 移除压缩记录、重新计算灰色区间，并提示“如果上下文再次超限，会重新压缩”。
+- `mayRecompact`：提示下一次提问可能立刻再次触发压缩。
+- 老 sidecar 不认识该请求；老 mod 不发送，压缩记录保持不可撤销。
+
+**注意**：`history.delete` 仍然拒绝含 `compaction` 的会话（避免删除单轮后摘要悬空）；
+撤销压缩必须走本节的专用消息。
+
+---
+
+### A.12 `confirm_request` / `confirm_result` — 写操作确认（M4）
+
+写操作必须先经过玩家确认。sidecar 生成 32 字节随机 token（16 进制），把
+`requestId/callId/tool/argsHash/token/title/body/risk/timeoutMs` 发给 mod；玩家点
+**同意** 后 mod 原样回传 token，sidecar 才把 token 放进 `tool_call.confirmToken`
+发给 mod 执行。token 60 秒有效、单次使用，并绑定 `callId + tool + argsHash`。
+
+#### `confirm_request`（sidecar → mod）
+
+```jsonc
+{
+  "v": 1, "id": "s-80", "type": "confirm_request",
+  "payload": {
+    "requestId": "confirm_1",
+    "callId": "call_7",
+    "tool": "game_set_research",
+    "argsHash": "sha256…",
+    "token": "64-hex…",
+    "title": "切换研究目标？",
+    "body": "科技：电磁学\n可能浪费当前研究已投入的进度。",
+    "risk": 2,
+    "timeoutMs": 60000
+  }
+}
+```
+
+mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右下角显示
+红色「拒绝」和蓝色「同意」；关窗、Esc、超时都按拒绝处理。
+
+#### `confirm_result`（mod → sidecar）
+
+```jsonc
+{
+  "v": 1, "id": "m-81", "type": "confirm_result",
+  "payload": {
+    "requestId": "confirm_1",
+    "decision": "allow",
+    "token": "64-hex…"
+  }
+}
+```
+
+- `decision`：`allow` 或 `deny`；v1 不实现 `allow_always`。
+- sidecar 校验 `requestId/token` 后才发写操作 `tool_call`；拒绝返回
+  `confirmation_denied`，不产生任何游戏副作用。
+- 玩家在 60 秒内不回答：mod 发 `deny`，sidecar 也按超时拒绝。
 
 ---
 
@@ -690,7 +900,7 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 
 | 协议/模型名 | 说明 |
 | --- | --- |
-| `game_get_overview` | 存档、时间、当前星球/星系、玩家坐标 |
+| `game_get_overview` | 存档、时间、当前星球/星系、玩家经纬度 |
 | `game_get_player` | 机甲能量/护盾、背包 |
 | `game_get_planet` | 行星矿脉汇总、建筑计数 |
 | `game_get_power` | 电网需求/供给/容量/储能 |
@@ -701,18 +911,18 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 
 | 协议/模型名 | 说明 |
 | --- | --- |
-| `game_get_entity` | 单个建筑详情：原型、配方、产物/消耗、功率、分拣器/传送带/仓储/物流塔、坐标与朝向 |
-| `game_render_layout` | 区域建筑字符布局图（上=+Z，左=-X） |
+| `game_get_entity` | 单个建筑详情：原型、配方、产物/消耗、功率、分拣器/传送带/仓储/物流塔、星系/行星/经纬度与朝向 |
+| `game_render_layout` | 区域建筑字符布局图（上=+Z，左=-X），origin 用经纬度 |
 | `game_get_planets` | 银河行星一览；矿脉按宇宙探索等级披露 |
 | `game_get_logistics` | 跨行星物流塔供给/需求汇总 |
-| `game_trace_line` | 沿传送带/分拣器追踪产线拓扑 |
-| `game_get_entities` | 行星内建筑分页列表；可按 `protoId` / `protoName` / `recipeId` / 区域过滤 |
+| `game_trace_line` | 沿传送带/分拣器追踪产线拓扑；节点用星系/行星/经纬度 |
+| `game_get_entities` | 行星内建筑分页列表；可按 `protoId` / `protoName` / `recipeId` / 区域过滤；每行带 location |
 
 **`game.analyze.v1`（M4c）**
 
 | 协议/模型名 | 说明 |
 | --- | --- |
-| `game_analyze_area` | 按空间范围聚合产线：建筑/配方计数、装机产能、耗电、物流设施、涉及电网 |
+| `game_analyze_area` | 按空间范围聚合产线：建筑/配方计数、装机产能、耗电、物流设施、涉及电网；center 用经纬度 |
 
 **`game.progress.v1`（M4a）**
 
@@ -724,10 +934,15 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 
 | 协议/模型名 | 说明 |
 | --- | --- |
-| `game_capture_view` | 截取当前画面（JPEG，可带可见实体的屏幕坐标），图片走 `tool_result.image` |
+| `game_capture_view` | 截取当前画面（JPEG，可带可见实体的屏幕坐标与 location），图片走 `tool_result.image` |
 
 > `game_capture_view` 只截**游戏层**：`GameCamera.CaptureScreenshot` 把 `cullingMask` 设为
 > `gameLayerMask`，UGUI 不进画面，因此不需要额外的"隐藏界面"开关。
+
+> **坐标约定**：建筑/玩家位置统一输出 `location` 对象：
+> `starId` / `starName` / `planetId` / `planetName` / `latitude` / `longitude` / `altitude`，
+> 辅助字段 `latitudeText` / `longitudeText`。不再输出会随行星自转/公转变化的 x/y/z。
+> 经纬度输入可直接传 `latitude` + `longitude`；`x/y/z` 仅保留兼容旧调用。
 
 ### B.1.1 M3 知识库工具（sidecar 本地）
 
@@ -750,9 +965,9 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 | --- | --- |
 | `wiki_search` | 搜索中/英文 DSP Wiki（MediaWiki API），返回标题/摘要/链接 |
 | `wiki_page` | 读取 Wiki 页面纯文本（自动重定向，≤8000 字） |
-| `blueprint_search` | 在线搜索 DSPBluePrints/FactoryBluePrints 的 `.txt` 蓝图路径（不打包内容） |
-| `blueprint_info` | 读取蓝图并做格式体检（header/base64+gzip/md5），带来源与许可 |
-| `blueprint_save` | 保存到游戏蓝图目录（默认 `IcarusII/`，可传 `dir`），同名自动加序号 |
+| `blueprint_search` | 在线搜索 DSPBluePrints/FactoryBluePrints 与 Dyson Sphere Blueprints 的蓝图（不打包内容） |
+| `blueprint_info` | 读取蓝图并做格式体检（header/base64+gzip/md5），支持 GitHub path 或网站 URL，带来源与署名 |
+| `blueprint_save` | 保存到游戏蓝图目录（默认 `IcarusII/`，可传 `dir`），支持 GitHub path 或网站 URL，同名自动加序号 |
 | `blueprint_fs` | 蓝图目录的受限虚拟文件系统：`pwd/cd/ls/cat/mkdir/write/rm/rmdir`；路径以蓝图根为 `/` |
 | `blueprint_generate` | 按知识库真实配方生成完整产线蓝图，保存到蓝图目录；单张总线容量不足时自动拆成多张 |
 
@@ -788,6 +1003,89 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 
 > 游戏自带的 UGUI 改版没有实现 `<b>`；`IcarusII` 在写入 `Text` 前会把 `<b>...</b>` 转成受支持的亮白 `<color=...>...</color>`。
 
+### B.1.4 交互问答 `ask_user`（`ui.ask.v1`）
+
+模型需要玩家明确选择、而现有信息不足以继续时，可调用 `ask_user`。
+mod 收到后把输入栏临时替换成 `choose` 面板；玩家在游戏里作答，答案通过同一个
+`tool_call` / `tool_result` 通道回填，**不新增协议帧**。
+
+工具名与参数形状对齐 Pi 社区包 [`pi-ask-user`](https://github.com/edlsh/pi-ask-user)，
+因此社区 skill/提示词里的 `ask_user` 调用可以直接复用；但本实现不加载 pi 的 TUI 扩展，
+UI 由 mod 的 `choose` 面板提供。旧名 `ui_ask_user` 继续接受。
+
+请求（`tool_call.payload.args`）：
+
+```jsonc
+{
+  "questions": [
+    {
+      "question": "今晚想吃什么？",
+      "context": "玩家在游戏里问晚饭",             // 可选，UI 暂不展示
+      "options": [
+        { "title": "火锅" },
+        { "title": "烧烤", "description": "可选说明" }
+      ],
+      "allowFreeform": true,                    // 可选，默认 true
+      "allowMultiple": false                    // 可选，默认 false；多选时选项前显示复选框
+    },
+    { "question": "几点吃？", "options": [{ "title": "六点" }, { "title": "七点" }] }
+  ]
+}
+```
+
+- `questions` 1–8 个；每题 `options` 0–4 个，选项可以是字符串或 `{title, description?}`（兼容 `label/text/value/name/option` 别名）。
+- 也支持单题写法：顶层 `question` + `options` + `allowMultiple` / `allowFreeform`。
+- 每个问题都会在 `choose/question/num` 显示 `当前 / 总数`；`返回` 回到上一题并恢复已填答案。
+- `allowFreeform` 为 true（默认）时，最后固定有一个输入项；为 false 时不显示输入项。
+- `allowMultiple` 为 true 时，每个选项数字前显示复选框，可同时选多个；自定义输入也算一个答案。
+- 多个问题时，非最后一题的提交按钮显示「下一个」，最后一题显示「提交」。
+- 玩家点 `跳过`（或按 Esc）跳过当前题；最后一题跳过后返回已答/跳过的结果。
+- 玩家关闭聊天窗时 mod 以 `cancelled` 结束；此时 sidecar 不再等待。
+- 同一连接同一时刻只允许一个 pending ask；重复调用返回 `busy`。
+
+结果（`tool_result.payload.data`）：
+
+```jsonc
+{
+  "answers": [
+    { "index": 0, "question": "今晚想吃什么？", "answer": "火锅", "optionIndex": 0,
+      "answers": ["火锅"], "optionIndexes": [0], "custom": false, "skipped": false },
+    { "index": 1, "question": "几点吃？", "answer": null, "optionIndex": -1,
+      "answers": [], "optionIndexes": [], "custom": false, "skipped": true }
+  ]
+}
+```
+
+- `answer` 是选项文字或玩家输入的自定义文本（多选时用「、」连接）；`skipped=true` 时 `answer=null`、`optionIndex=-1`。
+- `answers` / `optionIndexes` 是完整答案列表；多选时按选项顺序，自定义项下标为 -1。
+- `optionIndex >= 0` 表示普通选项；`custom=true` 表示答案里包含自定义输入。
+- `timeoutMs` 对 `ask_user` 放宽到 **600000ms**（玩家阅读/输入时间）；其它工具仍然
+  最多 30000ms。mod 与 sidecar 都必须按工具名做这个特判。
+- 失败码：`invalid_args`、`busy`、`cancelled`、`tool_unavailable`、`not_in_game`。
+
+sidecar 侧把上述结果转成可读文本交给模型，例如：
+
+```
+玩家已回答：
+1. 今晚想吃什么？ → 火锅
+2. 几点吃？ → （跳过）
+```
+
+### B.1.5 写工具（M4，`game.write.v1`）
+
+| 工具 | risk | 参数 | 说明 |
+| --- | --- | --- | --- |
+| `game_focus_camera` | 1 | `target`（行星/星系/建筑 id） | 移动视角；确认后执行 |
+| `game_place_marker` | 1 | `planetId?`, `latitude`, `longitude`, `altitude?`, `text`, `icon?` | 新建标记；确认后执行 |
+| `game_open_panel` | 1 | `panel`（inventory/tech/starmap/marker/mecha/replicator/statistics/blueprint） | 打开面板；确认后执行 |
+| `game_set_research` | 2 | `techId`（id 或名称） | 切换研究目标；确认后执行 |
+| `game_undo_last_write` | 0 | 无 | 撤销最近一次写操作；没有可撤销项时返回错误 |
+
+- 写工具只在 mod 声明 `game.write.v1` 时注册。
+- risk 1/2 的工具都会先走 A.12；拒绝确认时 mod 不执行、无任何副作用。
+- 每次写操作只保留一层撤销；换档/断线清空撤销栈。
+- `game_undo_last_write` 本身不再弹确认，但只撤销 mod 记录的一步。
+
 ### B.2 `tool_call`（sidecar → mod）
 
 ```jsonc
@@ -799,7 +1097,10 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
     "args": { "planetId": 3 },
     "risk": 0,
     "timeoutMs": 8000,
-    "internal": false
+    "internal": false,
+    // 写操作（risk>0）才出现：
+    "confirmToken": "64-hex…",
+    "confirmArgsHash": "sha256…"
   }
 }
 ```
@@ -807,8 +1108,9 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 - `callId` 由 sidecar 生成，单连接内唯一；mod 必须在 `tool_result.replyTo` 原样回传。
 - `internal` 可选，缺省 `false`。为 `true` 时表示 sidecar 内部调用（M3 知识库导出）：
   mod 应正常执行并回 `tool_result`，但**不要**显示工具卡、不要改状态栏。
-- `timeoutMs` 由 sidecar 钳制在 500–30000ms；超时后 sidecar 不再接受该 `callId` 的结果。
+- `timeoutMs` 由 sidecar 钳制在 500–30000ms；`ask_user` 例外，上限 600000ms。超时后 sidecar 不再接受该 `callId` 的结果。
 - M2 的 `risk` 恒为 0；写工具（M4）才使用 1/2。
+- `confirmToken` / `confirmArgsHash` 只有写操作才出现；mod 必须校验 token 未过期、未使用，且 callId/tool/argsHash 与确认时一致。
 - 同一连接同一时刻最多一个 `game.*` 调用（sidecar 串行化）。
 
 ### B.3 `tool_result`（mod → sidecar）

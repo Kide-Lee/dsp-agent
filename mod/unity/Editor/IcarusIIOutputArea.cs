@@ -402,10 +402,10 @@ namespace IcarusII.EditorTools
 
             var time = Node("time", footer);
             var timeLe = time.gameObject.AddComponent<LayoutElement>();
-            timeLe.preferredWidth = 30f;
+            timeLe.preferredWidth = 45f;
             timeLe.minHeight = 18f;
             timeLe.preferredHeight = 18f;
-            var timeText = AddMessageLabel(time, "08:42", FooterTimeColor);
+            var timeText = AddMessageLabel(time, "08:42:00", FooterTimeColor);
             timeText.fontSize = 12;
             timeText.alignment = TextAnchor.MiddleLeft;
             timeText.supportRichText = false;

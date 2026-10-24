@@ -6,8 +6,8 @@
  * 方便离线测试；文件读写与内存会话重建在 Agent 里。
  *
  * 会话是树（`id` / `parentId`），但本项目实际只产生线性会话。
- * 删除后把保留条目按原顺序重新串成一条链；一旦遇到压缩/分支条目就拒绝，
- * 避免把上下文树改坏。
+ * 删除后把保留条目按原顺序重新串成一条链；一旦遇到压缩/分支/上下文编辑条目
+ * 就拒绝，避免把上下文树改坏。要撤销压缩请用 `removeCompactionFromEntries()`。
  */
 
 export interface DeleteTurnOutcome {
@@ -54,7 +54,9 @@ function timestampOf(entry: Entry): number {
 
 function isUnsupported(entry: Entry): boolean {
   const type = entry['type'];
-  return type === 'compaction' || type === 'branch_summary';
+  // pi 1.4 新增 context_edit：它用 targetId 指向一条旧消息，只改模型上下文。
+  // 删除回合会让 targetId 悬空，所以和压缩/分支摘要一样拒绝，避免把会话树改坏。
+  return type === 'compaction' || type === 'branch_summary' || type === 'context_edit';
 }
 
 /**
@@ -137,6 +139,90 @@ export function removeTurnFromEntries(
   }
 
   return { outcome: { ok: true, removed }, entries: [header, ...kept] };
+}
+
+export interface UndoCompactionOutcome {
+  ok: boolean;
+  removed: number;
+  compactionId?: string;
+  error?: string;
+}
+
+/**
+ * 撤销最近一次（或指定的）上下文压缩：删掉 compaction entry，把它唯一的子条目
+ * 接回 compaction 的 parent。旧消息重新成为模型可见上下文。
+ *
+ * 只允许撤销**最后一次**压缩（LIFO）：更早的压缩已经被后续压缩覆盖，
+ * 单独删掉会破坏摘要链。多子节点（分支会话）拒绝改写。
+ */
+export function removeCompactionFromEntries(
+  entries: readonly unknown[],
+  compactionId?: string,
+): { outcome: UndoCompactionOutcome; entries?: unknown[] } {
+  if (entries.length === 0) {
+    return { outcome: { ok: false, removed: 0, error: 'not_found' } };
+  }
+  const header = entries[0];
+  if (!isRecord(header) || header['type'] !== 'session') {
+    return { outcome: { ok: false, removed: 0, error: 'unsupported_session' } };
+  }
+
+  const body: Entry[] = [];
+  for (const raw of entries.slice(1)) {
+    if (!isRecord(raw)) {
+      return { outcome: { ok: false, removed: 0, error: 'unsupported_session' } };
+    }
+    body.push(raw);
+  }
+
+  let latest = -1;
+  for (let i = 0; i < body.length; i += 1) {
+    if (body[i]?.['type'] === 'compaction') latest = i;
+  }
+  if (latest < 0) return { outcome: { ok: false, removed: 0, error: 'not_found' } };
+
+  const target = body[latest] as Entry;
+  const targetId = target['id'];
+  if (typeof targetId !== 'string' || targetId.length === 0) {
+    return { outcome: { ok: false, removed: 0, error: 'unsupported_session' } };
+  }
+  if (compactionId && compactionId !== targetId) {
+    const requested = body.findIndex(
+      (entry) => entry['type'] === 'compaction' && entry['id'] === compactionId,
+    );
+    // 指定的不是最近一次压缩：不允许跳过后续压缩单独撤销。
+    return {
+      outcome: {
+        ok: false,
+        removed: 0,
+        compactionId: targetId,
+        error: requested < 0 ? 'not_found' : 'not_latest',
+      },
+    };
+  }
+
+  const children: Entry[] = [];
+  for (const entry of body) {
+    if (entry['parentId'] === targetId) children.push(entry);
+  }
+  if (children.length > 1) {
+    return { outcome: { ok: false, removed: 0, compactionId: targetId, error: 'unsupported_session' } };
+  }
+  if (latest < body.length - 1 && children.length === 0) {
+    // 压缩后面还有条目，但链已经断了：不猜测，直接拒绝。
+    return { outcome: { ok: false, removed: 0, compactionId: targetId, error: 'unsupported_session' } };
+  }
+
+  const parentId = target['parentId'];
+  for (const child of children) {
+    child['parentId'] = typeof parentId === 'string' || parentId === null ? parentId : null;
+  }
+
+  const next = body.filter((_, index) => index !== latest);
+  return {
+    outcome: { ok: true, removed: 1, compactionId: targetId },
+    entries: [header, ...next],
+  };
 }
 
 /** 把 JSONL 文本拆成条目；坏行直接判为不支持，绝不猜测。 */

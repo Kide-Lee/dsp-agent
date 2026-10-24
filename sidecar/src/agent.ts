@@ -34,8 +34,10 @@ import type {
   ExtensionFactory,
   ModelRuntime,
   ResourceLoader,
+  ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import type { Api, Model } from '@earendil-works/pi-ai';
+import { Value } from 'typebox/value';
 import {
   defaultModelInput,
   type ConfigStore,
@@ -43,7 +45,14 @@ import {
   providerDisplayName,
   redactSecrets,
 } from './config.js';
-import { ICARUS_II_PERSONA_NAME, ICARUS_II_SYSTEM_PROMPT } from './persona.js';
+import {
+  ICARUS_II_PERSONA_NAME,
+  ICARUS_II_RICH_TEXT_PROMPT,
+  ICARUS_II_SYSTEM_PROMPT,
+} from './persona.js';
+
+/** mod 在 hello.capabilities 里声明：输出支持 Markdown + 小型 HTML 子集。 */
+const CAPABILITY_RICH_TEXT_V2 = 'ui.richtext.v2';
 import { errorFields, type Logger, type LogFields, log as rootLog } from './log.js';
 import {
   canonicalBaseForChat,
@@ -66,13 +75,22 @@ import type {
   BlueprintTiers,
   StatusState,
   StreamChannel,
+  ToolCatalogEntry,
+  ToolDebugResultPayload,
   ToolResultPayload,
 } from './protocol.js';
 import type { GameToolHost } from './tools/host.js';
 import { createKbTools } from './kb/tools.js';
-import type { BlueprintCardPayload, ToolActivityPayload } from './protocol.js';
-import { parseSessionLines, removeTurnFromEntries, serializeSessionEntries } from './history.js';
+import type { BlueprintCardPayload, ContextCompactedPayload, ToolActivityPayload } from './protocol.js';
+import {
+  parseSessionLines,
+  removeCompactionFromEntries,
+  removeTurnFromEntries,
+  serializeSessionEntries,
+} from './history.js';
 import { createScriptTool } from './tools/script.js';
+import { CAPABILITY_UI_ASK, createAskTool } from './tools/ask.js';
+import { isDebugToolAllowed } from './tools/debug.js';
 import { createWikiTools } from './wiki/tools.js';
 import { WikiClient } from './wiki/client.js';
 import { AliasResolver } from './wiki/aliases.js';
@@ -80,7 +98,9 @@ import { createBlueprintTools } from './blueprint/tools.js';
 import { BlueprintWorkspace } from './blueprint/workspace.js';
 import {
   attachBlueprintCards,
+  blueprintCardFileExists,
   compactBlueprintCard,
+  dropDeletedBlueprintCards,
   extractBlueprintCard,
   type BlueprintCardRecord,
 } from './blueprint/card.js';
@@ -129,13 +149,30 @@ export interface AgentEmitter {
   toolActivity?(payload: ToolActivityPayload): void;
   /** 蓝图卡片；协议附录 A.9。由 agent 在本轮收尾时统一发出。 */
   blueprintCard?(payload: BlueprintCardPayload): void;
+  /** 上下文压缩完成；协议附录 A.11。只给 UI，不进入模型上下文。 */
+  compacted?(payload: ContextCompactedPayload): void;
 }
 
 export interface AgentRunner {
   /** 对外报告的 agent 身份（`ready.payload.agent`）。 */
   readonly info: AgentInfo;
   /** 处理一次 prompt；同一 runner 上的调用由上层串行化。 */
-  run(text: string, promptId: string | null, emit: AgentEmitter): Promise<void>;
+  run(
+    text: string,
+    promptId: string | null,
+    emit: AgentEmitter,
+    requiredTool?: string | null,
+  ): Promise<void>;
+  /**
+   * 本次连接实际可用的工具目录（M4l，供 ready.payload.toolCatalog / 聊天窗工具列表）。
+   * 老实现可以不提供。
+   */
+  toolCatalog?(capabilities: readonly string[]): ToolCatalogEntry[];
+  /**
+   * M4m：调试直调。不创建/使用 pi 会话，不调用 LLM；只执行一个只读工具。
+   * 老实现可以不提供。
+   */
+  debugTool?(name: string, args: JsonObject, emit: AgentEmitter): Promise<ToolDebugResultPayload>;
   /** `config.set` 落地后调用：让下一次 run 使用新配置。 */
   onConfigChanged(): void;
   /** 握手完成后同步 mod 能力；能力变化时 agent 应重建会话。 */
@@ -158,6 +195,20 @@ export interface AgentRunner {
     text: string,
     timestamp?: number,
   ): Promise<{ ok: boolean; removed: number; error?: string }>;
+  /**
+   * 撤销最近一次上下文压缩（附录 A.11）：删掉 compaction entry，旧消息重新进入
+   * 模型上下文；下一次提问如果仍超预算，可能立刻再次压缩。
+   */
+  undoCompaction?(
+    saveKey: string | null,
+    compactionId?: string,
+  ): Promise<{
+    ok: boolean;
+    removed: number;
+    compactionId?: string;
+    error?: string;
+    mayRecompact?: boolean;
+  }>;
   /** 回存一轮回答完成时的游戏时间（附录 A.10）；写盘失败不影响回答。 */
   recordReplyTime?(saveKey: string | null, prompt: string, reply: string, gameTime: string): void;
   /**
@@ -208,7 +259,8 @@ function contentText(content: unknown): string {
  *   一次提问里会有多个 assistant 步骤（思考+工具、再思考+工具…，最后一段带正文），
  *   中间那些没有正文的步骤先攒着，等最终回答落地时按发生顺序一起挂上去；
  * - 工具结果按 toolCallId 回填到对应的 `steps[]`；没有结果的（回答被中断）不填 ok；
- * - 压缩/分支摘要照旧不回放。
+ * - `compaction` 投影成一条 `kind:"compaction"` 的 assistant 记录（摘要只给 UI）；
+ * - 分支摘要仍不回放。
  *
  * 数据全部来自会话记录，不再额外落盘；旧会话（没有工具记录字段）也能读。
  */
@@ -226,7 +278,11 @@ export function extractHistoryMessages(
     if (!raw || typeof raw !== 'object') continue;
     const entry = raw as {
       type?: unknown;
+      id?: unknown;
       timestamp?: unknown;
+      summary?: unknown;
+      tokensBefore?: unknown;
+      estimatedTokensAfter?: unknown;
       message?: {
         role?: unknown;
         content?: unknown;
@@ -235,6 +291,29 @@ export function extractHistoryMessages(
         isError?: unknown;
       };
     };
+
+    if (entry.type === 'compaction') {
+      const summary = typeof entry.summary === 'string' ? entry.summary.trim() : '';
+      if (summary) {
+        const compaction: HistoryMessage = {
+          role: 'assistant',
+          kind: 'compaction',
+          text: clipHistoryText(summary, maxText),
+          ...timestampOf(entry),
+        };
+        if (typeof entry.id === 'string' && entry.id) compaction.compactionId = entry.id;
+        if (typeof entry.tokensBefore === 'number') compaction.tokensBefore = entry.tokensBefore;
+        if (typeof entry.estimatedTokensAfter === 'number') {
+          compaction.estimatedTokensAfter = entry.estimatedTokensAfter;
+        }
+        out.push(compaction);
+      }
+      // 压缩边界之前的中间步骤不属于下一条回答。
+      pending = [];
+      toolSteps.clear();
+      continue;
+    }
+
     if (entry.type !== 'message' || !entry.message) continue;
     const message = entry.message;
     const role = message.role;
@@ -415,7 +494,12 @@ export class EchoAgent implements AgentRunner {
     };
   }
 
-  async run(text: string, promptId: string | null, emit: AgentEmitter): Promise<void> {
+  async run(
+    text: string,
+    promptId: string | null,
+    emit: AgentEmitter,
+    _requiredTool?: string | null,
+  ): Promise<void> {
     if (!emit.isActive()) return;
 
     const full = `echo: ${text}`;
@@ -477,6 +561,18 @@ interface RunState {
    * 因此先入队，等 final message（或失败 error）之后再 flush。
    */
   cards: BlueprintCardPayload[];
+
+  /**
+   * M4l：玩家用 /<工具名> 指定本轮必须调用的工具。
+   * 未指定为 null；指定时 before_agent_start 会把要求写进本轮 system prompt。
+   */
+  requiredTool: string | null;
+  /** 本轮是否已经看到 requiredTool 的 tool_call；看到后不再追加要求。 */
+  requiredToolSatisfied: boolean;
+  /** 已尝试的轮数（首次 + 一次纠正）；用于防止无限重试。 */
+  requiredToolAttempts: number;
+  /** 进入强制模式前的 active tools；满足要求后恢复，避免影响后续工具调用。 */
+  savedTools: string[] | null;
 }
 
 /**
@@ -592,6 +688,58 @@ function assistantText(message: { content?: unknown }): string {
   return parts.join('');
 }
 
+// ---------------------------------------------------------------- 强制工具（M4l）
+
+/**
+ * 从用户原文里解析开头的 `/<工具名>`。
+ *
+ * 只在名字确实在当前工具集里时返回——否则 `/foo` 应当按普通文本发送，
+ * 不能因为拼错一个工具就把整条消息判成“工具不存在”。
+ * 显式 `requiredTool` 优先；这个函数只用于兼容老 mod / 直接发 prompt 的测试。
+ */
+export function extractSlashTool(text: string, available: ReadonlySet<string>): string | null {
+  const match = /^\s*\/([A-Za-z0-9_-]+)(?=\s|$)/.exec(text ?? '');
+  if (!match) return null;
+  const name = match[1] ?? '';
+  return available.has(name) ? name : null;
+}
+
+/** 本轮强制工具的 system prompt 片段。 */
+export function forcedToolInstruction(tool: string): string {
+  return `【本轮强制工具】玩家在输入里用 /${tool} 明确要求必须调用工具 ${tool}。
+- 这是硬性要求：本轮至少调用一次 ${tool}，不要跳过它直接回答。
+- 如果 ${tool} 返回错误，如实说明错误，不要编造结果。
+- 调用 ${tool} 之后，可以继续调用其他工具或直接回答。`;
+}
+
+interface AgentMessageLike {
+  role?: unknown;
+  content?: unknown;
+}
+
+/** 从 `startIndex` 之后的消息里找一次指定工具的 toolCall。 */
+export function hasToolCallSince(
+  messages: readonly AgentMessageLike[],
+  startIndex: number,
+  toolName: string,
+): boolean {
+  for (let i = Math.max(0, startIndex); i < messages.length; i += 1) {
+    const message = messages[i];
+    if (!message || message.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (
+        block !== null &&
+        typeof block === 'object' &&
+        (block as { type?: unknown }).type === 'toolCall' &&
+        (block as { name?: unknown }).name === toolName
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------- 人格注入
 
 /** `DefaultResourceLoader.extendResources` 的入参类型（pi 根导出没带出来）。 */
@@ -610,10 +758,24 @@ type LoaderReloadOptions = Parameters<ResourceLoader['reload']>[0];
  * 于是 cwd 尾巴也不会进入请求体。
  *
  * 它是内联函数（`extensionFactories`），不落任何外部文件。
+ *
+ * M4l：`getExtraPrompt` 在强制工具回合返回额外要求，拼在人格后面；
+ * 它按**当前 run** 实时读取，因此一次会话里有的回合强制、有的回合不强制。
  */
-const registerPersonaSystemPrompt: ExtensionFactory = (api) => {
-  api.on('before_agent_start', () => ({ systemPrompt: ICARUS_II_SYSTEM_PROMPT }));
-};
+function createPersonaSystemPromptExtension(
+  getExtraPrompt: () => string | null,
+  getUseRichText: () => boolean,
+): ExtensionFactory {
+  return (api) => {
+    api.on('before_agent_start', () => {
+      const extra = getExtraPrompt();
+      const persona = getUseRichText() ? ICARUS_II_RICH_TEXT_PROMPT : ICARUS_II_SYSTEM_PROMPT;
+      return {
+        systemPrompt: extra ? `${persona}\n\n${extra}` : persona,
+      };
+    });
+  };
+}
 
 /**
  * 自定义 ResourceLoader：**装饰** `DefaultResourceLoader`，把「系统提示」与
@@ -633,9 +795,11 @@ const registerPersonaSystemPrompt: ExtensionFactory = (api) => {
  */
 class PersonaResourceLoader implements ResourceLoader {
   private readonly base: ResourceLoader;
+  private readonly systemPrompt: string;
 
-  constructor(base: ResourceLoader) {
+  constructor(base: ResourceLoader, systemPrompt: string) {
     this.base = base;
+    this.systemPrompt = systemPrompt;
   }
 
   getExtensions(): ReturnType<ResourceLoader['getExtensions']> {
@@ -661,10 +825,22 @@ class PersonaResourceLoader implements ResourceLoader {
 
   /** pi 的 coding prompt 永不出现：恒返回游戏内助手人格。 */
   getSystemPrompt(): string {
-    return ICARUS_II_SYSTEM_PROMPT;
+    return this.systemPrompt;
   }
 
   getAppendSystemPrompt(): string[] {
+    return [];
+  }
+
+  /**
+   * pi 1.4 的 ResourceLoader 新增来源查询；我们的系统提示全部来自内联人格，
+   * 没有文件来源，返回空即可（返回假路径会让导出/诊断误导）。
+   */
+  getSystemPromptSource(): { path: string } | undefined {
+    return undefined;
+  }
+
+  getAppendSystemPromptSources(): Array<{ path: string }> {
     return [];
   }
 
@@ -686,7 +862,11 @@ class PersonaResourceLoader implements ResourceLoader {
 function createPersonaResourceLoader(
   pi: PiSdk,
   options: { cwd: string; agentDir: string },
+  getExtraPrompt: () => string | null,
+  getUseRichText: () => boolean,
 ): ResourceLoader {
+  const getPrompt = () =>
+    getUseRichText() ? ICARUS_II_RICH_TEXT_PROMPT : ICARUS_II_SYSTEM_PROMPT;
   const base = new pi.DefaultResourceLoader({
     cwd: options.cwd,
     agentDir: options.agentDir,
@@ -696,13 +876,13 @@ function createPersonaResourceLoader(
     noThemes: true,
     noContextFiles: true,
     // 替换（不是追加）pi 的 system prompt；override 是双保险。
-    systemPrompt: ICARUS_II_SYSTEM_PROMPT,
-    systemPromptOverride: () => ICARUS_II_SYSTEM_PROMPT,
+    systemPrompt: getPrompt(),
+    systemPromptOverride: getPrompt,
     appendSystemPromptOverride: () => [],
     agentsFilesOverride: () => ({ agentsFiles: [] }),
-    extensionFactories: [registerPersonaSystemPrompt],
+    extensionFactories: [createPersonaSystemPromptExtension(getExtraPrompt, getUseRichText)],
   });
-  return new PersonaResourceLoader(base);
+  return new PersonaResourceLoader(base, getPrompt());
 }
 
 /**
@@ -790,6 +970,34 @@ async function fetchEndpointModels(
  *   - system prompt 被**整个替换**成游戏内助手人格（见 persona.ts），
  *     pi 的 coding agent 身份不会出现在上游请求里
  */
+// ---------------------------------------------------------------- 调试直调
+
+const DEBUG_TIMEOUT_MS = 30_000;
+const DEBUG_CONTENT_MAX = 64 * 1024;
+const DEBUG_DETAILS_MAX = 256 * 1024;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function debugJson(value: unknown): string {
+  try {
+    const text = JSON.stringify(value);
+    return text === undefined ? 'null' : text;
+  } catch {
+    return JSON.stringify(String(value));
+  }
+}
+
+/** base64 解码后的大致字节数；只用于 debug UI 显示，不参与校验。 */
+function base64Bytes(data: string): number {
+  if (!data) return 0;
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
+}
+
 export class PiAgent implements AgentRunner {
   private readonly dataDir: string;
   private readonly agentDir: string;
@@ -896,7 +1104,10 @@ export class PiAgent implements AgentRunner {
 
     const pi = await this.loadSdk();
     const manager = pi.SessionManager.continueRecent(this.dataDir, sessionDir);
-    const messages = extractHistoryMessages(manager.buildContextEntries());
+    // 聊天记录回放必须用全量 branch：buildContextEntries() 会按 compaction 丢掉
+    // 被摘要的旧消息，导致压缩后重进存档旧对话凭空消失。模型上下文由 pi 自己管，
+    // 这里只负责 UI 回放。
+    const messages = extractHistoryMessages(manager.getBranch());
     const records = this.readBlueprintCards(saveKey);
     const withCards = attachBlueprintCards(messages, records);
     const timeRecords = this.readReplyTimes(saveKey);
@@ -1163,6 +1374,83 @@ export class PiAgent implements AgentRunner {
     return outcome;
   }
 
+  /**
+   * 撤销最近一次上下文压缩（附录 A.11）。
+   *
+   * 从会话文件里删掉 compaction entry，并把它的子条目接回原 parent；旧消息重新
+   * 成为模型上下文。只允许撤销最后一次压缩（LIFO）。成功后下一次 prompt 会按
+   * 原始历史重建会话；如果仍超预算，pi 可能立刻再次压缩。
+   */
+  async undoCompaction(
+    saveKey: string | null,
+    compactionId?: string,
+  ): Promise<{
+    ok: boolean;
+    removed: number;
+    compactionId?: string;
+    error?: string;
+    mayRecompact?: boolean;
+  }> {
+    if (!saveKey) return { ok: false, removed: 0, error: 'no_save' };
+    if (this.active) return { ok: false, removed: 0, error: 'busy' };
+
+    const dir = join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey));
+    if (!existsSync(dir)) return { ok: false, removed: 0, error: 'not_found' };
+
+    const files = readdirSync(dir).filter((name) => isSessionFile(name));
+    if (files.length === 0) return { ok: false, removed: 0, error: 'not_found' };
+
+    let newest = files[0] as string;
+    let newestMs = -1;
+    for (const name of files) {
+      try {
+        const ms = statSync(join(dir, name)).mtimeMs;
+        if (ms > newestMs) {
+          newestMs = ms;
+          newest = name;
+        }
+      } catch {
+        // 单个文件读不到就跳过。
+      }
+    }
+
+    const file = join(dir, newest);
+    let raw: string;
+    try {
+      raw = readFileSync(file, 'utf8');
+    } catch {
+      return { ok: false, removed: 0, error: 'io_error' };
+    }
+
+    const entries = parseSessionLines(raw);
+    if (!entries) return { ok: false, removed: 0, error: 'unsupported_session' };
+
+    const { outcome, entries: next } = removeCompactionFromEntries(entries, compactionId);
+    if (!outcome.ok || !next) return outcome;
+
+    const tmp = `${file}.tmp-${process.pid}`;
+    try {
+      writeFileSync(tmp, serializeSessionEntries(next), { encoding: 'utf8', mode: 0o600 });
+      renameSync(tmp, file);
+    } catch (err) {
+      try {
+        rmSync(tmp, { force: true });
+      } catch {
+        // ignore
+      }
+      this.logger.warn('撤销压缩并写会话文件失败', errorFields(err));
+      return { ok: false, removed: 0, error: 'io_error' };
+    }
+
+    if (this.saveKey === saveKey) this.teardown();
+    this.logger.info('已撤销上下文压缩', {
+      saveKey,
+      compactionId: outcome.compactionId ?? null,
+      file: newest,
+    });
+    return { ...outcome, mayRecompact: true };
+  }
+
   dispose(): void {
     this.teardown();
   }
@@ -1190,10 +1478,15 @@ export class PiAgent implements AgentRunner {
     this.active = null;
   }
 
-  run(text: string, promptId: string | null, emit: AgentEmitter): Promise<void> {
+  run(
+    text: string,
+    promptId: string | null,
+    emit: AgentEmitter,
+    requiredTool: string | null = null,
+  ): Promise<void> {
     const task = async (): Promise<void> => {
       try {
-        await this.runOnce(text, promptId, emit);
+        await this.runOnce(text, promptId, emit, requiredTool);
       } finally {
         this.active = null;
         this.applyPendingTeardown();
@@ -1205,7 +1498,12 @@ export class PiAgent implements AgentRunner {
     return next;
   }
 
-  private async runOnce(text: string, promptId: string | null, emit: AgentEmitter): Promise<void> {
+  private async runOnce(
+    text: string,
+    promptId: string | null,
+    emit: AgentEmitter,
+    requiredTool: string | null,
+  ): Promise<void> {
     const data = this.store.get();
 
     if (!data.apiKey) {
@@ -1226,6 +1524,10 @@ export class PiAgent implements AgentRunner {
       error: null,
       stopReason: null,
       cards: [],
+      requiredTool,
+      requiredToolSatisfied: false,
+      requiredToolAttempts: 0,
+      savedTools: null,
     };
     this.active = run;
 
@@ -1257,12 +1559,96 @@ export class PiAgent implements AgentRunner {
       return;
     }
 
+    // 强制工具（M4l）：显式 requiredTool 优先；老 mod 只传 /<工具名> 时从原文兜底解析。
+    const activeNames = session.getActiveToolNames();
+    const available = new Set(activeNames);
+    let forced = run.requiredTool;
+    if (forced && !available.has(forced)) {
+      const message = `工具 ${forced} 当前不可用`;
+      this.logger.warn('requiredTool 不在当前工具集', { promptId, tool: forced });
+      if (emit.isActive()) {
+        emit.error('tool_unavailable', message, promptId);
+        emit.status('idle');
+      }
+      this.active = null;
+      return;
+    }
+    if (!forced) forced = extractSlashTool(text, available);
+    run.requiredTool = forced;
+
+    // 只把强制工具暴露给模型：这样它不可能“先调用别的工具再绕过要求”。
+    // 工具一被调用就在 handleEvent 里恢复完整工具集，后续轮次不受影响。
+    if (forced) {
+      run.savedTools = activeNames;
+      try {
+        session.setActiveToolsByName([forced]);
+      } catch (err) {
+        this.logger.warn('限制强制工具集失败，退回普通模式', {
+          promptId,
+          tool: forced,
+          ...errorFields(err),
+        });
+        run.requiredTool = null;
+        run.savedTools = null;
+      }
+    }
+
     // 工具只发往发起本轮 prompt 的连接；prompt 结束立即解绑。
     this.host.bind(emit);
     try {
       if (!emit.isActive()) return;
+      const start = session.messages.length;
       // 不解析斜杠命令/模板。
       await session.prompt(text, { expandPromptTemplates: false });
+
+      if (
+        run.requiredTool &&
+        !run.requiredToolSatisfied &&
+        hasToolCallSince(
+          session.messages as readonly AgentMessageLike[],
+          start,
+          run.requiredTool,
+        )
+      ) {
+        run.requiredToolSatisfied = true;
+      }
+
+      // 模型没按要求调用：明确纠正一次。第一次的文本没有流给 UI（见 handleEvent），
+      // 因此这里重置累积文本不会留下半截回答。
+      if (
+        run.requiredTool &&
+        !run.requiredToolSatisfied &&
+        run.requiredToolAttempts < 1 &&
+        run.stopReason !== 'error' &&
+        run.stopReason !== 'aborted' &&
+        emit.isActive()
+      ) {
+        run.requiredToolAttempts += 1;
+        run.text = '';
+        run.thinking = '';
+        run.error = null;
+        run.stopReason = null;
+        emit.status('thinking', `必须调用 ${run.requiredTool}`);
+        const retryStart = session.messages.length;
+        await session.prompt(
+          `请现在调用工具 ${run.requiredTool}，然后再回答。`,
+          { expandPromptTemplates: false },
+        );
+        if (
+          hasToolCallSince(
+            session.messages as readonly AgentMessageLike[],
+            retryStart,
+            run.requiredTool,
+          )
+        ) {
+          run.requiredToolSatisfied = true;
+        }
+      }
+
+      if (run.requiredTool && !run.requiredToolSatisfied) {
+        run.stopReason = 'error';
+        run.error = `本轮要求调用工具 ${run.requiredTool}，但模型没有调用。`;
+      }
     } catch (err) {
       run.error = run.error ?? describeError(err);
       run.stopReason = 'error';
@@ -1272,6 +1658,14 @@ export class PiAgent implements AgentRunner {
         apiKey: this.store.maskedApiKey,
       });
     } finally {
+      if (run.savedTools) {
+        try {
+          session.setActiveToolsByName(run.savedTools);
+        } catch (err) {
+          this.logger.debug('恢复工具集失败', errorFields(err));
+        }
+        run.savedTools = null;
+      }
       this.host.unbind(emit);
       this.active = null;
     }
@@ -1279,7 +1673,21 @@ export class PiAgent implements AgentRunner {
     if (!emit.isActive()) return;
 
     const failed = run.stopReason === 'error' || run.stopReason === 'aborted';
-    if (failed) {
+    // 强制工具没被调用是“本轮要求未被满足”，不是上游故障：不能把配置状态改成 unreachable。
+    const requiredMissing =
+      !!run.requiredTool &&
+      !run.requiredToolSatisfied &&
+      run.error?.startsWith('本轮要求调用工具') === true;
+
+    if (requiredMissing) {
+      const safe = redactSecrets(run.error ?? '强制工具未被调用', [data.apiKey]);
+      this.logger.warn('prompt 未满足 requiredTool', {
+        promptId,
+        tool: run.requiredTool,
+        message: safe,
+      });
+      emit.error('tool_required', safe, promptId);
+    } else if (failed) {
       const raw = run.error ?? '未知上游错误';
       const failure = classifyUpstreamError(raw);
       const safe = redactSecrets(raw, [data.apiKey]);
@@ -1303,6 +1711,8 @@ export class PiAgent implements AgentRunner {
     const uniqueCards: BlueprintCardPayload[] = [];
     const seenCards = new Set<string>();
     for (const card of run.cards) {
+      // 同一轮里生成后又被 blueprint_fs rm/rmdir 删掉的文件不再发卡。
+      if (!blueprintCardFileExists(card)) continue;
       if (seenCards.has(card.fileName)) continue;
       seenCards.add(card.fileName);
       uniqueCards.push(card);
@@ -1598,6 +2008,236 @@ export class PiAgent implements AgentRunner {
     });
   }
 
+  /**
+   * 当前回合的强制工具说明；pi 在每轮 `before_agent_start` 时调用。
+   * 工具一旦被调用就清空，避免后续模型轮次继续被要求“必须调用”。
+   */
+  private currentForcedToolPrompt(): string | null {
+    const run = this.active;
+    if (!run || !run.requiredTool || run.requiredToolSatisfied) return null;
+    return forcedToolInstruction(run.requiredTool);
+  }
+
+  /**
+   * 构造本次能力下实际注册的全部工具定义。
+   * ensureSession 与 ready.payload.toolCatalog 共用，避免两处工具集漂移。
+   */
+  private buildToolDefinitions(): ToolDefinition[] {
+    return [
+      ...this.host.tools(),
+      ...(this.host.has(CAPABILITY_UI_ASK) ? [createAskTool(this.host)] : []),
+      ...(this.kb ? createKbTools(this.kb) : []),
+      ...createWikiTools(this.wiki),
+      ...createBlueprintTools(
+        undefined,
+        this.kb ?? undefined,
+        this.aliases,
+        () => this.blueprintTiers,
+        this.blueprintWorkspace,
+      ),
+      createScriptTool(this.host),
+    ];
+  }
+
+  /** M4l：ready.payload.toolCatalog；只暴露显示需要的短字段。 */
+  toolCatalog(capabilities: readonly string[]): ToolCatalogEntry[] {
+    this.host.setCapabilities(capabilities);
+    return this.buildToolDefinitions().map((tool) => ({
+      name: tool.name,
+      label: tool.label || tool.name,
+      description: clipText(tool.description ?? '', 160),
+      debuggable: isDebugToolAllowed(tool.name),
+    }));
+  }
+
+  /**
+   * M4m：调试直调。完全绕开 pi 会话/LLM，只执行一个工具。
+   * 与 `run` 共用 `chain`，避免 `GameToolHost.bind` 和正在跑的回合抢 transport。
+   */
+  debugTool(
+    name: string,
+    args: JsonObject,
+    emit: AgentEmitter,
+  ): Promise<ToolDebugResultPayload> {
+    const task = async (): Promise<ToolDebugResultPayload> => this.debugToolOnce(name, args, emit);
+    const previous = this.chain;
+    const next = previous.then(task, task);
+    this.chain = next.catch(() => undefined);
+    return next;
+  }
+
+  private debugFailure(
+    name: string,
+    source: 'game' | 'local' | 'unknown',
+    startedAt: number,
+    code: string,
+    message: string,
+  ): ToolDebugResultPayload {
+    return {
+      ok: false,
+      tool: name,
+      source,
+      durationMs: Math.max(0, Date.now() - startedAt),
+      content: `[${code}] ${message}`,
+      details: { ok: false, error: { code, message } },
+      error: { code, message },
+      truncated: false,
+      image: null,
+    };
+  }
+
+  private async debugToolOnce(
+    name: string,
+    args: JsonObject,
+    emit: AgentEmitter,
+  ): Promise<ToolDebugResultPayload> {
+    const startedAt = Date.now();
+    const source: 'game' | 'local' | 'unknown' = this.host.tools().some((tool) => tool.name === name)
+      ? 'game'
+      : 'local';
+
+    if (!isDebugToolAllowed(name)) {
+      return this.debugFailure(
+        name,
+        source,
+        startedAt,
+        'debug_not_allowed',
+        `工具 ${name} 不在调试只读白名单里；写文件/改游戏状态的工具只能走正常 AI 路径`,
+      );
+    }
+
+    const definition = this.buildToolDefinitions().find((tool) => tool.name === name);
+    if (!definition) {
+      return this.debugFailure(name, source, startedAt, 'tool_not_found', `没有注册工具 ${name}`);
+    }
+
+    try {
+      if (!Value.Check(definition.parameters, args)) {
+        const errors = [...Value.Errors(definition.parameters, args)]
+          .slice(0, 4)
+          .map((error) => {
+            const item = error as { instancePath?: unknown; message?: unknown };
+            const path = typeof item.instancePath === 'string' ? item.instancePath : '/';
+            const message = typeof item.message === 'string' ? item.message : '参数不匹配';
+            return `${path} ${message}`;
+          });
+        return this.debugFailure(
+          name,
+          source,
+          startedAt,
+          'invalid_args',
+          errors.length > 0 ? errors.join('; ') : '参数不匹配工具的 schema',
+        );
+      }
+
+      // 与 prompt 相同：工具只发往当前 session 绑定的连接，结束后立即解绑。
+      // debugMode 让 host 调用标记 internal（mod 不显示普通工具卡，由 tool_debug_result 统一展示）。
+      this.host.bind(emit);
+      this.host.setDebugMode(true);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), DEBUG_TIMEOUT_MS);
+      timer.unref?.();
+      try {
+        const result = await definition.execute(
+          `debug_${startedAt}`,
+          args as never,
+          controller.signal,
+          undefined,
+          undefined as never,
+        );
+
+        let details: unknown = result.details;
+        let image: ToolDebugResultPayload['image'] = null;
+        const detailsObject = asRecord(details);
+        const rawImage = detailsObject ? asRecord(detailsObject['image']) : null;
+        if (rawImage && typeof rawImage['data'] === 'string') {
+          const mimeType = typeof rawImage['mimeType'] === 'string' ? rawImage['mimeType'] : 'image/jpeg';
+          const width = typeof rawImage['width'] === 'number' ? rawImage['width'] : 0;
+          const height = typeof rawImage['height'] === 'number' ? rawImage['height'] : 0;
+          image = { mimeType, width, height, bytes: base64Bytes(rawImage['data']) };
+          // 图片 base64 可能有 2MiB；调试结果只保留元数据，避免把 frame 撑爆。
+          details = {
+            ...detailsObject,
+            image: { mimeType, width, height, bytes: image.bytes },
+          };
+        }
+        if (!image && Array.isArray(result.content)) {
+          for (const block of result.content) {
+            const item = asRecord(block);
+            if (item && item['type'] === 'image' && typeof item['data'] === 'string') {
+              const mimeType = typeof item['mimeType'] === 'string' ? item['mimeType'] : 'image/jpeg';
+              image = { mimeType, width: 0, height: 0, bytes: base64Bytes(item['data']) };
+              break;
+            }
+          }
+        }
+
+        const detailsObject2 = asRecord(details);
+        const rawContent = contentText(result.content);
+        const errorPrefix = /^\[([a-z_]+)\]\s*/.exec(rawContent);
+        const explicitOk =
+          typeof detailsObject2?.['ok'] === 'boolean' ? detailsObject2['ok'] : null;
+        const hasErrorField = detailsObject2 != null && detailsObject2['error'] != null;
+        const ok = explicitOk ?? !(hasErrorField || !!errorPrefix);
+        let error: { code: string; message: string } | null = null;
+        if (!ok) {
+          const rawError = detailsObject2 ? detailsObject2['error'] : null;
+          const errorObject = asRecord(rawError);
+          const fallbackMessage = errorPrefix
+            ? (rawContent.slice(errorPrefix[0].length).split('\n')[0] ?? '')
+            : '工具返回失败';
+          error = {
+            code:
+              typeof errorObject?.['code'] === 'string'
+                ? errorObject['code']
+                : (errorPrefix?.[1] ?? 'tool_failed'),
+            message:
+              typeof errorObject?.['message'] === 'string'
+                ? errorObject['message']
+                : (typeof rawError === 'string' ? rawError : fallbackMessage),
+          };
+        }
+
+        let content = rawContent;
+        let truncated = false;
+        if (content.length > DEBUG_CONTENT_MAX) {
+          content = `${content.slice(0, DEBUG_CONTENT_MAX)}\n…（内容截断）`;
+          truncated = true;
+        }
+        const serialized = debugJson(details);
+        if (serialized.length > DEBUG_DETAILS_MAX) {
+          details = `${serialized.slice(0, DEBUG_DETAILS_MAX)}\n…（返回值截断）`;
+          truncated = true;
+        }
+
+        return {
+          ok,
+          tool: name,
+          source,
+          durationMs: Math.max(0, Date.now() - startedAt),
+          content,
+          details,
+          error,
+          truncated,
+          image,
+        };
+      } finally {
+        clearTimeout(timer);
+        this.host.setDebugMode(false);
+        this.host.unbind(emit);
+      }
+    } catch (err) {
+      const aborted = /abort/i.test(describeError(err));
+      return this.debugFailure(
+        name,
+        source,
+        startedAt,
+        aborted ? 'timeout' : 'tool_failed',
+        aborted ? `工具在 ${DEBUG_TIMEOUT_MS}ms 内没有完成` : describeError(err),
+      );
+    }
+  }
+
   private async ensureSession(
     provider: string,
     modelId: string,
@@ -1624,10 +2264,15 @@ export class PiAgent implements AgentRunner {
       );
     }
 
-    const resourceLoader = createPersonaResourceLoader(pi, {
-      cwd: this.dataDir,
-      agentDir: this.agentDir,
-    });
+    const resourceLoader = createPersonaResourceLoader(
+      pi,
+      {
+        cwd: this.dataDir,
+        agentDir: this.agentDir,
+      },
+      () => this.currentForcedToolPrompt(),
+      () => this.host.has(CAPABILITY_RICH_TEXT_V2),
+    );
     // pi 只有在「自己创建 loader」时才自动 reload；外部传入的 loader 必须我们自己 reload，
     // 否则 getExtensions() 还是空的（内联人格扩展就不会被注册）。
     await resourceLoader.reload();
@@ -1649,19 +2294,7 @@ export class PiAgent implements AgentRunner {
       thinkingLevel: thinkingLevel as NonNullable<CreateAgentSessionOptions['thinkingLevel']>,
       // 关闭全部内置工具，只注册按当前 mod 能力生成的游戏工具。
       noTools: 'builtin',
-      customTools: [
-        ...this.host.tools(),
-        ...(this.kb ? createKbTools(this.kb) : []),
-        ...createWikiTools(this.wiki),
-        ...createBlueprintTools(
-          undefined,
-          this.kb ?? undefined,
-          this.aliases,
-          () => this.blueprintTiers,
-          this.blueprintWorkspace,
-        ),
-        createScriptTool(this.host),
-      ],
+      customTools: this.buildToolDefinitions(),
       // 替换 pi 默认的 coding agent system prompt 为游戏内助手人格。
       resourceLoader,
     };
@@ -1673,7 +2306,10 @@ export class PiAgent implements AgentRunner {
 
     // 保险：确认 pi 真的用上了我们的人格（没生效就明确记一条 warn，别静默退化）。
     const effectivePrompt = created.session.systemPrompt ?? '';
-    if (!effectivePrompt.startsWith(ICARUS_II_SYSTEM_PROMPT)) {
+    if (
+      !effectivePrompt.startsWith(ICARUS_II_SYSTEM_PROMPT) &&
+      !effectivePrompt.startsWith(ICARUS_II_RICH_TEXT_PROMPT)
+    ) {
       this.logger.warn('pi 没有采用自定义 system prompt，助手人格可能未生效', {
         personaName: ICARUS_II_PERSONA_NAME,
         promptChars: effectivePrompt.length,
@@ -1688,7 +2324,7 @@ export class PiAgent implements AgentRunner {
       thinkingLevel: created.session.thinkingLevel,
       tools: created.session.getActiveToolNames(),
       persona: ICARUS_II_PERSONA_NAME,
-      systemPromptChars: ICARUS_II_SYSTEM_PROMPT.length,
+      systemPromptChars: effectivePrompt.length,
       extensions: created.extensionsResult.extensions.length,
       extensionErrors: created.extensionsResult.errors.length,
       apiKey: maskSecret(apiKey),
@@ -1729,13 +2365,19 @@ export class PiAgent implements AgentRunner {
           case 'text_delta':
             if (inner.delta.length > 0) {
               run.text += inner.delta;
-              run.emit.stream('text', inner.delta, run.promptId);
+              // 强制工具尚未调用时先不流给 UI：如果模型直接作答，这次输出会被丢弃重试，
+              // 提前显示会在界面上留下半截回答。
+              if (!run.requiredTool || run.requiredToolSatisfied) {
+                run.emit.stream('text', inner.delta, run.promptId);
+              }
             }
             return;
           case 'thinking_delta':
             if (inner.delta.length > 0) {
               run.thinking += inner.delta;
-              run.emit.stream('reasoning', inner.delta, run.promptId);
+              if (!run.requiredTool || run.requiredToolSatisfied) {
+                run.emit.stream('reasoning', inner.delta, run.promptId);
+              }
             }
             return;
           case 'error':
@@ -1774,6 +2416,18 @@ export class PiAgent implements AgentRunner {
       }
 
       case 'tool_execution_end': {
+        // 强制工具已被调用：恢复完整工具集，并允许后续文本正常流式输出。
+        if (run.requiredTool && event.toolName === run.requiredTool && !run.requiredToolSatisfied) {
+          run.requiredToolSatisfied = true;
+          if (run.savedTools && this.session) {
+            try {
+              this.session.setActiveToolsByName(run.savedTools);
+            } catch (err) {
+              this.logger.debug('恢复工具集失败', errorFields(err));
+            }
+            run.savedTools = null;
+          }
+        }
         // 工具结束后模型还要继续生成；回到 thinking，避免状态栏停在“工具”。
         run.emit.status('thinking');
         if (!this.isHostTool(event.toolName)) {
@@ -1787,9 +2441,62 @@ export class PiAgent implements AgentRunner {
             detail: clipText(text, 4000),
           });
         }
+        // 同一轮里 AI 用 blueprint_fs 删掉刚生成的蓝图时，先把待发卡片撤掉。
+        if (!event.isError && event.toolName === 'blueprint_fs') {
+          run.cards = dropDeletedBlueprintCards(run.cards, event.result);
+        }
         // 蓝图工具成功 ⇒ 记一张卡片，等 final message 后统一发，保证排在对话末尾。
         const card = extractBlueprintCard(event.toolName, event.result, event.isError);
         if (card) run.cards.push(card);
+        return;
+      }
+
+      case 'compaction_start': {
+        this.logger.info('开始整理上下文', { promptId: run.promptId, reason: event.reason });
+        run.emit.status('compacting', event.reason);
+        return;
+      }
+
+      case 'compaction_end': {
+        if (event.result && !event.aborted) {
+          // compaction entry 是刚追加的；取当前 branch 上最后一条，供 UI 撤销。
+          let compactionId: string | undefined;
+          try {
+            const branch = this.session?.sessionManager.getBranch() ?? [];
+            for (const entry of branch) {
+              const item = entry as { type?: unknown; id?: unknown };
+              if (item.type === 'compaction' && typeof item.id === 'string') compactionId = item.id;
+            }
+          } catch (err) {
+            this.logger.debug('读取 compaction entry id 失败', errorFields(err));
+          }
+          run.emit.compacted?.({
+            summary: clipHistoryText(event.result.summary, 4000),
+            ...(compactionId ? { compactionId } : {}),
+            timestamp: Date.now(),
+            tokensBefore: event.result.tokensBefore,
+            ...(typeof event.result.estimatedTokensAfter === 'number'
+              ? { estimatedTokensAfter: event.result.estimatedTokensAfter }
+              : {}),
+            reason: event.reason,
+          });
+          this.logger.info('上下文压缩完成', {
+            promptId: run.promptId,
+            reason: event.reason,
+            tokensBefore: event.result.tokensBefore,
+            estimatedTokensAfter: event.result.estimatedTokensAfter ?? null,
+            willRetry: event.willRetry,
+          });
+        } else if (event.errorMessage) {
+          this.logger.warn('上下文压缩失败', {
+            promptId: run.promptId,
+            reason: event.reason,
+            message: event.errorMessage,
+            aborted: event.aborted,
+          });
+        }
+        // 压缩后 pi 可能继续重试本轮；最终 idle 会由正常流程发出。
+        run.emit.status('thinking');
         return;
       }
 

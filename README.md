@@ -23,6 +23,11 @@
 > - M4a–M4j 已实现（部分实机验证）：建筑详情/建筑列表/进度阶段/截图（含聊天窗缩略图）、
 >   `kb_plan` 量化计算、`game_analyze_area` 区域产线、`run_script` 只读脚本沙箱、
 >   Wiki/蓝图仓库、蓝图卡片，以及按知识库真实配方生成的**完整产线蓝图**。
+> - M4 写操作已实现（待实机验收）：复用 `choose` 的确认页（`question/explain` + 红拒绝/蓝同意）、
+>   sidecar 确认钩子 + mod 一次性令牌（绑定 callId/tool/argsHash，60s 单次），
+>   以及 `game_focus_camera` / `game_place_marker` / `game_open_panel` / `game_set_research`
+>   + `game_undo_last_write`。验收清单见 [docs/m4-write-verification.md](docs/m4-write-verification.md)，
+>   可直接粘贴的测试提示词见 [docs/m4-acceptance-prompts.md](docs/m4-acceptance-prompts.md)。
 > - M3 已实现（离线验证；实机待验收）：**游戏本体知识库**——运行时从 LDB / Locale / Wiki 导出物品、配方、科技、
 >   建筑、提示、教程、里程碑、指引与术语；`kb_search` / `kb_get` / `kb_recipe_tree` / `kb_plan`
 >   由 sidecar 本地查询，配方原料树与机器数/电力不再靠模型心算。schema 与清洗规则见
@@ -53,7 +58,7 @@
 
 | 工具 | 内容 |
 | --- | --- |
-| `game_get_overview` | 存档、游戏时间、所在星球/星系、玩家坐标 |
+| `game_get_overview` | 存档、游戏时间、所在星球/星系、玩家经纬度 |
 | `game_get_player` | 机甲能量/护盾、背包物品 |
 | `game_get_planet` | 行星矿脉汇总、建筑计数 |
 | `game_get_power` | 电网需求/供给/容量/储能/满足率（kW、kWh） |
@@ -64,10 +69,10 @@
 
 | 工具 | 内容 |
 | --- | --- |
-| `game_get_entity` | 单个建筑：原型、配方、功率、分拣器/传送带/仓储/物流塔、坐标；`stale` 标记 id 已被回收 |
+| `game_get_entity` | 单个建筑：原型、配方、功率、分拣器/传送带/仓储/物流塔、星系/行星/经纬度；`stale` 标记 id 已被回收 |
 | `game_get_entities` | 建筑分页列表，可按原型 / 名称 / 配方过滤 |
 | `game_get_progress` | 派生阶段（前期/行星内物流/星际物流/戴森球）+ 判定信号、里程碑、教程、研究队列 |
-| `game_capture_view` | 截取当前画面（不含 UI，JPEG），并附可见建筑坐标；`view=topdown` 可临时切俯视机位，默认画编号框并返回 legend |
+| `game_capture_view` | 截取当前画面（不含 UI，JPEG），并附可见建筑屏幕坐标与经纬度；`view=topdown` 可临时切俯视机位，默认画编号框并返回 legend |
 | `game_render_layout` | 把区域建筑排布画成字符网格，判断布局/走线 |
 | `game_copy_blueprint` | 把选中的一批建筑存成游戏蓝图文件（复用游戏复制逻辑） |
 | `game_get_planets` | 跨行星总览：轨道、工厂、电力、按探索等级披露的矿脉 |
@@ -95,7 +100,7 @@
 | 工具 | 内容 |
 | --- | --- |
 | `wiki_search` / `wiki_page` | 搜索并读取中/英文 DSP Wiki，回答带来源链接 |
-| `blueprint_search` / `blueprint_info` | 在线检索社区蓝图仓库（CC BY-NC-SA 4.0，带署名），并做格式体检 |
+| `blueprint_search` / `blueprint_info` | 在线检索 DSPBluePrints 仓库与 Dyson Sphere Blueprints 网站（带来源署名），并做格式体检 |
 | `blueprint_save` | 直接把蓝图保存到游戏蓝图目录，打开蓝图界面即可用，无需退出游戏下载 |
 | `blueprint_generate` | 按知识库真实配方生成完整产线（各阶段机器 + 带 + 爪）；单张总线容量不足时自动拆成多张 |
 | `blueprint_fs` | 在蓝图目录里 `ls/cd/pwd/cat/mkdir/write/rm/rmdir`；默认保存到 `IcarusII/`，不能越出蓝图根 |
@@ -207,6 +212,14 @@ WINEDLLOVERRIDES="winhttp=n,b" %command%
 | `Shift+Enter` | 换行 |
 | 输入栏右侧「思考」下拉框 | 关闭 / 高 / 最高。开启后模型会先输出推理，以可折叠的「思考」块显示（收起时只留摘要） |
 | 输入栏右侧「模型」下拉框 | 在已配置的多个供应商 / 模型之间切换；下一轮对话生效 |
+| 输入栏左侧「工具」按钮 / 输入 `/` | 在输入框上方打开工具列表；输入 `/` 后继续打字可筛选 |
+| 选择工具 / 输入 `/<工具名>` | 本轮强制模型至少调用该工具；`<工具名>` 可用列表里的英文名或中文显示名 |
+
+> 工具列表只展示 **sidecar 当前连接实际注册**的工具（来自 `ready.payload.toolCatalog`），
+> 所以换存档、断线或能力变化后列表会跟着变。选中一项会把 `/工具名` 插到输入框开头，
+> 后续文字照常输入；发送时 mod 会把它解析成 `prompt.requiredTool`。
+> 如果模型本轮没有调用指定工具，sidecar 会先纠正一次，仍未调用则报
+> `tool_required`，不会静默给出普通回答。
 
 > 输出区里的 **思考块** 与 **工具块** 都收在一个 `loading` 分组里：模型思考/调用工具时，
 > 分组头显示「终端运行中…」和游戏自带的转圈图；这一轮结束后变成「已完成」并收起整组，
@@ -268,6 +281,7 @@ Hotkey = R
 HotkeyRequireNoBuildTool = true   ; 建造模式下把 R 让给游戏
 Language = auto
 Streaming = true
+DebugToolConsole = false   ; 输入框 !tools / !tool 调试直调（需 sidecar --debug-tools）
 
 [Sidecar]
 LaunchMode = spawnExe    ; spawnExe | connectOnly | spawnNode
@@ -288,6 +302,23 @@ MaxTranscriptLines = 500
 | `LaunchMode=spawnExe` | 由插件自动拉起随包的 `icarus-ii-sidecar.exe`（默认，推荐） |
 | `LaunchMode=connectOnly` | 插件只连接；你自己先启动 sidecar（便于调试 / 多存档共用） |
 | `Hotkey` | 任意 Unity `KeyCode` 名 |
+| `DebugToolConsole=true` | 开启输入框 `!tools` / `!tool` 调试直调；只读白名单，不经过 AI。`spawnExe` 会自动给 sidecar 加 `--debug-tools`，`connectOnly` 需手动加 |
+
+### 调试直调 `!tool`
+
+开发/排障用：不调用 AI，直接执行一个只读工具并显示原始返回值。
+
+```text
+!tools
+!tool game_get_power {}
+!tool game_get_entities {"limit": 5}
+!tool kb_search {"query": "量子芯片"}
+```
+
+- 需要 `DebugToolConsole=true`，且 sidecar 以 `--debug-tools` 启动。
+- 结果作为系统调试块显示，不写入对话历史、不消耗 token。
+- 只允许只读工具；`game_copy_blueprint`、`blueprint_save`、`blueprint_generate`、
+  `blueprint_fs`、`run_script` 不在白名单内。
 
 原生 Linux 跑 `connectOnly` 时，sidecar 与游戏不在同一 Wine 环境，需用
 `ICARUS_BLUEPRINT_DIR` 指向 Proton prefix 里的 `Documents/Dyson Sphere Program/Blueprint`

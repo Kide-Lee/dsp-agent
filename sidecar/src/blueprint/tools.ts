@@ -1,7 +1,7 @@
 /**
  * 蓝图仓库检索（M4h）。
  *
- * 数据源：DSPBluePrints/FactoryBluePrints（CC BY-NC-SA 4.0）。
+ * 数据源：DSPBluePrints/FactoryBluePrints（CC BY-NC-SA 4.0）与 Dyson Sphere Blueprints 网站。
  * 本工具**不打包、不缓存蓝图内容到仓库**：只在线按需读取 GitHub 索引与原始文件，
  * 结果里始终带作者/仓库/许可证/链接，供玩家自行下载与署名。
  *
@@ -15,6 +15,7 @@ import type { PlanResult } from '../kb/types.js';
 import type { AliasResolver } from '../wiki/aliases.js';
 import type { BlueprintTiers } from '../protocol.js';
 import { BlueprintPathError, BlueprintWorkspace } from './workspace.js';
+import { DysonSphereBlueprintsClient } from './site.js';
 import type { PlanBlueprintMeta } from './planner.js';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
@@ -227,6 +228,10 @@ function reply(payload: unknown, ok: boolean, code?: string): ToolReply {
   };
 }
 
+function describeError(value: unknown): string {
+  return value instanceof Error ? value.message : String(value);
+}
+
 /** 游戏读取蓝图的目录（Windows/Wine 下 Documents 被映射到前缀里）。 */
 export function resolveBlueprintDir(): string {
   const override = process.env['ICARUS_BLUEPRINT_DIR'];
@@ -337,8 +342,10 @@ export function createBlueprintTools(
   aliases?: AliasResolver,
   getTiers?: () => BlueprintTiers | null,
   workspace?: BlueprintWorkspace,
+  siteClient?: DysonSphereBlueprintsClient,
 ): ToolDefinition[] {
   const ws = workspace ?? new BlueprintWorkspace();
+  const site = siteClient ?? new DysonSphereBlueprintsClient();
   return [
     {
       name: 'blueprint_fs',
@@ -555,13 +562,16 @@ export function createBlueprintTools(
       name: 'blueprint_search',
       label: '蓝图搜索',
       description:
-        '在 DSPBluePrints/FactoryBluePrints 仓库里按路径关键词搜索蓝图（在线按需，不打包内容）。' +
-        `结果是文件路径 + 仓库链接，内容许可 ${LICENSE}；引用时必须署名仓库与作者。`,
+        '在 DSPBluePrints/FactoryBluePrints 仓库和 Dyson Sphere Blueprints 网站里按关键词搜索蓝图（在线按需，不打包内容）。' +
+        `GitHub 结果带仓库路径与许可 ${LICENSE}；网站结果带详情页 URL。引用时必须署名来源与作者。`,
       promptSnippet: '搜索社区蓝图仓库（在线，带署名）',
       promptGuidelines: [
         'Use blueprint_search 当玩家想要现成蓝图/产线设计时。',
         '路径多为中文目录+文件名，用“物品/产线/规模”这类关键词搜索；可多次换词。',
-        `结果必须附 repository 与 ${LICENSE} 署名；不要把蓝图内容说成自己生成的。`,
+        'GitHub 结果用 path 继续 blueprint_info/blueprint_save；Dyson Sphere Blueprints 结果用 url。',
+        'GitHub 的来源链接用 blobUrl（文件页），不是 repo；Dyson Sphere Blueprints 用 url。',
+        `结果必须附来源链接与作者；GitHub 内容许可 ${LICENSE}，不要把蓝图内容说成自己生成的。`,
+        'GitHub 搜索条目没有作者时不要编造；作者以 blueprint_info/blueprint_save 读出的 header 为准。',
       ],
       parameters: Type.Object({
         query: Type.String({ description: '路径关键词，例如“卡西米尔”“白糖”“300/min”' }),
@@ -574,27 +584,63 @@ export function createBlueprintTools(
         const limitRaw = typeof args['limit'] === 'number' ? args['limit'] : 10;
         const limit = Math.max(1, Math.min(20, Math.floor(limitRaw)));
 
-        try {
-          const rows = await client.search(query, limit);
+        const [githubResult, siteResult] = await Promise.allSettled([
+          client.search(query, limit),
+          site.search(query, limit),
+        ]);
+        const githubRows = githubResult.status === 'fulfilled' ? githubResult.value : [];
+        const siteRows = siteResult.status === 'fulfilled' ? siteResult.value : [];
+        const warnings: string[] = [];
+        if (githubResult.status === 'rejected') {
+          warnings.push(`GitHub 检索失败：${describeError(githubResult.reason)}`);
+        }
+        if (siteResult.status === 'rejected') {
+          warnings.push(`Dyson Sphere Blueprints 检索失败：${describeError(siteResult.reason)}`);
+        }
+        if (githubRows.length === 0 && siteRows.length === 0 && warnings.length > 0) {
           return reply(
-            {
-              query,
-              total: rows.length,
-              results: rows.map((row) => ({
-                ...client.meta(row.path),
-                size: row.size,
-              })),
-              note: `内容来自社区仓库，许可 ${LICENSE}；使用/再分发请遵守该许可并署名。`,
-            },
-            true,
-          );
-        } catch (err) {
-          return reply(
-            { error: err instanceof Error ? err.message : String(err), hint: 'GitHub 可能限流（未登录 60 次/小时）' },
+            { error: warnings.join('；'), hint: 'GitHub 可能限流；Dyson Sphere Blueprints 可能暂时不可用' },
             false,
             'blueprint_unavailable',
           );
         }
+
+        // 交替合并，确保 limit 较小时两个来源都有机会出现。
+        const results: Record<string, unknown>[] = [];
+        for (let i = 0; results.length < limit && (i < githubRows.length || i < siteRows.length); i++) {
+          const github = githubRows[i];
+          if (github) {
+            results.push({
+              ...client.meta(github.path),
+              source: 'github',
+              path: github.path,
+              size: github.size,
+            });
+          }
+          if (results.length >= limit) break;
+          const web = siteRows[i];
+          if (web) {
+            results.push({
+              ...site.meta(web.url),
+              title: web.title,
+              ...(web.author ? { author: web.author } : {}),
+              ...(web.gameVersion ? { gameVersion: web.gameVersion } : {}),
+            });
+          }
+        }
+
+        return reply(
+          {
+            query,
+            total: results.length,
+            results,
+            ...(warnings.length > 0 ? { warnings } : {}),
+            note:
+              `GitHub 结果许可 ${LICENSE}；` +
+              'Dyson Sphere Blueprints 结果版权归原作者，使用前查看蓝图页面说明。',
+          },
+          true,
+        );
       },
     },
 
@@ -603,34 +649,60 @@ export function createBlueprintTools(
       label: '蓝图详情',
       description:
         '读取一个蓝图文件并做格式体检（头部/base64+gzip/md5），返回大小与解码后字节数，不解析建筑。' +
-        `内容许可 ${LICENSE}，必须署名来源。`,
+        '支持 GitHub 仓库路径或 Dyson Sphere Blueprints 详情页 URL；内容版权归原作者，必须署名来源。',
       promptSnippet: '读取蓝图文件并做格式体检',
       promptGuidelines: [
-        'Use blueprint_info 在 blueprint_search 选中文件后，确认文件有效并给出下载链接。',
+        'Use blueprint_info 在 blueprint_search 选中结果后，确认文件有效并给出下载链接。',
+        'GitHub 结果传 path；Dyson Sphere Blueprints 结果传 url。',
         'valid=false 时说明原因（format/gzip），不要猜里面的建筑。',
-        `回答必须带 repository 与 ${LICENSE} 署名。`,
+        '回答必须带来源链接和署名；GitHub 仓库内容许可为 ' + LICENSE + '。',
+        'GitHub 的来源链接用返回的 blobUrl（文件页），不是 repo；Dyson Sphere Blueprints 用 url。',
+        '没有 author 时不要编造，按 header 里实际内容或“作者见蓝图页”处理。',
       ],
       parameters: Type.Object({
-        path: Type.String({ description: 'blueprint_search 返回的 path' }),
+        path: Type.Optional(Type.String({ description: 'GitHub 仓库路径（blueprint_search 的 path）' })),
+        url: Type.Optional(Type.String({ description: 'Dyson Sphere Blueprints 详情页 URL' })),
       }),
       async execute(_id, params) {
         const args = (params ?? {}) as Record<string, unknown>;
         const path = typeof args['path'] === 'string' ? args['path'] : '';
-        if (!path.trim()) return reply({ error: 'path 不能为空' }, false, 'bad_request');
+        const url = typeof args['url'] === 'string' ? args['url'] : '';
+        if (!path.trim() && !url.trim()) {
+          return reply({ error: 'path 或 url 至少提供一个' }, false, 'bad_request');
+        }
 
-        const fetched = await client.fetch(path);
+        let fetched: { text?: string; error?: string; title?: string };
+        let meta: Record<string, unknown>;
+        try {
+          if (url.trim()) {
+            fetched = await site.fetch(url);
+            meta = { ...site.meta(url) };
+          } else {
+            fetched = await client.fetch(path);
+            meta = { ...client.meta(path) };
+          }
+        } catch (err) {
+          return reply(
+            { error: describeError(err), hint: '网络/站点可能暂时不可用' },
+            false,
+            'blueprint_unavailable',
+          );
+        }
+
         if (!fetched.text) {
           const code = fetched.error === 'not_found' ? 'blueprint_not_found' : 'blueprint_unavailable';
-          return reply({ ...client.meta(path), error: fetched.error ?? 'unknown' }, false, code);
+          return reply({ ...meta, error: fetched.error ?? 'unknown' }, false, code);
         }
 
         const info = inspectBlueprintText(fetched.text);
         return reply(
           {
-            ...client.meta(path),
+            ...meta,
+            ...(fetched.title ? { title: fetched.title } : {}),
             bytes: fetched.text.length,
             ...info,
-            note: `内容来自社区仓库，许可 ${LICENSE}；请遵守许可并署名。`,
+            note: (meta as { note?: string }).note
+              ?? `内容来自社区仓库，许可 ${LICENSE}；请遵守许可并署名。`,
           },
           info.valid,
           'blueprint_invalid',
@@ -642,18 +714,21 @@ export function createBlueprintTools(
       name: 'blueprint_save',
       label: '保存蓝图',
       description:
-        '把 blueprint_search 找到的蓝图直接保存到游戏的蓝图目录（Documents/Dyson Sphere Program/Blueprint），' +
-        '保存后打开游戏内蓝图界面即可使用，无需退出游戏下载。' +
-        `内容许可 ${LICENSE}；保存的是仓库原文件，请遵守许可并署名。`,
+        '把 blueprint_search 找到的蓝图保存到游戏蓝图目录（Documents/Dyson Sphere Program/Blueprint），' +
+        '支持 GitHub 仓库路径或 Dyson Sphere Blueprints 详情页 URL；保存后打开游戏内蓝图界面即可使用。' +
+        '内容版权归原作者，保存/再分发请遵守来源页面说明并署名。',
       promptSnippet: '把社区蓝图保存到游戏蓝图目录',
       promptGuidelines: [
-        'Use blueprint_save 当玩家说“帮我保存/导入这个蓝图”时；path 来自 blueprint_search。',
+        'Use blueprint_save 当玩家说“帮我保存/导入这个蓝图”时；GitHub 结果传 path，Dyson Sphere Blueprints 结果传 url。',
         '默认不覆盖同名文件，会自动加 (2)/(3)；玩家明确要求覆盖时才传 overwrite=true。',
-        `保存不改变游戏状态，但回答要说明保存位置，并保留 repository 与 ${LICENSE} 署名。`,
+        '保存不改变游戏状态，但回答要说明保存位置，并保留来源链接与作者署名。',
+        'GitHub 的来源链接用 blobUrl（文件页），不是 repo；Dyson Sphere Blueprints 用 url。',
+        '没有 author 时不要编造。',
       ],
       parameters: Type.Object({
-        path: Type.String({ description: 'blueprint_search 返回的仓库路径' }),
-        name: Type.Optional(Type.String({ description: '保存名（不含 .txt），默认用原文件名' })),
+        path: Type.Optional(Type.String({ description: 'GitHub 仓库路径（blueprint_search 的 path）' })),
+        url: Type.Optional(Type.String({ description: 'Dyson Sphere Blueprints 详情页 URL' })),
+        name: Type.Optional(Type.String({ description: '保存名（不含 .txt），默认用蓝图/文件名' })),
         dir: Type.Optional(
           Type.String({ description: '保存目录（相对蓝图根，默认 /IcarusII）；不存在会自动创建' }),
         ),
@@ -662,16 +737,36 @@ export function createBlueprintTools(
       async execute(_id, params) {
         const args = (params ?? {}) as Record<string, unknown>;
         const path = typeof args['path'] === 'string' ? args['path'] : '';
-        if (!path.trim()) return reply({ error: 'path 不能为空' }, false, 'bad_request');
+        const url = typeof args['url'] === 'string' ? args['url'] : '';
+        if (!path.trim() && !url.trim()) {
+          return reply({ error: 'path 或 url 至少提供一个' }, false, 'bad_request');
+        }
 
-        const fetched = await client.fetch(path);
+        let fetched: { text?: string; error?: string; title?: string };
+        let meta: Record<string, unknown>;
+        try {
+          if (url.trim()) {
+            fetched = await site.fetch(url);
+            meta = { ...site.meta(url) };
+          } else {
+            fetched = await client.fetch(path);
+            meta = { ...client.meta(path) };
+          }
+        } catch (err) {
+          return reply(
+            { error: describeError(err), hint: '网络/站点可能暂时不可用' },
+            false,
+            'blueprint_unavailable',
+          );
+        }
+
         if (!fetched.text) {
           const code = fetched.error === 'not_found' ? 'blueprint_not_found' : 'blueprint_unavailable';
-          return reply({ ...client.meta(path), error: fetched.error ?? 'unknown' }, false, code);
+          return reply({ ...meta, error: fetched.error ?? 'unknown' }, false, code);
         }
         const info = inspectBlueprintText(fetched.text);
         if (!info.valid) {
-          return reply({ ...client.meta(path), ...info, error: '蓝图格式无效，未保存' }, false, 'blueprint_invalid');
+          return reply({ ...meta, ...info, error: '蓝图格式无效，未保存' }, false, 'blueprint_invalid');
         }
 
         let dir;
@@ -679,7 +774,7 @@ export function createBlueprintTools(
           dir = ws.resolveTargetDir(typeof args['dir'] === 'string' ? args['dir'] : undefined);
         } catch (err) {
           return reply(
-            { ...client.meta(path), error: err instanceof Error ? err.message : String(err) },
+            { ...meta, error: describeError(err) },
             false,
             'blueprint_save_failed',
           );
@@ -687,6 +782,9 @@ export function createBlueprintTools(
         let requested = typeof args['name'] === 'string' && args['name'].trim()
           ? args['name']
           : '';
+        if (!requested && url.trim()) {
+          requested = info.name ?? fetched.title ?? 'DysonSphereBlueprint';
+        }
         if (!requested) {
           const parts = path.replace(/\.txt$/i, '').split('/');
           const stem = parts[parts.length - 1] ?? 'blueprint';
@@ -711,8 +809,8 @@ export function createBlueprintTools(
         } catch (err) {
           return reply(
             {
-              ...client.meta(path),
-              error: err instanceof Error ? err.message : String(err),
+              ...meta,
+              error: describeError(err),
               dir: dir.real,
             },
             false,
@@ -723,7 +821,7 @@ export function createBlueprintTools(
 
         return reply(
           {
-            ...client.meta(path),
+            ...meta,
             saved: true,
             source: 'downloaded',
             path: target.real,
@@ -744,13 +842,15 @@ export function createBlueprintTools(
             ...(info.width !== undefined ? { width: info.width } : {}),
             ...(info.height !== undefined ? { height: info.height } : {}),
             note:
-              `已保存到游戏蓝图目录，打开游戏内蓝图界面即可使用（列表没刷新就关掉重开）。` +
-              `内容来自社区仓库，许可 ${LICENSE}，请遵守许可并署名。`,
+              '已保存到游戏蓝图目录，打开游戏内蓝图界面即可使用（列表没刷新就关掉重开）。' +
+              ((meta as { note?: string }).note
+                ?? `内容来自社区仓库，许可 ${LICENSE}；请遵守许可并署名。`),
           },
           true,
         );
       },
     },
+
     {
       name: 'blueprint_generate',
       label: '生成产线蓝图',

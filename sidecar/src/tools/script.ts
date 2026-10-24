@@ -30,6 +30,7 @@ import {
 import QUICKJS_VARIANT_MODULE from '@jitl/quickjs-singlefile-cjs-release-sync';
 import type { JsonObject } from '../protocol.js';
 import { SCRIPT_TOOL_NAME, type GameToolHost } from './host.js';
+import { isWriteToolName } from './write.js';
 
 const MAX_CODE_CHARS = 8000;
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -96,7 +97,9 @@ async function runScript(
   code: string,
   limits: ScriptLimit,
 ): Promise<ToolReply> {
-  const allowed = new Set(host.tools().map((tool) => tool.name));
+  const allowed = new Set(
+    host.tools().map((tool) => tool.name).filter((name) => !isWriteToolName(name)),
+  );
   if (allowed.size === 0) {
     return fail('tool_unavailable', '当前没有可用的 game_* 工具（未进入存档或连接未就绪）');
   }

@@ -84,7 +84,7 @@ Key 只保存在本机 sidecar 的数据目录里，不会上传到任何第三�
 ## 常见问题
 
 **按 `R` 没反应**
-先看 `BepInEx/LogOutput.log` 里有没有 `Icarus II 0.3.1 已加载`。
+先看 `BepInEx/LogOutput.log` 里有没有 `Icarus II 0.3.2 已加载`。
 没有 → BepInEx 没生效（版本不对 / 没装好）；有 → 建造模式下 `R` 会主动让位给游戏（旋转建筑），退出建造模式再按。
 
 **杀毒软件报毒 / 提示"未知发布者"**
@@ -119,11 +119,11 @@ DSP 每次大版本更新都可能改动内部类型。看日志里的报错，�
 
 ---
 
-## 文件校验（0.3.1）
+## 文件校验（0.3.2）
 
 ```
-icarus-ii-sidecar.exe   SHA256 89cc514373c8d7fe61c32d036948f936819ffeded4fa7b23d74b47f5a71e8a49
-IcarusII.dll            SHA256 009e1d63f8802dea0ee920d9a973fd1712a6e2494f5f5565034289d3d5611356
+icarus-ii-sidecar.exe   SHA256 80012ed1f6cd9f9f783be3ce08c35310c1d4882500f000865e464751c18b10f6
+IcarusII.dll            SHA256 29a8e69bcf61d14393d81a07825029a42166407807e3fcd8f4015eb99ed53bf5
 ```
 
 ---

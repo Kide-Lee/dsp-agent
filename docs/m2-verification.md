@@ -19,7 +19,7 @@ scripts/install.sh --game-dir "/path/to/Dyson Sphere Program"
 
 | # | 问法 | 期望调用 | 核对方式 |
 | --- | --- | --- | --- |
-| 1 | “我现在在哪个星球？” | `game_get_overview` | 星球名、坐标与游戏 UI 一致 |
+| 1 | “我现在在哪个星球？” | `game_get_overview` | 星球名、经纬度与游戏 UI 一致 |
 | 2 | “我还有多少能量？背包里有什么？” | `game_get_player` | 核心能量/护盾与机甲面板一致；背包物品名/数量抽查 3 项 |
 | 3 | “这个星球有什么矿？” | `game_get_planet` | 矿种与总量与矿脉面板/扫描一致；建筑计数抽查 2 类 |
 | 4 | “电够不够？” | `game_get_power` | 需求/已供/满足率与电力面板一致（允许 1% 取整误差） |

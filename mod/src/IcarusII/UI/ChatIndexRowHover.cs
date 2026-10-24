@@ -17,6 +17,12 @@ namespace IcarusII.UI
         public Color HoverColor = new Color(0.35f, 0.75f, 1f, 0.10f);
         public Color SelectedColor = new Color(0.35f, 0.75f, 1f, 0.16f);
 
+        /// <summary>
+        /// 已压缩的历史行禁止删除：hover 时也不显示删除按钮。
+        /// 压缩记录行本身仍然可删（= 撤销压缩）。
+        /// </summary>
+        public bool AllowDelete = true;
+
         public event Action Clicked;
 
         private bool _hovered;
@@ -54,7 +60,7 @@ namespace IcarusII.UI
 
         private void Apply()
         {
-            if (DeleteButton != null) DeleteButton.SetActive(_hovered);
+            if (DeleteButton != null) DeleteButton.SetActive(AllowDelete && _hovered);
             if (HoverBackground != null)
                 HoverBackground.color = _selected ? SelectedColor : (_hovered ? HoverColor : Color.clear);
         }

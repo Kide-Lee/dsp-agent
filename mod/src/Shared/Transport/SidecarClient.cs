@@ -251,6 +251,24 @@ namespace IcarusII.Common.Transport
         }
 
         /// <summary>
+        /// 撤销最近一次上下文压缩（协议附录 A.11）。返回 envelope id；
+        /// 连接未就绪时返回 null。`compactionId` 为空表示撤销最近一次。
+        /// </summary>
+        public string SendHistoryUndoCompaction(string saveKey, string compactionId)
+        {
+            if (_state != ConnectionState.Ready) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.HistoryUndoCompaction,
+                Protocol.Protocol.BuildHistoryUndoCompaction(saveKey, compactionId),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
+        /// <summary>
         /// 回传一次 tool_result（协议附录 B）。`replyTo` 是 sidecar 发来的 callId。
         /// 连接未就绪时返回 false；调用方无需重试（sidecar 侧会超时）。
         /// </summary>
@@ -276,11 +294,29 @@ namespace IcarusII.Common.Transport
             try { ConfigChanged?.Invoke(next); } catch (Exception ex) { EmitLog($"配置回调异常：{ex.Message}"); }
         }
 
-        public string SendPrompt(string text, string conversationId = null)
+        public string SendPrompt(string text, string conversationId = null, string requiredTool = null)
         {
             var env = Protocol.Protocol.Envelope(
                 Protocol.Protocol.Prompt,
-                Protocol.Protocol.BuildPrompt(text, conversationId),
+                Protocol.Protocol.BuildPrompt(text, conversationId, requiredTool),
+                NextId(), null);
+
+            if (_state != ConnectionState.Ready) return null;
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
+        /// <summary>
+        /// 调试直调（M4m）：把一个工具名 + 参数直接发给 sidecar，不经过 AI。
+        /// 返回请求 id（用于匹配 tool_debug_result）；连接未就绪时返回 null。
+        /// </summary>
+        public string SendToolDebug(string name, JsonValue args)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ToolDebug,
+                Protocol.Protocol.BuildToolDebug(name, args),
                 NextId(), null);
 
             if (_state != ConnectionState.Ready) return null;

@@ -37,6 +37,8 @@ export const MessageType = {
   Ping: 'ping',
   ConfigSet: 'config.set',
   SaveBind: 'save.bind',
+  // M4m：调试直调（不经过 AI；只读工具白名单）
+  ToolDebug: 'tool_debug',
   // sidecar → mod
   Ready: 'ready',
   Pong: 'pong',
@@ -49,6 +51,11 @@ export const MessageType = {
   // M4e：删除一个问答回合（附录 A.7）
   HistoryDelete: 'history.delete',
   HistoryDeleted: 'history.deleted',
+  // 撤销一次上下文压缩（附录 A.11）
+  HistoryUndoCompaction: 'history.undo_compaction',
+  HistoryCompactionUndone: 'history.compaction_undone',
+  // 压缩完成事件（附录 A.11）；只给 UI，不进入模型上下文
+  ContextCompacted: 'context.compacted',
   // M4f：sidecar 本地工具的 UI 事件（附录 A.8）
   ToolActivity: 'tool_activity',
   // M4i：蓝图卡片（附录 A.9）
@@ -61,6 +68,11 @@ export const MessageType = {
   // M2：只读游戏工具（协议附录 B）
   ToolCall: 'tool_call',
   ToolResult: 'tool_result',
+  // M4m：调试直调结果
+  ToolDebugResult: 'tool_debug_result',
+  // M4：写操作确认（附录 A.12）
+  ConfirmRequest: 'confirm_request',
+  ConfirmResult: 'confirm_result',
 } as const;
 
 export type MessageTypeName = (typeof MessageType)[keyof typeof MessageType];
@@ -68,8 +80,6 @@ export type MessageTypeName = (typeof MessageType)[keyof typeof MessageType];
 /** 服务端未实现、必须忽略的已预留类型（协议 §4.9）。 */
 export const RESERVED_TYPES: readonly string[] = [
   'abort',
-  'confirm_request',
-  'confirm_result',
   'game_event',
   'ui_event',
   'session',
@@ -95,7 +105,16 @@ export type ErrorCode =
   | 'invalid_args'
   | 'timeout'
   | 'busy'
-  | 'cancelled';
+  | 'cancelled'
+  // M4l：prompt.requiredTool 未被调用
+  | 'tool_required'
+  // M4m：调试直调
+  | 'debug_disabled'
+  | 'debug_not_allowed'
+  | 'confirmation_required'
+  | 'confirmation_invalid'
+  | 'confirmation_expired'
+  | 'confirmation_denied';
 
 export type StatusState =
   | 'idle'
@@ -139,6 +158,43 @@ export interface ToolCallPayload {
   timeoutMs: number;
   /** true 表示 sidecar 内部调用（如知识库导出），mod 不显示工具卡。 */
   internal?: boolean;
+  /** 写操作一次性令牌；risk>0 时由确认流程生成。 */
+  confirmToken?: string;
+  /** 确认时绑定的参数哈希。 */
+  confirmArgsHash?: string;
+}
+
+/** `confirm_request`（sidecar → mod，M4）。 */
+export interface ConfirmRequestPayload {
+  requestId: string;
+  callId: string;
+  tool: string;
+  argsHash: string;
+  token: string;
+  title: string;
+  body: string;
+  risk: 1 | 2;
+  timeoutMs: number;
+}
+
+/** `confirm_result`（mod → sidecar）。 */
+export interface ConfirmResultPayload {
+  requestId: string;
+  decision: 'allow' | 'deny';
+  token: string;
+}
+
+export function buildConfirmRequestPayload(args: ConfirmRequestPayload): JsonObject {
+  return { ...args };
+}
+
+export function parseConfirmResultPayload(payload: JsonObject): ConfirmResultPayload | null {
+  if (!isPlainObject(payload)) return null;
+  const requestId = typeof payload['requestId'] === 'string' ? payload['requestId'] : '';
+  const token = typeof payload['token'] === 'string' ? payload['token'] : '';
+  const decision = payload['decision'];
+  if (!requestId || !token || (decision !== 'allow' && decision !== 'deny')) return null;
+  return { requestId, token, decision };
 }
 
 /** `tool_result.error`（mod → sidecar）。 */
@@ -171,6 +227,73 @@ export interface ToolResultPayload {
   meta: JsonObject;
   /** 可选附件；只在 ok=true 时有效。 */
   image?: ToolImagePayload | null;
+}
+
+// ---------------------------------------------------------------- 调试直调（M4m）
+
+/** `tool_debug` 的负载（mod → sidecar）。 */
+export interface ToolDebugPayload {
+  name: string;
+  args: JsonObject;
+}
+
+const MAX_DEBUG_ARGS_CHARS = 64 * 1024;
+
+export function parseToolDebugPayload(payload: JsonObject): ToolDebugPayload | null {
+  if (!isPlainObject(payload)) return null;
+  const name = typeof payload['name'] === 'string' ? payload['name'].trim() : '';
+  if (!name || name.length > 128) return null;
+  const rawArgs = payload['args'] === undefined || payload['args'] === null ? {} : payload['args'];
+  if (!isPlainObject(rawArgs)) return null;
+  try {
+    if (JSON.stringify(rawArgs).length > MAX_DEBUG_ARGS_CHARS) return null;
+  } catch {
+    return null;
+  }
+  return { name, args: rawArgs };
+}
+
+export interface ToolDebugImageInfo {
+  mimeType: string;
+  width: number;
+  height: number;
+  bytes: number;
+}
+
+/** `tool_debug_result` 的负载（sidecar → mod）。 */
+export interface ToolDebugResultPayload {
+  ok: boolean;
+  tool: string;
+  source: 'game' | 'local' | 'unknown';
+  durationMs: number;
+  /** 模型可见文本（不含图片 base64）。 */
+  content: string;
+  /** 原始 details；图片 data 已剥离，超限时可能退化为截断字符串。 */
+  details: unknown;
+  error: { code: string; message: string } | null;
+  truncated: boolean;
+  image: ToolDebugImageInfo | null;
+}
+
+export function buildToolDebugResultPayload(result: ToolDebugResultPayload): JsonObject {
+  return {
+    ok: result.ok,
+    tool: result.tool,
+    source: result.source,
+    durationMs: result.durationMs,
+    content: result.content,
+    details: result.details === undefined ? null : result.details,
+    error: result.error ? { code: result.error.code, message: result.error.message } : null,
+    truncated: result.truncated,
+    image: result.image
+      ? {
+          mimeType: result.image.mimeType,
+          width: result.image.width,
+          height: result.image.height,
+          bytes: result.image.bytes,
+        }
+      : null,
+  };
 }
 
 // ---------------------------------------------------------------- 基础取值
@@ -345,22 +468,39 @@ export function parseHelloPayload(payload: JsonObject): HelloPayload | null {
 export interface PromptPayload {
   text: string;
   conversationId: string | null;
+  /** M4l：本轮必须调用的工具名；null = 不强制。 */
+  requiredTool: string | null;
 }
 
 /**
  * 解析 prompt 负载（协议 §4.4）。
  * `text` 缺失按空串处理；存在但不是 string ⇒ 返回 null（bad_request）。
+ * `requiredTool` 存在但不是 string ⇒ 返回 null；空串按未指定处理。
  */
 export function parsePromptPayload(payload: JsonObject): PromptPayload | null {
   const textValue = payload['text'];
   if (textValue !== undefined && textValue !== null && typeof textValue !== 'string') return null;
 
+  const requiredToolValue = payload['requiredTool'];
+  if (
+    requiredToolValue !== undefined &&
+    requiredToolValue !== null &&
+    typeof requiredToolValue !== 'string'
+  ) {
+    return null;
+  }
+
   const conversationId = payload['conversationId'];
+  const requiredTool =
+    typeof requiredToolValue === 'string' && requiredToolValue.trim().length > 0
+      ? requiredToolValue.trim()
+      : null;
 
   return {
     text: typeof textValue === 'string' ? textValue : '',
     conversationId:
       typeof conversationId === 'string' && conversationId.length > 0 ? conversationId : null,
+    requiredTool,
   };
 }
 
@@ -461,8 +601,18 @@ export interface HistoryMessage {
    * 老客户端忽略该字段，行为不变。
    */
   cards?: BlueprintCardPayload[];
-  /** 该回答完成时的游戏时间 HH:mm（附录 A.6/A.10）。 */
+  /** 该回答完成时的游戏时间 HH:mm:ss（附录 A.6/A.10）。 */
   gameTime?: string;
+  /**
+   * `compaction` = 压缩记录（附录 A.11）。UI 用它插入“自动压缩上下文”记录；
+   * 只用于回放，不进入模型上下文。老客户端会把它当普通 assistant 消息显示。
+   */
+  kind?: 'compaction';
+  /** 压缩记录对应的 pi compaction entry id（撤销时用；可选）。 */
+  compactionId?: string;
+  /** 压缩前/后的估算 token（只用于展示）。 */
+  tokensBefore?: number;
+  estimatedTokensAfter?: number;
 }
 
 /** `reply.time` 载荷（附录 A.10）：mod 回存回答完成时的游戏时间。 */
@@ -545,6 +695,73 @@ export function buildHistoryDeletedPayload(args: {
     ok: args.ok,
     removed: args.removed,
     error: args.error ?? null,
+  };
+}
+
+// ---------------------------------------------------------------- 上下文压缩（附录 A.11）
+
+export interface ContextCompactedPayload {
+  /** 压缩摘要（给玩家看；同时用于回放）。 */
+  summary: string;
+  /** pi compaction entry id；事件刚发生时可能拿不到，撤销时可省略按“最近一次”处理。 */
+  compactionId?: string;
+  /** 毫秒时间戳（压缩完成时）。 */
+  timestamp: number;
+  /** 压缩前/后的估算 token。 */
+  tokensBefore?: number;
+  estimatedTokensAfter?: number;
+  reason?: 'manual' | 'threshold' | 'overflow';
+}
+
+export function buildContextCompactedPayload(args: ContextCompactedPayload): JsonObject {
+  const payload: JsonObject = {
+    summary: args.summary,
+    timestamp: args.timestamp,
+  };
+  if (args.compactionId) payload['compactionId'] = args.compactionId;
+  if (typeof args.tokensBefore === 'number') payload['tokensBefore'] = args.tokensBefore;
+  if (typeof args.estimatedTokensAfter === 'number') {
+    payload['estimatedTokensAfter'] = args.estimatedTokensAfter;
+  }
+  if (args.reason) payload['reason'] = args.reason;
+  return payload;
+}
+
+export interface HistoryUndoCompactionPayload {
+  saveKey: string | null;
+  /** 省略 = 撤销最近一次压缩。 */
+  compactionId?: string;
+}
+
+export function parseHistoryUndoCompactionPayload(
+  payload: JsonObject,
+): HistoryUndoCompactionPayload | null {
+  const key = payload['saveKey'];
+  if (key !== undefined && key !== null && typeof key !== 'string') return null;
+  const id = payload['compactionId'];
+  if (id !== undefined && id !== null && typeof id !== 'string') return null;
+  return {
+    saveKey: typeof key === 'string' && key.length > 0 ? key : null,
+    ...(typeof id === 'string' && id.length > 0 ? { compactionId: id } : {}),
+  };
+}
+
+export function buildHistoryCompactionUndonePayload(args: {
+  saveKey: string | null;
+  compactionId: string | null;
+  ok: boolean;
+  removed: number;
+  error?: string | null;
+  /** 撤销后如果上下文仍超预算，下一次提问可能立刻重新压缩。 */
+  mayRecompact?: boolean;
+}): JsonObject {
+  return {
+    saveKey: args.saveKey,
+    compactionId: args.compactionId,
+    ok: args.ok,
+    removed: args.removed,
+    error: args.error ?? null,
+    mayRecompact: args.mayRecompact === true,
   };
 }
 
@@ -957,6 +1174,15 @@ export interface AgentInfo {
   available: boolean;
 }
 
+/** ready.payload.toolCatalog 的一条：工具名 + 显示名 + 简介（M4l）。 */
+export interface ToolCatalogEntry {
+  name: string;
+  label: string;
+  description: string;
+  /** M4m：是否允许在 `!tool` 调试直调中执行（只读白名单）。 */
+  debuggable?: boolean;
+}
+
 // ---------------------------------------------------------------- 负载构造
 
 export function buildReadyPayload(args: {
@@ -964,6 +1190,8 @@ export function buildReadyPayload(args: {
   sessionId: string;
   agent: AgentInfo;
   tools: readonly string[];
+  /** M4l：可选工具目录，供聊天窗的工具列表展示；老 mod 忽略。 */
+  toolCatalog?: readonly ToolCatalogEntry[];
   /** 附录 A.2 新增的可选字段；给出时才会出现在 `ready.payload.config` 里。 */
   config?: ConfigView;
 }): JsonObject {
@@ -978,6 +1206,14 @@ export function buildReadyPayload(args: {
     },
     tools: [...args.tools],
   };
+  if (args.toolCatalog && args.toolCatalog.length > 0) {
+    payload['toolCatalog'] = args.toolCatalog.map((entry) => ({
+      name: entry.name,
+      label: entry.label,
+      description: entry.description,
+      ...(entry.debuggable === undefined ? {} : { debuggable: entry.debuggable }),
+    }));
+  }
   if (args.config) payload['config'] = buildConfigStatePayload(args.config);
   return payload;
 }
@@ -1021,6 +1257,8 @@ export function buildToolCallPayload(args: ToolCallPayload): JsonObject {
     timeoutMs: args.timeoutMs,
   };
   if (args.internal === true) payload['internal'] = true;
+  if (args.confirmToken) payload['confirmToken'] = args.confirmToken;
+  if (args.confirmArgsHash) payload['confirmArgsHash'] = args.confirmArgsHash;
   return payload;
 }
 

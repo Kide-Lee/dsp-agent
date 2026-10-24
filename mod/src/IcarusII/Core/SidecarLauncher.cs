@@ -119,6 +119,7 @@ namespace IcarusII.Core
                 }
                 fileName = "node";
                 arguments = $"\"{script}\" serve --host {_config.SidecarHost} --port {_config.SidecarPort} --data-dir \"{dataDir}\"";
+                if (_config.DebugToolConsole) arguments += " --debug-tools";
             }
             else
             {
@@ -132,6 +133,7 @@ namespace IcarusII.Core
                 }
                 fileName = exe;
                 arguments = $"serve --host {_config.SidecarHost} --port {_config.SidecarPort} --data-dir \"{dataDir}\"";
+                if (_config.DebugToolConsole) arguments += " --debug-tools";
             }
 
             try
@@ -225,6 +227,9 @@ namespace IcarusII.Core
                     IcarusII.Common.Protocol.Protocol.CapabilityGameProgress,
                     IcarusII.Common.Protocol.Protocol.CapabilityGameView,
                     IcarusII.Common.Protocol.Protocol.CapabilityGameAnalyze,
+                    IcarusII.Common.Protocol.Protocol.CapabilityUiAsk,
+                    IcarusII.Common.Protocol.Protocol.CapabilityGameWrite,
+                    IcarusII.Common.Protocol.Protocol.CapabilityRichTextV2,
                 },
                 ConnectTimeoutMs = Math.Max(500, _config.ConnectTimeoutMs),
                 MinBackoffMs = 1000,

@@ -41,6 +41,8 @@ export interface ServerOptions {
   knowledge?: KnowledgeManager;
   /** 工具名列表；给出函数时按 hello 能力动态计算。 */
   tools?: readonly string[] | ((capabilities: readonly string[]) => readonly string[]);
+  /** M4m：是否开启 `tool_debug` 调试直调（默认 false）。 */
+  debugTools?: boolean;
   helloTimeoutMs?: number;
 }
 
@@ -137,6 +139,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       config: options.config,
       knowledge: options.knowledge,
       tools,
+      debugTools: options.debugTools,
       helloTimeoutMs: options.helloTimeoutMs,
       logger: rootLog,
     }, () => {

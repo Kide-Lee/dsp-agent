@@ -2,8 +2,8 @@
 # 构建自包含的 icarus-ii sidecar 可执行文件。
 #
 # 本脚本中的每一步都在开发机上实测通过（见 design.md §7.1.1 与附录 A）：
-#   pi SDK + 全部依赖  ->  7.1MB 单 JS 文件（零原生模块）
-#                     ->  132MB Linux x64 / 107MB Windows x64 自包含可执行文件
+#   pi SDK + 全部依赖  ->  8.5MB 单 JS 文件（零原生模块）
+#                     ->  127MB Linux x64 / 107MB Windows x64 自包含可执行文件
 #
 # 用法:
 #   scripts/build-sidecar.sh              # 构建当前平台
@@ -11,7 +11,7 @@
 #   scripts/build-sidecar.sh windows-x64
 #   SIDECAR_RUNTIME_DIR=./runtimes scripts/build-sidecar.sh windows-x64
 #
-# 前置: node >= 20, npm/npx, unzip, curl
+# 前置: node >= 22.19, npm/npx, unzip, curl
 # 目标平台的自包含产物**不需要**目标机器安装 Node。
 
 set -euo pipefail
@@ -70,7 +70,7 @@ command -v npx >/dev/null 2>&1 || {
 #   --external:@mariozechner/clipboard : 可选的原生剪贴板，仅 TUI 使用，我们不需要
 log "打包 sidecar 为单文件 (esbuild)"
 npx --yes esbuild@"${ESBUILD_VERSION:-0.25.0}" "$SIDECAR_DIR/src/index.ts" \
-  --bundle --platform=node --format=cjs --target=node20 --minify \
+  --bundle --platform=node --format=cjs --target=node22 --minify \
   --external:@mariozechner/clipboard \
   --define:import.meta.url=import_meta_url \
   --banner:js="const import_meta_url = require('url').pathToFileURL(__filename).href;" \

@@ -17,6 +17,10 @@ export const SCRIPT_TOOL_NAME = 'run_script';
 export interface ToolCallOptions {
   timeoutMs: number;
   signal?: AbortSignal;
+  /** true = mod 不显示工具卡（知识库导出、调试直调）。 */
+  internal?: boolean;
+  /** 写操作风险等级；>0 时走 confirm_request + 一次性令牌。 */
+  risk?: number;
 }
 
 /** Session 实现它；工具宿主只依赖这个窄接口。 */
@@ -37,6 +41,8 @@ export class GameToolHost {
   private transport: ToolTransport | null = null;
   private capabilities: string[] = [];
   private cachedTools: ToolDefinition[] | null = null;
+  /** 调试直调期间把 host 调用标记为 internal，mod 不显示普通工具卡。 */
+  private debugMode = false;
 
   /** 返回能力集合是否真的变了。 */
   setCapabilities(next: readonly string[]): boolean {
@@ -60,6 +66,10 @@ export class GameToolHost {
 
   bind(transport: ToolTransport): void {
     this.transport = transport;
+  }
+
+  setDebugMode(enabled: boolean): void {
+    this.debugMode = enabled;
   }
 
   unbind(transport: ToolTransport): void {
@@ -91,7 +101,10 @@ export class GameToolHost {
       return toolError('tool_unavailable', '当前没有绑定到游戏连接（可能已断线或尚未进入存档）');
     }
     try {
-      return await transport.callTool(name, args, options);
+      return await transport.callTool(name, args, {
+        ...options,
+        internal: options.internal ?? this.debugMode,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return toolError('tool_unavailable', `工具调用失败：${message}`);

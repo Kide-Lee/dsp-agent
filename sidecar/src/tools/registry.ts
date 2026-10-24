@@ -13,6 +13,8 @@ import { GameToolHost, registerGameToolsFactory, SCRIPT_TOOL_NAME } from './host
 import { WIKI_TOOL_NAMES } from '../wiki/tools.js';
 import { BLUEPRINT_TOOL_NAMES } from '../blueprint/tools.js';
 import { KB_TOOL_NAMES } from '../kb/tools.js';
+import { CAPABILITY_UI_ASK, UI_ASK_TOOL_NAME } from './ask.js';
+import { CAPABILITY_GAME_WRITE, WRITE_TOOL_NAMES, createWriteTools } from './write.js';
 
 export const CAPABILITY_GAME_READ = 'game.read.v1';
 export const CAPABILITY_GAME_ENTITY = 'game.entity.v1';
@@ -51,6 +53,11 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_get_planets: CAPABILITY_GAME_ENTITY,
   game_get_logistics: CAPABILITY_GAME_ENTITY,
   game_trace_line: CAPABILITY_GAME_ENTITY,
+  game_focus_camera: CAPABILITY_GAME_WRITE,
+  game_place_marker: CAPABILITY_GAME_WRITE,
+  game_open_panel: CAPABILITY_GAME_WRITE,
+  game_set_research: CAPABILITY_GAME_WRITE,
+  game_undo_last_write: CAPABILITY_GAME_WRITE,
 };
 
 const MAX_RESULT_CHARS = 9000;
@@ -122,6 +129,7 @@ function gameTool(
     promptGuidelines?: string[];
     parameters: ReturnType<typeof Type.Object>;
     timeoutMs: number;
+    risk?: number;
   },
 ): ToolDefinition {
   return {
@@ -136,6 +144,7 @@ function gameTool(
       const result = await host.call(spec.name, (params ?? {}) as ToolArgs, {
         timeoutMs: spec.timeoutMs,
         signal,
+        risk: spec.risk ?? 0,
       });
       return {
         content: buildToolContent(result),
@@ -157,7 +166,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       name: 'game_get_overview',
       label: '存档概览',
       description:
-        '读取当前存档概览：存档名、游戏时刻、当前行星/星系、玩家坐标、是否暂停。' +
+        '读取当前存档概览：存档名、游戏时刻、当前行星/星系、玩家经纬度、是否暂停。' +
         '玩家问“我在哪”“现在什么情况”时先调用它；不要凭印象回答。',
       promptSnippet: '读取当前存档、星球、时间与玩家位置的概览',
       promptGuidelines: [
@@ -276,7 +285,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       name: 'game_get_entities',
       label: '建筑列表',
       description:
-        '分页列出指定行星（省略则为当前行星）的建筑：id、原型、配方、坐标、朝向。' +
+        '分页列出指定行星（省略则为当前行星）的建筑：id、原型、配方、星系/行星/经纬度、朝向。' +
         '可按原型 id/名称、配方 id 过滤；配合 game_get_entity 查看单体细节。' +
         '大星球请用 offset/limit 分页，不要一次拉全量。',
       promptSnippet: '分页列出建筑，可按原型或配方过滤',
@@ -341,8 +350,15 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         ),
         entityId: Type.Optional(Type.Integer({ description: '俯视中心：建筑 id' })),
         center: Type.Optional(
-          Type.Object({ x: Type.Number(), y: Type.Number(), z: Type.Number() }, {
-            description: '俯视中心（行星局部坐标）',
+          Type.Object({
+            latitude: Type.Optional(Type.Number()),
+            longitude: Type.Optional(Type.Number()),
+            altitude: Type.Optional(Type.Number()),
+            x: Type.Optional(Type.Number()),
+            y: Type.Optional(Type.Number()),
+            z: Type.Optional(Type.Number()),
+          }, {
+            description: '俯视中心：latitude+longitude；x/y/z 仅兼容旧调用',
           }),
         ),
         cameraHeight: Type.Optional(Type.Number({ description: '俯视高度（米），默认 60，范围 10–150' })),
@@ -391,7 +407,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       name: 'game_trace_line',
       label: '产线拓扑',
       description:
-        '从一栋建筑出发，沿传送带与分拣器把相连设备串成图：节点（id/名称/类别/坐标/深度）与有向边。' +
+        '从一栋建筑出发，沿传送带与分拣器把相连设备串成图：节点（id/名称/类别/星系/行星/经纬度/深度）与有向边。' +
         '用于回答“这条线从哪到哪、哪里断了、上下游有哪些机器”。',
       promptSnippet: '沿传送带/分拣器追踪产线拓扑',
       promptGuidelines: [
@@ -470,9 +486,14 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         radius: Type.Optional(Type.Number({ description: '半径（米），默认 60，范围 5–500' })),
         center: Type.Optional(
           Type.Object({
-            x: Type.Number(),
+            latitude: Type.Optional(Type.Number()),
+            longitude: Type.Optional(Type.Number()),
+            altitude: Type.Optional(Type.Number()),
+            x: Type.Optional(Type.Number()),
             y: Type.Optional(Type.Number()),
-            z: Type.Number(),
+            z: Type.Optional(Type.Number()),
+          }, {
+            description: '中心：latitude+longitude；x/y/z 仅兼容旧调用',
           }),
         ),
         all: Type.Optional(Type.Boolean({ description: '分析整颗星球，忽略 radius/center' })),
@@ -483,6 +504,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
     }),
   ];
 
+  tools.push(...createWriteTools(host));
   return tools.filter((tool) => {
     const capability = TOOL_CAPABILITY[tool.name];
     return capability !== undefined && host.has(capability);
@@ -497,6 +519,8 @@ export function toolNamesForCapabilities(capabilities: readonly string[]): strin
   const game = Object.entries(TOOL_CAPABILITY)
     .filter(([, capability]) => capabilities.includes(capability))
     .map(([name]) => name);
+  // 交互问答依赖 mod 的 choose UI；老 mod 不会声明该能力。
+  const ask = capabilities.includes(CAPABILITY_UI_ASK) ? [UI_ASK_TOOL_NAME] : [];
   // 脚本工具是 sidecar 本地能力，始终注册（没有 game 工具时执行会明确报错）。
-  return [...game, ...KB_TOOL_NAMES, ...WIKI_TOOL_NAMES, ...BLUEPRINT_TOOL_NAMES, SCRIPT_TOOL_NAME];
+  return [...ask, ...game, ...KB_TOOL_NAMES, ...WIKI_TOOL_NAMES, ...BLUEPRINT_TOOL_NAMES, SCRIPT_TOOL_NAME];
 }

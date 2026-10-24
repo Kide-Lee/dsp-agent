@@ -36,7 +36,7 @@ import { toolNamesForCapabilities } from './tools/registry.js';
  * 打包成单文件（esbuild --bundle，见 scripts/build-sidecar.sh）后 `__dirname` 里没有
  * package.json，所以版本号内嵌一份，package.json 只用来交叉核对（不一致时警告）。
  */
-const SERVER_VERSION = '0.3.1';
+const SERVER_VERSION = '0.3.2';
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_DATA_DIR_NAME = '.icarus-ii-dev';
@@ -54,6 +54,7 @@ interface ServeArgs {
   agentKind: AgentKind;
   provider: string;
   model: string;
+  debugTools: boolean;
 }
 
 function usage(): string {
@@ -71,6 +72,7 @@ function usage(): string {
     `  --host <addr>     监听地址（默认 ${DEFAULT_HOST}）`,
     `  --data-dir <path> 数据目录（默认 ~/${DEFAULT_DATA_DIR_NAME}）；写 runtime.json 与 config.json`,
     '  --token <token>   握手 token（默认随机 32 字节 hex）',
+    '  --debug-tools     开启 !tool 调试直调（只读白名单；默认关闭）',
     '  --log-level <l>   debug | info | warn | error（默认 info，也可用 ICARUS_II_LOG_LEVEL）',
     '  -h, --help        显示本帮助',
     '  -v, --version     显示版本号',
@@ -231,6 +233,7 @@ async function runServe(args: ServeArgs): Promise<void> {
       knowledge,
       // M2/M3：按 hello.capabilities 决定游戏工具；kb_* 始终注册。
       tools: toolNamesForCapabilities,
+      debugTools: args.debugTools,
     });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
@@ -267,6 +270,7 @@ async function runServe(args: ServeArgs): Promise<void> {
     agentKind: args.agentKind,
     configState: config.view().state,
     apiKey: config.maskedApiKey,
+    debugTools: args.debugTools,
     pid: process.pid,
   });
 
@@ -318,6 +322,7 @@ interface CliValues {
   agent?: string;
   provider?: string;
   model?: string;
+  'debug-tools'?: boolean;
   selfcheck?: boolean;
   help?: boolean;
   version?: boolean;
@@ -341,6 +346,7 @@ async function main(argv: string[]): Promise<void> {
         agent: { type: 'string' },
         provider: { type: 'string' },
         model: { type: 'string' },
+        'debug-tools': { type: 'boolean' },
         selfcheck: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
@@ -449,9 +455,19 @@ async function main(argv: string[]): Promise<void> {
     dataDir,
     tokenLength: token.length,
     tokenGenerated: values['token'] === undefined,
+    debugTools: values['debug-tools'] === true,
   });
 
-  await runServe({ host, port, dataDir, token, agentKind, provider, model });
+  await runServe({
+    host,
+    port,
+    dataDir,
+    token,
+    agentKind,
+    provider,
+    model,
+    debugTools: values['debug-tools'] === true,
+  });
 }
 
 void main(process.argv.slice(2)).catch((err: unknown) => {

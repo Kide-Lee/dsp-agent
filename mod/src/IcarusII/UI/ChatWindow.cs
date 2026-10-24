@@ -6,6 +6,7 @@ using System.Text;
 using UnityEngine;
 using UnityEngine.UI;
 using IcarusII.Common.Protocol;
+using IcarusII.Common.Text;
 using IcarusII.Config;
 using IcarusII.Game;
 using IcarusII.I18n;
@@ -111,6 +112,17 @@ namespace IcarusII.UI
         private ScrollRect _inputScrollRect;
         private RectTransform _inputViewport;
         private RectTransform _inputContent;
+        /// <summary>输入栏根节点；ask 期间被 choose 替换。</summary>
+        private RectTransform _inputRoot;
+        /// <summary>输出区根节点；底部让给输入栏/choose 时改它的 offsetMin.y。</summary>
+        private RectTransform _outputRoot;
+        /// <summary>当前替换输入栏的面板（目前是 choose；将来可扩展其它面板）。</summary>
+        private RectTransform _bottomReplacement;
+        private RectTransform _chooseRoot;
+        private RectTransform _inputFieldRect;
+        private AskPanel _askPanel;
+        private float _inputHeight = 100f;
+        private bool _inputHeightDirty;
         private bool _caretPrimed;
         private int _iconMapTick;
         private bool _iconMapReady;
@@ -202,6 +214,14 @@ namespace IcarusII.UI
             public GameObject Row;
             public Text Link;
             public ChatIndexRowHover Hover;
+            /// <summary>压缩记录行（“自动压缩上下文” + 摘要）；删除它 = 撤销压缩。</summary>
+            public bool IsCompaction;
+            /// <summary>对应的 pi compaction entry id；为空时撤销最近一次。</summary>
+            public string CompactionId;
+            /// <summary>被最近一次压缩记录覆盖：灰色、hover 不显示删除。</summary>
+            public bool Compacted;
+            public int TokensBefore;
+            public int EstimatedTokensAfter;
         }
 
         private readonly List<Line> _lines = new List<Line>();
@@ -213,6 +233,145 @@ namespace IcarusII.UI
         /// </summary>
         private readonly Dictionary<string, Block> _toolBlocks =
             new Dictionary<string, Block>(StringComparer.Ordinal);
+
+        /// <summary>每个 Text 自己的 linkId → URL 映射；链接点击只在该 Text 内查找。</summary>
+        private readonly Dictionary<Text, Dictionary<int, string>> _linkTargets =
+            new Dictionary<Text, Dictionary<int, string>>();
+        /// <summary>已订阅的点击回调，避免同一个 Text 重复加 handler。</summary>
+        private readonly Dictionary<Text, Action<UnityEngine.EventSystems.PointerEventData,
+            UnityEngine.UI.Youthcat.TextTriggerBounds>> _linkHandlers =
+            new Dictionary<Text, Action<UnityEngine.EventSystems.PointerEventData,
+                UnityEngine.UI.Youthcat.TextTriggerBounds>>();
+
+        private static TechProtoSet _techTagSource;
+        private static Dictionary<string, int> _techIdsByTag;
+
+        /// <summary>科技 IconTag（如 dcx）→ 科技 ID；表单器通过它把 dsp://tech/dcx 变成 link。</summary>
+        private static int ResolveTechTag(string tag)
+        {
+            if (string.IsNullOrEmpty(tag)) return 0;
+            var techs = LDB.techs;
+            if (techs == null) return 0;
+
+            if (!ReferenceEquals(techs, _techTagSource) || _techIdsByTag == null)
+            {
+                var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var array = techs.dataArray;
+                if (array != null)
+                {
+                    for (var i = 0; i < array.Length; i++)
+                    {
+                        var proto = array[i];
+                        if (proto == null || string.IsNullOrEmpty(proto.IconTag)) continue;
+                        if (!map.ContainsKey(proto.IconTag)) map[proto.IconTag] = proto.ID;
+                    }
+                }
+                _techTagSource = techs;
+                _techIdsByTag = map;
+            }
+
+            return _techIdsByTag.TryGetValue(tag.Trim(), out var id) ? id : 0;
+        }
+
+        private static ItemProtoSet _itemTagSource;
+        private static Dictionary<string, int> _itemIdsByTag;
+        private static RecipeProtoSet _recipeTagSource;
+        private static Dictionary<string, int> _recipeResultByTag;
+        private static AchievementProtoSet _achievementSidSource;
+        private static Dictionary<string, int> _achievementIdsBySid;
+
+        /// <summary>物品/配方 IconTag → 物品 ID；配方链接最终打开合成器里的这个物品。</summary>
+        private static int ResolveRecipeTag(string tag)
+        {
+            if (string.IsNullOrEmpty(tag)) return 0;
+            var key = tag.Trim();
+
+            var items = LDB.items;
+            if (items != null &&
+                (!ReferenceEquals(items, _itemTagSource) || _itemIdsByTag == null))
+            {
+                var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var array = items.dataArray;
+                if (array != null)
+                {
+                    for (var i = 0; i < array.Length; i++)
+                    {
+                        var proto = array[i];
+                        if (proto == null || string.IsNullOrEmpty(proto.IconTag)) continue;
+                        if (!map.ContainsKey(proto.IconTag)) map[proto.IconTag] = proto.ID;
+                    }
+                }
+                _itemTagSource = items;
+                _itemIdsByTag = map;
+            }
+            if (_itemIdsByTag != null && _itemIdsByTag.TryGetValue(key, out var itemId))
+                return itemId;
+
+            // 也接受配方自己的 IconTag：取第一个产物物品作为合成器目标。
+            var recipes = LDB.recipes;
+            if (recipes != null &&
+                (!ReferenceEquals(recipes, _recipeTagSource) || _recipeResultByTag == null))
+            {
+                var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var array = recipes.dataArray;
+                if (array != null)
+                {
+                    for (var i = 0; i < array.Length; i++)
+                    {
+                        var proto = array[i];
+                        if (proto == null || string.IsNullOrEmpty(proto.IconTag)) continue;
+                        if (proto.Results == null || proto.Results.Length == 0) continue;
+                        if (!map.ContainsKey(proto.IconTag)) map[proto.IconTag] = proto.Results[0];
+                    }
+                }
+                _recipeTagSource = recipes;
+                _recipeResultByTag = map;
+            }
+            return _recipeResultByTag != null && _recipeResultByTag.TryGetValue(key, out var result)
+                ? result
+                : 0;
+        }
+
+        /// <summary>成就 ID 或 SID（ACHIEVEMENT_1）→ 成就 ID。</summary>
+        private static int ResolveAchievementKey(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return 0;
+            var value = key.Trim();
+
+            if (int.TryParse(value, out var numeric))
+            {
+                var achievements = LDB.achievements;
+                if (achievements != null && achievements.Select(numeric) != null) return numeric;
+                return 0;
+            }
+
+            var set = LDB.achievements;
+            if (set == null) return 0;
+            if (!ReferenceEquals(set, _achievementSidSource) || _achievementIdsBySid == null)
+            {
+                var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var array = set.dataArray;
+                if (array != null)
+                {
+                    for (var i = 0; i < array.Length; i++)
+                    {
+                        var proto = array[i];
+                        if (proto == null || string.IsNullOrEmpty(proto.SID)) continue;
+                        if (!map.ContainsKey(proto.SID)) map[proto.SID] = proto.ID;
+                    }
+                }
+                _achievementSidSource = set;
+                _achievementIdsBySid = map;
+            }
+            return _achievementIdsBySid.TryGetValue(value, out var id) ? id : 0;
+        }
+
+        private static readonly RichTextLinkResolvers LinkResolvers = new RichTextLinkResolvers
+        {
+            TechTag = ResolveTechTag,
+            RecipeTag = ResolveRecipeTag,
+            AchievementKey = ResolveAchievementKey,
+        };
 
         /// <summary>当前正在流式输出的思考块（null = 没在思考）。</summary>
         private Block _thinking;
@@ -312,6 +471,8 @@ namespace IcarusII.UI
         {
             public GameObject Go;
             public Text Body;
+            /// <summary>正文里真表格/后续文本段动态创建的 Text 节点；重建正文时清掉。</summary>
+            public readonly List<GameObject> BodyExtras = new List<GameObject>();
             public GameObject Footer;
             public Text Time;
             public Button Copy;
@@ -385,6 +546,12 @@ namespace IcarusII.UI
         private readonly StringBuilder _stream = new StringBuilder();
         private int _streamItem = -1;
         private int _itemSeq;
+        private int _lastStreamRenderLength = -1;
+
+        private static readonly RichTextOptions RichOptions14 =
+            new RichTextOptions { BodyFontSize = 14 };
+        private static readonly RichTextOptions RichOptions13 =
+            new RichTextOptions { BodyFontSize = 13 };
 
         // prefab 里的 example-* 示例就是消息模板：样式只在 prefab 定义一次，运行期克隆。
         private RectTransform _userTemplate;
@@ -404,6 +571,37 @@ namespace IcarusII.UI
         private int _currentTurnId;
         private int _focusedTurnId;
         private bool _awaitingResponse;
+
+        // ---- 工具列表（输入框上方的 popup；静态结构在 prefab，运行期只绑数据） ----
+        private readonly List<ToolMenuItem> _toolCatalog = new List<ToolMenuItem>();
+        private RectTransform _toolMenu;
+        private ScrollRect _toolScroll;
+        private GameObject _toolScrollbar;
+        private RectTransform _toolContent;
+        private RectTransform _toolRowTemplate;
+        private Text _toolMenuEmpty;
+        private Text _toolMenuFooter;
+        private Text _toolMenuHint;
+        private Button _toolButton;
+        private readonly List<ToolRowView> _toolRows = new List<ToolRowView>();
+        private readonly List<ToolMenuItem> _toolVisible = new List<ToolMenuItem>();
+        private int _toolSelected;
+        private string _toolFilter = string.Empty;
+        private bool _toolMenuOpen;
+        private bool _toolCatalogLoaded;
+        /// <summary>程序化改输入框时屏蔽 onValueChanged，避免把菜单重新打开。</summary>
+        private bool _suppressToolMenuEvents;
+
+        /// <summary>prefab 里 tool-row-template 的绑定结果；行本身只在运行期克隆。</summary>
+        private sealed class ToolRowView
+        {
+            public GameObject Go;
+            public Button Button;
+            public Image Bg;
+            public Text Label;
+            public Text Command;
+            public Text Description;
+        }
 
         /// <summary>正文字体：输入框与聊天正文都用它。</summary>
         private Font _bodyFont;
@@ -459,6 +657,7 @@ namespace IcarusII.UI
         public void FocusInput()
         {
             if (_input == null) return;
+            if (AskShowing) return;
             _wantInputFocus = true;
             _caretPrimed = false;
             ApplyFocus();
@@ -550,6 +749,18 @@ namespace IcarusII.UI
         /// <summary>玩家提交了一条消息。参数为去除首尾空白后的文本。</summary>
         public event Action<string> Submitted;
 
+        /// <summary>玩家完成一次 ask（多题逐题作答后一次性回传）。</summary>
+        public event Action<List<AskAnswer>> AskCompleted;
+
+        /// <summary>ask 被取消（关窗/连接断开/主动取消）。</summary>
+        public event Action AskCancelled;
+
+        /// <summary>写操作确认结果：true=同意，false=拒绝/关窗。</summary>
+        public event Action<bool> ConfirmationChosen;
+
+        /// <summary>当前是否正在显示 ask 面板。</summary>
+        public bool AskShowing => _askPanel != null && _askPanel.IsShowing;
+
         /// <summary>
         /// 玩家点了蓝图卡片上的动作。参数是卡片数据 + 动作类型；
         /// 真正的游戏 API 调用由 <see cref="IcarusII.Game.BlueprintActions"/> 完成。
@@ -593,6 +804,8 @@ namespace IcarusII.UI
             _fromPrefab = false;
             _lines.Clear();
             _items.Clear();
+            _linkTargets.Clear();
+            _linkHandlers.Clear();
             _toolBlocks.Clear();
             _thinking = null;
             _thinkingText.Length = 0;
@@ -600,6 +813,7 @@ namespace IcarusII.UI
             _suppressThinkingLevelEvent = false;
             _stream.Length = 0;
             _streamItem = -1;
+            _lastStreamRenderLength = -1;
             _scrollBottomFrames = 0;
             _userTemplate = null;
             _assistantTemplate = null;
@@ -619,6 +833,23 @@ namespace IcarusII.UI
             _dirty = false;
             IsOpen = false;
             _wantInputFocus = false;
+
+            // 工具列表的静态节点随窗口一起销毁；目录数据保留，重建窗口后直接复用。
+            _toolMenu = null;
+            _toolScroll = null;
+            _toolScrollbar = null;
+            _toolContent = null;
+            _toolRowTemplate = null;
+            _toolMenuEmpty = null;
+            _toolMenuFooter = null;
+            _toolMenuHint = null;
+            _toolButton = null;
+            _toolRows.Clear();
+            _toolVisible.Clear();
+            _toolMenuOpen = false;
+            _toolFilter = string.Empty;
+            _toolSelected = 0;
+            _suppressToolMenuEvents = false;
         }
 
         // ---------------------------------------------------------------- 构建
@@ -971,6 +1202,11 @@ namespace IcarusII.UI
             // （照原生 UISmartInputField 的做法），所以弹窗、图标表、调色板都和原生一致。
             WireInputToolbar(panel);
 
+            // 输入框上方的工具列表：静态样式来自 prefab，运行期只绑定/筛选/克隆行。
+            WireToolMenu(panel);
+            WireBottomLayout(panel);
+            WireAskPanel(panel);
+
             // 右下角「思考等级」下拉框：用游戏自己的 UIComboBox（prefab 里已放好节点）。
             WireThinkingLevelCombo(panel);
             WireModelCombo(panel);
@@ -1013,6 +1249,8 @@ namespace IcarusII.UI
 
             // 行为必须运行期接管：prefab 引用不了本 mod 的类型
             _input.onEndEdit.AddListener(OnInputEndEdit);
+            // 输入 "/" 或继续输入过滤词时，实时更新工具列表。
+            _input.onValueChanged.AddListener(OnInputValueChanged);
             // 抄自信标窗待办框的输入框是**多行**的：回车不会走 onEndEdit，
             // 而是走游戏改写版 InputField 的 OnNewLine，所以这里单独接一发。
             _input.OnNewLine += OnInputNewLine;
@@ -1344,6 +1582,7 @@ namespace IcarusII.UI
                     if (_titleFromPrefab && ReferenceEquals(t, _titleText)) continue;
                     ApplyBodyFont(t);
                 }
+                _inputHeightDirty = true;
             }
 
             // 正文与状态栏的文字颜色（聊天内容配色，不是窗口外观）。
@@ -1396,9 +1635,12 @@ namespace IcarusII.UI
                 return;
             }
 
+            if (!open && _askPanel != null && _askPanel.IsShowing) _askPanel.Cancel();
+
             IsOpen = open;
             _root.SetActive(open);
-            if (!open) { _wantInputFocus = false; _textMaterialRebound = false; }
+            if (!open) { _wantInputFocus = false; _textMaterialRebound = false; HideToolMenu(); }
+            else _inputHeightDirty = true;
 
             ApplyOpenState(open);
             if (open) EnsureIconMappings();
@@ -1535,7 +1777,7 @@ namespace IcarusII.UI
                 // 默认不自动聚焦：这样打开后按键仍可立即关窗。
                 // 需要"开窗即打字"的玩家可在配置里打开 AutoFocusInput。
                 // 密钥录入态总是自动聚焦：此时玩家唯一要做的事就是填 Key
-                if (_autoFocusInput || _keyEntryMode) FocusInput();
+                if ((_autoFocusInput || _keyEntryMode) && !AskShowing) FocusInput();
                 EnsureThinkingComboText();
                 EnsureModelComboText();
                 // 刚 SetActive(true)，布局还没重建：直接贴底只能按旧高度算，
@@ -1705,6 +1947,13 @@ namespace IcarusII.UI
         public event Action<string, long> TurnDeleted;
 
         /// <summary>
+        /// 玩家点了压缩记录行的删除：请求 sidecar 撤销最近一次压缩（协议 A.11）。
+        /// 参数是 compaction entry id；空字符串表示撤销最近一次。
+        /// UI 不先删行，等 sidecar 成功后再移除（失败要保留记录）。
+        /// </summary>
+        public event Action<string> CompactionUndoRequested;
+
+        /// <summary>
         /// 玩家点了某条回答 footer 的刷新：窗口已经把这一轮的助手侧清空，
         /// Plugin 先把旧回合从会话里删掉（A.7），再用同一句提问重新发 prompt。
         /// </summary>
@@ -1712,7 +1961,7 @@ namespace IcarusII.UI
 
         /// <summary>追加一条用户消息（渲染成气泡，样式来自 prefab 的 example-user-*）。</summary>
         /// <param name="timestampMs">历史回放时带上的时间戳；当场提问传 0。</param>
-        /// <param name="gameTime">历史回放的游戏时间（HH:mm）；空则用当前游戏时间。</param>
+        /// <param name="gameTime">历史回放的游戏时间（HH:mm:ss）；空则用当前游戏时间。</param>
         public void AppendUser(string text, long timestampMs = 0, string gameTime = null)
         {
             if (text == null) return;
@@ -1733,6 +1982,159 @@ namespace IcarusII.UI
             if (text == null) return;
             AddMessage(LineKind.System, text);
             // 错误/提示类系统消息意味着本轮已经收尾；允许索引删除已完成的回合。
+            _awaitingResponse = false;
+        }
+
+        /// <summary>
+        /// 追加一条上下文压缩记录（协议 A.11）：一条“自动压缩上下文”用户消息 +
+        /// 一条摘要回答，并在索引里把之前的对话标灰、禁止删除。
+        ///
+        /// 它不能改变 `_currentTurnId` 的归属：压缩可能发生在一轮回答开始前或中途，
+        /// 之后模型的正文仍应落回**玩家提问的那一轮**，而不是压缩记录。
+        /// </summary>
+        public void AppendCompaction(HistoryMessageInfo message)
+        {
+            if (message == null) return;
+            AppendCompaction(
+                message.Text,
+                message.Timestamp,
+                message.CompactionId,
+                message.TokensBefore,
+                message.EstimatedTokensAfter);
+        }
+
+        public void AppendCompaction(
+            string summary,
+            long timestampMs,
+            string compactionId,
+            int tokensBefore = 0,
+            int estimatedTokensAfter = 0)
+        {
+            if (string.IsNullOrEmpty(summary)) summary = Strings.Get("chat.compaction.empty");
+
+            // 压缩发生在流式回答中途时，先把已收到的半截正文收尾；重试会产生新的回答。
+            if (_streamItem >= 0) EndStream();
+
+            var answerTurnId = _currentTurnId;
+            var wasAwaiting = _awaitingResponse;
+            var insertBefore = wasAwaiting && answerTurnId != 0 && !HasAssistantContent(answerTurnId);
+            var time = CompactionClock(timestampMs);
+            var label = $"[{time}] {Strings.Get("chat.compaction.label")}";
+
+            _currentTurnId = ++_nextTurnId;
+            _awaitingResponse = false;
+            AddMessage(LineKind.User, label, null);
+            AddTurn(
+                _currentTurnId,
+                label,
+                timestampMs,
+                isCompaction: true,
+                compactionId: compactionId,
+                tokensBefore: tokensBefore,
+                estimatedTokensAfter: estimatedTokensAfter);
+            AddMessage(LineKind.Assistant, summary, null);
+
+            // 压缩发生在“新问题刚发出、回答还没开始”时：记录应排在问题之前，
+            // 否则会把玩家当前这一问也标灰。压缩发生在回答之后/中途时保持追加。
+            if (insertBefore)
+            {
+                MoveCompactionBeforeTurn(_currentTurnId, answerTurnId);
+                RefreshCompactionStates();
+            }
+
+            // 后续正文回到玩家提问的那一轮；没有提问时保持压缩记录为当前轮。
+            _currentTurnId = answerTurnId != 0 ? answerTurnId : _currentTurnId;
+            _awaitingResponse = wasAwaiting;
+            UpdateReplyRefreshAvailability();
+            _dirty = true;
+            ScrollToBottom();
+        }
+
+        private bool HasAssistantContent(int turnId)
+        {
+            foreach (var line in _lines)
+            {
+                if (line.TurnId == turnId && line.Kind == LineKind.Assistant &&
+                    !string.IsNullOrEmpty(line.Text))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 把刚追加在末尾的压缩记录整块移到 `targetTurnId` 之前（索引、输出区、_turns 同步）。
+        /// 只在“问题已发出但还没有任何回答”时调用，因此目标轮还没有 assistant 项。
+        /// </summary>
+        private void MoveCompactionBeforeTurn(int compactionTurnId, int targetTurnId)
+        {
+            int cardTurn = _turns.FindIndex(t => t.Id == compactionTurnId);
+            int targetTurn = _turns.FindIndex(t => t.Id == targetTurnId);
+            if (cardTurn >= 0 && targetTurn >= 0 && cardTurn > targetTurn)
+            {
+                var entry = _turns[cardTurn];
+                _turns.RemoveAt(cardTurn);
+                targetTurn = _turns.FindIndex(t => t.Id == targetTurnId);
+                _turns.Insert(targetTurn, entry);
+            }
+
+            int cardLine = _lines.FindIndex(l => l.TurnId == compactionTurnId);
+            int targetLine = _lines.FindIndex(l => l.TurnId == targetTurnId);
+            if (cardLine >= 0 && targetLine >= 0 && cardLine > targetLine)
+            {
+                var block = _lines.GetRange(cardLine, _lines.Count - cardLine);
+                _lines.RemoveRange(cardLine, block.Count);
+                targetLine = _lines.FindIndex(l => l.TurnId == targetTurnId);
+                _lines.InsertRange(targetLine, block);
+            }
+
+            if (_content == null) return;
+            int cardItem = _items.FindIndex(i => i.TurnId == compactionTurnId);
+            int targetItem = _items.FindIndex(i => i.TurnId == targetTurnId);
+            if (cardItem >= 0 && targetItem >= 0 && cardItem > targetItem)
+            {
+                var block = _items.GetRange(cardItem, _items.Count - cardItem);
+                _items.RemoveRange(cardItem, block.Count);
+                targetItem = _items.FindIndex(i => i.TurnId == targetTurnId);
+                _items.InsertRange(targetItem, block);
+                for (int i = 0; i < block.Count; i++)
+                {
+                    var go = block[i].Go;
+                    if (go != null) go.transform.SetSiblingIndex(targetItem + i);
+                }
+            }
+        }
+
+        /// <summary>把最近一次压缩记录之前的回合标灰并刷新索引（更早的压缩记录也灰）。</summary>
+        private void RefreshCompactionStates()
+        {
+            var latest = -1;
+            for (int i = 0; i < _turns.Count; i++)
+            {
+                if (_turns[i].IsCompaction) latest = i;
+            }
+            for (int i = 0; i < _turns.Count; i++)
+            {
+                _turns[i].Compacted = latest >= 0 && i < latest;
+            }
+            if (_chatIndexContent != null) RebuildIndexRows();
+        }
+
+        private static string CompactionClock(long timestampMs)
+        {
+            if (timestampMs <= 0) return DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+            return DateTimeOffset.FromUnixTimeMilliseconds(timestampMs)
+                .LocalDateTime.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// 追加调试直调结果（`!tool`）。
+        /// 走普通助手正文样式（和正常回答一致），而不是灰色系统行；同时对内容做
+        /// 尖括号转义，避免工具返回值里的 `<...>` 被 UGUI 当成富文本标签。
+        /// </summary>
+        public void AppendDebugResult(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            AddMessage(LineKind.Assistant, Escape(text));
             _awaitingResponse = false;
         }
 
@@ -2022,7 +2424,7 @@ namespace IcarusII.UI
             titleLe.preferredHeight = Mathf.Max(16f, _fontSize + 3f);
             var title = UiFactory.AddLabel(titleRt, _bodyFont, Mathf.Max(11, _fontSize),
                 _textMain, TextAnchor.MiddleLeft);
-            title.text = SanitizeRichText(card.DisplayTitle);
+            title.text = FormatInline(card.DisplayTitle);
             // 标题/文件名只占一行：Wrap + Truncate 不会像 Overflow 那样盖到来源角标上。
             title.horizontalOverflow = HorizontalWrapMode.Wrap;
             title.verticalOverflow = VerticalWrapMode.Truncate;
@@ -2034,7 +2436,7 @@ namespace IcarusII.UI
             fileLe.preferredHeight = Mathf.Max(14f, _fontSize);
             var file = UiFactory.AddLabel(fileRt, _bodyFont, Mathf.Max(9, _fontSize - 2),
                 _textDim, TextAnchor.MiddleLeft);
-            file.text = SanitizeRichText(string.IsNullOrEmpty(card.FileName) ? card.DisplayTitle : card.FileName);
+            file.text = FormatInline(string.IsNullOrEmpty(card.FileName) ? card.DisplayTitle : card.FileName);
             file.horizontalOverflow = HorizontalWrapMode.Wrap;
             file.verticalOverflow = VerticalWrapMode.Truncate;
 
@@ -2088,7 +2490,7 @@ namespace IcarusII.UI
                 descLe.preferredHeight = Mathf.Max(30f, _fontSize * 2f + 2f);
                 var desc = UiFactory.AddLabel(descRt, _bodyFont, Mathf.Max(9, _fontSize - 2),
                     new Color(_textDim.r, _textDim.g, _textDim.b, 0.95f), TextAnchor.UpperLeft);
-                desc.text = SanitizeRichText(card.Description);
+                desc.text = FormatInline(card.Description);
                 desc.horizontalOverflow = HorizontalWrapMode.Wrap;
                 desc.verticalOverflow = VerticalWrapMode.Truncate;
                 desc.wideCharSpacing = 1f;
@@ -2638,7 +3040,7 @@ namespace IcarusII.UI
             if (_thinking == null) return;
 
             _thinkingText.Append(delta);
-            _thinking.Body.text = SanitizeRichText(_thinkingText.ToString());
+            ApplyRichText(_thinking.Body, _thinkingText.ToString(), RichOptions13, RichTextProfile.Body);
             if (!_thinking.Body.gameObject.activeSelf) _thinking.Body.gameObject.SetActive(true);
             _dirty = true;
         }
@@ -2957,7 +3359,7 @@ namespace IcarusII.UI
             block.Summary.gameObject.SetActive(!expanded && !string.IsNullOrEmpty(block.Summary.text));
 
             block.RawBody = body ?? string.Empty;
-            block.Body.text = SanitizeRichText(block.RawBody);
+            block.Body.text = FormatRichText(block.RawBody, RichOptions13, RichTextProfile.Plain).Rich;
             block.Body.gameObject.SetActive(expanded && !string.IsNullOrEmpty(block.RawBody));
 
             // 截图只在展开时显示：收起态是一行摘要，塞一张 220px 的图会把聊天串撑乱。
@@ -3604,6 +4006,7 @@ namespace IcarusII.UI
         {
             // 助手消息不显示说话人名字：prefab 里的样式就是裸文本（见 example-reply/body）。
             _stream.Length = 0;
+            _lastStreamRenderLength = -1;
             if (_replyTemplate != null)
             {
                 var reply = EnsureReplyForTurn();
@@ -3611,6 +4014,7 @@ namespace IcarusII.UI
                 {
                     // 正文开始：把这一轮之前的思考块、工具块全部收起。
                     CollapseReplyBlocks(reply);
+                    ClearBodyExtras(reply);
                     if (reply.Body != null) reply.Body.text = string.Empty;
                     if (reply.Footer != null) reply.Footer.SetActive(false);
                     reply.CopyText = string.Empty;
@@ -3640,7 +4044,8 @@ namespace IcarusII.UI
                 var item = _items[_streamItem];
                 if (item.Reply != null)
                 {
-                    if (item.Reply.Body != null) item.Reply.Body.text = SanitizeRichText(text);
+                    if (item.Reply.Body != null)
+                        RenderReplyBody(item.Reply, text);
                     var lineIndex = FindLineIndex(item.Go);
                     var time = GameClock();
                     if (lineIndex >= 0)
@@ -3665,7 +4070,8 @@ namespace IcarusII.UI
                 }
                 else
                 {
-                    if (item.Label != null) item.Label.text = SanitizeRichText(text);
+                    if (item.Label != null)
+                        ApplyRichText(item.Label, text, RichOptions14, RichTextProfile.Body);
                     AttachReplyFooter(_streamItem, text);
                     _lines.Add(new Line
                     {
@@ -3678,6 +4084,7 @@ namespace IcarusII.UI
                 }
             }
             _streamItem = -1;
+            _lastStreamRenderLength = -1;
             _stream.Length = 0;
             _awaitingResponse = false;
             TrimHistory();
@@ -3751,11 +4158,11 @@ namespace IcarusII.UI
         private void ApplyReplyFooter(ReplyView view, string rawText, string time)
         {
             if (view == null) return;
-            view.CopyText = rawText ?? string.Empty;
+            view.CopyText = ToPlainText(rawText);
             var hasText = !string.IsNullOrEmpty(rawText);
             if (view.Footer != null) view.Footer.SetActive(hasText);
             if (view.Time != null)
-                view.Time.text = string.IsNullOrEmpty(time) ? GameClock() : time;
+                view.Time.text = FormatGameTime(time);
             if (view.CopyLabel != null) view.CopyLabel.text = Strings.Get("reply.copy");
             UpdateReplyRefreshAvailability();
         }
@@ -3769,7 +4176,8 @@ namespace IcarusII.UI
             int last = -1;
             for (int i = _items.Count - 1; i >= 0; i--)
             {
-                if (_items[i].Kind == LineKind.Assistant && _items[i].Reply != null)
+                if (_items[i].Kind == LineKind.Assistant && _items[i].Reply != null &&
+                    !IsCompactionTurn(_items[i].TurnId))
                 {
                     last = i;
                     break;
@@ -3780,10 +4188,19 @@ namespace IcarusII.UI
             {
                 var item = _items[i];
                 if (item.Kind != LineKind.Assistant || item.Reply == null || item.Reply.Refresh == null) continue;
-                bool show = i == last;
+                bool show = i == last && !IsCompactionTurn(item.TurnId);
                 if (item.Reply.Refresh.gameObject.activeSelf != show)
                     item.Reply.Refresh.gameObject.SetActive(show);
             }
+        }
+
+        private bool IsCompactionTurn(int turnId)
+        {
+            for (int i = 0; i < _turns.Count; i++)
+            {
+                if (_turns[i].Id == turnId) return _turns[i].IsCompaction;
+            }
+            return false;
         }
 
         /// <summary>把协议里的蓝图卡片数据填进一张固定卡片。</summary>
@@ -3793,11 +4210,11 @@ namespace IcarusII.UI
 
             view.Card = card;
             if (view.Name != null)
-                view.Name.text = SanitizeRichText(CardTitle(card));
+                view.Name.text = FormatInline(CardTitle(card));
             if (view.Description != null)
                 view.Description.text = string.IsNullOrEmpty(card.Description)
                     ? Strings.Get("blueprint.card.no_description")
-                    : SanitizeRichText(card.Description);
+                    : FormatInline(card.Description);
             if (view.Meta != null)
                 view.Meta.text = BuildCardMeta(card);
             if (view.ThumbLabel != null)
@@ -3856,6 +4273,11 @@ namespace IcarusII.UI
         {
             if (view == null) return false;
             if (view.Body != null && !string.IsNullOrEmpty(view.Body.text)) return true;
+            for (int i = 0; i < view.BodyExtras.Count; i++)
+            {
+                var go = view.BodyExtras[i];
+                if (go != null && go.activeSelf) return true;
+            }
             if (view.CardViews.Count > 0) return true;
             for (int i = 0; i < view.ThinkingBlocks.Count; i++)
             {
@@ -3882,13 +4304,14 @@ namespace IcarusII.UI
             if (item.Reply == null)
             {
                 _streamItem = -1;
+                _lastStreamRenderLength = -1;
                 _stream.Length = 0;
                 return;
             }
 
             var text = _stream.ToString();
             if (!string.IsNullOrEmpty(text) && item.Reply.Body != null)
-                item.Reply.Body.text = SanitizeRichText(text);
+                RenderReplyBody(item.Reply, text);
 
             var lineIndex = FindLineIndex(item.Go);
             var time = GameClock();
@@ -3902,6 +4325,7 @@ namespace IcarusII.UI
             ApplyReplyFooter(item.Reply, text, lineIndex >= 0 ? _lines[lineIndex].Time : time);
 
             _streamItem = -1;
+            _lastStreamRenderLength = -1;
             _stream.Length = 0;
 
             if (!HasReplyContent(item.Reply)) RemoveReply(item.Reply);
@@ -3910,6 +4334,12 @@ namespace IcarusII.UI
         private void RemoveReply(ReplyView view)
         {
             if (view == null) return;
+            ReleaseLinkTargets(view.Body);
+            for (var i = 0; i < view.BodyExtras.Count; i++)
+            {
+                var go = view.BodyExtras[i];
+                if (go != null) ReleaseLinkTargets(go.GetComponent<Text>());
+            }
             RemoveItemsUnder(view.Go);
             var lineIndex = FindLineIndex(view.Go);
             if (lineIndex >= 0) _lines.RemoveAt(lineIndex);
@@ -3951,8 +4381,11 @@ namespace IcarusII.UI
             _thinking = null;
             _thinkingText.Length = 0;
             _lines.Clear();
+            _linkTargets.Clear();
+            _linkHandlers.Clear();
             _stream.Length = 0;
             _streamItem = -1;
+            _lastStreamRenderLength = -1;
             _turns.Clear();
             _currentTurnId = 0;
             _nextTurnId = 0;
@@ -3963,8 +4396,20 @@ namespace IcarusII.UI
             _dirty = true;
         }
 
-        /// <summary>给 Plugin 回存 reply.time 用；与脚注显示的是同一套 HH:mm。</summary>
+        /// <summary>给 Plugin 回存 reply.time 用；与脚注显示的是同一套 HH:mm:ss。</summary>
         public static string CurrentGameClock() => GameClock();
+
+        /// <summary>旧历史只存 HH:mm；显示时补成 HH:mm:ss，保证所有脚注都含秒。</summary>
+        private static string FormatGameTime(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return GameClock();
+            if (value == "--:--") return value;
+            var parts = value.Split(':');
+            if (parts.Length == 2 && parts[1].Length == 2
+                && int.TryParse(parts[0], out _) && int.TryParse(parts[1], out _))
+                return value + ":00";
+            return value;
+        }
 
         private static string GameClock()
         {
@@ -3972,7 +4417,8 @@ namespace IcarusII.UI
             long sec = GameMain.gameTick / 60L;
             int hour = (int)((sec / 3600L) % 24L);
             int min = (int)((sec / 60L) % 60L);
-            return hour.ToString("00") + ":" + min.ToString("00");
+            int second = (int)(sec % 60L);
+            return hour.ToString("00") + ":" + min.ToString("00") + ":" + second.ToString("00");
         }
 
         /// <summary>
@@ -3987,12 +4433,13 @@ namespace IcarusII.UI
 
             var footer = "\n<size=16><color=#8FA3B8>游戏时间 " + GameClock()
                 + " · 点击复制</color></size>";
-            item.Label.text = SanitizeRichText(rawText) + footer;
+            ApplyRichText(item.Label, rawText, RichOptions14, RichTextProfile.Body);
+            item.Label.text = item.Label.text + footer;
 
             var button = item.Go.GetComponent<Button>();
             if (button == null) button = item.Go.AddComponent<Button>();
             button.onClick.RemoveAllListeners();
-            var copy = rawText;
+            var copy = ToPlainText(rawText);
             button.onClick.AddListener(() => GUIUtility.systemCopyBuffer = copy);
         }
 
@@ -4031,7 +4478,7 @@ namespace IcarusII.UI
                     // 正文落地：收起这一轮的思考块/工具块（与流式正文同一规则）。
                     CollapseReplyBlocks(replyItem.Reply);
                     if (replyItem.Reply.Body != null)
-                        replyItem.Reply.Body.text = SanitizeRichText(text);
+                        RenderReplyBody(replyItem.Reply, text);
                     line.Go = replyItem.Go;
                     line.Time = string.IsNullOrEmpty(gameTime) ? GameClock() : gameTime;
                     ApplyReplyFooter(replyItem.Reply, text, line.Time);
@@ -4061,12 +4508,17 @@ namespace IcarusII.UI
                 line.Go = item.Go;
                 if (item.Reply != null)
                 {
-                    if (item.Reply.Body != null) item.Reply.Body.text = SanitizeRichText(text);
+                    if (item.Reply.Body != null)
+                        RenderReplyBody(item.Reply, text);
                     ApplyReplyFooter(item.Reply, text, line.Time);
                 }
                 else
                 {
-                    if (item.Label != null) item.Label.text = SanitizeRichText(text);
+                    if (item.Label != null)
+                    {
+                        if (kind == LineKind.User) ApplyPlainText(item.Label, text);
+                        else ApplyRichText(item.Label, text, RichOptions14, RichTextProfile.Body);
+                    }
                     FitBubbleWidth(item.Go, text);
                     if (kind == LineKind.Assistant) AttachReplyFooter(index, text);
                     else if (kind == LineKind.User) ApplyUserFooter(index, text, line.Time);
@@ -4176,12 +4628,16 @@ namespace IcarusII.UI
                         if (item.Reply.Loading != null) MarkLoadingDone(item.Reply);
                         AddCards(item.Reply, line.Cards);
                         if (item.Reply.Body != null)
-                            item.Reply.Body.text = SanitizeRichText(line.Text);
+                            RenderReplyBody(item.Reply, line.Text);
                         ApplyReplyFooter(item.Reply, line.Text, line.Time);
                     }
                     else
                     {
-                        if (item.Label != null) item.Label.text = SanitizeRichText(line.Text);
+                        if (item.Label != null)
+                        {
+                            if (line.Kind == LineKind.User) ApplyPlainText(item.Label, line.Text);
+                            else ApplyRichText(item.Label, line.Text, RichOptions14, RichTextProfile.Body);
+                        }
                         FitBubbleWidth(item.Go, line.Text);
                         if (line.Kind == LineKind.Assistant) AttachReplyFooter(index, line.Text);
                         else if (line.Kind == LineKind.User) ApplyUserFooter(index, line.Text, line.Time);
@@ -4276,7 +4732,8 @@ namespace IcarusII.UI
             AppendHistorySteps(reply, message.Steps);
             // 回放的是已经完成的回答：loading 直接显示“已完成”，内容收起。
             if (reply.Loading != null) MarkLoadingDone(reply);
-            if (reply.Body != null) reply.Body.text = SanitizeRichText(text);
+            if (reply.Body != null)
+                RenderReplyBody(reply, text);
             ApplyReplyFooter(reply, text, time);
 
             var lineIndex = FindLineIndex(reply.Go);
@@ -4290,6 +4747,7 @@ namespace IcarusII.UI
             }
 
             _streamItem = -1;
+            _lastStreamRenderLength = -1;
             _stream.Length = 0;
             _awaitingResponse = false;
             TrimHistory();
@@ -4395,7 +4853,14 @@ namespace IcarusII.UI
             RebuildIndexRows();
         }
 
-        private void AddTurn(int turnId, string text, long timestampMs = 0)
+        private void AddTurn(
+            int turnId,
+            string text,
+            long timestampMs = 0,
+            bool isCompaction = false,
+            string compactionId = null,
+            int tokensBefore = 0,
+            int estimatedTokensAfter = 0)
         {
             var userGo = _lines.Count > 0 ? _lines[_lines.Count - 1].Go : null;
             var entry = new TurnEntry
@@ -4404,10 +4869,15 @@ namespace IcarusII.UI
                 Text = text ?? string.Empty,
                 Timestamp = timestampMs,
                 UserGo = userGo,
+                IsCompaction = isCompaction,
+                CompactionId = compactionId,
+                TokensBefore = tokensBefore,
+                EstimatedTokensAfter = estimatedTokensAfter,
             };
             _turns.Add(entry);
             if (_chatIndexContent != null) CreateIndexRow(entry);
-            RefreshIndexEmpty();
+            if (isCompaction) RefreshCompactionStates();
+            else RefreshIndexEmpty();
         }
 
         private void UpdateTurnUserGo(int turnId, GameObject go)
@@ -4477,11 +4947,14 @@ namespace IcarusII.UI
             label.verticalOverflow = VerticalWrapMode.Truncate;
             label.wideCharSpacing = 1f;
             label.raycastTarget = false;
+            // 已被压缩覆盖的回合：灰色、禁止删除；压缩记录本身保持正常色。
+            if (entry.Compacted) label.color = _textDim;
 
             var hover = go.GetComponent<ChatIndexRowHover>();
             if (hover == null) hover = go.AddComponent<ChatIndexRowHover>();
             hover.DeleteButton = delTf.gameObject;
             hover.HoverBackground = go.GetComponent<Graphic>();
+            hover.AllowDelete = !entry.Compacted;
             int linkId = entry.Id;
             int delId = entry.Id;
             hover.Clicked += () => FocusTurn(linkId);
@@ -4492,7 +4965,9 @@ namespace IcarusII.UI
             {
                 nativeDelete.onClick += _ => DeleteTurn(delId);
                 var tips = nativeDelete.tips;
-                tips.tipTitle = Strings.Get("chat.index.delete.tip");
+                tips.tipTitle = entry.IsCompaction
+                    ? Strings.Get("chat.index.undo.compaction.tip")
+                    : Strings.Get("chat.index.delete.tip");
                 // 提示 prefab 来自游戏运行时配置；不要把外部 prefab 引用序列化进 bundle，
                 // 否则 bundle 载入时可能变成 null。
                 tips.simpleGeneralTipPrefab = Configs.builtin != null
@@ -4508,7 +4983,7 @@ namespace IcarusII.UI
             entry.Link = label;
             entry.Hover = hover;
 
-            // 只有鼠标进入该行时才显示删除按钮。
+            // 只有鼠标进入该行时才显示删除按钮；已压缩行永不显示。
             delTf.gameObject.SetActive(false);
             hover.SetSelected(entry.Id == _focusedTurnId);
 
@@ -4597,26 +5072,24 @@ namespace IcarusII.UI
             }
             if (entry == null) return;
 
-            var destroyed = new HashSet<GameObject>();
-            for (int i = _lines.Count - 1; i >= 0; i--)
+            // 已被更新一次压缩覆盖的旧记录：不可单独撤销。
+            if (entry.Compacted) return;
+
+            // 压缩记录行：删除它 = 撤销压缩，不能先删 UI；等 sidecar 成功后再移除。
+            if (entry.IsCompaction)
             {
-                var line = _lines[i];
-                if (line.TurnId != turnId) continue;
-                if (line.Block != null) ForgetBlock(line.Block);
-                if (line.Go != null && destroyed.Add(line.Go))
-                    UnityEngine.Object.Destroy(line.Go);
-                _lines.RemoveAt(i);
+                try
+                {
+                    CompactionUndoRequested?.Invoke(entry.CompactionId ?? string.Empty);
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogWarning($"[索引] 通知 sidecar 撤销压缩失败：{ex.Message}");
+                }
+                return;
             }
 
-            for (int i = _items.Count - 1; i >= 0; i--)
-            {
-                if (_items[i].TurnId != turnId) continue;
-                var go = _items[i].Go;
-                if (go != null && destroyed.Add(go)) UnityEngine.Object.Destroy(go);
-                _items.RemoveAt(i);
-                if (_streamItem > i) _streamItem--;
-            }
-
+            RemoveTurnVisuals(turnId);
             if (entry.Row != null) UnityEngine.Object.Destroy(entry.Row);
             _turns.Remove(entry);
             if (_focusedTurnId == turnId) _focusedTurnId = 0;
@@ -4641,6 +5114,62 @@ namespace IcarusII.UI
             }
         }
 
+        /// <summary>销毁某一轮在输出区里的所有行/项（索引行由调用方处理）。</summary>
+        private void RemoveTurnVisuals(int turnId)
+        {
+            var destroyed = new HashSet<GameObject>();
+            for (int i = _lines.Count - 1; i >= 0; i--)
+            {
+                var line = _lines[i];
+                if (line.TurnId != turnId) continue;
+                if (line.Block != null) ForgetBlock(line.Block);
+                if (line.Go != null && destroyed.Add(line.Go))
+                    UnityEngine.Object.Destroy(line.Go);
+                _lines.RemoveAt(i);
+            }
+
+            for (int i = _items.Count - 1; i >= 0; i--)
+            {
+                if (_items[i].TurnId != turnId) continue;
+                var go = _items[i].Go;
+                if (go != null && destroyed.Add(go)) UnityEngine.Object.Destroy(go);
+                _items.RemoveAt(i);
+                if (_streamItem > i) _streamItem--;
+            }
+        }
+
+        /// <summary>
+        /// sidecar 成功撤销压缩后调用：移除压缩记录行，并重新计算灰色区间。
+        /// 如果还有更早的压缩记录，它前面的对话继续保持灰色。
+        /// </summary>
+        public void RemoveCompaction(string compactionId)
+        {
+            int index = -1;
+            for (int i = 0; i < _turns.Count; i++)
+            {
+                var candidate = _turns[i];
+                if (!candidate.IsCompaction) continue;
+                if (string.IsNullOrEmpty(compactionId) || candidate.CompactionId == compactionId)
+                    index = i;
+            }
+            if (index < 0) return;
+
+            var entry = _turns[index];
+            RemoveTurnVisuals(entry.Id);
+            if (entry.Row != null) UnityEngine.Object.Destroy(entry.Row);
+            _turns.RemoveAt(index);
+            if (_focusedTurnId == entry.Id) _focusedTurnId = 0;
+            if (_currentTurnId == entry.Id)
+                _currentTurnId = _lines.Count > 0 ? _lines[_lines.Count - 1].TurnId : 0;
+
+            RefreshCompactionStates();
+            RefreshIndexSelection();
+            RefreshIndexEmpty();
+            UpdateReplyRefreshAvailability();
+            _dirty = true;
+            Plugin.Log.LogInfo($"[索引] 已撤销压缩记录 {entry.CompactionId ?? "(latest)"}");
+        }
+
         /// <summary>
         /// 点回答 footer 的刷新：只允许重新推理**最后一轮**（会话是线性的）。
         /// 保留用户气泡、索引行和回合号，只清掉这一轮的助手内容；
@@ -4659,7 +5188,7 @@ namespace IcarusII.UI
             {
                 if (_turns[i].Id == view.TurnId) { entry = _turns[i]; break; }
             }
-            if (entry == null || string.IsNullOrEmpty(entry.Text)) return;
+            if (entry == null || entry.IsCompaction || string.IsNullOrEmpty(entry.Text)) return;
 
             RemoveAssistantSide(view.TurnId);
 
@@ -4876,7 +5405,7 @@ namespace IcarusII.UI
 
             item.Footer.SetActive(!string.IsNullOrEmpty(text));
             if (item.FooterTime != null)
-                item.FooterTime.text = string.IsNullOrEmpty(time) ? GameClock() : time;
+                item.FooterTime.text = FormatGameTime(time);
             if (item.FooterCopy != null)
             {
                 var copy = text ?? string.Empty;
@@ -5227,6 +5756,15 @@ namespace IcarusII.UI
             if (reply == null) return;
             if (resanitize) ResanitizeLabel(reply.Body);
             AssignIconMapping(reply.Body, icons);
+            for (int i = 0; i < reply.BodyExtras.Count; i++)
+            {
+                var go = reply.BodyExtras[i];
+                if (go == null) continue;
+                var extra = go.GetComponent<Text>();
+                if (extra == null) continue;
+                if (resanitize) ResanitizeLabel(extra);
+                AssignIconMapping(extra, icons);
+            }
             for (int i = 0; i < reply.ThinkingBlocks.Count; i++)
             {
                 var thinking = reply.ThinkingBlocks[i];
@@ -5246,7 +5784,9 @@ namespace IcarusII.UI
         private static void ResanitizeLabel(Text label)
         {
             if (label == null || string.IsNullOrEmpty(label.text)) return;
-            var cleaned = SanitizeRichText(label.text);
+            // 这里只补图标表校验；不要重新跑 Markdown/HTML 格式化——
+            // label.text 已经是游戏标签，重跑会把已经展开的标签当普通文本。
+            var cleaned = SanitizeIconTags(label.text);
             if (string.Equals(cleaned, label.text, StringComparison.Ordinal)) return;
             label.text = cleaned;
             label.SetVerticesDirty();
@@ -5544,6 +6084,7 @@ namespace IcarusII.UI
             }
 
             RemoveItemsUnder(line.Go);
+            ReleaseLinksUnder(line.Go);
             if (line.Go != null) UnityEngine.Object.Destroy(line.Go);
             _lines.RemoveAt(0);
         }
@@ -5676,8 +6217,32 @@ namespace IcarusII.UI
 
             // VFInput 的状态每帧由游戏输入系统重算，单次赋值可能被覆盖，
             // 因此窗口打开期间每帧重申一次；关闭时由 SetOpen 还原原值。
-            // ESC：聊天窗开着时由我们消费掉，否则同一次按键会同时关窗并打开游戏的暂停菜单。
+            // ESC：ask 面板开着时先跳过当前题，不关窗。
+            if (IsOpen && AskShowing)
+            {
+                if (VFInput.escape)
+                {
+                    VFInput.UseEscape();
+                    _askPanel.SkipCurrent();
+                    return;
+                }
+                _wantInputFocus = false;
+            }
+            // ESC：工具列表开着时先关列表，不关窗；否则聊天窗开着时由我们消费掉，
+            // 避免同一次按键同时关窗并打开游戏的暂停菜单。
             // 游戏自己的窗口也是这个套路：先 UseEscape() 再处理。
+            if (IsOpen && _toolMenuOpen && VFInput.escape)
+            {
+                VFInput.UseEscape();
+                HideToolMenu();
+                if (_input != null && _input.text == "/") SetInputText(string.Empty, 0);
+                return;
+            }
+            if (IsOpen && _toolMenuOpen)
+            {
+                if (UnityEngine.Input.GetKeyDown(KeyCode.DownArrow)) MoveToolSelection(1);
+                if (UnityEngine.Input.GetKeyDown(KeyCode.UpArrow)) MoveToolSelection(-1);
+            }
             if (IsOpen && !_keyEntryMode && VFInput.escape)
             {
                 VFInput.UseEscape();
@@ -5691,12 +6256,12 @@ namespace IcarusII.UI
             if (IsOpen) EnsureThinkingComboText();
             if (IsOpen) EnsureModelComboText();
 
-            // Enter 进入输入状态（此时 R 才让位给打字）
-            if (IsOpen && !InputFocused && UnityEngine.Input.GetKeyDown(KeyCode.Return))
+            // Enter 进入输入状态（此时 R 才让位给打字）；ask 时回车由 AskPanel 处理。
+            if (IsOpen && !AskShowing && !InputFocused && UnityEngine.Input.GetKeyDown(KeyCode.Return))
                 FocusInput();
 
             // 期望聚焦但实际没聚焦 → 重申（游戏可能清空了 EventSystem 的选中对象）
-            if (IsOpen && _wantInputFocus && _input != null && !_input.isFocused)
+            if (IsOpen && !AskShowing && _wantInputFocus && _input != null && !_input.isFocused)
                 ApplyFocus();
 
             // 焦点有了但游戏 InputField 的 Caret 可能还没创建/绑定材质。
@@ -5750,6 +6315,7 @@ namespace IcarusII.UI
             if (IsOpen && _input != null && _input.text != _lastInputText)
             {
                 _lastInputText = _input.text;
+                _inputHeightDirty = true;
                 // 文本变化后 InputField 可能重建 Caret 网格，下一帧重新补一次。
                 _caretPrimed = false;
                 if (!string.IsNullOrEmpty(_input.text) && !_textMaterialRebound)
@@ -5758,6 +6324,8 @@ namespace IcarusII.UI
                     RebindInputTextMaterial(_input.textComponent, "首次输入");
                 }
             }
+
+            if (IsOpen && _inputHeightDirty && !AskShowing) UpdateInputHeight();
         }
 
 
@@ -5769,7 +6337,13 @@ namespace IcarusII.UI
             if (_streamItem >= 0 && _streamItem < _items.Count)
             {
                 var item = _items[_streamItem];
-                if (item.Label != null) item.Label.text = SanitizeRichText(_stream.ToString());
+                if (_stream.Length != _lastStreamRenderLength)
+                {
+                    _lastStreamRenderLength = _stream.Length;
+                    var label = item.Reply != null ? item.Reply.Body : item.Label;
+                    if (label != null)
+                        ApplyRichText(label, _stream.ToString(), RichOptions14, RichTextProfile.Body);
+                }
             }
 
             if (_suppressAutoScrollOnce) _suppressAutoScrollOnce = false;
@@ -5814,6 +6388,7 @@ namespace IcarusII.UI
 
             var first = !_keyEntryMode;
             _keyEntryMode = true;
+            HideToolMenu();
 
             _input.contentType = InputField.ContentType.Password;
             _input.characterLimit = 0;
@@ -5869,6 +6444,26 @@ namespace IcarusII.UI
         {
             if (!IsNewlineModifierHeld())
             {
+                // 工具列表开着时 Enter = 选中当前项，而不是发送。
+                if (_toolMenuOpen)
+                {
+                    var all = _input != null ? (_input.text ?? text ?? string.Empty) : (text ?? string.Empty);
+                    if (newlineIndex >= 0 && newlineIndex < all.Length)
+                    {
+                        all = all.Remove(newlineIndex, 1);
+                        SetInputText(all, Mathf.Min(newlineIndex, all.Length));
+                    }
+                    // 没有匹配项（例如手输了不存在的 /foo）就按普通消息发送，不要把玩家卡住。
+                    if (_toolVisible.Count == 0)
+                    {
+                        HideToolMenu();
+                        _submitPending = true;
+                        return;
+                    }
+                    SelectHighlightedTool();
+                    return;
+                }
+
                 _submitPending = true;
                 return;
             }
@@ -5916,6 +6511,7 @@ namespace IcarusII.UI
             var raw = _input.text;
             var value = raw != null ? raw.Trim() : string.Empty;
 
+            HideToolMenu();
             _input.text = string.Empty;
             if (value.Length == 0) return;
 
@@ -6068,9 +6664,6 @@ namespace IcarusII.UI
 
         // ------------------------------------------------ 输入工具条（图标 / 复选框 / 颜色）
 
-        private Button _iconToolButton;
-        private Button _colorToolButton;
-
         /// <summary>
         /// 给工具条三个按钮接上游戏自己的实现（对照 `UISmartInputField`）：
         ///   * 复选框 → `InputField.InsertCheckBox()`
@@ -6087,9 +6680,6 @@ namespace IcarusII.UI
             var colorBtn = FindComponent<Button>(panel,
                 "input/editor/tool-bar/icons/text-color-btn", "tool-bar/icons/text-color-btn", "text-color-btn");
 
-            _iconToolButton = iconBtn;
-            _colorToolButton = colorBtn;
-
             if (iconBtn != null) iconBtn.onClick.AddListener(OnInsertIconClicked);
             if (checkBtn != null) checkBtn.onClick.AddListener(OnInsertCheckBoxClicked);
             if (colorBtn != null) colorBtn.onClick.AddListener(OnPickTextColorClicked);
@@ -6105,8 +6695,594 @@ namespace IcarusII.UI
             }
         }
 
+        // ---------------------------------------------------------------- 工具列表（M4l）
+
         /// <summary>
-        /// 选择器弹窗关掉后把键盘焦点还给输入框。
+        /// 绑定 prefab 里的工具列表（静态结构/样式全部在 prefab，运行期只找节点）。
+        ///
+        ///   input/tool-menu
+        ///   ├── bg / border
+        ///   ├── header/{title,hint}
+        ///   ├── scroll-view/viewport/content/tool-row-template
+        ///   ├── scroll-view/empty
+        ///   └── footer
+        /// </summary>
+        private void WireToolMenu(RectTransform panel)
+        {
+            var toolBtnNode = FindNode(panel,
+                "input/editor/tool-bar/icons/tool-btn", "tool-bar/icons/tool-btn", "tool-btn");
+            _toolButton = toolBtnNode != null ? toolBtnNode.GetComponent<Button>() : null;
+            if (_toolButton != null)
+            {
+                _toolButton.onClick.AddListener(ToggleToolMenu);
+            }
+            else
+            {
+                Plugin.Log.LogWarning("[工具] prefab 里没有 tool-btn，无法打开工具列表。");
+            }
+
+            _toolMenu = FindNode(panel, "input/tool-menu", "tool-menu") as RectTransform;
+            if (_toolMenu == null)
+            {
+                Plugin.Log.LogWarning("[工具] prefab 里没有 input/tool-menu；点击 / 不会出现工具列表。");
+                return;
+            }
+
+            var scroll = _toolMenu.Find("scroll-view") as RectTransform;
+            _toolScroll = scroll != null ? scroll.GetComponent<ScrollRect>() : null;
+            _toolScrollbar = scroll != null && scroll.Find("Scrollbar Vertical") != null
+                ? scroll.Find("Scrollbar Vertical").gameObject
+                : null;
+            _toolContent = scroll != null ? scroll.Find("viewport/content") as RectTransform : null;
+            _toolRowTemplate = _toolContent != null
+                ? _toolContent.Find("tool-row-template") as RectTransform
+                : null;
+            _toolMenuEmpty = FindText(_toolMenu, "scroll-view/empty", "empty");
+            _toolMenuHint = FindText(_toolMenu, "header/hint");
+            _toolMenuFooter = FindText(_toolMenu, "footer");
+
+            if (_toolMenuHint != null) _toolMenuHint.text = Strings.Get("tool.menu.hint");
+            if (_toolMenuFooter != null) _toolMenuFooter.text = Strings.Get("tool.menu.footer");
+            if (_toolRowTemplate != null) _toolRowTemplate.gameObject.SetActive(false);
+
+            _toolMenu.gameObject.SetActive(false);
+            _toolMenuOpen = false;
+
+            if (_toolRowTemplate == null || _toolContent == null || _toolScroll == null)
+            {
+                Plugin.Log.LogWarning(
+                    $"[工具] 工具列表结构不完整（row={_toolRowTemplate != null} content={_toolContent != null} scroll={_toolScroll != null}）。");
+            }
+            else
+            {
+                Plugin.Log.LogInfo("[UI] 已接上工具列表（tool-btn / 输入 /）。");
+            }
+        }
+
+        // ---------------------------------------------------------------- 底部面板（input / ask）
+
+        /// <summary>
+        /// 记录输出区、输入栏和 choose。静态尺寸仍在 prefab；这里只缓存引用。
+        /// </summary>
+        private void WireBottomLayout(RectTransform panel)
+        {
+            _outputRoot = FindNode(panel, "output") as RectTransform;
+            _inputRoot = FindNode(panel, "input") as RectTransform;
+            _chooseRoot = FindNode(panel, "choose") as RectTransform;
+            _inputFieldRect = _inputContent != null
+                ? _inputContent.Find("InputField") as RectTransform
+                : null;
+
+            // prefab 里 choose 是设计态可见的；运行时默认收起，输入栏默认展开。
+            if (_inputRoot != null) _inputRoot.gameObject.SetActive(true);
+            if (_chooseRoot != null) _chooseRoot.gameObject.SetActive(false);
+
+            _inputHeightDirty = true;
+            ApplyBottomLayout();
+        }
+
+        private void WireAskPanel(RectTransform panel)
+        {
+            if (_chooseRoot == null)
+            {
+                Plugin.Log.LogInfo("[ask] prefab 没有 choose，作答面板不可用。");
+                return;
+            }
+
+            var ask = _chooseRoot.GetComponent<AskPanel>();
+            if (ask == null) ask = _chooseRoot.gameObject.AddComponent<AskPanel>();
+            if (!ask.Bind(_chooseRoot))
+            {
+                Plugin.Log.LogWarning("[ask] choose/answer-grop 结构不完整，作答面板不可用。");
+                _chooseRoot.gameObject.SetActive(false);
+                return;
+            }
+
+            ask.Completed += OnAskCompleted;
+            ask.Cancelled += OnAskCancelled;
+            ask.ConfirmationChosen += OnConfirmationChosen;
+            _askPanel = ask;
+            _chooseRoot.gameObject.SetActive(false);
+        }
+
+        /// <summary>显示一组问题。choose 会替换 input，输出区按 choose 的高度收缩。</summary>
+        public bool ShowAsk(List<AskQuestion> questions)
+        {
+            if (_askPanel == null || questions == null || questions.Count == 0) return false;
+            if (_askPanel.IsShowing) return false;
+            if (!IsOpen) SetOpen(true);
+            if (!IsOpen) return false;
+
+            HideToolMenu();
+            _wantInputFocus = false;
+            BlurInput();
+            _askPanel.Show(questions);
+            BeginBottomReplacement(_chooseRoot);
+            return true;
+        }
+
+        /// <summary>收起 ask（不触发 Answered/Cancelled）。</summary>
+        public void HideAsk()
+        {
+            if (_askPanel != null) _askPanel.Hide();
+            EndBottomReplacement();
+        }
+
+        /// <summary>取消 ask；会触发 AskCancelled，让 sidecar 拿到 cancelled 结果。</summary>
+        public void CancelAsk()
+        {
+            if (_askPanel != null && _askPanel.IsShowing) _askPanel.Cancel();
+        }
+
+        /// <summary>显示写操作确认页（复用 choose 的 question/explain/按钮）。</summary>
+        public bool ShowConfirmation(string title, string details)
+        {
+            if (_askPanel == null || _askPanel.IsShowing) return false;
+            if (!IsOpen) SetOpen(true);
+            if (!IsOpen) return false;
+            HideToolMenu();
+            _wantInputFocus = false;
+            BlurInput();
+            _askPanel.ShowConfirmation(title, details);
+            BeginBottomReplacement(_chooseRoot);
+            return true;
+        }
+
+        public bool ConfirmationShowing => _askPanel != null && _askPanel.IsConfirming;
+
+        /// <summary>
+        /// 用另一个底部面板替换 input（ask 用 choose）。只切 active 和输出区高度，
+        /// 不改任何静态 RectTransform 尺寸；将来别的面板也可以复用。
+        /// </summary>
+        private void BeginBottomReplacement(RectTransform panel)
+        {
+            if (panel == null) return;
+            if (_inputRoot != null) _inputRoot.gameObject.SetActive(false);
+            _bottomReplacement = panel;
+            panel.gameObject.SetActive(true);
+            ApplyBottomLayout();
+        }
+
+        private void EndBottomReplacement()
+        {
+            if (_bottomReplacement != null) _bottomReplacement.gameObject.SetActive(false);
+            _bottomReplacement = null;
+            if (_inputRoot != null) _inputRoot.gameObject.SetActive(true);
+            _inputHeightDirty = true;
+            UpdateInputHeight(force: true);
+            ApplyBottomLayout();
+        }
+
+        private void OnAskCompleted(List<AskAnswer> answers)
+        {
+            EndBottomReplacement();
+            AskCompleted?.Invoke(answers);
+        }
+
+        private void OnAskCancelled()
+        {
+            EndBottomReplacement();
+            AskCancelled?.Invoke();
+        }
+
+        private void OnConfirmationChosen(bool accepted)
+        {
+            EndBottomReplacement();
+            ConfirmationChosen?.Invoke(accepted);
+        }
+
+        /// <summary>输出区底边 = 底部面板顶边 + 2px。input 和 choose 共用这条规则。</summary>
+        private void ApplyBottomLayout()
+        {
+            if (_outputRoot == null) return;
+
+            var height = _bottomReplacement != null
+                ? _bottomReplacement.rect.height
+                : _inputHeight;
+            if (height <= 0f) height = _inputHeight > 0f ? _inputHeight : InputMinHeight;
+
+            var target = BottomMargin + height + BottomPanelGap;
+            var min = _outputRoot.offsetMin;
+            if (Mathf.Abs(min.y - target) < 0.1f) return;
+
+            var atBottom = _scroll != null && _scroll.verticalNormalizedPosition <= 0.01f;
+            min.y = target;
+            _outputRoot.offsetMin = min;
+            if (atBottom) ScrollToBottomAfterContentChange();
+        }
+
+        /// <summary>
+        /// 按输入文字高度把 input 从 100 撑到 choose 的高度（200），
+        /// 到顶后才让内部 ScrollRect 出现滚动条，并同步收缩 output。
+        /// </summary>
+        private void UpdateInputHeight(bool force = false)
+        {
+            if (_input == null || _inputRoot == null || _inputContent == null || _inputFieldRect == null)
+                return;
+            if (AskShowing) return;
+
+            var text = _input.textComponent;
+            if (text == null) return;
+
+            var width = text.rectTransform.rect.width;
+            if (width <= 1f)
+            {
+                _inputHeightDirty = true;
+                return;
+            }
+
+            var textHeight = text.preferredHeight;
+            if (textHeight < 1f) textHeight = text.fontSize * 1.2f;
+
+            var maxHeight = _chooseRoot != null && _chooseRoot.rect.height > 0f
+                ? _chooseRoot.rect.height
+                : InputMaxHeight;
+            var desired = InputToolbarHeight + Mathf.Max(InputMinViewport, textHeight + InputTextPadding);
+            desired = Mathf.Clamp(desired, InputMinHeight, maxHeight);
+            var viewport = desired - InputToolbarHeight;
+            var contentHeight = Mathf.Max(viewport, textHeight + InputTextPadding);
+
+            var rootSize = _inputRoot.sizeDelta;
+            var contentSize = _inputContent.sizeDelta;
+            var fieldSize = _inputFieldRect.sizeDelta;
+            var changed = force
+                          || Mathf.Abs(rootSize.y - desired) > 0.5f
+                          || Mathf.Abs(contentSize.y - contentHeight) > 0.5f
+                          || Mathf.Abs(fieldSize.y - contentHeight) > 0.5f;
+
+            _inputHeight = desired;
+            _inputHeightDirty = false;
+            if (!changed) return;
+
+            rootSize.y = desired;
+            _inputRoot.sizeDelta = rootSize;
+            contentSize.y = contentHeight;
+            _inputContent.sizeDelta = contentSize;
+            fieldSize.y = contentHeight;
+            _inputFieldRect.sizeDelta = fieldSize;
+
+            Canvas.ForceUpdateCanvases();
+            ApplyBottomLayout();
+
+            if (_inputScrollRect != null)
+            {
+                if (contentHeight <= viewport + 0.5f)
+                    _inputScrollRect.verticalNormalizedPosition = 1f;
+                else if (_input.isFocused && _input.caretPosition >= (_input.text != null ? _input.text.Length : 0))
+                    _inputScrollRect.verticalNormalizedPosition = 0f;
+            }
+        }
+
+        /// <summary>输入栏高度上限（= choose 高度；prefab 里是 200）。</summary>
+        private const float InputMaxHeight = 200f;
+        private const float InputMinHeight = 100f;
+        private const float InputToolbarHeight = 37f;
+        private const float InputMinViewport = 63f;
+        private const float InputTextPadding = 8f;
+        private const float BottomMargin = 40f;
+        private const float BottomPanelGap = 2f;
+
+        /// <summary>连接断开时清空目录，避免还显示一份已经不可用的工具。</summary>
+        public void ClearToolCatalog()
+        {
+            _toolCatalog.Clear();
+            _toolCatalogLoaded = false;
+            if (_toolMenuOpen) RefreshToolMenu();
+        }
+
+        /// <summary>ready.payload.toolCatalog 到达后更新列表数据；菜单开着就立即刷新。</summary>
+        public void SetToolCatalog(IEnumerable<ToolMenuItem> items)
+        {
+            _toolCatalog.Clear();
+            if (items != null)
+            {
+                foreach (var item in items)
+                {
+                    if (item == null || string.IsNullOrEmpty(item.Name)) continue;
+                    if (string.IsNullOrEmpty(item.Label)) item.Label = ToolNames.Label(item.Name);
+                    _toolCatalog.Add(item);
+                }
+            }
+            _toolCatalogLoaded = true;
+            if (_toolMenuOpen) RefreshToolMenu();
+            else if (_toolMenuEmpty != null && _toolCatalog.Count == 0)
+                _toolMenuEmpty.text = Strings.Get("tool.menu.empty");
+        }
+
+        /// <summary>调试直调用：当前工具目录的副本（不暴露内部列表）。</summary>
+        internal List<ToolMenuItem> GetToolCatalog()
+        {
+            return new List<ToolMenuItem>(_toolCatalog);
+        }
+
+        /// <summary>
+        /// 解析输入开头的 `/<工具名>`，返回模型可见工具名（也接受显示名）。
+        /// 未知名字返回 null，按普通文本发送。
+        /// </summary>
+        public string GetRequiredTool(string text)
+        {
+            if (!TryLeadingSlashToken(text, out var token, out var end)) return null;
+            if (end < text.Length && !char.IsWhiteSpace(text[end])) return null;
+            if (string.IsNullOrEmpty(token)) return null;
+
+            for (int i = 0; i < _toolCatalog.Count; i++)
+            {
+                var item = _toolCatalog[i];
+                if (string.Equals(item.Name, token, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(item.Label, token, StringComparison.OrdinalIgnoreCase))
+                    return item.Name;
+            }
+            return null;
+        }
+
+        private void ToggleToolMenu()
+        {
+            if (_toolMenu == null || _keyEntryMode) return;
+            if (_toolMenuOpen)
+            {
+                HideToolMenu();
+                // 只是点按钮打开、还没输入过滤词时，关掉菜单顺手把占位的 "/" 清掉。
+                if (_input != null && _input.text == "/") SetInputText(string.Empty, 0);
+                return;
+            }
+
+            // 空输入时点击按钮等价于输入一个 "/"，之后可以直接打字过滤。
+            var text = _input != null ? (_input.text ?? string.Empty) : string.Empty;
+            if (text.Length == 0)
+            {
+                SetInputText("/", 1);
+                _toolFilter = string.Empty;
+            }
+            else if (TryLeadingSlashToken(text, out var token, out var end) && end == text.Length)
+            {
+                _toolFilter = token;
+            }
+            else
+            {
+                _toolFilter = string.Empty;
+            }
+
+            _toolSelected = 0;
+            ShowToolMenu();
+            FocusInput();
+        }
+
+        private void OnInputValueChanged(string value)
+        {
+            _inputHeightDirty = true;
+            if (_suppressToolMenuEvents || _keyEntryMode || !IsOpen) return;
+
+            var text = value ?? string.Empty;
+            if (TryLeadingSlashToken(text, out var token, out var end) && end == text.Length)
+            {
+                _toolFilter = token;
+                _toolSelected = 0;
+                ShowToolMenu();
+            }
+            else if (_toolMenuOpen)
+            {
+                HideToolMenu();
+            }
+        }
+
+        private static bool TryLeadingSlashToken(string text, out string token, out int tokenEnd)
+        {
+            token = null;
+            tokenEnd = -1;
+            if (string.IsNullOrEmpty(text)) return false;
+
+            int start = 0;
+            while (start < text.Length && (text[start] == ' ' || text[start] == '\t')) start++;
+            if (start >= text.Length || text[start] != '/') return false;
+
+            int end = start + 1;
+            while (end < text.Length && !char.IsWhiteSpace(text[end])) end++;
+            token = text.Substring(start + 1, end - start - 1);
+            tokenEnd = end;
+            return true;
+        }
+
+        private void ShowToolMenu()
+        {
+            if (_toolMenu == null || !IsOpen || _keyEntryMode) return;
+            _toolMenuOpen = true;
+            _toolMenu.gameObject.SetActive(true);
+            _toolMenu.SetAsLastSibling();
+            // 先激活再排版：LayoutRebuilder 对 inactive 父节点不保证算出 content 高度。
+            RefreshToolMenu();
+        }
+
+        private void HideToolMenu()
+        {
+            _toolMenuOpen = false;
+            if (_toolMenu != null) _toolMenu.gameObject.SetActive(false);
+        }
+
+        private void RefreshToolMenu()
+        {
+            if (_toolContent == null || _toolRowTemplate == null) return;
+
+            _toolVisible.Clear();
+            for (int i = 0; i < _toolCatalog.Count; i++)
+            {
+                var item = _toolCatalog[i];
+                if (item.Matches(_toolFilter)) _toolVisible.Add(item);
+            }
+
+            int count = _toolVisible.Count;
+            EnsureToolRows(count);
+            for (int i = 0; i < _toolRows.Count; i++)
+            {
+                var row = _toolRows[i];
+                bool active = i < count;
+                row.Go.SetActive(active);
+                if (!active) continue;
+
+                var item = _toolVisible[i];
+                if (row.Label != null) row.Label.text = item.Label ?? ToolNames.Label(item.Name);
+                if (row.Command != null) row.Command.text = "/" + item.Name;
+                if (row.Description != null)
+                {
+                    row.Description.text = string.IsNullOrEmpty(item.Description)
+                        ? item.Name
+                        : item.Description;
+                }
+
+                var name = item.Name;
+                row.Button.onClick.RemoveAllListeners();
+                row.Button.onClick.AddListener(() => SelectTool(name));
+            }
+
+            if (_toolSelected >= count) _toolSelected = Mathf.Max(0, count - 1);
+            if (count == 0) _toolSelected = -1;
+
+            if (_toolMenuEmpty != null)
+            {
+                _toolMenuEmpty.text = !_toolCatalogLoaded
+                    ? Strings.Get("tool.menu.loading")
+                    : Strings.Get("tool.menu.empty");
+                _toolMenuEmpty.gameObject.SetActive(count == 0);
+            }
+            if (_toolScrollbar != null) _toolScrollbar.SetActive(count > 1);
+
+            // 行是运行期克隆的；先强制排一次版，接着算滚动位置才有正确的 content 高度。
+            if (_toolContent != null) LayoutRebuilder.ForceRebuildLayoutImmediate(_toolContent);
+            UpdateToolSelection(scrollToSelected: true);
+        }
+
+        private void EnsureToolRows(int count)
+        {
+            while (_toolRows.Count < count)
+            {
+                var go = UnityEngine.Object.Instantiate(_toolRowTemplate.gameObject, _toolContent);
+                go.name = "tool-row";
+                go.SetActive(true);
+                var rt = go.transform as RectTransform;
+                if (rt != null) rt.localScale = Vector3.one;
+
+                var view = new ToolRowView
+                {
+                    Go = go,
+                    Button = go.GetComponent<Button>(),
+                    Bg = go.transform.Find("bg")?.GetComponent<Image>(),
+                    Label = go.transform.Find("label")?.GetComponent<Text>(),
+                    Command = go.transform.Find("command")?.GetComponent<Text>(),
+                    Description = go.transform.Find("description")?.GetComponent<Text>(),
+                };
+                if (view.Button == null)
+                {
+                    view.Button = go.AddComponent<Button>();
+                    view.Button.transition = Selectable.Transition.ColorTint;
+                    if (view.Bg != null) view.Button.targetGraphic = view.Bg;
+                }
+                _toolRows.Add(view);
+            }
+        }
+
+        private void UpdateToolSelection(bool scrollToSelected)
+        {
+            for (int i = 0; i < _toolRows.Count; i++)
+            {
+                var row = _toolRows[i];
+                if (row.Button == null) continue;
+                var colors = row.Button.colors;
+                colors.fadeDuration = 0.06f;
+                colors.highlightedColor = new Color(0.353f, 0.749f, 1f, 0.28f);
+                colors.pressedColor = new Color(0.353f, 0.749f, 1f, 0.38f);
+                colors.selectedColor = new Color(0.353f, 0.749f, 1f, 0.22f);
+                colors.normalColor = i == _toolSelected
+                    ? new Color(0.353f, 0.749f, 1f, 0.22f)
+                    : new Color(1f, 1f, 1f, 0.015f);
+                row.Button.colors = colors;
+            }
+
+            if (scrollToSelected && _toolScroll != null && _toolVisible.Count > 0 && _toolSelected >= 0)
+            {
+                float t = _toolVisible.Count <= 1
+                    ? 1f
+                    : 1f - (float)_toolSelected / (_toolVisible.Count - 1);
+                _toolScroll.verticalNormalizedPosition = Mathf.Clamp01(t);
+            }
+        }
+
+        private void MoveToolSelection(int delta)
+        {
+            if (!_toolMenuOpen || _toolVisible.Count == 0) return;
+            _toolSelected = (_toolSelected + delta + _toolVisible.Count) % _toolVisible.Count;
+            UpdateToolSelection(scrollToSelected: true);
+        }
+
+        private void SelectHighlightedTool()
+        {
+            if (_toolSelected >= 0 && _toolSelected < _toolVisible.Count)
+                SelectTool(_toolVisible[_toolSelected].Name);
+        }
+
+        private void SelectTool(string name)
+        {
+            if (_input == null || string.IsNullOrEmpty(name)) return;
+
+            var command = "/" + name + " ";
+            var text = _input.text ?? string.Empty;
+            string next;
+            if (TryLeadingSlashToken(text, out _, out var end))
+            {
+                var rest = end < text.Length ? text.Substring(end).TrimStart() : string.Empty;
+                next = command + rest;
+            }
+            else
+            {
+                next = command + text.TrimStart();
+            }
+
+            SetInputText(next, next.Length);
+            HideToolMenu();
+            FocusInput();
+            Plugin.Log.LogInfo($"[工具] 已插入命令 {command.TrimEnd()}（{Strings.Get("tool.menu.required", ToolNames.Label(name))}）");
+        }
+
+        private void SetInputText(string value, int caret)
+        {
+            if (_input == null) return;
+            _inputHeightDirty = true;
+            _suppressToolMenuEvents = true;
+            try
+            {
+                _input.text = value ?? string.Empty;
+                int pos = Mathf.Clamp(caret, 0, _input.text != null ? _input.text.Length : 0);
+                _input.caretPosition = pos;
+                _input.selectionAnchorPosition = pos;
+                _input.selectionFocusPosition = pos;
+                try { _input.CalculateColorText(true); } catch { /* 旧版输入框没有此方法 */ }
+                _input.ForceLabelUpdate();
+            }
+            finally
+            {
+                _suppressToolMenuEvents = false;
+            }
+        }
+
+        /// <summary>选择器弹窗关掉后把键盘焦点还给输入框。
         ///
         /// ⚠️ 不要用 FocusInput()/ActivateInputField()：那会重排光标，
         /// 而游戏的 InputField 在**任何光标移动**里都会把 m_BrushColor 重置成 -2
@@ -6153,9 +7329,10 @@ namespace IcarusII.UI
                 }
 
                 var pickerTrans = UISignalTagPicker._PickerTrans;
+                HideToolMenu();
                 // 先把自己画布抬到聊天窗之上，否则选择器会整块藏在窗口后面
                 BoostPickerAboveWindow(pickerTrans, "图标");
-                var pos = PickerPosition(_iconToolButton, pickerTrans);
+                var pos = PickerPositionAboveInput(pickerTrans);
 
                 UISignalTagPicker.Popup(pos, signalId =>
                 {
@@ -6193,8 +7370,9 @@ namespace IcarusII.UI
                     ? UIRoot.instance.uiGame.simpleColorPicker
                     : null;
                 var pickerTrans = picker != null ? picker.pickerTrans : null;
+                HideToolMenu();
                 BoostPickerAboveWindow(pickerTrans, "颜色");
-                var pos = PickerPosition(_colorToolButton, pickerTrans);
+                var pos = PickerPositionAboveInput(pickerTrans);
 
                 UISimpleColorPicker.Popup(pos, GetBrushColor(),
                     idx => { if (_input != null) { _input.OnColorChange(idx); RestoreInputFocus(); } },
@@ -6271,72 +7449,94 @@ namespace IcarusII.UI
         }
 
         /// <summary>
-        /// 选择器弹窗位置。游戏是用 `pickerTrans.anchoredPosition = pos` 直接放置的，
-        /// 所以要把按钮位置换算到 **picker 父节点**（`Common Tools`）的局部坐标
-        /// （照 `UIMarkerDesc.CalcSignalIconPickerPos` 的做法）。
+        /// 图标/取色弹窗的位置：和工具列表**同一个锚点**——输入框上沿、左对齐。
         ///
-        /// **单位**：按钮在面板里（1 单位 = 1 像素），`Common Tools` 在游戏画布坐标系里
-        /// （1 单位 = `scaleFactor` 像素），所以偏移量要先把选择器宽度从画布单位
-        /// 换算成像素（`* _canvasScale`），再交给 `TransformPoint`。
-        /// 换算完 `InverseTransformPoint` 回来，结果就是画布单位的锚点坐标。
+        /// 原生 `UISignalTagPicker` / `UISimpleColorPicker` 的 `Popup(pos)` 是把
+        /// `pickerTrans.anchoredPosition` 直接设成 `pos`；它们的 pivot 是左上角，
+        /// 父节点是游戏的 `Common Tools`（全屏、pivot(0,0)）。
+        /// 这里把「工具列表左下角」的世界坐标换算到 `Common Tools` 的局部坐标，
+        /// 再按 picker 自己的 pivot 把左下角贴到该锚点（等价于弹窗从输入框上沿向上展开）。
         ///
-        /// picker 的 pivot 是左上角，所以 y 是它的**上边缘**：先尝试放在按钮上方
-        /// （聊天输入栏在窗口底部，往下放会直接出屏），放不下再放下面，最后做边界夹取。
-        /// 算不出来就退回原生兜底位置。
+        /// 不再按按钮位置“左/上”摆放：图标按钮在输入栏左下角，按原生算法弹窗会跑到
+        /// 屏幕左侧、和工具列表不在一个位置。
         /// </summary>
-        private Vector2 PickerPosition(Button button, RectTransform pickerTrans)
+        private Vector2 PickerPositionAboveInput(RectTransform pickerTrans)
         {
             var fallback = new Vector2(-206f, 194f);
-            if (button == null || pickerTrans == null) return fallback;
+            if (pickerTrans == null) return fallback;
+
             try
             {
                 var parent = pickerTrans.parent as RectTransform;
-                var rt = button.transform as RectTransform;
-                if (parent == null || rt == null) return fallback;
+                if (parent == null || parent.rect.width <= 0f || parent.rect.height <= 0f)
+                    return fallback;
+                if (!TryGetToolMenuAnchorWorld(out var anchorWorld)) return fallback;
 
-                var pickerW = pickerTrans.rect.width;
-                var pickerH = pickerTrans.rect.height;
-                var halfW = parent.rect.width * 0.5f;
-                var halfH = parent.rect.height * 0.5f;
-
-                // `InverseTransformPoint` 得到的是**以父级 pivot 为原点**的局部坐标，
-                // 而 `anchoredPosition` 是相对**锚点**（picker 的 anchor 是 0.5,0.5）的。
-                // 两者差一个"pivot → 父级中心"的偏移；`Common Tools` 的 pivot 是 (0,0)，
-                // 不减去这个偏移，选择器会被丢到屏幕左下角（原生 CalcSignalIconPickerPos
-                // 里的 `-= rect.size * 0.5f` 就是在做这件事）。
+                // `InverseTransformPoint` 得到的是以父级 pivot 为原点的局部坐标，
+                // 而 `anchoredPosition` 相对父级中心；补上这段偏移。
                 var centerOffset = new Vector2(
                     (0.5f - parent.pivot.x) * parent.rect.width,
                     (0.5f - parent.pivot.y) * parent.rect.height);
+                var local = (Vector2)parent.InverseTransformPoint(anchorWorld) - centerOffset;
 
-                // 选择器宽度是"游戏画布单位"，按钮的本地单位是"像素"
-                var pxPerUnit = Mathf.Max(0.01f, _canvasScale);
-                var pickerWpx = pickerW * pxPerUnit;
+                var pickerScale = pickerTrans.localScale;
+                var pickerW = pickerTrans.rect.width * Mathf.Abs(pickerScale.x);
+                var pickerH = pickerTrans.rect.height * Mathf.Abs(pickerScale.y);
+                if (pickerW <= 0f || pickerH <= 0f) return fallback;
+                var pivot = pickerTrans.pivot;
+                var halfW = parent.rect.width * 0.5f;
+                var halfH = parent.rect.height * 0.5f;
 
-                // 默认放在按钮左侧；左边放不下就换到右侧（同原生 UIMarkerDesc）
-                var world = rt.TransformPoint(new Vector3(-pickerWpx - 2f, 0f, 0f));
-                var local = (Vector2)parent.InverseTransformPoint(world) - centerOffset;
-                if (local.x < -halfW)
-                {
-                    world = rt.TransformPoint(new Vector3(rt.rect.width + 2f, 0f, 0f));
-                    local = (Vector2)parent.InverseTransformPoint(world) - centerOffset;
-                }
+                // 把 picker 的左下角贴到锚点；pivot 通常是 (0,1)。
+                var pos = new Vector2(
+                    local.x + pickerW * pivot.x,
+                    local.y + pickerH * pivot.y);
 
-                // 先尝试按钮上方，再退回下方
-                var y = local.y + pickerH;
-                var yMax = halfH - 8f;
-                if (y > yMax) y = local.y;
+                // 按 picker 实际占位夹取，避免右侧/顶部出屏。
+                var xMin = -halfW + 8f + pickerW * pivot.x;
+                var xMax = halfW - 8f - pickerW * (1f - pivot.x);
+                var yMin = -halfH + 8f + pickerH * pivot.y;
+                var yMax = halfH - 8f - pickerH * (1f - pivot.y);
+                if (xMin > xMax) xMin = xMax;
+                if (yMin > yMax) yMin = yMax;
 
-                var yMin = -halfH + pickerH;
-                if (y < yMin) y = yMin;
-                if (y > yMax) y = yMax;
-
-                var x = Mathf.Clamp(local.x, -halfW + 8f, halfW - 8f);
-                return new Vector2(Mathf.Round(x), Mathf.Round(y));
+                pos.x = Mathf.Clamp(pos.x, xMin, xMax);
+                pos.y = Mathf.Clamp(pos.y, yMin, yMax);
+                return new Vector2(Mathf.Round(pos.x), Mathf.Round(pos.y));
             }
             catch
             {
                 return fallback;
             }
+        }
+
+        /// <summary>
+        /// 工具列表的锚点（世界坐标）：`tool-menu` 的左下角。
+        /// 没有工具列表时退回输入框左上角（两者在 prefab 里本就对齐）。
+        /// </summary>
+        private bool TryGetToolMenuAnchorWorld(out Vector3 world)
+        {
+            world = Vector3.zero;
+
+            if (_toolMenu != null && _toolMenu.rect.width > 0f && _toolMenu.rect.height > 0f)
+            {
+                // pivot(0,0) 的 RectTransform：局部 (0,0) 就是左下角。
+                world = _toolMenu.TransformPoint(new Vector3(
+                    -_toolMenu.pivot.x * _toolMenu.rect.width,
+                    -_toolMenu.pivot.y * _toolMenu.rect.height,
+                    0f));
+                return true;
+            }
+
+            var inputRt = _input != null ? _input.transform as RectTransform : null;
+            if (inputRt == null) return false;
+
+            // 输入框 pivot 是 (0.5,0)：局部左上角 = (-w/2, +h)。
+            world = inputRt.TransformPoint(new Vector3(
+                -inputRt.pivot.x * inputRt.rect.width,
+                (1f - inputRt.pivot.y) * inputRt.rect.height,
+                0f));
+            return true;
         }
 
         /// <summary>当前"画笔"颜色（照抄原生 UISmartInputField.GetBrushColor 的语义）。</summary>
@@ -6362,7 +7562,18 @@ namespace IcarusII.UI
                      || UnityEngine.Input.GetKeyDown(KeyCode.KeypadEnter);
             if (!enter) return;
 
+            if (_toolMenuOpen)
+            {
+                if (_toolVisible.Count > 0)
+                {
+                    SelectHighlightedTool();
+                    return;
+                }
+                HideToolMenu();
+            }
+
             var text = value.Trim();
+            HideToolMenu();
             if (_input != null)
             {
                 _input.text = string.Empty;
@@ -6389,119 +7600,496 @@ namespace IcarusII.UI
             }
         }
 
-        /// <summary>把用户输入里可能破坏富文本的字符转义掉。</summary>
         /// <summary>
-        /// 富文本消毒：**只放行游戏 Text 自己支持的标签**，其余 `<` 一律换成
-        /// "看起来一样但不会被解析"的形式（`&lt;` + 零宽空格）。
+        /// 把模型输出编译成游戏 Text 的标记。
         ///
-        /// 放行清单（大小写不敏感）：
-        ///   &lt;color=#RRGGBB&gt; / &lt;color=#RRGGBBAA&gt; / &lt;/color&gt;
-        ///   &lt;i&gt; &lt;/i&gt; &lt;size=NN&gt; &lt;/size&gt;
-        /// 游戏改版 UGUI 不支持 &lt;b&gt;，这里把 &lt;b&gt;/&lt;/b&gt; 转成亮白色 &lt;color&gt;/&lt;/color&gt;。
+        /// 具体语法见 docs/rich-text-output-plan.md：
+        ///   - Markdown 作为外层结构；
+        ///   - 游戏样式用内联 HTML 子集（color/size/tint/box/sqrt/sup/sub/i/a/icon）；
+        ///   - 裸游戏标签作为兼容输入；
+        ///   - 未知 HTML/尖括号一律转义。
         ///
-        /// 游戏自定义的图标标签写作 `\xxx;`（反斜杠 + 短码 + 分号），不含 `<`，原样通过。
-        /// 这样一来 AI 只能用游戏支持的格式，玩家消息里的裸尖括号也不会打乱标签配对。
+        /// 图标短码 `\xxx;` 仍交给 <see cref="SanitizeIconTags"/> 按当前图标表校验，
+        /// 因为 formatter 是 Unity-free 的，不知道这一局加载了哪张 iconMapping。
         /// </summary>
-        private static string SanitizeRichText(string s)
+        private static RichTextResult FormatRichText(
+            string s,
+            RichTextOptions options,
+            RichTextProfile profile,
+            RichTextLinkAllocator linkAllocator = null,
+            RichTextLinkResolvers linkResolvers = null)
         {
-            if (string.IsNullOrEmpty(s)) return string.Empty;
-            s = SanitizeIconTags(s);
-            if (s.IndexOf('<') < 0) return s;
+            var result = GameRichText.Format(s, profile, options, linkAllocator, linkResolvers);
+            result.Rich = SanitizeIconTags(result.Rich);
+            return result;
+        }
 
-            var sb = new StringBuilder(s.Length + 8);
-            for (int i = 0; i < s.Length; i++)
+        private static string FormatInline(
+            string s,
+            RichTextLinkAllocator linkAllocator = null,
+            List<RichTextLink> links = null)
+        {
+            var ignored = false;
+            return FormatInline(s, linkAllocator, links, ref ignored, null);
+        }
+
+        private static string FormatInline(
+            string s,
+            RichTextLinkAllocator linkAllocator,
+            List<RichTextLink> links,
+            ref bool hasGameLinks,
+            RichTextLinkResolvers linkResolvers)
+        {
+            var result = FormatRichText(
+                s, RichOptions14, RichTextProfile.Inline, linkAllocator, linkResolvers);
+            if (links != null) links.AddRange(result.Links);
+            hasGameLinks |= result.HasGameLinks;
+            return result.Rich;
+        }
+
+        /// <summary>复制按钮用的纯文本：去掉 Markdown/HTML 标记，保留正文与代码。</summary>
+        private static string ToPlainText(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return string.Empty;
+            return GameRichText.Format(raw, RichTextProfile.Body, RichOptions14).Plain;
+        }
+
+        /// <summary>
+        /// 格式化并直接写进 Text。复选框只在真正包含任务列表时开启，
+        /// 避免普通文本里的 `[-]` 被游戏画成勾选框。
+        /// </summary>
+        private RichTextResult ApplyRichText(
+            Text label,
+            string s,
+            RichTextOptions options,
+            RichTextProfile profile,
+            RichTextLinkAllocator linkAllocator = null)
+        {
+            var allocator = linkAllocator ?? new RichTextLinkAllocator();
+            var result = FormatRichText(s, options, profile, allocator, LinkResolvers);
+            if (label != null)
             {
-                if (s[i] != '<')
+                if (!label.supportRichText) label.supportRichText = true;
+                label.text = result.Rich;
+                if (label.useCheckBox != result.HasCheckBoxes)
+                    label.useCheckBox = result.HasCheckBoxes;
+                RegisterLinkTargets(label, result.Links, result.HasGameLinks);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// 玩家消息不解析 Markdown/HTML：只转义尖括号，保留 `*`、`#`、`-` 等原字符。
+        /// </summary>
+        private void ApplyPlainText(Text label, string s)
+        {
+            if (label == null) return;
+            ReleaseLinkTargets(label);
+            var text = GameRichText.Format(s, RichTextProfile.Plain, RichOptions14).Rich;
+            label.text = SanitizeIconTags(text);
+            label.raycastTarget = false;
+            if (label.useCheckBox) label.useCheckBox = false;
+        }
+
+        /// <summary>把一个 Text 的网页/科技/配方/成就链接映射挂到它的 onTriggerClick 上。</summary>
+        private void RegisterLinkTargets(Text label, List<RichTextLink> links, bool hasGameLinks)
+        {
+            if (label == null) return;
+
+            var map = new Dictionary<int, string>();
+            if (links != null)
+            {
+                for (var i = 0; i < links.Count; i++)
                 {
-                    sb.Append(s[i]);
+                    var link = links[i];
+                    if (link == null || !RichTextLinkAllocator.IsWebId(link.Id)) continue;
+                    if (string.IsNullOrEmpty(link.Url)) continue;
+                    map[link.Id] = link.Url;
+                }
+            }
+
+            if (_linkHandlers.TryGetValue(label, out var oldHandler))
+            {
+                label.onTriggerClick -= oldHandler;
+                _linkHandlers.Remove(label);
+            }
+
+            if (map.Count == 0 && !hasGameLinks)
+            {
+                _linkTargets.Remove(label);
+                label.raycastTarget = false;
+                return;
+            }
+
+            _linkTargets[label] = map;
+            label.raycastTarget = true;
+
+            Action<UnityEngine.EventSystems.PointerEventData,
+                UnityEngine.UI.Youthcat.TextTriggerBounds> handler =
+                (data, bounds) => OnRichLinkClicked(label, data, bounds);
+            label.onTriggerClick += handler;
+            _linkHandlers[label] = handler;
+        }
+
+        private void ReleaseLinkTargets(Text label)
+        {
+            if (label == null) return;
+            if (_linkHandlers.TryGetValue(label, out var handler))
+            {
+                label.onTriggerClick -= handler;
+                _linkHandlers.Remove(label);
+            }
+            _linkTargets.Remove(label);
+        }
+
+        private void ReleaseLinksUnder(GameObject root)
+        {
+            if (root == null) return;
+            var rootTransform = root.transform;
+            var dead = new HashSet<Text>();
+            foreach (var pair in _linkTargets)
+                if (pair.Key != null && pair.Key.transform.IsChildOf(rootTransform)) dead.Add(pair.Key);
+            foreach (var pair in _linkHandlers)
+                if (pair.Key != null && pair.Key.transform.IsChildOf(rootTransform)) dead.Add(pair.Key);
+            foreach (var text in dead) ReleaseLinkTargets(text);
+        }
+
+        private void OnRichLinkClicked(
+            Text label,
+            UnityEngine.EventSystems.PointerEventData data,
+            UnityEngine.UI.Youthcat.TextTriggerBounds bounds)
+        {
+            if (data.button != UnityEngine.EventSystems.PointerEventData.InputButton.Left) return;
+            if (bounds.type != UnityEngine.UI.Youthcat.TextTriggerBounds.LINK_TYPE) return;
+
+            if (RichTextLinkAllocator.IsTechLinkId(bounds.linkId))
+            {
+                OpenTechLink(bounds.linkId);
+                return;
+            }
+
+            if (RichTextLinkAllocator.IsRecipeLinkId(bounds.linkId))
+            {
+                OpenRecipeLink(bounds.linkId);
+                return;
+            }
+
+            if (RichTextLinkAllocator.IsAchievementLinkId(bounds.linkId))
+            {
+                OpenAchievementLink(bounds.linkId);
+                return;
+            }
+
+            if (!RichTextLinkAllocator.IsWebId(bounds.linkId)) return;
+            if (!_linkTargets.TryGetValue(label, out var map)) return;
+            if (!map.TryGetValue(bounds.linkId, out var url) || string.IsNullOrEmpty(url)) return;
+
+            // formatter 只放行 http/https，这里再校验一次；绝不把 file:/javascript: 交给系统。
+            if (!GameRichText.IsHttpUrl(url)) return;
+
+            try
+            {
+                Application.OpenURL(url);
+                SetStatus(Strings.Get("reply.link.opening"), _accent);
+            }
+            catch
+            {
+                GUIUtility.systemCopyBuffer = url;
+                SetStatus(Strings.Get("reply.link.open_failed"), _accent);
+            }
+        }
+
+        /// <summary>
+        /// 科技链接：1000–9999 直接作为科技 ID；使用游戏自己的
+        /// OpenTechTree + SelectTech，后者会选中、居中并展开节点。
+        /// </summary>
+        private void OpenTechLink(int linkId)
+        {
+            var uiGame = UIRoot.instance != null ? UIRoot.instance.uiGame : null;
+            if (uiGame == null || uiGame.techTree == null || !uiGame.techTree.inited) return;
+
+            var techId = linkId;
+
+            if (techId > 0 && LDB.techs != null)
+            {
+                var proto = LDB.techs.Select(techId);
+                if (proto == null)
+                {
+                    techId = 0;
+                }
+                else if (proto.IsHiddenTech && GameMain.history != null &&
+                         !GameMain.history.TechUnlocked(proto.ID))
+                {
+                    return;
+                }
+            }
+
+            SetOpen(false);
+            if (!uiGame.techTree.active) uiGame.OpenTechTree();
+            if (techId > 0) uiGame.techTree.SelectTech(techId);
+        }
+
+        /// <summary>配方链接：10000 + 物品 ID；打开合成器并选中该物品的主配方。</summary>
+        private void OpenRecipeLink(int linkId)
+        {
+            var uiGame = UIRoot.instance != null ? UIRoot.instance.uiGame : null;
+            if (uiGame == null || LDB.items == null) return;
+
+            var itemId = linkId - 10000;
+            var item = LDB.items.Select(itemId);
+            if (item == null || item.maincraft == null) return;
+
+            SetOpen(false);
+            uiGame.FocusOnReplicate(itemId);
+        }
+
+        /// <summary>成就链接：20000 + 成就 ID；打开成就页并滚动/高亮对应条目。</summary>
+        private void OpenAchievementLink(int linkId)
+        {
+            var uiGame = UIRoot.instance != null ? UIRoot.instance.uiGame : null;
+            if (uiGame == null) return;
+
+            var statWindow = uiGame.statWindow;
+            if (statWindow == null || !statWindow.inited) return;
+            var panel = statWindow.achievementPanelUI;
+            if (panel == null) return;
+
+            var achId = linkId - 20000;
+            if (panel.uiEntries == null || !panel.uiEntries.ContainsKey(achId)) return;
+
+            SetOpen(false);
+            panel.HighlightAchievement(achId);
+        }
+
+        /// <summary>
+        /// 渲染助手正文。没有表格时走单 Text；有表格时把正文切成
+        /// “文本段 → 表格 Text → 文本段 …”，表格用游戏 Text 自带的
+        /// tableColWidths/tableRowHeights 排版，而不是拿空格画表。
+        /// </summary>
+        private void RenderReplyBody(ReplyView reply, string raw)
+        {
+            if (reply == null || reply.Body == null) return;
+
+            ClearBodyExtras(reply);
+            var segments = GameRichText.SplitTables(raw ?? string.Empty);
+            var hasTable = false;
+            for (var i = 0; i < segments.Count; i++)
+            {
+                if (segments[i].IsTable) { hasTable = true; break; }
+            }
+
+            if (!hasTable)
+            {
+                reply.Body.gameObject.SetActive(true);
+                ApplyRichText(reply.Body, raw, RichOptions14, RichTextProfile.Body);
+                return;
+            }
+
+            var insert = reply.Body.transform.GetSiblingIndex() + 1;
+            var icons = TryGetPreferredIconMapping();
+            var firstText = true;
+            for (var i = 0; i < segments.Count; i++)
+            {
+                var segment = segments[i];
+                if (segment.IsTable)
+                {
+                    if (firstText)
+                    {
+                        reply.Body.text = string.Empty;
+                        ReleaseLinkTargets(reply.Body);
+                        reply.Body.gameObject.SetActive(false);
+                        firstText = false;
+                    }
+
+                    var table = CreateTableText(reply, segment.Table);
+                    if (table == null) continue;
+                    AssignIconMapping(table, icons);
+                    table.transform.SetSiblingIndex(insert++);
+                    reply.BodyExtras.Add(table.gameObject);
                     continue;
                 }
 
-                int end = s.IndexOf('>', i + 1);
-                if (end > i && IsAllowedTag(s, i, end))
+                if (string.IsNullOrWhiteSpace(segment.Text)) continue;
+
+                Text label;
+                if (firstText)
                 {
-                    var tagLength = end - i + 1;
-                    // 游戏自带的 UGUI 改版**没有实现 <b>**（RichTextType 里根本没有 Bold），
-                    // 直接放行只会显示成字面量。这里统一转成受支持的亮白色强调，
-                    // 保证 ``<b>加粗</b>`` 至少是“被强调”的，而不是把标签画出来。
-                    if (tagLength == 3 && (s[i + 1] == 'b' || s[i + 1] == 'B'))
-                    {
-                        sb.Append("<color=#FFFFFF>");
-                    }
-                    else if (tagLength == 4 && s[i + 1] == '/' &&
-                             (s[i + 2] == 'b' || s[i + 2] == 'B'))
-                    {
-                        sb.Append("</color>");
-                    }
-                    else
-                    {
-                        sb.Append(s, i, end - i + 1);
-                    }
-                    i = end;
+                    label = reply.Body;
+                    reply.Body.gameObject.SetActive(true);
+                    firstText = false;
                 }
                 else
                 {
-                    sb.Append("<\u200B");
+                    label = CreateBodyTextClone(reply);
+                    if (label == null) continue;
+                    AssignIconMapping(label, icons);
+                    label.transform.SetSiblingIndex(insert++);
+                    reply.BodyExtras.Add(label.gameObject);
                 }
-            }
-            return sb.ToString();
-        }
 
-        /// <summary>`s[start] == '<'`、`s[end] == '>'`，判断这个标签是否在放行清单里。</summary>
-        private static bool IsAllowedTag(string s, int start, int end)
-        {
-            int i = start + 1;
-            bool closing = i < end && s[i] == '/';
-            if (closing) i++;
-
-            int nameStart = i;
-            while (i < end && char.IsLetter(s[i])) i++;
-            if (i == nameStart) return false;
-
-            var name = s.Substring(nameStart, i - nameStart).ToLowerInvariant();
-
-            if (closing)
-            {
-                return i == end && (name == "color" || name == "b" || name == "i" || name == "size");
+                ApplyRichText(label, segment.Text, RichOptions14, RichTextProfile.Body);
             }
 
-            switch (name)
+            if (firstText)
             {
-                case "b":
-                case "i":
-                    return i == end;
-                case "size":
-                    return IsTagValue(s, i, end, withHash: false, minDigits: 1, maxDigits: 3);
-                case "color":
-                    return IsTagValue(s, i, end, withHash: true, minDigits: 6, maxDigits: 8);
-                default:
-                    return false;
+                reply.Body.text = string.Empty;
+                ReleaseLinkTargets(reply.Body);
+                reply.Body.gameObject.SetActive(false);
             }
         }
 
-        /// <summary>校验 `=<可选#><十六进制数字>` 这一段。</summary>
-        private static bool IsTagValue(string s, int i, int end, bool withHash, int minDigits, int maxDigits)
+        private void ClearBodyExtras(ReplyView reply)
         {
-            if (i >= end || s[i] != '=') return false;
-            i++;
-            if (withHash)
+            if (reply == null) return;
+            for (var i = 0; i < reply.BodyExtras.Count; i++)
             {
-                if (i >= end || s[i] != '#') return false;
-                i++;
+                var go = reply.BodyExtras[i];
+                if (go == null) continue;
+                var text = go.GetComponent<Text>();
+                if (text != null) ReleaseLinkTargets(text);
+                go.SetActive(false);
+                UnityEngine.Object.Destroy(go);
             }
-
-            int digits = 0;
-            while (i < end && IsHexDigit(s[i]))
+            reply.BodyExtras.Clear();
+            if (reply.Body != null)
             {
-                i++;
-                digits++;
+                ReleaseLinkTargets(reply.Body);
+                reply.Body.raycastTarget = false;
+                reply.Body.gameObject.SetActive(true);
             }
-            return i == end && digits >= minDigits && digits <= maxDigits;
         }
 
-        private static bool IsHexDigit(char c)
+        private static Text CreateBodyTextClone(ReplyView reply)
         {
-            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (reply == null || reply.Body == null) return null;
+
+            var go = UnityEngine.Object.Instantiate(reply.Body.gameObject, reply.Body.transform.parent);
+            go.name = "body-text";
+            go.SetActive(true);
+            var text = go.GetComponent<Text>();
+            if (text == null)
+            {
+                UnityEngine.Object.Destroy(go);
+                return null;
+            }
+            text.supportRichText = true;
+            text.useCheckBox = false;
+            text.raycastTarget = false;
+            text.tableColWidths = new float[0];
+            text.tableRowHeights = new float[0];
+            return text;
+        }
+
+        private Text CreateTableText(ReplyView reply, RichTextTable table)
+        {
+            if (reply == null || reply.Body == null || table == null) return null;
+
+            var columns = Math.Min(4, table.Headers.Count);
+            if (columns <= 0) return null;
+
+            var go = UnityEngine.Object.Instantiate(reply.Body.gameObject, reply.Body.transform.parent);
+            go.name = "body-table";
+            go.SetActive(true);
+            var text = go.GetComponent<Text>();
+            if (text == null)
+            {
+                UnityEngine.Object.Destroy(go);
+                return null;
+            }
+
+            text.supportRichText = true;
+            text.useCheckBox = false;
+            text.raycastTarget = false;
+            text.horizontalOverflow = HorizontalWrapMode.Wrap;
+            text.verticalOverflow = VerticalWrapMode.Overflow;
+
+            var width = reply.Body.rectTransform.rect.width;
+            if (width < 200f && _content != null && _content.rect.width > 200f)
+                width = _content.rect.width - 24f;
+            if (width < 200f) width = 700f;
+
+            var padding = new Vector4(6f, 6f, 3f, 3f);
+            var usable = Math.Max(240f, width - 12f);
+            var colWidth = Math.Max(48f, (usable - (padding.x + padding.z) * columns) / columns);
+
+            text.tableColWidths = new float[columns];
+            for (var i = 0; i < columns; i++) text.tableColWidths[i] = colWidth;
+
+            var rowCount = Math.Min(40, table.Rows.Count);
+            var truncatedRows = table.Rows.Count > rowCount ? 1 : 0;
+            text.tableRowHeights = new float[rowCount + 1 + truncatedRows];
+            for (var i = 0; i < text.tableRowHeights.Length; i++) text.tableRowHeights[i] = -1f;
+
+            text.tableColAlignments = new Text.HorzAlignment[columns];
+            for (var i = 0; i < columns; i++)
+            {
+                var align = i < table.Alignments.Count ? table.Alignments[i] : RichTextTableAlign.Left;
+                text.tableColAlignments[i] = align == RichTextTableAlign.Center
+                    ? Text.HorzAlignment.Center
+                    : align == RichTextTableAlign.Right
+                        ? Text.HorzAlignment.Right
+                        : Text.HorzAlignment.Left;
+            }
+
+            text.tableRowAlignments = new Text.VertAlignment[rowCount + 1 + truncatedRows];
+            for (var i = 0; i < text.tableRowAlignments.Length; i++)
+                text.tableRowAlignments[i] = Text.VertAlignment.Middle;
+
+            text.tableCellPadding = padding;
+            text.tableLineColor = new Color(1f, 1f, 1f, 0.28f);
+            text.tableLineTint = true;
+
+            var allocator = new RichTextLinkAllocator();
+            var links = new List<RichTextLink>();
+            var hasGameLinks = false;
+            var sb = new StringBuilder();
+            AppendTableRow(sb, table.Headers, columns, header: true, allocator, links, ref hasGameLinks);
+            for (var i = 0; i < rowCount; i++)
+                AppendTableRow(sb, table.Rows[i], columns, header: false, allocator, links, ref hasGameLinks);
+            if (table.Rows.Count > rowCount)
+            {
+                var truncated = new List<string>(columns);
+                for (var i = 0; i < columns; i++) truncated.Add(i == 0 ? "…" : string.Empty);
+                AppendTableRow(sb, truncated, columns, header: false, allocator, links, ref hasGameLinks);
+            }
+            text.text = sb.ToString().TrimEnd('\n');
+            RegisterLinkTargets(text, links, hasGameLinks);
+            return text;
+        }
+
+        private static void AppendTableRow(
+            StringBuilder sb,
+            List<string> cells,
+            int columns,
+            bool header,
+            RichTextLinkAllocator allocator,
+            List<RichTextLink> links,
+            ref bool hasGameLinks)
+        {
+            for (var i = 0; i < columns; i++)
+            {
+                if (i > 0) sb.Append('\t');
+                var cell = cells != null && i < cells.Count ? cells[i] : string.Empty;
+                sb.Append(FormatTableCell(cell, header, allocator, links, ref hasGameLinks));
+            }
+            sb.Append('\n');
+        }
+
+        private static string FormatTableCell(
+            string cell,
+            bool header,
+            RichTextLinkAllocator allocator,
+            List<RichTextLink> links,
+            ref bool hasGameLinks)
+        {
+            var formatted = FormatInline(
+                cell ?? string.Empty, allocator, links, ref hasGameLinks, LinkResolvers);
+            if (header && formatted.Length > 0)
+                formatted = "<color=#FFFFFF>" + formatted + "</color>";
+            return formatted
+                .Replace("\r", string.Empty)
+                .Replace("\n", "↲")
+                .Replace("\t", "↹");
         }
 
         private static string Escape(string s)

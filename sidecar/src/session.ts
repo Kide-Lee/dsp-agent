@@ -24,8 +24,10 @@ import {
   PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
   buildConfigStatePayload,
+  buildContextCompactedPayload,
   buildEnvelope,
   buildErrorPayload,
+  buildHistoryCompactionUndonePayload,
   buildHistoryDeletedPayload,
   buildMessagePayload,
   buildModelCatalogPayload,
@@ -37,26 +39,36 @@ import {
   buildToolActivityPayload,
   buildBlueprintCardPayload,
   buildToolCallPayload,
+  buildToolDebugResultPayload,
+  buildConfirmRequestPayload,
+  parseConfirmResultPayload,
   errorRetryable,
   parseConfigSetPayload,
   parseFrame,
   parseHelloPayload,
   parseHistoryDeletePayload,
+  parseHistoryUndoCompactionPayload,
   parseModelCatalogPayload,
   parsePromptPayload,
   parseProviderTestPayload,
   parseReplyTimePayload,
   parseSaveBindPayload,
   parseToolResultPayload,
+  parseToolDebugPayload,
   serializeEnvelope,
   type ConfigView,
   type ErrorCode,
   type JsonObject,
   type BlueprintCardPayload,
+  type ContextCompactedPayload,
   type ModelCatalogResult,
   type ProviderTestResult,
+  type ToolCatalogEntry,
   type ToolResultPayload,
+  type ConfirmRequestPayload,
+  type ConfirmResultPayload,
 } from './protocol.js';
+import { UI_ASK_TOOL_NAME, UI_ASK_TOOL_NAME_ALIASES, UI_ASK_TIMEOUT_MS } from './tools/ask.js';
 import type { AgentEmitter, AgentRunner } from './agent.js';
 import { maskSecret, redactSecrets, type ConfigStore } from './config.js';
 import type { KbTransport, KnowledgeManager } from './kb/manager.js';
@@ -85,6 +97,8 @@ export interface SessionOptions {
   knowledge?: KnowledgeManager;
   /** 本次连接注册的工具名；可按 hello 能力动态计算。 */
   tools: readonly string[] | ((capabilities: readonly string[]) => readonly string[]);
+  /** M4m：是否允许 `tool_debug` 调试直调（默认 false）。 */
+  debugTools?: boolean;
   helloTimeoutMs?: number;
   logger?: Logger;
   /** 便于测试注入。 */
@@ -107,6 +121,59 @@ interface PendingToolCall {
   resolve: (result: ToolResultPayload) => void;
   timer: NodeJS.Timeout;
   cleanup: () => void;
+}
+
+interface PendingConfirm {
+  resolve: (result: { token: string; argsHash: string } | null) => void;
+  timer: NodeJS.Timeout;
+  token: string;
+  argsHash: string;
+  callId: string;
+  tool: string;
+  cleanup: () => void;
+}
+
+/** 稳定 JSON：确认令牌的参数哈希不依赖对象键顺序。 */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return `{${Object.keys(obj)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(obj[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function hashArgs(args: JsonObject): string {
+  return createHash('sha256').update(stableJson(args)).digest('hex');
+}
+
+function describeConfirmation(
+  name: string,
+  args: JsonObject,
+): { title: string; body: string } {
+  const fmt = (value: unknown): string =>
+    typeof value === 'object' && value !== null ? stableJson(value) : String(value ?? '');
+  switch (name) {
+    case 'game_focus_camera':
+      return { title: '移动视角？', body: `目标：${fmt(args['target'])}` };
+    case 'game_place_marker':
+      return {
+        title: '新增标记？',
+        body: `行星：${fmt(args['planetId'] ?? '当前')}\n坐标：${fmt(args['position'])}\n文字：${fmt(args['text'])}`,
+      };
+    case 'game_open_panel':
+      return { title: '打开游戏面板？', body: `面板：${fmt(args['panel'])}` };
+    case 'game_set_research':
+      return {
+        title: '切换研究目标？',
+        body: `科技：${fmt(args['techId'])}\n可能浪费当前研究已投入的进度。`,
+      };
+    default:
+      return { title: '确认写操作？', body: `${name}\n${stableJson(args)}` };
+  }
 }
 
 function toolFailure(code: string, message: string): ToolResultPayload {
@@ -142,7 +209,10 @@ export class Session {
 
   /** 已发出、尚未收到 tool_result 的调用。 */
   private readonly pendingTools = new Map<string, PendingToolCall>();
+  /** 已发出、尚未收到 confirm_result 的写操作确认。 */
+  private readonly pendingConfirms = new Map<string, PendingConfirm>();
   private toolSeq = 0;
+  private confirmSeq = 0;
 
   /** 本进程见过哪些 saveKey（只用于 save.bound.existed 的显示，不参与会话隔离）。 */
   private readonly seenSaveKeys = new Set<string>();
@@ -274,6 +344,9 @@ export class Session {
       case MessageType.Prompt:
         this.handlePrompt(env);
         return;
+      case MessageType.ToolDebug:
+        this.handleToolDebug(env);
+        return;
       case MessageType.ConfigSet:
         this.handleConfigSet(env);
         return;
@@ -283,11 +356,17 @@ export class Session {
       case MessageType.HistoryDelete:
         void this.handleHistoryDelete(env);
         return;
+      case MessageType.HistoryUndoCompaction:
+        void this.handleHistoryUndoCompaction(env);
+        return;
       case MessageType.ReplyTime:
         this.handleReplyTime(env);
         return;
       case MessageType.ToolResult:
         this.handleToolResult(env);
+        return;
+      case MessageType.ConfirmResult:
+        this.handleConfirmResult(env);
         return;
       case MessageType.ModelCatalog:
         this.handleModelCatalog(env);
@@ -364,6 +443,14 @@ export class Session {
         ? this.options.tools(payload.capabilities)
         : this.options.tools;
 
+    // M4l：工具目录是可选字段；agent 没实现时老 mod 继续用 tools 名 + 本地短名。
+    let toolCatalog: ToolCatalogEntry[] = [];
+    try {
+      toolCatalog = this.options.agent.toolCatalog?.(payload.capabilities) ?? [];
+    } catch (err) {
+      this.logger.warn('生成工具目录失败（ready 不带 toolCatalog）', errorFields(err));
+    }
+
     this.sendEnvelope(
       buildEnvelope({
         type: MessageType.Ready,
@@ -373,6 +460,7 @@ export class Session {
           sessionId: this.sessionId,
           agent: this.options.agent.info,
           tools: toolNames,
+          toolCatalog,
           // 附录 A.2：让 mod 在第一次握手就知道要不要进密钥引导态。
           config: this.options.config.view(),
         }),
@@ -721,6 +809,74 @@ export class Session {
     );
   }
 
+  /**
+   * 撤销最近一次上下文压缩。和删除回合一样，必须落到会话文件上；
+   * 成功后丢弃内存会话，下一次 prompt 从展开后的历史重建上下文。
+   */
+  private async handleHistoryUndoCompaction(
+    env: import('./protocol.js').ParsedEnvelope,
+  ): Promise<void> {
+    const payload = parseHistoryUndoCompactionPayload(env.payload ?? {});
+    if (!payload) {
+      this.sendEnvelope(
+        buildEnvelope({
+          type: MessageType.HistoryCompactionUndone,
+          replyTo: env.id ?? null,
+          payload: buildHistoryCompactionUndonePayload({
+            saveKey: this.boundSaveKey,
+            compactionId: null,
+            ok: false,
+            removed: 0,
+            error: 'bad_request',
+          }),
+        }),
+      );
+      return;
+    }
+
+    const saveKey = payload.saveKey ?? this.boundSaveKey;
+    let result: {
+      ok: boolean;
+      removed: number;
+      compactionId?: string;
+      error?: string;
+      mayRecompact?: boolean;
+    } = { ok: false, removed: 0, error: 'agent_unavailable' };
+
+    if (this.options.agent.undoCompaction) {
+      try {
+        result = await this.options.agent.undoCompaction(saveKey, payload.compactionId);
+      } catch (err) {
+        this.logger.warn('撤销上下文压缩失败', errorFields(err));
+        result = { ok: false, removed: 0, error: 'io_error' };
+      }
+    }
+
+    this.logger.info('处理 history.undo_compaction', {
+      saveKey,
+      requested: payload.compactionId ?? null,
+      ok: result.ok,
+      removed: result.removed,
+      compactionId: result.compactionId ?? null,
+      error: result.error ?? null,
+    });
+
+    this.sendEnvelope(
+      buildEnvelope({
+        type: MessageType.HistoryCompactionUndone,
+        replyTo: env.id ?? null,
+        payload: buildHistoryCompactionUndonePayload({
+          saveKey,
+          compactionId: result.compactionId ?? payload.compactionId ?? null,
+          ok: result.ok,
+          removed: result.removed,
+          error: result.error ?? null,
+          mayRecompact: result.mayRecompact === true,
+        }),
+      }),
+    );
+  }
+
   private handlePrompt(env: import('./protocol.js').ParsedEnvelope): void {
     if (this._state !== 'ready') {
       this.logger.warn('握手未完成就收到 prompt');
@@ -740,6 +896,7 @@ export class Session {
       promptId,
       chars: prompt.text.length,
       conversationId: prompt.conversationId,
+      requiredTool: prompt.requiredTool,
     });
 
     // 串行化：保证同一 prompt 的 status/stream/message 不被交错的下一轮切开。
@@ -751,11 +908,72 @@ export class Session {
         // 无导出在途时立即返回，不额外发 status 帧（echo/无知识库路径的帧序必须保持 M0 契约）。
         await knowledge.whenReady(2500);
       }
-      await this.options.agent.run(prompt.text, promptId, emit);
+      await this.options.agent.run(prompt.text, promptId, emit, prompt.requiredTool);
     });
     this.promptChain = run.catch((err: unknown) => {
       this.logger.error('agent 执行失败', errorFields(err));
       this.sendError('internal', 'agent failed', promptId);
+    });
+  }
+
+  /**
+   * M4m：调试直调。不进入 agent 的 prompt 会话、不调用 LLM；
+   * 与 prompt 共用串行链，避免 GameToolHost.bind 冲突。
+   */
+  private handleToolDebug(env: import('./protocol.js').ParsedEnvelope): void {
+    if (this._state !== 'ready') {
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+    if (!this.options.debugTools) {
+      this.sendError(
+        'debug_disabled',
+        '调试直调未开启：sidecar 需要用 --debug-tools 启动',
+        env.id || null,
+      );
+      return;
+    }
+
+    const request = parseToolDebugPayload(env.payload);
+    if (!request) {
+      this.sendError('bad_request', 'tool_debug.payload.name/args 非法', env.id || null);
+      return;
+    }
+
+    const debugId = env.id || null;
+    this.logger.info('收到 tool_debug', { debugId, name: request.name, argsBytes: JSON.stringify(request.args).length });
+
+    const emit = this.createEmitter();
+    const run = this.promptChain.then(async () => {
+      const debug = this.options.agent.debugTool;
+      if (!debug) {
+        this.sendError('tool_unavailable', '当前 agent 不支持调试直调', debugId);
+        return;
+      }
+      try {
+        const result = await debug.call(this.options.agent, request.name, request.args, emit);
+        if (this._state !== 'ready' || !this.socket.isOpen) return;
+        this.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.ToolDebugResult,
+            replyTo: debugId,
+            payload: buildToolDebugResultPayload(result),
+          }),
+        );
+        this.logger.info('tool_debug 完成', {
+          debugId,
+          name: request.name,
+          ok: result.ok,
+          durationMs: result.durationMs,
+        });
+      } catch (err) {
+        this.logger.error('tool_debug 执行失败', { debugId, name: request.name, ...errorFields(err) });
+        this.sendError('internal', '调试直调失败', debugId);
+      }
+    });
+    this.promptChain = run.catch((err: unknown) => {
+      this.logger.error('tool_debug 队列失败', errorFields(err));
+      this.sendError('internal', '调试直调失败', debugId);
     });
   }
 
@@ -779,17 +997,31 @@ export class Session {
    * 发一次 tool_call 并等待 mod 的 tool_result。
    * 超时、断线、取消都 resolve 成结构化错误；调用方（pi 工具层）不需要 try/catch。
    */
-  private callTool(
+  private async callTool(
     name: string,
     args: JsonObject,
-    options: { timeoutMs: number; signal?: AbortSignal; internal?: boolean },
+    options: { timeoutMs: number; signal?: AbortSignal; internal?: boolean; risk?: number },
   ): Promise<ToolResultPayload> {
     if (this._state !== 'ready' || !this.socket.isOpen) {
-      return Promise.resolve(toolFailure('tool_unavailable', 'mod 连接未就绪'));
+      return toolFailure('tool_unavailable', 'mod 连接未就绪');
     }
 
-    const timeoutMs = Math.min(30000, Math.max(500, options.timeoutMs || 8000));
+    const isAsk = name === UI_ASK_TOOL_NAME || (UI_ASK_TOOL_NAME_ALIASES as readonly string[]).includes(name);
+    const maxTimeoutMs = isAsk ? UI_ASK_TIMEOUT_MS : 30000;
+    const timeoutMs = Math.min(maxTimeoutMs, Math.max(500, options.timeoutMs || 8000));
     const callId = `call_${(this.toolSeq += 1)}`;
+    const risk = options.risk ?? 0;
+
+    let token: string | undefined;
+    let argsHash: string | undefined;
+    if (risk > 0 && options.internal !== true) {
+      const approved = await this.requestConfirmation(callId, name, args, risk, options.signal);
+      if (!approved) {
+        return toolFailure('confirmation_denied', '玩家拒绝了这次写操作，未执行');
+      }
+      token = approved.token;
+      argsHash = approved.argsHash;
+    }
 
     return new Promise<ToolResultPayload>((resolve) => {
       let cleanup = (): void => {};
@@ -815,7 +1047,7 @@ export class Session {
 
       this.pendingTools.set(callId, { resolve, timer, cleanup });
 
-      this.logger.debug('发送 tool_call', { callId, name, timeoutMs });
+      this.logger.debug('发送 tool_call', { callId, name, timeoutMs, risk, confirmed: !!token });
       this.sendEnvelope(
         buildEnvelope({
           type: MessageType.ToolCall,
@@ -823,9 +1055,11 @@ export class Session {
             callId,
             name,
             args,
-            risk: 0,
+            risk: risk as 0 | 1 | 2,
             timeoutMs,
             internal: options.internal === true,
+            confirmToken: token,
+            confirmArgsHash: argsHash,
           }),
         }),
         (err) => {
@@ -835,6 +1069,98 @@ export class Session {
         },
       );
     });
+  }
+
+  private requestConfirmation(
+    callId: string,
+    name: string,
+    args: JsonObject,
+    risk: number,
+    signal?: AbortSignal,
+  ): Promise<{ token: string; argsHash: string } | null> {
+    const requestId = `confirm_${(this.confirmSeq += 1)}`;
+    const token = randomBytes(32).toString('hex');
+    const argsHash = hashArgs(args);
+    const copy = describeConfirmation(name, args);
+
+    return new Promise((resolve) => {
+      let cleanup = (): void => {};
+      const finish = (value: { token: string; argsHash: string } | null): void => {
+        const pending = this.pendingConfirms.get(requestId);
+        if (!pending) return;
+        this.pendingConfirms.delete(requestId);
+        clearTimeout(pending.timer);
+        try {
+          pending.cleanup();
+        } catch {
+          /* ignore */
+        }
+        resolve(value);
+      };
+
+      const timer = setTimeout(() => finish(null), 60000);
+      timer.unref?.();
+      if (signal) {
+        const onAbort = (): void => finish(null);
+        if (signal.aborted) {
+          clearTimeout(timer);
+          resolve(null);
+          return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+        cleanup = () => signal.removeEventListener('abort', onAbort);
+      }
+
+      this.pendingConfirms.set(requestId, {
+        resolve: finish,
+        timer,
+        token,
+        argsHash,
+        callId,
+        tool: name,
+        cleanup,
+      });
+      this.logger.info('请求写操作确认', { requestId, callId, tool: name, risk });
+      this.sendEnvelope(
+        buildEnvelope({
+          type: MessageType.ConfirmRequest,
+          payload: buildConfirmRequestPayload({
+            requestId,
+            callId,
+            tool: name,
+            argsHash,
+            token,
+            title: copy.title,
+            body: copy.body,
+            risk: risk as 1 | 2,
+            timeoutMs: 60000,
+          } satisfies ConfirmRequestPayload),
+        }),
+        (err) => {
+          if (err) {
+            this.logger.warn('发送 confirm_request 失败', { requestId, error: err.message });
+            finish(null);
+          }
+        },
+      );
+    });
+  }
+
+  private handleConfirmResult(env: import('./protocol.js').ParsedEnvelope): void {
+    const parsed = parseConfirmResultPayload(env.payload);
+    if (!parsed) {
+      this.logger.warn('confirm_result 载荷无效');
+      return;
+    }
+    const pending = this.pendingConfirms.get(parsed.requestId);
+    if (!pending) return;
+    const ok = parsed.decision === 'allow' && parsed.token === pending.token;
+    this.logger.info('收到确认结果', {
+      requestId: parsed.requestId,
+      decision: parsed.decision,
+      ok,
+    });
+    pending.resolve(ok ? { token: pending.token, argsHash: pending.argsHash } : null);
   }
 
   /**
@@ -911,6 +1237,10 @@ export class Session {
     for (const callId of [...this.pendingTools.keys()]) {
       this.settleTool(callId, toolFailure('tool_unavailable', reason));
     }
+    for (const pending of [...this.pendingConfirms.values()]) {
+      pending.resolve(null);
+    }
+    this.pendingConfirms.clear();
   }
 
   // ---------------------------------------------------------------- agent 写帧出口
@@ -985,6 +1315,15 @@ export class Session {
           buildEnvelope({
             type: MessageType.BlueprintCard,
             payload: buildBlueprintCardPayload(payload),
+          }),
+        );
+      },
+
+      compacted(payload: ContextCompactedPayload) {
+        session.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.ContextCompacted,
+            payload: buildContextCompactedPayload(payload),
           }),
         );
       },

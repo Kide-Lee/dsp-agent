@@ -46,6 +46,7 @@ export function createWikiTools(client: WikiClient = new WikiClient()): ToolDefi
       promptGuidelines: [
         'Use wiki_search 当玩家问机制、版本差异、百科背景，而 kb_* 没有覆盖时。',
         '回答里保留 wiki 链接（url），并说明信息来自哪个语言的 wiki。',
+        'wiki 链接必须原样使用工具返回的 url；不要自行拼接或改写成 /wiki/、/Wiki/。',
         'wiki 没有结果或站点不可用时，直说“wiki 没查到/暂时不可用”，不要改用记忆编造。',
       ],
       parameters: Type.Object({
@@ -85,7 +86,7 @@ export function createWikiTools(client: WikiClient = new WikiClient()): ToolDefi
             query,
             hits,
             errors,
-            note: '内容来自对应 Wiki；回答时请附 url，授权以站点页面声明为准。',
+            note: '内容来自对应 Wiki；回答时请原样使用返回的 url（不要自行拼 /wiki/），授权以站点页面声明为准。',
           },
           true,
         );
@@ -102,6 +103,7 @@ export function createWikiTools(client: WikiClient = new WikiClient()): ToolDefi
       promptGuidelines: [
         'Use wiki_page 在 wiki_search 找到标题之后，读取正文细节。',
         '长度超过 8000 字会被截断（truncated=true）；不要假装读过截断之后的内容。',
+        'wiki 链接必须原样使用返回的 url；不要自行拼接或改写成 /wiki/、/Wiki/。',
         '页面不存在时如实说“wiki 没有这个页面”，不要用记忆补。',
       ],
       parameters: Type.Object({

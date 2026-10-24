@@ -9,7 +9,7 @@
  */
 
 import { createServer } from 'node:http';
-import { WikiClient } from '../dist/wiki/client.js';
+import { WikiClient, pageUrl } from '../dist/wiki/client.js';
 import { createWikiTools, WIKI_TOOL_NAMES } from '../dist/wiki/tools.js';
 
 let passed = 0;
@@ -106,6 +106,18 @@ async function run(name, params) {
 }
 
 // ---------------------------------------------------------------- 1. 双语搜索
+
+// ---------------------------------------------------------------- 0. 页面 URL
+
+console.log('── 0. 页面 URL ──');
+{
+  const title = '升级矿物利用约等于无限资源';
+  const zh = pageUrl('https://wiki.biligame.com/dsp', title);
+  const en = pageUrl('https://dsp-wiki.com', title);
+  check('biligame 不带 /Wiki/', !/\/wiki\//i.test(zh) && zh.startsWith('https://wiki.biligame.com/dsp/%E5%8D%87'), zh);
+  check('biligame 中文已编码', zh.includes('%E7%BA%A7%E7%9F%BF%E7%89%A9'), zh);
+  check('英文 wiki 保留 /wiki/', en.startsWith('https://dsp-wiki.com/wiki/'), en);
+}
 
 console.log('── 1. wiki_search ──');
 {

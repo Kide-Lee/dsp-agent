@@ -10,6 +10,7 @@
 
 import {
   parseSessionLines,
+  removeCompactionFromEntries,
   removeTurnFromEntries,
   serializeSessionEntries,
 } from '../dist/history.js';
@@ -100,6 +101,71 @@ console.log('\n── 3. 找不到 / 不支持 ──');
   const branched = fixture();
   branched.splice(2, 0, { type: 'branch_summary', id: 'b1', parentId: 'u1', summary: 'x' });
   check('分支会话拒绝', removeTurnFromEntries(branched, '第一个问题').outcome.error === 'unsupported_session');
+
+  const edited = fixture();
+  edited.splice(2, 0, {
+    type: 'context_edit', id: 'e1', parentId: 'u1', targetId: 'a1', replacement: null,
+  });
+  check('context_edit 会话拒绝', removeTurnFromEntries(edited, '第一个问题').outcome.error === 'unsupported_session');
+}
+
+console.log('\n── 3.5 pi 1.4 新 entry 的兼容性 ──');
+{
+  // 1.4 的首个请求会持久化一条 system message；删回合时它必须保留并重新接链。
+  const withSystem = fixture();
+  withSystem.splice(1, 0, {
+    type: 'message', id: 'sys1', parentId: null, timestamp: '2026-01-01T00:00:00.000Z',
+    message: { role: 'system', content: '', sections: { preamble: 'persona' } },
+  });
+  const sys = removeTurnFromEntries(withSystem, '第一个问题');
+  check('system message 会话可删除', sys.outcome.ok === true, sys.outcome.error);
+  check('system message 保留', sys.entries?.some((e) => e.id === 'sys1') === true);
+  check('system message 仍在最前', sys.entries?.[1]?.id === 'sys1', JSON.stringify(sys.entries?.map((e) => e.id)));
+  check('u2 接到 system 后', sys.entries?.find((e) => e.id === 'u2')?.parentId === 'sys1');
+
+  // usage 不参与模型上下文；删回合时保留它，不能因为不认识就拒绝整个会话。
+  const withUsage = fixture();
+  withUsage.push({
+    type: 'usage', id: 'us1', parentId: 'a2', kind: 'cache_warm',
+    provider: 'test', model: 'test', usage: { input: 0, output: 0, totalTokens: 0 },
+  });
+  const usage = removeTurnFromEntries(withUsage, '第一个问题');
+  check('usage 会话可删除', usage.outcome.ok === true, usage.outcome.error);
+  check('usage 条目保留', usage.entries?.some((e) => e.id === 'us1') === true);
+}
+
+console.log('\n── 3.6 撤销上下文压缩 ──');
+{
+  const compacted = fixture();
+  compacted.splice(2, 0, {
+    type: 'compaction', id: 'c1', parentId: 'a1', summary: '旧对话摘要',
+    firstKeptEntryId: 'u1', tokensBefore: 1000,
+  });
+  // 压缩 entry 是追加在链中间的：它的下一个条目 parentId 指向它。
+  compacted[3].parentId = 'c1';
+  const undo = removeCompactionFromEntries(compacted);
+  check('撤销最近一次压缩', undo.outcome.ok === true, undo.outcome.error);
+  check('compactionId 正确', undo.outcome.compactionId === 'c1');
+  check('compaction entry 已删除', undo.entries?.some((e) => e.id === 'c1') === false);
+  check('子条目接回原 parent', undo.entries?.find((e) => e.id === 't1')?.parentId === 'a1');
+  check('其他条目未丢', undo.entries?.length === 6, String(undo.entries?.length));
+
+  const noCompaction = removeCompactionFromEntries(fixture());
+  check('没有压缩时 not_found', noCompaction.outcome.error === 'not_found');
+
+  const twice = fixture();
+  twice.splice(2, 0, { type: 'compaction', id: 'c1', parentId: 'a1', summary: '一' });
+  twice[3].parentId = 'c1';
+  twice.splice(6, 0, { type: 'compaction', id: 'c2', parentId: 'u2', summary: '二' });
+  twice[7].parentId = 'c2';
+  const old = removeCompactionFromEntries(twice, 'c1');
+  check('只能撤销最近一次', old.outcome.error === 'not_latest', old.outcome.error);
+  const latest = removeCompactionFromEntries(twice, 'c2');
+  check('指定最近一次可撤销', latest.outcome.ok === true, latest.outcome.error);
+  check('撤销后仍保留较早压缩', latest.entries?.some((e) => e.id === 'c1') === true);
+
+  const missing = removeCompactionFromEntries(twice, 'nope');
+  check('找不到指定压缩', missing.outcome.error === 'not_found', missing.outcome.error);
 }
 
 console.log('\n── 4. JSONL 解析与序列化 ──');

@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { gzipSync } from 'node:zlib';
 import { BlueprintClient, createBlueprintTools, inspectBlueprintText, BLUEPRINT_TOOL_NAMES } from '../dist/blueprint/tools.js';
 import { BlueprintWorkspace } from '../dist/blueprint/workspace.js';
+import { DysonSphereBlueprintsClient } from '../dist/blueprint/site.js';
 
 let passed = 0;
 let failed = 0;
@@ -58,7 +59,18 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const port = server.address().port;
 const base = `http://127.0.0.1:${port}`;
 const client = new BlueprintClient({ apiBase: base, rawBase: `${base}/raw`, timeoutMs: 3000 });
-const tools = createBlueprintTools(client);
+const fakeSite = {
+  search: async () => [],
+  fetch: async () => ({ error: 'not_found' }),
+  meta: (url) => ({
+    source: 'dysonsphereblueprints',
+    url,
+    repo: 'https://www.dysonsphereblueprints.com',
+    license: '未标注（见蓝图页面）',
+    note: 'fake site',
+  }),
+};
+const tools = createBlueprintTools(client, undefined, undefined, undefined, undefined, fakeSite);
 const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
 
 async function run(name, params) {
@@ -122,7 +134,7 @@ console.log('\n── 4. 保存到游戏蓝图目录 ──');
   const dir = mkdtempSync(join(tmpdir(), 'icarus-bp-'));
   process.env.ICARUS_BLUEPRINT_DIR = dir;
   const ws = new BlueprintWorkspace({ root: dir });
-  const saveTools = createBlueprintTools(client, undefined, undefined, undefined, ws);
+  const saveTools = createBlueprintTools(client, undefined, undefined, undefined, ws, fakeSite);
   const saveByName = Object.fromEntries(saveTools.map((tool) => [tool.name, tool]));
   const save = async (name, params) => JSON.parse((await saveByName[name].execute('save_1', params)).content[0].text);
 
@@ -197,6 +209,65 @@ console.log('\n── 5. header/二进制元数据（卡片用） ──');
 console.log('\n── 6. 元数据 ──');
 check('五个蓝图工具', tools.length === 5 && BLUEPRINT_TOOL_NAMES.length === 5);
 check('描述带署名', byName['blueprint_search'].description.includes('CC BY-NC-SA 4.0'));
+
+console.log('\n── 6. Dyson Sphere Blueprints 解析 ──');
+{
+  const siteHtml = `
+    <li class="o-blueprint-card factory" data-blueprint-id="1">
+      <div class="o-blueprint-card__content"><div><h2><a href="/blueprints/factory-test">Test &amp; Blueprint</a></h2>
+      <p>by <a href="/users/1/blueprints">Alice</a></p></div></div>
+      <div class="o-blueprint-card__version"><span>Up to version <strong>0.10.35.29151</strong></span></div>
+    </li>`;
+  const site = new DysonSphereBlueprintsClient({
+    baseUrl: 'https://example.test',
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => siteHtml }),
+  });
+  const rows = await site.search('test', 5);
+  check('站点搜索命中', rows.length === 1, JSON.stringify(rows));
+  check('站点标题去实体', rows[0]?.title === 'Test & Blueprint', JSON.stringify(rows[0]));
+  check('站点 URL 绝对化', rows[0]?.url === 'https://example.test/blueprints/factory-test');
+  check('站点作者/版本', rows[0]?.author === 'Alice' && rows[0]?.gameVersion === '0.10.35.29151');
+
+  const page = `<textarea data-preview-target="data" data-clipboard-target="true" readonly>${validText.replace(/"/g, '&quot;')}</textarea>`;
+  const siteFetch = new DysonSphereBlueprintsClient({
+    baseUrl: 'https://example.test',
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => page }),
+  });
+  const fetched = await siteFetch.fetch('https://example.test/blueprints/factory-test');
+  check('站点蓝图原文解码', fetched.text === validText, JSON.stringify(fetched));
+  const blocked = await siteFetch.fetch('https://evil.test/blueprints/x');
+  check('拒绝非站点 URL', blocked.error === 'bad_path', JSON.stringify(blocked));
+}
+
+console.log('\n── 7. 网站结果进入 search/info/save ──');
+{
+  const webUrl = 'https://example.test/blueprints/factory-web';
+  const webSite = {
+    search: async () => [{ title: 'Web Blueprint', url: webUrl, author: 'Bob', gameVersion: '0.10.35.29151' }],
+    fetch: async () => ({ text: validText, title: 'Web Blueprint', url: webUrl }),
+    meta: (url) => ({
+      source: 'dysonsphereblueprints', url, repo: 'https://www.dysonsphereblueprints.com',
+      license: '未标注（见蓝图页面）', note: '网站来源',
+    }),
+  };
+  const webTools = createBlueprintTools(client, undefined, undefined, undefined, undefined, webSite);
+  const webByName = Object.fromEntries(webTools.map((tool) => [tool.name, tool]));
+  const web = JSON.parse((await webByName['blueprint_search'].execute('web_1', { query: '白糖' })).content[0].text);
+  check('search 合并两个来源', web.results.some((row) => row.source === 'dysonsphereblueprints'), JSON.stringify(web.results));
+  check('网站结果带 url', web.results.find((row) => row.source === 'dysonsphereblueprints')?.url === webUrl);
+
+  const info = JSON.parse((await webByName['blueprint_info'].execute('web_2', { url: webUrl })).content[0].text);
+  check('网站 info 成功', info.valid === true && info.source === 'dysonsphereblueprints', JSON.stringify(info));
+
+  const dir = mkdtempSync(join(tmpdir(), 'icarus-bp-web-'));
+  const ws = new BlueprintWorkspace({ root: dir });
+  const saveTools = createBlueprintTools(client, undefined, undefined, undefined, ws, webSite);
+  const saveByName = Object.fromEntries(saveTools.map((tool) => [tool.name, tool]));
+  const saved = JSON.parse((await saveByName['blueprint_save'].execute('web_3', { url: webUrl })).content[0].text);
+  check('网站 save 成功', saved.saved === true && existsSync(join(dir, saved.relPath)), JSON.stringify(saved));
+  check('网站 save 用标题作文件名', String(saved.fileName).includes('Web Blueprint'), saved.fileName);
+  rmSync(dir, { recursive: true, force: true });
+}
 
 console.log(`\n${failed === 0 ? '✅' : '❌'} blueprint 测试${failed === 0 ? '全部通过' : '失败'}（${passed} 项，失败 ${failed}）`);
 server.close();
