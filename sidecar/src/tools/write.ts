@@ -87,7 +87,8 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       label: '移动视角',
       description:
         '把镜头移动到指定行星/星系或建筑。写操作：执行前玩家必须在游戏里确认。' +
-        'target 可以是行星 id、星系 id 或建筑 id；成功后返回聚焦目标描述。',
+        '当前行星/建筑会先进入行星视图再聚焦，镜头不会进入星球内部；' +
+        '玩家退出行星视图后注视自动结束。target 优先使用 planet:/star:/entity: 前缀。',
       promptSnippet: '移动镜头到指定目标（需要玩家确认）',
       promptGuidelines: [
         'Use game_focus_camera 当玩家明确要求“带我去看/镜头移到”某个星球或建筑时。目标优先写 planet:<id> / star:<id> / entity:<id>，不要只传裸数字。',
@@ -154,7 +155,8 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       label: '切换研究',
       description:
         '把当前研究目标切换为指定科技。写操作，风险 2：可能浪费当前科技已投入的研究进度，' +
-        '执行前玩家必须确认。techId 可以是科技 id 或名称。',
+        '执行前玩家必须确认。已完成的科技会被拒绝；科技必须未完成且前置已满足。' +
+        'techId 可以是科技 id 或名称。',
       promptSnippet: '切换当前研究目标（高风险，需要确认）',
       promptGuidelines: [
         'Use game_set_research 当玩家明确要求切换研究目标时。',

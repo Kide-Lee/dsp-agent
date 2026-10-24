@@ -260,7 +260,7 @@ namespace IcarusII
         private void OnDestroy()
         {
             try { CancelPendingAsk("插件卸载", Protocol.CodeCancelled); } catch { /* ignore */ }
-            try { CancelPendingConfirm("插件卸载"); _confirmation.Clear(); CameraFocusOverride.Clear(); } catch { /* ignore */ }
+            try { CancelPendingConfirm("插件卸载"); _confirmation.Clear(); } catch { /* ignore */ }
             try { _chat?.Destroy(); } catch (Exception ex) { Log?.LogWarning($"清理 UI 失败：{ex.Message}"); }
             try { _tools?.CancelAll("插件卸载"); } catch { /* ignore */ }
             try { _client?.Stop(); } catch (Exception ex) { Log?.LogWarning($"停止客户端失败：{ex.Message}"); }
@@ -1264,7 +1264,6 @@ namespace IcarusII
                 CancelPendingAsk("存档切换", Protocol.CodeCancelled);
                 CancelPendingConfirm("存档切换");
                 WriteActionStack.Clear();
-                CameraFocusOverride.Clear();
                 _markersSanitized = false;
                 _tools?.CancelAll("存档切换", OnToolDone);
                 _tools?.ClearCache();

@@ -151,6 +151,23 @@ namespace IcarusII.Game.Tools
                 if (planet == null) throw Fail("找不到该行星");
                 var uiGame = UIRoot.instance != null ? UIRoot.instance.uiGame : null;
                 if (uiGame == null) throw Fail("UIGame 尚未就绪");
+                // 当前所在行星要聚焦“行星上某处”，先进行星视图，而不是星图。
+                if (currentPlanet != null && planet.id == currentPlanet.id)
+                {
+                    var wasPlanetView = uiGame.globemap != null && uiGame.globemap.active;
+                    if (!wasPlanetView)
+                    {
+                        uiGame.OpenGlobemap();
+                        if (uiGame.globemap == null || !uiGame.globemap.active)
+                            throw Fail("无法进入行星视图");
+                    }
+                    uiGame.globemap.MoveToViewTargetTwoStep(player.position, 60f);
+                    WriteActionStack.Push("关闭行星视图", () =>
+                    {
+                        if (!wasPlanetView && uiGame.globemap != null) uiGame.ShutGlobemap();
+                    });
+                    return Ok($"已进入行星视图并聚焦 {planet.displayName}（#{planet.id}）");
+                }
                 var wasOpen = uiGame.starmap != null && uiGame.starmap.active;
                 uiGame.OpenStarmap();
                 if (uiGame.starmap == null) throw Fail("星图尚未就绪");
@@ -187,10 +204,25 @@ namespace IcarusII.Game.Tools
             if (kind == "entity")
             {
                 if (!entityValid) throw Fail("当前行星上找不到该建筑");
-                // entityPool 的 pos 与玩家/相机使用同一套行星局部坐标。
-                CameraFocusOverride.Focus(entityPool[id].pos, 40f);
-                WriteActionStack.Push("恢复相机视角", CameraFocusOverride.Clear);
-                return Ok($"已聚焦建筑 #{id}（相机临时覆盖，撤销恢复）");
+                var uiGame = UIRoot.instance != null ? UIRoot.instance.uiGame : null;
+                if (uiGame == null || uiGame.globemap == null) throw Fail("UIGame 尚未就绪");
+
+                // 先进入行星视图，再用游戏自己的 PlanetPoser 把镜头放到目标上方；
+                // 不直接改 Camera.onPreRender，避免镜头钻进星球内部。
+                var wasPlanetView = uiGame.globemap.active;
+                if (!wasPlanetView)
+                {
+                    uiGame.OpenGlobemap();
+                    if (!uiGame.globemap.active) throw Fail("无法进入行星视图");
+                }
+                var entity = entityPool[id];
+                var distance = Mathf.Max(20f, entity.pos.magnitude - currentPlanet.realRadius + 20f);
+                uiGame.globemap.MoveToViewTargetTwoStep(entity.pos, distance);
+                WriteActionStack.Push("关闭行星视图", () =>
+                {
+                    if (!wasPlanetView && uiGame.globemap != null) uiGame.ShutGlobemap();
+                });
+                return Ok($"已进入行星视图并聚焦建筑 #{id}；退出行星视图后注视自动结束");
             }
 
             throw Fail("target 类型不明确；请用 planet:/star:/entity: 前缀");
@@ -333,29 +365,11 @@ namespace IcarusII.Game.Tools
         public override string Name => "game_set_research";
         public override int TimeoutMs => 8000;
 
-        private static void SetCurrentTech(GameHistoryData history, int techId)
-        {
-            // 实际游戏程序集只暴露 currentTech 的 getter；设计期 API 有 set_currentTech，
-            // 但不同版本可见性不一致。这里用反射写属性，避免依赖某个版本的方法签名。
-            var prop = typeof(GameHistoryData).GetProperty("currentTech",
-                BindingFlags.Public | BindingFlags.Instance);
-            var setter = prop?.GetSetMethod(true);
-            if (setter != null)
-            {
-                setter.Invoke(history, new object[] { techId });
-                return;
-            }
-            var field = typeof(GameHistoryData).GetField("<currentTech>k__BackingField",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (field == null) throw Fail("当前游戏版本不支持切换研究目标");
-            field.SetValue(history, techId);
-        }
-
         protected override GameToolJobResult Execute(JsonValue args)
         {
             if (!GameRefs.IsInGame) throw Fail("当前不在游戏内");
             var history = GameMain.history;
-            if (history == null) throw Fail("GameHistoryData 尚未就绪");
+            if (history == null || history.techQueue == null) throw Fail("GameHistoryData 尚未就绪");
 
             int techId = args["techId"].AsInt(0);
             string wanted = args["techId"].AsString(null);
@@ -374,18 +388,50 @@ namespace IcarusII.Game.Tools
                 }
             }
             if (proto == null) throw Fail("找不到该科技");
-            // 可以研究的目标不要求 already unlocked：只要前置科技满足即可。
-            // 之前误用 TechUnlocked，导致研究队列里的科技也切不了。
-            if (!history.TechUnlocked(proto.ID) && !history.HasPreTechUnlocked(proto.ID))
+
+            // 已完成科技不能再作为研究目标；未解锁但前置已满足的科技才是合法目标。
+            if (history.TechUnlocked(proto.ID))
+                throw Fail("该科技已完成，不需要设为研究目标");
+            if (!history.HasPreTechUnlocked(proto.ID))
                 throw Fail("该科技的前置科技尚未解锁");
 
-            var previous = history.currentTech;
-            SetCurrentTech(history, proto.ID);
-            WriteActionStack.Push($"恢复研究目标 {previous}", () =>
+            var queue = history.techQueue;
+            var previousQueue = (int[])queue.Clone();
+            var previousCurrent = history.currentTech;
+            if (previousCurrent == proto.ID)
+                return Ok($"当前研究目标已经是 {proto.name}（#{proto.ID}）");
+
+            int index = Array.IndexOf(queue, proto.ID);
+            if (index < 0)
             {
-                if (GameMain.history != null) SetCurrentTech(GameMain.history, previous);
+                int slot = Array.IndexOf(queue, 0);
+                if (slot < 0) throw Fail("研究队列已满，无法加入该科技");
+                Array.Copy(queue, 0, queue, 1, slot);
+                queue[0] = proto.ID;
+            }
+            else if (index > 0)
+            {
+                var target = queue[index];
+                Array.Copy(queue, 0, queue, 1, index);
+                queue[0] = target;
+            }
+
+            // ResumeTechQueue 会走游戏自己的 AlterCurrentTech 校验（前置/已完成），
+            // 不再用反射直接写 currentTech。
+            history.ResumeTechQueue();
+            if (history.currentTech != proto.ID)
+                throw Fail("游戏拒绝切换研究目标（前置或队列状态不满足）");
+
+            WriteActionStack.Push($"恢复研究目标 {previousCurrent}", () =>
+            {
+                var h = GameMain.history;
+                if (h == null || h.techQueue == null) return;
+                Array.Copy(previousQueue, h.techQueue, Math.Min(previousQueue.Length, h.techQueue.Length));
+                if (previousCurrent > 0) h.ResumeTechQueue();
+                else h.PauseTechQueue();
             });
-            return Ok($"研究目标已切换为 {proto.name}（#{proto.ID}）");
+            var queueNote = history.TechInQueue(proto.ID) ? "，已在研究队列" : "";
+            return Ok($"研究目标已切换为 {proto.name}（#{proto.ID}）{queueNote}");
         }
     }
 
