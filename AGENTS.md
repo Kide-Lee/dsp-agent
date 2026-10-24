@@ -5,7 +5,7 @@
 1. [README.md](README.md) —— 玩家/开发向的安装、使用和构建入口。
 2. [design.md](design.md) —— 已确认的架构与游戏 API 证据。
 3. [docs/protocol-v1.md](docs/protocol-v1.md) —— mod ↔ sidecar 的唯一通信契约。
-4. [docs/m2-verification.md](docs/m2-verification.md)、[docs/m3-verification.md](docs/m3-verification.md) —— 实机验收项。
+4. [docs/current-status.md](docs/current-status.md) —— 当前完成度、已知限制与后续计划。
 
 ---
 

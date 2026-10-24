@@ -7,7 +7,7 @@
 游戏里按 **`R`** 打开聊天窗，可以问机制、要攻略、让 AI 读取你当前的存档状态给建议，
 也可以在**你确认之后**让 AI 执行游戏内操作。
 
-> 状态：**M4（读写工具 + 蓝图生成）**。
+> 状态：**M4 已完成并通过实机验收**（2026-10-24）。
 > - M0 已完成并实机验证：插件加载 → 窗口开关（`R`）→ 与 sidecar 握手 → 消息回显。
 > - M1 已完成：sidecar 接入 [pi](https://github.com/earendil-works/pi) + DeepSeek，
 >   mod 侧实现首次密钥引导与配置上报。
@@ -20,24 +20,24 @@
 >   模型增删），聊天窗「模型」下拉框即时切换；支持自定义 OpenAI 兼容端点。
 > - M2.7 已实现：左侧 **chat-index** 提问索引——每条用户提问一个可点击链接，点击定位到对应消息；
 >   每行带删除按钮：同时删掉聊天窗显示、会话文件条目与模型上下文（`history.delete`）。
-> - M4a–M4j 已实现（部分实机验证）：建筑详情/建筑列表/进度阶段/截图（含聊天窗缩略图）、
+> - M4a–M4j 已实现并通过实机验收：建筑详情/建筑列表/进度阶段/截图（含聊天窗缩略图）、
 >   `kb_plan` 量化计算、`game_analyze_area` 区域产线、`run_script` 只读脚本沙箱、
 >   Wiki/蓝图仓库、蓝图卡片，以及按知识库真实配方生成的**完整产线蓝图**。
-> - M4 写操作已实现（待实机验收）：复用 `choose` 的确认页（`question/explain` + 红拒绝/蓝同意）、
+> - M4 写操作已实现并通过实机验收：复用 `choose` 的确认页（`question/explain` + 红拒绝/蓝同意）、
 >   sidecar 确认钩子 + mod 一次性令牌（绑定 callId/tool/argsHash，60s 单次），
 >   以及 `game_focus_camera` / `game_place_marker` / `game_open_panel` / `game_set_research`
->   + `game_undo_last_write`。验收清单见 [docs/m4-write-verification.md](docs/m4-write-verification.md)，
->   可直接粘贴的测试提示词见 [docs/m4-acceptance-prompts.md](docs/m4-acceptance-prompts.md)。
-> - M3 已实现（离线验证；实机待验收）：**游戏本体知识库**——运行时从 LDB / Locale / Wiki 导出物品、配方、科技、
+>   + `game_undo_last_write`。确认页崩溃、原生按钮动效、`explain` 垂直居中、建筑经纬度输出、
+>   行星视图聚焦和研究切换判定已修复。
+>   当前状态与后续计划见 [docs/current-status.md](docs/current-status.md)。
+> - M3 已实现并随 M4 实机验收：**游戏本体知识库**——运行时从 LDB / Locale / Wiki 导出物品、配方、科技、
 >   建筑、提示、教程、里程碑、指引与术语；`kb_search` / `kb_get` / `kb_recipe_tree` / `kb_plan`
 >   由 sidecar 本地查询，配方原料树与机器数/电力不再靠模型心算。schema 与清洗规则见
 >   [docs/kb-v1.md](docs/kb-v1.md)。
 > - 真实 DeepSeek 端点、KB 导出、工具调用、蓝图落盘与卡片已在实机跑通；
->   M4a–M4d 的完整验收清单仍未逐条过，见 [docs/m2-verification.md](docs/m2-verification.md)
->   与 [docs/m3-verification.md](docs/m3-verification.md)。
->   蓝图生成的离线回归与实机检查项见 [docs/m4j-verification.md](docs/m4j-verification.md)。
+>   M4 验收已全部通过，验收用的临时清单已从仓库移除，结论保留在
+>   [docs/current-status.md](docs/current-status.md)。
 >
-> 设计与路线图见 [design.md](design.md)，待定想法见 [docs/ideas.md](docs/ideas.md)。
+> 设计与路线图见 [design.md](design.md)，当前状态与下一步见 [docs/current-status.md](docs/current-status.md)，待定想法见 [docs/ideas.md](docs/ideas.md)。
 
 ---
 
@@ -84,7 +84,7 @@
 `ModelEntry.input` 已覆盖 pi 目录里"只收文本"的旧标注；老配置会读时兜底，不会静默丢图。
 图片不落盘、不混进 JSON 数据，只在调用 `game_capture_view` 时产生。
 
-工具只读，写操作（建造/拆除/改配方）留到 M4，并且必须经过确认。
+上面的读工具只读；写工具（镜头/标记/面板/研究/撤销）在 M4 提供，执行前必须经过玩家确认。
 
 ## AI 能查什么（M3）
 
@@ -95,7 +95,7 @@
 | `kb_recipe_tree` | 递归展开主配方，算直接输入、原料总量、副产物（支持 `amount` / `rate` / `depth`） |
 | `kb_plan` | 按目标产量计算机器数、总功率、传送带，并给出原料与副产物（`rate` 必填） |
 
-## AI 能写什么（M4d）
+## AI 能查/生成什么（M4d–M4j）
 
 | 工具 | 内容 |
 | --- | --- |
@@ -105,6 +105,18 @@
 | `blueprint_generate` | 按知识库真实配方生成完整产线（各阶段机器 + 带 + 爪）；单张总线容量不足时自动拆成多张 |
 | `blueprint_fs` | 在蓝图目录里 `ls/cd/pwd/cat/mkdir/write/rm/rmdir`；默认保存到 `IcarusII/`，不能越出蓝图根 |
 | `run_script` | 在 QuickJS-WASM 沙箱里跑只读脚本：`dsp.call` 同步调用 game_* 工具，可循环/筛选/求和；无 fs/net/process，调用与时长都有上限 |
+
+## AI 能做什么写操作（M4）
+
+| 工具 | 说明 |
+| --- | --- |
+| `game_focus_camera` | 聚焦行星/星系/建筑；目标支持 `planet:` / `star:` / `entity:` 前缀 |
+| `game_place_marker` | 按经纬度新建地图标记；简述最多两字，完整名称保存到详情 |
+| `game_open_panel` | 打开背包/科技树/星图/标记/机甲/复制器/统计/蓝图面板 |
+| `game_set_research` | 切换当前研究目标；只允许前置科技已满足的科技 |
+| `game_undo_last_write` | 撤销最近一次写操作（单层栈） |
+
+写操作采用 sidecar 确认 + mod 一次性令牌双门禁；拒绝、超时、换档、断线都会取消。
 
 本地工具（`kb_*` / `run_script`）也会在聊天窗里显示工具卡（“量化计算”“知识库检索”“脚本”），
 数据来自 sidecar 的 `tool_activity` 事件，不经过游戏侧执行。

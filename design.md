@@ -4,11 +4,11 @@
 
 | 项 | 值 |
 | --- | --- |
-| 文档版本 | v0.1（设计草案） |
+| 文档版本 | v1.0（M4 已完成） |
 | 目标游戏版本 | DSP `0.10.30.3100`（Unity `2022.3.62f3c1`，Mono） |
 | 目标运行环境 | Linux + Proton（已核实 `Proton Experimental` / Wine `11.0-100`）；原生 Windows 为次要目标 |
 | 作者 | — |
-| 状态 | 待评审 |
+| 状态 | 已实现并通过 M4 实机验收（2026-10-24） |
 
 ---
 
@@ -557,7 +557,7 @@ AgentRoot (RectTransform, 默认 inactive)
   - `TextLayoutLocale`：按语言提供字体替换对（`LanguageFontPair {oldFont, newFont}`）与字距/缩进参数 ⇒ **中文字体由游戏自动处理**，无需自带字体。
   - `TextIconMapping`：把文本标签映射为内嵌图标（`GetIconInString`）⇒ AI 回复里可直接内联物品/建筑图标。
   - `TextEventTrigger` / `TextTriggerBounds`：文本区间级触发器 ⇒ 支持"点击回复中的物品名 → 打开该物品详情"。
-- 输出富文本由 `mod/src/Shared/Text/GameRichText.cs` 编译：外层用标准 Markdown，游戏样式用一小撮内联 HTML（`color/size/tint/box/sqrt/sup/sub/i/a/icon`），裸游戏标签只作为游戏输出，不作为输入解析；Markdown 表格由 `SplitTables` 切成独立 Text 段，用游戏 `tableColWidths/tableRowHeights` 做真表格；网页链接使用 900000–999999 的顺序 ID，点击打开外部浏览器（失败时复制 URL）；科技链接使用 1000–9999，输出 `dsp://tech/<iconTag>`（如 `dsp://tech/dcx`），点击打开科技树并定位、展开对应科技；配方链接使用 10000–19999，输出 `dsp://recipe/<itemIconTag>`，点击打开合成器并选中对应物品主配方；成就链接使用 20000–21000，输出 `dsp://achievement/<id>`，点击打开成就页并定位条目；裸 `http(s)://...` 也自动转成网页链接（代码除外）；块级排版在标题/段落/列表组/引用/代码块/分隔线之间保留一个空行，连续空行折叠；段落内单换行按 Markdown 软换行合并（中文不加空格、英文补空格），行尾两空格/反斜杠作为硬换行。详细映射见 `docs/rich-text-output-plan.md`；**不**引入第三方 Markdown 渲染器。
+- 输出富文本由 `mod/src/Shared/Text/GameRichText.cs` 编译：外层用标准 Markdown，游戏样式用一小撮内联 HTML（`color/size/tint/box/sqrt/sup/sub/i/a/icon`），裸游戏标签只作为游戏输出，不作为输入解析；Markdown 表格由 `SplitTables` 切成独立 Text 段，用游戏 `tableColWidths/tableRowHeights` 做真表格；网页链接使用 900000–999999 的顺序 ID，点击打开外部浏览器（失败时复制 URL）；科技链接使用 1000–9999，输出 `dsp://tech/<iconTag>`（如 `dsp://tech/dcx`），点击打开科技树并定位、展开对应科技；配方链接使用 10000–19999，输出 `dsp://recipe/<itemIconTag>`，点击打开合成器并选中对应物品主配方；成就链接使用 20000–21000，输出 `dsp://achievement/<id>`，点击打开成就页并定位条目；裸 `http(s)://...` 也自动转成网页链接（代码除外）；块级排版在标题/段落/列表组/引用/代码块/分隔线之间保留一个空行，连续空行折叠；段落内单换行按 Markdown 软换行合并（中文不加空格、英文补空格），行尾两空格/反斜杠作为硬换行。详细映射见 `mod/src/Shared/Text/GameRichText.cs` 与 §6.5；**不**引入第三方 Markdown 渲染器。
 - 流式显示：`stream.delta` 到达即追加到当前气泡；渲染节流到**每帧最多一次**（避免逐字触发重建布局）。
 - 历史上限：内存中保留最近 N 条（默认 200），更早的由 sidecar 会话文件承载，可通过"打开完整历史"分页拉取。
 
@@ -1278,14 +1278,14 @@ icarus-ii/
 | **M2 懂现状** | `game_get_overview/player/planet/power/research/production` + 分帧采集框架 + 工具链路（协议、ToolHost、执行器、卡片） | 问"我现在缺什么"能定位到具体物品/电力缺口，数值与游戏面板一致 |
 | **M2.6 配置完善** | 多供应商/多模型设置页、模型目录、Key 检测、自定义 OpenAI 兼容端点 | 可在多个供应商/模型间切换；Key 不落聊天记录、不出站 |
 | **M3 有知识** | 运行时 LDB 导出 + 本地索引 + `kb_search`/`kb_get`/`kb_recipe_tree` + 提示/教程/里程碑/指引/术语（M3b） | 配方/科技数值与游戏一致；能正确算原料总量（副产物抵扣）；提示/教程可检索 |
-| **M4a 能看** | `game.entity.v1` / `game.progress.v1` / `game.view.v1`：建筑详情、建筑列表、进度阶段、截图（JPEG 进模型上下文）；协议 `tool_result.image`；模型 `input` 覆盖 | 截图不含 UI 且模型能描述画面；建筑字段与游戏面板一致；id 回收返回 `stale`；见 [docs/m4a-verification.md](docs/m4a-verification.md) |
-| **M4b 能算** | `kb_plan`：按目标产量计算机器数/电力/传送带；KB 增加 `building.assemblerRecipeType`，缓存换 `r2` 强制重导 | 机器数与游戏面板一致（base/mk2 档位）；缺建筑参数时降级为 1x 并 warning；见 [docs/m4b-verification.md](docs/m4b-verification.md) |
+| **M4a 能看** | `game.entity.v1` / `game.progress.v1` / `game.view.v1`：建筑详情、建筑列表、进度阶段、截图（JPEG 进模型上下文）；协议 `tool_result.image`；模型 `input` 覆盖 | 截图不含 UI 且模型能描述画面；建筑字段与游戏面板一致；id 回收返回 `stale` |
+| **M4b 能算** | `kb_plan`：按目标产量计算机器数/电力/传送带；KB 增加 `building.assemblerRecipeType`，缓存换 `r2` 强制重导 | 机器数与游戏面板一致（base/mk2 档位）；缺建筑参数时降级为 1x 并 warning |
 | **M4c 能析** | `game_analyze_area`：范围聚合建筑/配方/装机产能/耗电/物流设施/电网 | 与目测数量一致；装机口径与实际产出分开陈述 |
 | **M4d 能编** | `run_script`：QuickJS-WASM 只读沙箱 + `dsp.call` 复用同一工具注册表；单文件内联 WASM | 脚本可批量取数并聚合；越权工具/超时/无宿主全局都有测试；SEA 打包后仍可运行 |
 | **M4g 能查外网** | `wiki_search` / `wiki_page`：中英 DSP Wiki，带来源链接 | 外部内容显式标注不可信；失败返回 `wiki_unavailable` |
 | **M4h 能取蓝图** | `blueprint_search` / `blueprint_info` / `blueprint_save`：社区蓝图仓库检索、格式体检、直接保存 | 带作者/仓库/许可署名；路径清洗；同名不覆盖 |
 | **M4i 能看卡片** | 协议 A.9 `blueprint_card` + 聊天窗数据驱动卡片 + 历史回放 | 生成/下载/复制后出现卡片；重进存档可回放；删除回合一起消失 |
-| **M4j 能出蓝图** | `blueprint_generate`：KB `kb_plan` 的真实机器数 → dsp-calc 布局 → 写入蓝图目录；`from` 起点、rows 拆阶段、超高产量拆多张、save.bind 被动档位 | 60/min 电磁涡轮 29 台机器/7 阶段；300/min→3 张、600/min→5 张；见 [docs/m4j-verification.md](docs/m4j-verification.md) |
+| **M4j 能出蓝图** | `blueprint_generate`：KB `kb_plan` 的真实机器数 → dsp-calc 布局 → 写入蓝图目录；`from` 起点、rows 拆阶段、超高产量拆多张、save.bind 被动档位 | 60/min 电磁涡轮 29 台机器/7 阶段；300/min→3 张、600/min→5 张 |
 | **M4 能动手** | 确认 UI + 令牌门禁 + `focus_camera`/`place_marker`/`open_panel`/`set_research` + 撤销 | 拒绝确认时无任何副作用（重点测试） |
 | **M5 完善** | 错误处理全覆盖、i18n 结构、**打包流水线（cjs bundle + SEA 注入 + 双平台产物）+ 体积优化评估**、README/安装文档、性能调优 | 冷启动 < 2s；连续对话 30 轮无卡顿与内存增长；发布包在干净机器上零附加依赖可用 |
 | **M6 扩展**（可选） | 更多 L2 工具（配方/物流/蓝图）、`DshAcpRuntime`、Web 配置页 | — |

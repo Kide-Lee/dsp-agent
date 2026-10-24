@@ -72,4 +72,4 @@ rows 宽度下降且机器数不变、300/min→3 张、600/min→5 张、`from=
 `from=电动机` 9 台机器、被动档位（mk3/低档/显式覆盖）、知识库缺失报错；
 别名另见 `test/wiki-alias.mjs`（curated / Wiki `|别称=` / 缓存 / 多候选）。
 
-实机检查项见 [m4j-verification.md](m4j-verification.md)。
+M4 已完成实机验收；当前状态见 [current-status.md](current-status.md)。

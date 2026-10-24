@@ -480,7 +480,7 @@ return { count: asm.length, powerKw: power };
   schema、risk、超时、路由。不要写两套实现。
 - **能力面 ≠ 工具面**：有些能力适合脚本、不适合作为模型工具（如 `entity_at(x,y)`、
   `belt_path(from,to)`）。它们只注入脚本，不广告给模型——正好解决
-  `reference-implementations.md` §5「不要几十个细碎工具」的顾虑。
+  “不要几十个细碎工具”的顾虑（见历史调研记录）。
 - **写操作**：v1 只读；v2 允许写，但脚本只能产生 **intent**，由 sidecar 汇总成一次
   dry-run 预览 + 一次确认，绝不逐个自动执行。确认令牌沿用现有机制。
 
