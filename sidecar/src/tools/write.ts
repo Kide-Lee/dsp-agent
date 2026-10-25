@@ -16,6 +16,7 @@ export const CAPABILITY_GAME_DROP = 'game.drop.v1';
 export const CAPABILITY_GAME_BUILD = 'game.build.v1';
 export const CAPABILITY_GAME_STORAGE = 'game.storage.v1';
 export const CAPABILITY_GAME_TETHER = 'game.tether.v1';
+export const CAPABILITY_GAME_TODO = 'game.todo.v1';
 
 export function isWriteToolName(name: string): boolean {
   return (WRITE_TOOL_NAMES as readonly string[]).includes(name);
@@ -37,6 +38,8 @@ export const WRITE_TOOL_NAMES = [
   'game_feed_input',
   'game_tether_add',
   'game_tether_clear',
+  'game_todo_add',
+  'game_todo_remove',
   'game_take_output',
   'game_undo_last_write',
 ] as const;
@@ -432,6 +435,53 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       parameters: Type.Object({}),
       timeoutMs: 5000,
       risk: 0,
+    }),
+    writeTool(host, {
+      name: 'game_todo_add',
+      label: '新增游戏目标',
+      description:
+        '在原生左侧“游戏目标”面板新增目标。写操作：执行前玩家必须确认。' +
+        '先用 game_todo_templates 查原生 GoalProto 模板；templateId 必填，' +
+        'title 是显示文案，params 可覆盖原生 DeterminatorParams。目标完成判定完全复用游戏原生 GoalDeterminator。',
+      promptSnippet: '新增原生游戏目标（需要玩家确认）',
+      promptGuidelines: [
+        'Use game_todo_add 当玩家明确要求“给我一个目标/待办/采集 N 个/解锁科技”等目标时。',
+        '必须先调用 game_todo_templates 选择真实存在的模板；不要编造 templateId 或判断器名。',
+        'title 要写清楚目标；itemId/count 只用于模板参数确实是 item/count 的常见情况，其他模板用 params 按模板原参数顺序覆盖。',
+        '目标会直接出现在游戏左侧原生目标面板；不要重复添加同一个目标。',
+      ],
+      parameters: Type.Object({
+        group: Type.Optional(Type.String({ description: '分组标题，默认“游戏目标”' })),
+        goals: Type.Array(
+          Type.Object({
+            templateId: Type.Integer({ description: '原生 GoalProto 模板 id，来自 game_todo_templates' }),
+            title: Type.Optional(Type.String({ description: '目标显示文案；留空用模板名' })),
+            params: Type.Optional(Type.Array(Type.Number(), { description: '覆盖原生 DeterminatorParams' })),
+            itemId: Type.Optional(Type.Integer({ description: '模板参数第 0 位为物品 id 时可填' })),
+            count: Type.Optional(Type.Integer({ description: '模板参数第 1 位为目标数量时可填' })),
+          }),
+          { description: '本轮要新增的目标列表' },
+        ),
+      }),
+      timeoutMs: 10000,
+      risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_todo_remove',
+      label: '删除游戏目标',
+      description:
+        '删除 AI 创建的原生游戏目标；groupId 删除整组，goalId 删除单个子目标。写操作：执行前玩家必须确认。',
+      promptSnippet: '删除 AI 创建的游戏目标（需要玩家确认）',
+      promptGuidelines: [
+        'Use game_todo_remove 当玩家明确要求删除目标时。',
+        '先用 game_todo_list 找到 groupId/goalId；不要删除不是 AI 创建的原生目标。',
+      ],
+      parameters: Type.Object({
+        groupId: Type.Optional(Type.Integer({ description: '删除整组目标' })),
+        goalId: Type.Optional(Type.Integer({ description: '删除单个目标' })),
+      }),
+      timeoutMs: 8000,
+      risk: 2,
     }),
     writeTool(host, {
       name: 'game_undo_last_write',

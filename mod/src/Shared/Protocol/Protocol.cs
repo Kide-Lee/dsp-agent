@@ -142,6 +142,9 @@ namespace IcarusII.Common.Protocol
         /// <summary>mod 支持方位指示（tether）。</summary>
         public const string CapabilityGameTether = "game.tether.v1";
 
+        /// <summary>mod 支持原生 GoalProto 目标注入与读取。</summary>
+        public const string CapabilityGameTodo = "game.todo.v1";
+
         /// <summary>mod 支持受控写脚本（run_script 脚本级确认 + 租约）。</summary>
         public const string CapabilityScriptWrite = "script.write.v1";
 

@@ -132,6 +132,10 @@ namespace IcarusII.Game.Tools
             Register(new TetherAddTool());
             Register(new TetherClearTool());
             Register(new TetherListTool());
+            Register(new GameTodoTemplatesTool());
+            Register(new GameTodoListTool());
+            Register(new GameTodoAddTool());
+            Register(new GameTodoRemoveTool());
             Register(new TakeOutputTool());
             Register(new UndoLastWriteTool());
         }

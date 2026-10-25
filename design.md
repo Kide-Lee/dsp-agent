@@ -1572,7 +1572,7 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 | --- | --- | --- | --- |
 | D1 | 第 9 条"摧毁背包物品"是否实现？ | A 不做；B 改"丢弃到地面"；C 仅沙盒 + 二次确认 + 不可撤销 | **B 丢弃**。实现用 `Player.TakeItemFromPlayer(..., true, ...)` 从背包取出，再 `Player.ThrowTrash(..., life=0)`；物品以可拾回的 trash 落地/漂浮。按 risk 2 实现；确认卡标注"可撤销（需手动拾回）"，不是一键撤销。这不属于 R7 的"无法撤销" |
 | D2 | 第 12 条"自动驾驶"与 §1.2"不做全自动代打"冲突 | A 改为"确认后的一次性长任务"；B 保持 §1.2 不做；C 独立扩展模块 | **B 暂不做**。§1.2 保持有效；不排期、不注册、不写实现承诺。未来重启需复议本条与 §1.2，并先补长任务协议 + 导航 spike |
-| D3 | 第 11 条"游戏目标"用原生还是 mod 侧 | A 原生 `TodoModule` + mod 侧有界触发器；B 注入 `GoalProto`；C 只在聊天窗做任务卡 | **A**。先 spike `TodoModule` 的落盘/重载；不注入 `GoalProto` |
+| D3 | 第 11 条"游戏目标"用原生还是 mod 侧 | A 原生 `TodoModule` + mod 侧有界触发器；B 注入 `GoalProto`；C 只在聊天窗做任务卡 | **B（2026-10-26 改）**。用户要求复用原生左侧 `UIGoalPanel`；注入 `GoalProto`/`GoalData`，触发器复用原生 `GoalDeterminator`；目标定义存 Global TodoModule JSON，读档重注入 |
 | D4 | 高频 risk 2 的确认方式 | A 批量工具，一次确认、一次撤销；B 会话级租约（需改 §9.3）；C 每次确认 | **A 批量工具**。补充：`game_get_entity` 是高频**读**工具（risk 0），不走确认，但要按读侧优化：字段裁剪、按实体/帧缓存、批量 id、结果上限（2026-10-24 已实现 fields/entityIds，缓存沿用 dispatcher 5s） |
 | D5 | 新增工具的能力串粒度 | A 每族一个新能力串 + `save_bind.sandbox`；B hello 里带工具清单；C 继续复用 `game.write.v1`/`game.read.v1` | **A**。新增工具按族拆能力串；不继续复用粗粒度能力串 |
 
@@ -1593,7 +1593,7 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 | 8 | 沙盒门禁（D5=A） | 无新工具；`save_bind.sandbox` + 工具集刷新 | — | 全局 | — | `save_bind` 可选字段 + 回合边界重建会话 | **已实现门禁（2026-10-24）**；沙盒工具未实现 |
 | 9 | 丢弃物品（D1=B） | `game_drop_item` | 2 | 任意 | 可撤销（需手动拾回） | 新 `game.drop.v1` | **已实现（2026-10-24，待实机）** |
 | 10 | 生成物品 | `game_spawn_item` | 2 | 仅沙盒 | 可撤销（移除刚生成） | 新 `game.sandbox.v1` | 待拍板 |
-| 11 | 游戏目标/待办（D3=A） | `game_todo_add` / `game_todo_list` / `game_todo_remove`（触发器在 mod 侧） | 1/2 | 任意 | 可撤销 | 新 `game.todo.v1`（对用户称"目标"） | 可做，先 spike |
+| 11 | 游戏目标/待办（D3=B） | `game_todo_add` / `game_todo_list` / `game_todo_remove` / `game_todo_templates`（触发器复用原生 GoalDeterminator） | 2 | 任意 | 删除只隐藏 AI 目标 | 新 `game.todo.v1`（对用户称"目标"） | **已实现，待实机** |
 | 12 | 自动驾驶（D2=B） | `game_autopilot_start` / `game_autopilot_status` / `game_autopilot_cancel` | 2 + 租约 | 任意 | 可取消；位置不可逆 | 新 `game.task.v1`（长任务） | **暂不做**；重启需复议 |
 | 13 | 瞬移 | `game_teleport` | 2 | 仅沙盒 | 不可撤销（可再传送返回） | 新 `game.sandbox.v1` | 待拍板 |
 

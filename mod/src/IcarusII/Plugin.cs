@@ -193,6 +193,9 @@ namespace IcarusII
             // 建筑 tether 的自绘线每帧跟随玩家/建筑；跨行星不画伪连线。
             GameTether.Update();
 
+            // 原生 GoalProto 注入/读档后重建；没有自定义目标时只做一次空检查。
+            GameGoals.Tick();
+
             // 工具采集必须在 UI 就绪之前也持续运行：模型可能在窗口关闭时仍在用工具。
             _tools.Tick(2, OnToolDone);
 

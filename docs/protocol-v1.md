@@ -77,6 +77,9 @@
 - `game.tether.v1`：mod 支持方位指示：`game_tether_add` / `game_tether_list` / `game_tether_clear`。
   可同时建立多个（最多 20 个）：本星球每个建筑一条 `LineGizmo`；跨行星用原生
   `navigation.indicatorAstroId` 指向其中一个目标行星（游戏一次只支持一个朝向），落地后该行星上的建筑切换为自绘线。
+- `game.todo.v1`：mod 支持原生 GoalProto 目标注入与读取：`game_todo_templates` /
+  `game_todo_list` / `game_todo_add` / `game_todo_remove`。目标直接进入原生
+  `LDB.goals` / `GoalSystem` / `UIGoalPanel`；完成判定复用原生 `GoalDeterminator`。
 
 ### 4.2 `ready` — sidecar → mod
 
@@ -1183,10 +1186,14 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | `game_tether_add` | 1 | `kind`（planet/building/vein）, `planetId?`, `buildingId?`, `veinId?` | 建立机甲到行星/建筑/矿脉的方位指示；使用游戏原生动线 |
 | `game_tether_clear` | 1 | 无 | 清除本 mod 建立的所有方位指示 |
 | `game_tether_list` | 0 | 无 | 列出当前方位指示 |
+| `game_todo_templates` | 0 | 无 | 列出原生 GoalProto 模板与判断器 |
+| `game_todo_list` | 0 | 无 | 列出 AI 创建的目标、进度与阶段 |
+| `game_todo_add` | 2 | `group?`, `goals[]`（`templateId`, `title?`, `params?`, `itemId?`, `count?`） | 注入原生目标；确认后执行；使用原生 GoalDeterminator |
+| `game_todo_remove` | 2 | `groupId?`, `goalId?` | 隐藏/删除 AI 创建的目标；确认后执行 |
 | `game_take_output` | 2 | `buildingId` | 取生产建筑成品；保留配方；背包满返回剩余；不进入撤销栈 |
 | `game_undo_last_write` | 1 | 无 | 撤销最近一次可撤销写操作；最近一次不可撤销时返回错误 |
 
-- `game_focus_camera` / `game_place_marker` / `game_open_panel` / `game_set_research` / `game_undo_last_write` 需要 `game.write.v1`；`game_drop_item` 需要 `game.drop.v1`；`game_set_recipe` / `game_set_assembler_batch` / `game_take_output` / `game_feed_input` 需要 `game.build.v1`；存储五件套需要 `game.storage.v1`；方位三件套需要 `game.tether.v1`。
+- `game_focus_camera` / `game_place_marker` / `game_open_panel` / `game_set_research` / `game_undo_last_write` 需要 `game.write.v1`；`game_drop_item` 需要 `game.drop.v1`；`game_set_recipe` / `game_set_assembler_batch` / `game_take_output` / `game_feed_input` 需要 `game.build.v1`；存储五件套需要 `game.storage.v1`；方位三件套需要 `game.tether.v1`；目标四件套需要 `game.todo.v1`。
 - risk 1/2 的工具都会先走 A.12；拒绝确认时 mod 不执行、无任何副作用。
 - 写操作只保留一层撤销；`game_set_assembler_batch` 整批算一层。换档/断线清空撤销栈。
 - `game_drop_item`、`game_take_output`、`game_tether_add/clear` 不进入撤销栈：

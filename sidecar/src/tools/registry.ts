@@ -19,6 +19,7 @@ import {
   CAPABILITY_GAME_DROP,
   CAPABILITY_GAME_STORAGE,
   CAPABILITY_GAME_TETHER,
+  CAPABILITY_GAME_TODO,
   CAPABILITY_GAME_WRITE,
   WRITE_TOOL_NAMES,
   createWriteTools,
@@ -78,6 +79,10 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_tether_add: CAPABILITY_GAME_TETHER,
   game_tether_clear: CAPABILITY_GAME_TETHER,
   game_tether_list: CAPABILITY_GAME_TETHER,
+  game_todo_templates: CAPABILITY_GAME_TODO,
+  game_todo_list: CAPABILITY_GAME_TODO,
+  game_todo_add: CAPABILITY_GAME_TODO,
+  game_todo_remove: CAPABILITY_GAME_TODO,
   game_undo_last_write: CAPABILITY_GAME_WRITE,
 };
 
@@ -544,6 +549,29 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         limit: Type.Optional(Type.Integer({ description: '列出的建筑上限，默认 40，最大 100' })),
       }),
       timeoutMs: 15000,
+    }),
+    gameTool(host, {
+      name: 'game_todo_templates',
+      label: '目标模板',
+      description:
+        '列出游戏原生 GoalProto 目标模板：id、名称、判断器、等级、父分组和默认参数。' +
+        '生成游戏目标前先调用它，选择真实存在的判断器/模板。',
+      promptSnippet: '列出原生游戏目标模板与判断器',
+      promptGuidelines: [
+        'Use game_todo_templates 在创建游戏目标前；不要凭记忆编造 GoalProto 模板 id。',
+        'params 是原生 DeterminatorParams 的默认值；game_todo_add 可覆盖它们。',
+      ],
+      parameters: Type.Object({}),
+      timeoutMs: 5000,
+    }),
+    gameTool(host, {
+      name: 'game_todo_list',
+      label: '当前游戏目标',
+      description: '读取 AI 创建的原生游戏目标及当前值/目标值/阶段。',
+      promptSnippet: '读取当前 AI 游戏目标',
+      promptGuidelines: ['Use game_todo_list 当玩家询问当前目标进度或准备删除目标时。'],
+      parameters: Type.Object({}),
+      timeoutMs: 5000,
     }),
   ];
 
