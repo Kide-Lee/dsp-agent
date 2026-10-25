@@ -114,6 +114,8 @@ namespace IcarusII.UI
         private RectTransform _inputRoot;
         /// <summary>输出区根节点；尺寸/底边由 prefab 固定，运行期只做滚动。</summary>
         private RectTransform _outputRoot;
+        private float _outputOriginalBottom;
+        private bool _outputBottomSaved;
         /// <summary>当前替换输入栏的面板（目前是 choose；将来可扩展其它面板）。</summary>
         private RectTransform _bottomReplacement;
         private RectTransform _chooseRoot;
@@ -7048,12 +7050,43 @@ namespace IcarusII.UI
             if (_inputRoot != null) _inputRoot.gameObject.SetActive(false);
             _bottomReplacement = panel;
             panel.gameObject.SetActive(true);
+            ApplyBottomReplacementHeight(panel);
+        }
+
+        /// <summary>
+        /// ask/confirm 是替换 input 的底部面板；显示时让 output 的底边停在
+        /// 面板顶部，避免正文被面板盖住。只在替换期间临时改 offsetMin，
+        /// 收起时恢复 prefab 原值。
+        /// </summary>
+        private void ApplyBottomReplacementHeight(RectTransform panel)
+        {
+            if (_outputRoot == null || panel == null) return;
+            if (!_outputBottomSaved)
+            {
+                _outputOriginalBottom = _outputRoot.offsetMin.y;
+                _outputBottomSaved = true;
+            }
+            Canvas.ForceUpdateCanvases();
+            float bottom = panel.offsetMin.y + panel.rect.height + 2f;
+            var min = _outputRoot.offsetMin;
+            if (bottom > min.y)
+                _outputRoot.offsetMin = new Vector2(min.x, bottom);
+            LayoutRebuilder.ForceRebuildLayoutImmediate(_outputRoot);
+            Canvas.ForceUpdateCanvases();
         }
 
         private void EndBottomReplacement()
         {
             if (_bottomReplacement != null) _bottomReplacement.gameObject.SetActive(false);
             _bottomReplacement = null;
+            if (_outputRoot != null && _outputBottomSaved)
+            {
+                var min = _outputRoot.offsetMin;
+                _outputRoot.offsetMin = new Vector2(min.x, _outputOriginalBottom);
+                _outputBottomSaved = false;
+                LayoutRebuilder.ForceRebuildLayoutImmediate(_outputRoot);
+                Canvas.ForceUpdateCanvases();
+            }
             if (_inputRoot != null) _inputRoot.gameObject.SetActive(true);
         }
 
@@ -7077,9 +7110,9 @@ namespace IcarusII.UI
 
         /*
          * 底部区域的 RectTransform 完全由 prefab 决定：
-         *   - input 固定 200 高，与 choose 同高，内部 scroll-view 自己滚动；
-         *   - output 的底边在 prefab 里固定为 242（40 + 200 + 2），不再随底部面板变化；
-         *   - choose 显示时只是替换 input，不运行期改 output 尺寸。
+         *   - input 固定 100 高，内部 scroll-view 自己滚动；
+         *   - output 的底边在 prefab 里已经是 142（40 + 100 + 2），与 input 顶边对齐；
+         *   - choose 是 200 高的模态面板，显示时覆盖聊天区底部，不再运行期改 output 尺寸。
          * 运行期只切换 input/choose 的 active，不写 sizeDelta/offsetMin。
          */
 
