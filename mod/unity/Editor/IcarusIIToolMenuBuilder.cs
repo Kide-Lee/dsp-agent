@@ -66,7 +66,8 @@ namespace IcarusII.EditorTools
 
             try
             {
-                var input = root.transform.Find("input") as RectTransform;
+                var input = root.transform.Find("content-column/input") as RectTransform;
+                if (input == null) input = root.transform.Find("input") as RectTransform;
                 if (input == null)
                 {
                     Debug.LogWarning("[IcarusII] prefab 里找不到 input，跳过工具列表");
@@ -84,7 +85,10 @@ namespace IcarusII.EditorTools
                 var title = root.transform.Find("panel-bg/title-text") as RectTransform;
                 var titleText = title != null ? title.GetComponent<Text>() : null;
                 var inputLabel = root.transform.Find(
-                    "input/editor/scroll-view/viewport/content/InputField/input/input-text") as RectTransform;
+                    "content-column/input/editor/scroll-view/viewport/content/InputField/input/input-text") as RectTransform;
+                if (inputLabel == null)
+                    inputLabel = root.transform.Find(
+                        "input/editor/scroll-view/viewport/content/InputField/input/input-text") as RectTransform;
                 var inputText = inputLabel != null ? inputLabel.GetComponent<Text>() : null;
 
                 var fontBold = titleText != null ? titleText.font : null;

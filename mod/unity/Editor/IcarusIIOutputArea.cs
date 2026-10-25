@@ -139,7 +139,8 @@ namespace IcarusII.EditorTools
             }
 
             // 先只读地确认目标节点在，避免瞎加
-            if (prefab.transform.Find(OutputNodeName) == null)
+            if (prefab.transform.Find(OutputNodeName) == null &&
+                prefab.transform.Find("content-column/" + OutputNodeName) == null)
             {
                 message = "prefab 里没有 `" + OutputNodeName + "` 节点，未做任何修改：" + path +
                           "\n（先在 Unity 里手工建好这个容器，再跑一次本工具。）";
@@ -149,7 +150,8 @@ namespace IcarusII.EditorTools
             var root = PrefabUtility.LoadPrefabContents(path);
             try
             {
-                var output = root.transform.Find(OutputNodeName) as RectTransform;
+                var output = root.transform.Find("content-column/" + OutputNodeName) as RectTransform;
+                if (output == null) output = root.transform.Find(OutputNodeName) as RectTransform;
                 if (output == null)
                 {
                     message = "`" + OutputNodeName + "` 不是 UI 节点（没有 RectTransform），未做任何修改：" + path;
@@ -181,7 +183,7 @@ namespace IcarusII.EditorTools
         /// <summary>只重建 content 下的示例消息，不动滚动区结构。</summary>
         public static bool AddExamplesAt(string path, out string message)
         {
-            var contentPath = OutputNodeName + "/" + ScrollNodeName + "/viewport/content";
+            var contentPath = "content-column/" + OutputNodeName + "/" + ScrollNodeName + "/viewport/content";
             var root = PrefabUtility.LoadPrefabContents(path);
             if (root == null)
             {
@@ -192,6 +194,11 @@ namespace IcarusII.EditorTools
             try
             {
                 var content = root.transform.Find(contentPath) as RectTransform;
+                if (content == null)
+                {
+                    contentPath = OutputNodeName + "/" + ScrollNodeName + "/viewport/content";
+                    content = root.transform.Find(contentPath) as RectTransform;
+                }
                 if (content == null)
                 {
                     message = "找不到 " + contentPath + "，先跑一次“Add Output Scroll Area”。未做任何修改。";
