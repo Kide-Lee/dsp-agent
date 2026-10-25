@@ -1770,6 +1770,7 @@ namespace IcarusII.UI
                 if (_autoFocusInput && !AskShowing) FocusInput();
                 EnsureThinkingComboText();
                 EnsureModelComboText();
+                RebuildBottomLayout();
                 // 刚 SetActive(true)，布局还没重建：直接贴底只能按旧高度算，
                 // 打开窗口时可能停在历史中间而不是最新一条（蓝图卡片尤其明显）。
                 ScrollToBottomAfterContentChange();
