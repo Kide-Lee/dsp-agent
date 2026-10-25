@@ -35,6 +35,7 @@
 | M5 方位指示（tether） | 已实现 `game_tether_add/list/clear`，最多 20 个目标；本星球多建筑多线，跨行星原生导航一次一个、落地后切换；换档/断线清理；离线测试通过，待实机 |
 | Game Menu 聊天入口 | 右下角 Game Menu 的截图键正上方新增聊天入口按钮（`button-agent.prefab` 随 UI bundle 分发）；Game Menu 是 `DSPGame.unity` 里的场景对象，运行期按 `UIGameMenu.buttonS` 锚定并绑定打开聊天窗；离线构建通过，待实机验收 |
 | 首次配置引导 | 取消聊天输入框的密钥录入态；`missing_key` / `invalid_key` / `unreachable` 时在聊天窗提示点击右上角设置按钮，由设置页「模型」页提交 Key。未配置时发送提问会被拦截并再次指向设置页，不再把输入当成 Key |
+| 输入工具条修复 | 图标 / 复选框 / 文字颜色改为按点击工具条前的光标/选区插入：工具栏按钮带 Unity `Button`，点击会让 InputField 失焦并把内部 caret 清 0；现在运行期记住最后聚焦时的选区并在插入前恢复 |
 
 ### M4 收尾修复
 

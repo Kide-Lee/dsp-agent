@@ -634,6 +634,17 @@ namespace IcarusII.UI
         private bool _autoFocusInput;
         private bool _wantInputFocus;
 
+        /// <summary>
+        /// 输入框最后一次处于聚焦态时的选区。
+        ///
+        /// 点击工具条按钮会让 InputField 失焦，而游戏的 `DeactivateInputField()`
+        /// 会把内部 caret 清成 0。若不记住点击前的选区，`InsertGeneralString()` /
+        /// `InsertCheckBox()` / `OnColorChange()` 都会作用到文本开头。
+        /// </summary>
+        private int _lastSelectionAnchor;
+        private int _lastSelectionFocus;
+        private bool _hasSelectionSnapshot;
+
         /// <summary>多行输入框按回车后待提交（见 `OnInputNewLine`）。</summary>
         private bool _submitPending;
 
@@ -830,6 +841,7 @@ namespace IcarusII.UI
             _dirty = false;
             IsOpen = false;
             _wantInputFocus = false;
+            _hasSelectionSnapshot = false;
 
             // 工具列表的静态节点随窗口一起销毁；目录数据保留，重建窗口后直接复用。
             _toolMenu = null;
@@ -6504,6 +6516,7 @@ namespace IcarusII.UI
             // 焦点有了但游戏 InputField 的 Caret 可能还没创建/绑定材质。
             if (IsOpen && _input != null && _input.isFocused)
             {
+                SnapshotInputSelection();
                 if (!_caretPrimed) PrimeInputCaret();
             }
             else
@@ -6847,6 +6860,10 @@ namespace IcarusII.UI
         ///   * 图标   → `UISignalTagPicker.Popup(...)`，选中后插入 `LDB.signals.IconTag(id)`
         ///   * 颜色   → `UISimpleColorPicker.Popup(...)`，选中后 `InputField.OnColorChange(...)`
         /// 弹出的选择器因此和游戏里其它输入框完全一致（图标表、调色板、带名字的图标等都是原生的）。
+        ///
+        /// 注意：这三个 prefab 按钮带 Unity `Button`（Selectable），点击会把焦点从
+        /// InputField 抢走，`DeactivateInputField()` 随后把内部 caret 清 0。所以三个
+        /// 插入动作都必须先 `RestoreInputSelection()`（见 Tick 里的快照）。
         /// </summary>
         private void WireInputToolbar(RectTransform panel)
         {
@@ -7381,6 +7398,29 @@ namespace IcarusII.UI
                 es.SetSelectedGameObject(_input.gameObject);
         }
 
+        /// <summary>记录输入框仍聚焦时的选区（见 _lastSelectionAnchor 的注释）。</summary>
+        private void SnapshotInputSelection()
+        {
+            if (_input == null || !_input.isFocused) return;
+            _lastSelectionAnchor = _input.selectionAnchorPosition;
+            _lastSelectionFocus = _input.selectionFocusPosition;
+            _hasSelectionSnapshot = true;
+        }
+
+        /// <summary>
+        /// 把点击工具条前的选区写回 InputField。
+        ///
+        /// 必须在 `InsertGeneralString` / `InsertCheckBox` / `OnColorChange` 之前调用：
+        /// 工具条按钮带 Unity `Button`（Selectable），点击会把输入框顶掉，
+        /// `DeactivateInputField()` 随即把内部 caret 清成 0。
+        /// </summary>
+        private void RestoreInputSelection()
+        {
+            if (_input == null || !_hasSelectionSnapshot) return;
+            _input.selectionAnchorPosition = _lastSelectionAnchor;
+            _input.selectionFocusPosition = _lastSelectionFocus;
+        }
+
         private void OnInsertCheckBoxClicked()
         {
             if (_input == null) return;
@@ -7388,6 +7428,7 @@ namespace IcarusII.UI
             {
                 // 原生就是这一句：插入 `[-]`（Text 会画成复选框）
                 var before = _input.text ?? string.Empty;
+                RestoreInputSelection();
                 _input.InsertCheckBox();
                 _input.ForceLabelUpdate();
                 RestoreInputFocus();
@@ -7423,6 +7464,7 @@ namespace IcarusII.UI
                     if (string.IsNullOrEmpty(tag)) return;
                     // isIconTag=true：插入 `\图标标签;`，Text 靠 iconMapping 把它画成图标
                     var before = _input.text ?? string.Empty;
+                    RestoreInputSelection();
                     _input.InsertGeneralString(tag, true);
                     _input.ForceLabelUpdate();
                     RestoreInputFocus();
@@ -7457,8 +7499,8 @@ namespace IcarusII.UI
                 var pos = PickerPositionAboveInput(pickerTrans);
 
                 UISimpleColorPicker.Popup(pos, GetBrushColor(),
-                    idx => { if (_input != null) { _input.OnColorChange(idx); RestoreInputFocus(); } },
-                    alpha => { if (_input != null) { _input.OnColorChange(alpha, true); RestoreInputFocus(); } });
+                    idx => { if (_input != null) { RestoreInputSelection(); _input.OnColorChange(idx); RestoreInputFocus(); } },
+                    alpha => { if (_input != null) { RestoreInputSelection(); _input.OnColorChange(alpha, true); RestoreInputFocus(); } });
 
                 LogPickerState("颜色", pickerTrans, pos);
             }
