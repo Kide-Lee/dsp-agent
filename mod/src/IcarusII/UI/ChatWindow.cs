@@ -114,6 +114,7 @@ namespace IcarusII.UI
         private RectTransform _inputRoot;
         /// <summary>输出区根节点；尺寸/底边由 prefab 固定，运行期只做滚动。</summary>
         private RectTransform _outputRoot;
+        private RectTransform _bottomColumn;
         /// <summary>当前替换输入栏的面板（目前是 choose；将来可扩展其它面板）。</summary>
         private RectTransform _bottomReplacement;
         private RectTransform _chooseRoot;
@@ -6963,10 +6964,12 @@ namespace IcarusII.UI
             _outputRoot = FindNode(panel, "content-column/output", "output") as RectTransform;
             _inputRoot = FindNode(panel, "content-column/input", "input") as RectTransform;
             _chooseRoot = FindNode(panel, "content-column/choose", "choose") as RectTransform;
+            _bottomColumn = _outputRoot != null ? _outputRoot.parent as RectTransform : null;
 
             // prefab 里 choose 是设计态可见的；运行时默认收起，输入栏默认展开。
             if (_inputRoot != null) _inputRoot.gameObject.SetActive(true);
             if (_chooseRoot != null) _chooseRoot.gameObject.SetActive(false);
+            RebuildBottomLayout();
         }
 
         private void WireAskPanel(RectTransform panel)
@@ -7048,6 +7051,7 @@ namespace IcarusII.UI
             if (_inputRoot != null) _inputRoot.gameObject.SetActive(false);
             _bottomReplacement = panel;
             panel.gameObject.SetActive(true);
+            RebuildBottomLayout();
         }
 
         private void EndBottomReplacement()
@@ -7055,6 +7059,18 @@ namespace IcarusII.UI
             if (_bottomReplacement != null) _bottomReplacement.gameObject.SetActive(false);
             _bottomReplacement = null;
             if (_inputRoot != null) _inputRoot.gameObject.SetActive(true);
+            RebuildBottomLayout();
+        }
+
+        /// <summary>
+        /// 高度由 prefab 的 content-column/VerticalLayoutGroup 计算；这里只通知布局组
+        /// 在 input/choose 切换后立即重算，不写任何 RectTransform 尺寸。
+        /// </summary>
+        private void RebuildBottomLayout()
+        {
+            if (_bottomColumn == null || !_bottomColumn.gameObject.activeInHierarchy) return;
+            LayoutRebuilder.ForceRebuildLayoutImmediate(_bottomColumn);
+            Canvas.ForceUpdateCanvases();
         }
 
         private void OnAskCompleted(List<AskAnswer> answers)
