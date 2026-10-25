@@ -21,8 +21,15 @@ namespace IcarusII.UI
     {
         private const string InstanceName = "button-agent";
 
-        /// <summary>与截图键之间的垂直间距（Game Menu 本地坐标，像素）。</summary>
-        private const float Gap = 4f;
+        /// <summary>
+        /// 两个按钮**根节点**之间的垂直间距（Game Menu 本地坐标）。
+        ///
+        /// 根节点是 46×46，但真正可见的底图/圆环只有 30/32px（子节点内缩 8px）。
+        /// 大圆按钮的根节点中心距 64.7、根尺寸 70 ⇒ 根间距约 -5.3；它们可见圆环
+        /// 的间距约 8.7px。这里用 -5：本按钮与截图键的可见圆环间距约 9px、
+        /// 可见底图间距约 11px，正好和大圆按钮一致。
+        /// </summary>
+        private const float Gap = -5f;
 
         private static GameObject _instance;
         private static Button _button;
@@ -70,6 +77,17 @@ namespace IcarusII.UI
                 _button.onClick.AddListener(() => onOpen());
 
             BindTip(go, hotkey);
+
+            // 一次性的位置日志：以后调间距/排查“按钮在哪”时不用再猜。
+            var selfRt = go.transform as RectTransform;
+            var anchorRt = anchor.transform as RectTransform;
+            if (selfRt != null && anchorRt != null)
+            {
+                Plugin.Log.LogInfo(
+                    $"[UI] Game Menu 入口位置：截图键 {anchorRt.sizeDelta} @ {anchorRt.anchoredPosition}，" +
+                    $"入口 {selfRt.sizeDelta} @ {selfRt.anchoredPosition}。");
+            }
+
             Plugin.Log.LogInfo("[UI] 已在 Game Menu 截图键上方添加聊天入口按钮。");
             return true;
         }
