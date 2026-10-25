@@ -25,6 +25,7 @@ namespace IcarusII.EditorTools
             try
             {
                 EnsureChatIndexAdditions(root.transform);
+                EnsureOutputHeight(root.transform);
                 PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
                 AssetDatabase.Refresh();
                 Debug.Log("[IcarusII] 聊天窗布局已固化到 prefab：" + prefabPath);
@@ -34,6 +35,28 @@ namespace IcarusII.EditorTools
             {
                 PrefabUtility.UnloadPrefabContents(root);
             }
+        }
+
+        /// <summary>
+        /// output 的静态高度按 choose 面板的顶部预留：确认/问答页替换 input 时
+        /// 不再由运行期改 offsetMin。input 也静态撑到 choose 高度，避免两者之间留下空条。
+        /// 只读取 prefab 里 choose 的实际高度，幂等。
+        /// </summary>
+        private static void EnsureOutputHeight(Transform root)
+        {
+            var output = root.Find("output") as RectTransform;
+            var input = root.Find("input") as RectTransform;
+            var choose = root.Find("choose") as RectTransform;
+            if (output == null || choose == null) return;
+
+            float height = choose.rect.height;
+            if (input != null && input.sizeDelta.y < height)
+                input.sizeDelta = new Vector2(input.sizeDelta.x, height);
+
+            float bottom = choose.offsetMin.y + height + 2f;
+            var min = output.offsetMin;
+            if (min.y >= bottom) return;
+            output.offsetMin = new Vector2(min.x, bottom);
         }
 
         private static void EnsureChatIndexAdditions(Transform root)
