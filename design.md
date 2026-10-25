@@ -473,6 +473,13 @@ bool buildToolActive = build != null && build.active;
 
 ### 6.3 聊天窗口 UI
 
+**界面入口**：除热键（默认 `R`）外，右下角 Game Menu 的**截图键正上方**有一个聊天入口
+按钮。按钮的静态结构、尺寸、图标与 hover 动画都在 `button-agent.prefab`（随
+`icarusii-ui` bundle 分发）；运行期只把实例挂到 `UIGameMenu` 根节点下，以
+`UIGameMenu.buttonS` 为锚点（同 x、抬到截图键正上方）并绑定点击打开窗口。
+Game Menu 与截图键直接写在 `DSPGame.unity` 里（不是 Resources prefab），mod 无法在
+安装期改场景，因此这里只做“挂载 + 锚点适配”，不修改按钮内部布局。
+
 **组件树**（全部 UGUI，挂在 `UIRoot.overlayCanvasTop` 下的自建 `RectTransform`）：
 
 ```

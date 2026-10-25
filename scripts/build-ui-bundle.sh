@@ -53,9 +53,17 @@ BUNDLE="$OUT/icarusii-ui"
 
 # prefab 位于 dsp-game/（已 gitignore），所以回存一份到仓库以便版本化与复现。
 # 它引用了游戏贴图的 GUID，回存保留 .meta 才能在恢复后不丢引用。
+# button-agent 是 Game Menu 的聊天入口按钮；console.png 是它自己的图标
+# （原路径 Assets/IcarusII/Resources/console.png，回存时放平在同一目录）。
 SNAP="$ROOT/mod/unity/Prefab"
 mkdir -p "$SNAP"
-for f in "$PROJ/Assets/IcarusII/ChatWindow.prefab" "$PROJ/Assets/IcarusII/ChatWindow.prefab.meta"; do
+for f in \
+  "$PROJ/Assets/IcarusII/ChatWindow.prefab" \
+  "$PROJ/Assets/IcarusII/ChatWindow.prefab.meta" \
+  "$PROJ/Assets/IcarusII/button-agent.prefab" \
+  "$PROJ/Assets/IcarusII/button-agent.prefab.meta" \
+  "$PROJ/Assets/IcarusII/Resources/console.png" \
+  "$PROJ/Assets/IcarusII/Resources/console.png.meta"; do
   [ -f "$f" ] && cp "$f" "$SNAP/"
 done
 echo "==> 已回存 prefab 快照到 $SNAP"

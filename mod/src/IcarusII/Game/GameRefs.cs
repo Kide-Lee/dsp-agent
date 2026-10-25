@@ -297,6 +297,47 @@ namespace IcarusII.Game
         /// <summary>UI 根节点；未进入游戏时为 null。</summary>
         public static UIRoot UiRoot => UIRoot.instance;
 
+        /// <summary>
+        /// 游戏右下角 HUD 的环形菜单（Game Menu）根节点。
+        ///
+        /// 它和截图键都直接写在 `DSPGame.unity` 里（不是 Resources 下的 prefab），
+        /// mod 无法在安装期改场景，所以聊天入口按钮只能在运行期挂到它下面。
+        /// 未进入游戏/界面尚未创建时返回 null。
+        /// </summary>
+        public static Transform GameMenuRoot
+        {
+            get
+            {
+                try
+                {
+                    var root = UIRoot.instance;
+                    var game = root != null ? root.uiGame : null;
+                    var menu = game != null ? game.gameMenu : null;
+                    return menu != null ? menu.transform : null;
+                }
+                catch { return null; }
+            }
+        }
+
+        /// <summary>
+        /// Game Menu 里的截图按钮。聊天入口按钮以它为锚点，摆在它正上方。
+        /// 拿不到就返回 null（调用方下一帧重试）。
+        /// </summary>
+        public static UnityEngine.UI.Button GameMenuScreenshotButton
+        {
+            get
+            {
+                try
+                {
+                    var root = UIRoot.instance;
+                    var game = root != null ? root.uiGame : null;
+                    var menu = game != null ? game.gameMenu : null;
+                    return menu != null ? menu.buttonS : null;
+                }
+                catch { return null; }
+            }
+        }
+
         /// <summary>当前语言代码（BCP-47 子集）。</summary>
         public static string LanguageCode
         {

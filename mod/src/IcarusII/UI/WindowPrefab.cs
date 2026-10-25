@@ -8,7 +8,7 @@ using UnityEngine;
 namespace IcarusII.UI
 {
     /// <summary>
-    /// 从随插件分发的 AssetBundle 里加载聊天窗 prefab。
+    /// 从随插件分发的 AssetBundle 里加载聊天窗与 Game Menu 入口按钮 prefab。
     ///
     /// 为什么是 AssetBundle 而不是"游戏内置 prefab"：mod 改不了已发布的游戏构建
     /// （`DSPGame.unity` 与 `Resources` 都是构建产物），所以 prefab 必须随 mod 自带。
@@ -27,6 +27,9 @@ namespace IcarusII.UI
         private const string BundleSubDir = "ui";
         private const string AssetName = "IcarusIIWindow";
 
+        /// <summary>Game Menu 右上角入口按钮的资源名（见 IcarusIIBundleBuilder）。</summary>
+        private const string AgentButtonAssetName = "IcarusIIAgentButton";
+
         private static readonly ManualLogSource Log = BepInEx.Logging.Logger.CreateLogSource("IcarusII.UI");
         private static bool _attempted;
         private static GameObject _prefab;
@@ -43,6 +46,15 @@ namespace IcarusII.UI
             var go = UnityEngine.Object.Instantiate(prefab, parent, false);
             go.name = "Panel";
             return go;
+        }
+
+        /// <summary>
+        /// Game Menu 入口按钮 prefab。它和聊天窗在同一个 bundle 里，
+        /// 但资源名不同，所以按名单独取（`Load()` 只缓存聊天窗 prefab）。
+        /// </summary>
+        public static GameObject LoadAgentButton()
+        {
+            return LoadAsset<GameObject>(AgentButtonAssetName);
         }
 
         /// <summary>

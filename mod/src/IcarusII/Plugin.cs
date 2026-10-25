@@ -195,6 +195,7 @@ namespace IcarusII
                 _uiInitialized = false;
                 _streaming = false;
                 _chat.Reset();
+                AgentMenuButton.Reset();
                 Log.LogInfo("UI 随场景销毁，将在新场景中重建。");
             }
 
@@ -209,6 +210,11 @@ namespace IcarusII
             }
 
             _chat.Tick();
+
+            // 右下角 Game Menu（截图键正上方）的聊天入口。
+            // 菜单/UIRoot 重建后自动补回；已存在时这里只做两次引用比较。
+            AgentMenuButton.Ensure(_hotkey.Key, OpenChatFromMenu);
+
             if (_uiInitialized && !_markersSanitized && GameRefs.IsInGame)
             {
                 var fixedMarkers = MarkerSanitizer.FixAll(Log);
@@ -270,6 +276,7 @@ namespace IcarusII
         {
             try { CancelPendingAsk("插件卸载", Protocol.CodeCancelled); } catch { /* ignore */ }
             try { CancelPendingConfirm("插件卸载"); _confirmation.Clear(); GameTether.Clear(); } catch { /* ignore */ }
+            try { AgentMenuButton.Reset(); } catch (Exception ex) { Log?.LogWarning($"清理 Game Menu 入口失败：{ex.Message}"); }
             try { _chat?.Destroy(); } catch (Exception ex) { Log?.LogWarning($"清理 UI 失败：{ex.Message}"); }
             try { _tools?.CancelAll("插件卸载"); } catch { /* ignore */ }
             try { _client?.Stop(); } catch (Exception ex) { Log?.LogWarning($"停止客户端失败：{ex.Message}"); }
@@ -1499,6 +1506,19 @@ namespace IcarusII
             // 首次打开时补一条提示，避免玩家不知道窗口有没有在工作
             if (_client.State == ConnectionState.Ready) return;
             _chat.SetStatus(Strings.Get("status.connecting"), null);
+        }
+
+        /// <summary>
+        /// 点击 Game Menu 的聊天入口按钮。语义与热键的“打开”一致：
+        /// 窗口已经开着时不做任何事（第二个入口不该把已打开的窗口关掉）。
+        /// </summary>
+        private void OpenChatFromMenu()
+        {
+            if (_chat == null || !_chat.Created || _chat.IsOpen) return;
+
+            _chat.SetOpen(true);
+            OnWindowOpened();
+            Log.LogInfo($"[UI] 已从 Game Menu 打开窗口。{_chat.DescribeVisibility()}");
         }
 
         private void ShowHint(string hint)

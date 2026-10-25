@@ -5,7 +5,8 @@ using UnityEngine;
 namespace IcarusII.EditorTools
 {
     /// <summary>
-    /// 把聊天窗 prefab（连同它用到的窗口贴图）打成一个 **Windows** AssetBundle。
+    /// 把聊天窗 prefab 和 Game Menu 入口按钮（连同它们用到的贴图/材质）
+    /// 打成一个 **Windows** AssetBundle。
     ///
     /// 为什么必须是 Windows：AssetBundle 是**分平台**的，bundle 头里带目标平台标记，
     /// 平台不匹配时 `AssetBundle.LoadFromFile` 会直接失败。游戏是
@@ -32,14 +33,22 @@ namespace IcarusII.EditorTools
         /// bundle 里的资源名仍然是 `IcarusIIWindow`（见 AssetName），mod 侧不用改。
         /// </summary>
         private const string PrefabPath = "Assets/IcarusII/ChatWindow.prefab";
+        /// <summary>
+        /// 右下角 Game Menu 的聊天入口按钮：由用户手工从原生截图键复制而来。
+        /// 运行期挂在游戏 Game Menu 的截图键正上方（见 UI/AgentMenuButton.cs）。
+        /// </summary>
+        private const string AgentButtonPrefabPath = "Assets/IcarusII/button-agent.prefab";
         private const string SpriteRoot = "Assets/Resources/UI/Textures/Sprites/";
         private const string SpriteDir = "Assets/Resources/UI/Textures/Sprites/Sci-fi/";
         private const string IconDir = "Assets/Resources/UI/Textures/Sprites/Icons/";
         private const string ItemIconDir = "Assets/Resources/Icons/ItemRecipe/";
         private const string MaterialDir = "Assets/Resources/UI/Materials/";
+        /// <summary>入口按钮的图标（用户提供）；随 prefab 一起进 bundle，避免引用丢失。</summary>
+        private const string AgentButtonIconPath = "Assets/IcarusII/Resources/console.png";
         private const string OutputDir = "Build/IcarusIIBundle";
         private const string BundleName = "icarusii-ui";
         private const string AssetName = "IcarusIIWindow";
+        private const string AgentButtonAssetName = "IcarusIIAgentButton";
 
         [MenuItem("Icarus II/Build UI AssetBundle (Windows)")]
         public static void BuildFromMenu()
@@ -108,6 +117,12 @@ namespace IcarusII.EditorTools
                             "如果你要的是从头生成，用 IcarusIIWindowPrefabBuilder.BuildForced()。");
             }
 
+            if (AssetDatabase.LoadAssetAtPath<GameObject>(AgentButtonPrefabPath) == null)
+            {
+                return Fail("找不到 Game Menu 入口按钮 prefab：" + AgentButtonPrefabPath + "\n" +
+                            "这份是手工维护的 prefab（从游戏原生截图键复制而来），不要删。");
+            }
+
             if (!IcarusIIChatIndexBuilder.Ensure(PrefabPath))
             {
                 return Fail("chat-index prefab 结构构建失败：" + PrefabPath);
@@ -144,6 +159,12 @@ namespace IcarusII.EditorTools
                 assetNames = new[]
                 {
                     PrefabPath,
+                    // 右下角 Game Menu 的聊天入口按钮（含它自己的图标/底图/材质）。
+                    AgentButtonPrefabPath,
+                    AgentButtonIconPath,
+                    SpriteDir + "crystal-btn-black.png",
+                    SpriteDir + "circle-thin-64.png",
+                    MaterialDir + "trsl-colored.mat",
                     SpriteDir + "window-trsl-1.png",
                     SpriteDir + "window-trsl-1-sd.png",
                     SpriteDir + "window-border-1.png",
@@ -179,6 +200,11 @@ namespace IcarusII.EditorTools
                 addressableNames = new[]
                 {
                     AssetName,
+                    AgentButtonAssetName,
+                    "console",
+                    "crystal-btn-black",
+                    "circle-thin-64",
+                    "trsl-colored",
                     "window-trsl-1",
                     "window-trsl-1-sd",
                     "window-border-1",

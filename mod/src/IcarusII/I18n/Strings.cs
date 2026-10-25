@@ -66,6 +66,9 @@ namespace IcarusII.I18n
             ["hint.conflict"] = "提示：{0}",
             ["settings.tip.title"] = "设置",
             ["settings.tip.text"] = "打开设置，切换模型 / 配置 API 密钥",
+            // 右下角 Game Menu 里的聊天入口（按在截图键正上方）
+            ["menu.tip.title"] = "AI窗口({0})",
+            ["menu.tip.text"] = "点击进入由 IcarusII 提供的聊天界面，可以咨询各种信息、分析产线",
             ["system"] = "系统",
             ["you"] = "你",
             ["agent"] = "助手",

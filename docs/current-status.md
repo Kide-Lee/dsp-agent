@@ -33,6 +33,7 @@
 | M5 link 卡片 | 运行期接 `cards-group` 三模板；整卡聚焦、`定位/已定位` 双向连线；多行 ContentSizeFitter；建筑统计/星球备忘录与图标已接 |
 | M5 矿脉卡片 | 复用建筑卡模板：矿脉图标/#id、标题、储量+经纬度、星系/行星、定位；支持 `dsp://entity/vein/<planet>/<vein>` 与历史持久化 |
 | M5 方位指示（tether） | 已实现 `game_tether_add/list/clear`，最多 20 个目标；本星球多建筑多线，跨行星原生导航一次一个、落地后切换；换档/断线清理；离线测试通过，待实机 |
+| Game Menu 聊天入口 | 右下角 Game Menu 的截图键正上方新增聊天入口按钮（`button-agent.prefab` 随 UI bundle 分发）；Game Menu 是 `DSPGame.unity` 里的场景对象，运行期按 `UIGameMenu.buttonS` 锚定并绑定打开聊天窗；离线构建通过，待实机验收 |
 
 ### M4 收尾修复
 
@@ -51,7 +52,7 @@
 - `scripts/build-mod.sh`：0 warning / 0 error。
 - `dotnet run --project tests/ProtocolTests`：通过（M5 新增租约/工具表断言）。
 - `cd sidecar && npm test`：退出码 0。
-- UI AssetBundle 与 `mod/unity/Prefab/ChatWindow.prefab` 快照已同步。
+- UI AssetBundle 与 `mod/unity/Prefab/ChatWindow.prefab`、`button-agent.prefab`（含图标）快照已同步。
 - `scripts/package.sh` 成功；Steam 安装目录通过 SHA-256 校验更新。
 - sidecar `config.json` 的 provider/model/key 迁移自检通过；玩家配置未被覆盖。
 - M4 实机验收：用户确认全部通过（M4a–M4j + 写操作）。
