@@ -54,8 +54,6 @@ namespace IcarusII.UI
         private Text _submitLabel;
         private Button _submitButton;
         private Button _skipButton;
-        private Text _skipLabel;
-        private string _skipLabelOriginal;
         private Button _backButton;
         private Button _rejectButton;
         private Text _rejectLabel;
@@ -155,8 +153,6 @@ namespace IcarusII.UI
 
             _submitButton = FindButton(chooseRoot, "voting-device/btn-grop/agree-button");
             _skipButton = FindButton(chooseRoot, "voting-device/btn-grop/skip-button");
-            _skipLabel = FindText(chooseRoot, "voting-device/btn-grop/skip-button/text");
-            _skipLabelOriginal = _skipLabel != null ? _skipLabel.text : null;
             _backButton = FindButton(chooseRoot, "voting-device/btn-grop/return-button");
             _rejectButton = FindButton(chooseRoot, "voting-device/btn-grop/reject-button");
             _submitLabel = FindText(chooseRoot, "voting-device/btn-grop/agree-button/text");
@@ -198,7 +194,6 @@ namespace IcarusII.UI
             _confirmMode = false;
             _showing = true;
             gameObject.SetActive(true);
-            if (_skipLabel != null && _skipLabelOriginal != null) _skipLabel.text = _skipLabelOriginal;
             ApplyQuestion(0, restoreFocus: false);
         }
 
@@ -321,6 +316,28 @@ namespace IcarusII.UI
             ApplyQuestion(_index, restoreFocus: true);
         }
 
+        /// <summary>
+        /// 确认页/问答页会复用同一批按钮；把 tips 也在运行时同步一次，
+        /// 避免旧 UI bundle 或已缓存的 UIButtonTip 继续显示模板占位文案。
+        /// </summary>
+        private static void SetButtonTip(Button button, string title, string text)
+        {
+            if (button == null) return;
+            var ui = button.GetComponent<UIButton>();
+            if (ui == null) return;
+            var tips = ui.tips;
+            tips.corner = 7;
+            tips.level = 0;
+            tips.delay = 0.2f;
+            tips.width = 0;
+            tips.type = UIButton.ItemTipType.Other;
+            tips.tipTitle = title ?? string.Empty;
+            tips.tipText = text ?? string.Empty;
+            ui.tips = tips;
+            ui.tipTitleFormatString = string.Empty;
+            ui.tipTextFormatString = string.Empty;
+        }
+
         private void ApplyQuestion(int index, bool restoreFocus)
         {
             var question = _questions[index];
@@ -339,6 +356,8 @@ namespace IcarusII.UI
             // 最后一题后面还有总结轮，所以所有问题页都显示「下一个」；
             // 只有 ShowReview 的最终页显示「提交」。
             if (_submitLabel != null) _submitLabel.text = Strings.Get("ask.next");
+            SetButtonTip(_submitButton, Strings.Get("ask.next"), "提交当前答案");
+            SetButtonTip(_skipButton, "跳过", "跳过当前问题");
 
             int count = Mathf.Min(question.Options.Count, AskArgs.MaxOptions);
             ConfigureMultiSelectVisuals(count);
@@ -441,18 +460,10 @@ namespace IcarusII.UI
             if (_submitButton != null) _submitButton.gameObject.SetActive(true);
             if (_rejectLabel != null) _rejectLabel.text = Strings.Get("confirm.reject");
             if (_backButton != null) _backButton.gameObject.SetActive(false);
-            if (_rejectButton != null)
-            {
-                _rejectButton.gameObject.SetActive(true);
-                if (_skipButton != null) _skipButton.gameObject.SetActive(false);
-            }
-            else if (_skipButton != null)
-            {
-                // 当前 prefab 没有独立 reject-button；确认模式下把“跳过”按钮
-                // 临时复用为拒绝按钮。点击路径仍然是 SkipCurrent -> Confirm(false)。
-                _skipButton.gameObject.SetActive(true);
-                if (_skipLabel != null) _skipLabel.text = Strings.Get("confirm.reject");
-            }
+            if (_rejectButton != null) _rejectButton.gameObject.SetActive(true);
+            if (_skipButton != null) _skipButton.gameObject.SetActive(false);
+            SetButtonTip(_submitButton, Strings.Get("confirm.agree"), "允许这次写操作");
+            SetButtonTip(_rejectButton, Strings.Get("confirm.reject"), "拒绝这次写操作");
             if (_explainText != null)
                 LayoutRebuilder.ForceRebuildLayoutImmediate(_explainText.rectTransform);
             if (_explainRoot != null)
