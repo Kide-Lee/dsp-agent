@@ -114,6 +114,8 @@ namespace IcarusII.UI
         private RectTransform _inputRoot;
         /// <summary>输出区根节点；尺寸/底边由 prefab 固定，运行期只做滚动。</summary>
         private RectTransform _outputRoot;
+        private float _outputOriginalBottom;
+        private bool _outputBottomSaved;
         /// <summary>当前替换输入栏的面板（目前是 choose；将来可扩展其它面板）。</summary>
         private RectTransform _bottomReplacement;
         private RectTransform _chooseRoot;
@@ -7048,12 +7050,43 @@ namespace IcarusII.UI
             if (_inputRoot != null) _inputRoot.gameObject.SetActive(false);
             _bottomReplacement = panel;
             panel.gameObject.SetActive(true);
+            ApplyBottomReplacementHeight(panel);
+        }
+
+        /// <summary>
+        /// ask/confirm 是替换 input 的底部面板；显示时让 output 的底边停在
+        /// 面板顶部，避免正文被面板盖住。只在替换期间临时改 offsetMin，
+        /// 收起时恢复 prefab 原值。
+        /// </summary>
+        private void ApplyBottomReplacementHeight(RectTransform panel)
+        {
+            if (_outputRoot == null || panel == null) return;
+            if (!_outputBottomSaved)
+            {
+                _outputOriginalBottom = _outputRoot.offsetMin.y;
+                _outputBottomSaved = true;
+            }
+            Canvas.ForceUpdateCanvases();
+            float bottom = panel.offsetMin.y + panel.rect.height + 2f;
+            var min = _outputRoot.offsetMin;
+            if (bottom > min.y)
+                _outputRoot.offsetMin = new Vector2(min.x, bottom);
+            LayoutRebuilder.ForceRebuildLayoutImmediate(_outputRoot);
+            Canvas.ForceUpdateCanvases();
         }
 
         private void EndBottomReplacement()
         {
             if (_bottomReplacement != null) _bottomReplacement.gameObject.SetActive(false);
             _bottomReplacement = null;
+            if (_outputRoot != null && _outputBottomSaved)
+            {
+                var min = _outputRoot.offsetMin;
+                _outputRoot.offsetMin = new Vector2(min.x, _outputOriginalBottom);
+                _outputBottomSaved = false;
+                LayoutRebuilder.ForceRebuildLayoutImmediate(_outputRoot);
+                Canvas.ForceUpdateCanvases();
+            }
             if (_inputRoot != null) _inputRoot.gameObject.SetActive(true);
         }
 

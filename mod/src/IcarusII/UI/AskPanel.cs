@@ -54,6 +54,8 @@ namespace IcarusII.UI
         private Text _submitLabel;
         private Button _submitButton;
         private Button _skipButton;
+        private Text _skipLabel;
+        private string _skipLabelOriginal;
         private Button _backButton;
         private Button _rejectButton;
         private Text _rejectLabel;
@@ -153,6 +155,8 @@ namespace IcarusII.UI
 
             _submitButton = FindButton(chooseRoot, "voting-device/btn-grop/agree-button");
             _skipButton = FindButton(chooseRoot, "voting-device/btn-grop/skip-button");
+            _skipLabel = FindText(chooseRoot, "voting-device/btn-grop/skip-button/text");
+            _skipLabelOriginal = _skipLabel != null ? _skipLabel.text : null;
             _backButton = FindButton(chooseRoot, "voting-device/btn-grop/return-button");
             _rejectButton = FindButton(chooseRoot, "voting-device/btn-grop/reject-button");
             _submitLabel = FindText(chooseRoot, "voting-device/btn-grop/agree-button/text");
@@ -194,6 +198,7 @@ namespace IcarusII.UI
             _confirmMode = false;
             _showing = true;
             gameObject.SetActive(true);
+            if (_skipLabel != null && _skipLabelOriginal != null) _skipLabel.text = _skipLabelOriginal;
             ApplyQuestion(0, restoreFocus: false);
         }
 
@@ -435,9 +440,19 @@ namespace IcarusII.UI
             if (_submitLabel != null) _submitLabel.text = Strings.Get("confirm.agree");
             if (_submitButton != null) _submitButton.gameObject.SetActive(true);
             if (_rejectLabel != null) _rejectLabel.text = Strings.Get("confirm.reject");
-            if (_skipButton != null) _skipButton.gameObject.SetActive(false);
             if (_backButton != null) _backButton.gameObject.SetActive(false);
-            if (_rejectButton != null) _rejectButton.gameObject.SetActive(true);
+            if (_rejectButton != null)
+            {
+                _rejectButton.gameObject.SetActive(true);
+                if (_skipButton != null) _skipButton.gameObject.SetActive(false);
+            }
+            else if (_skipButton != null)
+            {
+                // 当前 prefab 没有独立 reject-button；确认模式下把“跳过”按钮
+                // 临时复用为拒绝按钮。点击路径仍然是 SkipCurrent -> Confirm(false)。
+                _skipButton.gameObject.SetActive(true);
+                if (_skipLabel != null) _skipLabel.text = Strings.Get("confirm.reject");
+            }
             if (_explainText != null)
                 LayoutRebuilder.ForceRebuildLayoutImmediate(_explainText.rectTransform);
             if (_explainRoot != null)

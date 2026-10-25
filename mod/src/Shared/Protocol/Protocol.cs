@@ -174,6 +174,10 @@ namespace IcarusII.Common.Protocol
         public const string ToolTetherAdd = "game_tether_add";
         public const string ToolTetherClear = "game_tether_clear";
         public const string ToolTetherList = "game_tether_list";
+        public const string ToolTodoTemplates = "game_todo_templates";
+        public const string ToolTodoList = "game_todo_list";
+        public const string ToolTodoAdd = "game_todo_add";
+        public const string ToolTodoRemove = "game_todo_remove";
         public const string ToolTakeOutput = "game_take_output";
 
         /// <summary>沙盒专属工具名（尚未实现；先用于门禁/测试）。</summary>
@@ -215,6 +219,8 @@ namespace IcarusII.Common.Protocol
             ToolFeedInput,
             ToolTetherAdd,
             ToolTetherClear,
+            ToolTodoAdd,
+            ToolTodoRemove,
             ToolTakeOutput,
             ToolUndoLastWrite,
         };
