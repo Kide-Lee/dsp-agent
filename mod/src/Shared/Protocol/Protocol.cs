@@ -155,6 +155,7 @@ namespace IcarusII.Common.Protocol
         public const string ConfirmRelease = "confirm_release";
 
         public const string ToolFocusCamera = "game_focus_camera";
+        public const string ToolPlaceMarker = "game_place_marker";
         public const string ToolOpenPanel = "game_open_panel";
         public const string ToolSetResearch = "game_set_research";
         public const string ToolUndoLastWrite = "game_undo_last_write";
@@ -171,7 +172,6 @@ namespace IcarusII.Common.Protocol
         public const string ToolTetherClear = "game_tether_clear";
         public const string ToolTetherList = "game_tether_list";
         public const string ToolTakeOutput = "game_take_output";
-        public const string ToolDismantle = "game_dismantle";
 
         /// <summary>沙盒专属工具名（尚未实现；先用于门禁/测试）。</summary>
         public const string ToolSpawnItem = "game_spawn_item";
@@ -190,6 +190,40 @@ namespace IcarusII.Common.Protocol
             return sandboxEnabled || !IsSandboxOnlyTool(toolName);
         }
 
+        /// <summary>
+        /// 需要确认令牌的写工具**唯一来源**。
+        /// mod 的确认门禁、脚本租约白名单与分发器缓存都必须引用这张表，
+        /// 不要再在 Plugin / Dispatcher / ConfirmationService 各抄一份。
+        /// </summary>
+        public static readonly string[] WriteToolNames =
+        {
+            ToolFocusCamera,
+            ToolPlaceMarker,
+            ToolOpenPanel,
+            ToolSetResearch,
+            ToolDropItem,
+            ToolSetRecipe,
+            ToolSetAssemblerBatch,
+            ToolStorageSetFilter,
+            ToolStorageSetLimit,
+            ToolStorageMove,
+            ToolStorageDeposit,
+            ToolStorageWithdraw,
+            ToolFeedInput,
+            ToolTetherAdd,
+            ToolTetherClear,
+            ToolTakeOutput,
+            ToolUndoLastWrite,
+        };
+
+        public static bool IsWriteTool(string toolName)
+        {
+            if (string.IsNullOrEmpty(toolName)) return false;
+            for (int i = 0; i < WriteToolNames.Length; i++)
+                if (string.Equals(WriteToolNames[i], toolName, StringComparison.Ordinal)) return true;
+            return false;
+        }
+
         /// <summary>确认请求默认有效期（设计 §9.3）。</summary>
         public const int ConfirmTimeoutMs = 60000;
 
@@ -201,6 +235,9 @@ namespace IcarusII.Common.Protocol
         /// 与 Pi 社区的 `pi-ask-user` 包保持同名；mod 在进入 GameToolDispatcher 前拦截。
         /// </summary>
         public const string ToolAskUser = "ask_user";
+
+        /// <summary>sidecar 本地脚本工具名；脚本写租约只允许由它创建。</summary>
+        public const string ToolRunScript = "run_script";
 
         /// <summary>旧名兼容：早期实现使用 ui_ask_user，继续接受。</summary>
         public const string ToolUiAskUser = "ui_ask_user";
@@ -739,6 +776,7 @@ namespace IcarusII.Common.Protocol
             };
             if (r.Kind != "planet" && r.Kind != "building" && r.Kind != "vein") return null;
             if (r.PlanetId <= 0) return null;
+            if (string.IsNullOrWhiteSpace(r.Name)) return null;
             if (r.Kind == "building" && r.BuildingId <= 0) return null;
             if (r.Kind == "vein" && r.VeinId <= 0) return null;
             return r;

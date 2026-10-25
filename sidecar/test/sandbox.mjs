@@ -174,13 +174,15 @@ async function run() {
       v: 1, id: 'm-2', type: 'save.bind',
       payload: { saveKey: 'save-s', sandbox: true },
     })), false);
-    check('绑定回应', socket.frames.some((frame) => frame.type === 'save.bound'));
+    check('绑定回应', await waitFor(() => socket.frames.some((frame) => frame.type === 'save.bound')));
+    await waitFor(() => sandboxSeen.includes(true));
     check('agent 收到 sandbox=true', sandboxSeen.includes(true), JSON.stringify(sandboxSeen));
 
     session.handleFrame(Buffer.from(JSON.stringify({
       v: 1, id: 'm-3', type: 'save.bind',
       payload: { saveKey: null, sandbox: true },
     })), false);
+    await waitFor(() => sandboxSeen[sandboxSeen.length - 1] === false);
     check('解绑按 false 转发', sandboxSeen[sandboxSeen.length - 1] === false, JSON.stringify(sandboxSeen));
     session.dispose('test');
   }

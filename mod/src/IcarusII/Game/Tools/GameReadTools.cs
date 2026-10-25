@@ -264,6 +264,30 @@ namespace IcarusII.Game.Tools
             }
         }
 
+        /// <summary>
+        /// 写工具专用的严格解析：显式传了 planetId 就必须解析成功，不能静默回退到当前行星。
+        /// 读工具仍用 ResolvePlanet 的兼容回退。
+        /// </summary>
+        public static PlanetData ResolvePlanetStrict(JsonValue args)
+        {
+            var raw = args["planetId"];
+            if (raw != null && !raw.IsNull)
+            {
+                var id = raw.AsInt(0);
+                if (id <= 0)
+                    throw new ArgumentException("planetId 必须是正整数");
+                var planet = GameMain.data != null && GameMain.data.galaxy != null
+                    ? GameMain.data.galaxy.PlanetById(id)
+                    : null;
+                if (planet == null)
+                    throw new ArgumentException("行星 #" + id.ToString(CultureInfo.InvariantCulture) + " 不存在");
+                return planet;
+            }
+            var local = GameMain.data != null ? GameMain.data.localPlanet : null;
+            if (local == null) throw new ArgumentException("当前没有载入行星");
+            return local;
+        }
+
         public static double PowerSatisfactionPct(PlanetFactory factory)
         {
             if (factory == null || factory.powerSystem == null) return 0;

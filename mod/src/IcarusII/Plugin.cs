@@ -33,7 +33,7 @@ namespace IcarusII
     {
         public const string Guid = "icarus-ii";
         public const string PluginName = "Icarus II";
-        public const string PluginVersion = "0.3.2";
+        public const string PluginVersion = "0.3.3";
 
         /// <summary>每帧用于处理后台线程回调的时间预算（毫秒）。</summary>
         private const int MainThreadBudgetMs = 4;
@@ -753,16 +753,7 @@ namespace IcarusII
 
         private static bool IsWriteToolName(string name)
         {
-            return name == Protocol.ToolFocusCamera
-                || name == Protocol.ToolOpenPanel || name == Protocol.ToolSetResearch
-                || name == Protocol.ToolDropItem || name == Protocol.ToolSetRecipe
-                || name == Protocol.ToolSetAssemblerBatch || name == Protocol.ToolStorageSetFilter
-                || name == Protocol.ToolStorageSetLimit || name == Protocol.ToolStorageMove
-                || name == Protocol.ToolStorageDeposit || name == Protocol.ToolStorageWithdraw
-                || name == Protocol.ToolFeedInput || name == Protocol.ToolTetherAdd
-                || name == Protocol.ToolTetherClear
-                || name == Protocol.ToolTakeOutput
-                || name == Protocol.ToolDismantle;
+            return Protocol.IsWriteTool(name);
         }
 
         /// <summary>sidecar 请求写操作确认：用 choose 的 question/explain + 红拒绝/蓝同意。</summary>
@@ -800,7 +791,15 @@ namespace IcarusII
         {
             var request = _confirmation.Current;
             if (request == null) return;
-            if (!_confirmation.TryResolve(request.RequestId, accepted, out var resolved)) return;
+            if (!_confirmation.TryResolve(request.RequestId, accepted, out var resolved))
+            {
+                // 确认请求本身不合法（例如脚本租约缺少 writeNames）：按拒绝回执，
+                // 不能让 sidecar 干等 60 秒超时。
+                Log.LogWarning($"[confirm] 拒绝不合法的确认请求 tool={request.Tool}");
+                SendConfirmResult(request, false);
+                _chat?.SetStatus(Strings.Get("sandbox.required"), WarnColor);
+                return;
+            }
             SendConfirmResult(resolved, accepted);
             _chat?.SetStatus(Strings.Get("status.ready"), accepted ? OkColor : WarnColor);
         }

@@ -72,6 +72,7 @@ namespace IcarusII.UI
                 case "ask_user":
                 case "ui_ask_user": return "向玩家提问";
                 case "game_focus_camera": return "移动视角";
+                case "game_place_marker": return "新建标记";
                 case "game_open_panel": return "打开面板";
                 case "game_set_research": return "切换研究";
                 case "game_drop_item": return "丢弃物品";
@@ -87,7 +88,6 @@ namespace IcarusII.UI
                 case "game_tether_clear": return "清除方位";
                 case "game_tether_list": return "方位列表";
                 case "game_take_output": return "取成品";
-                case "game_dismantle": return "拆除建筑";
                 case "game_undo_last_write": return "撤销写操作";
                 default: return name;
             }

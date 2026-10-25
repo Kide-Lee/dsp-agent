@@ -157,7 +157,7 @@ namespace IcarusII.EditorTools
 
         // ---- 输入区尺寸（全部来自 to-do-list 现场取值）
         private const float InputHeight = 70f;      // 原生 to-do-list 高
-        private const float InputBarHeight = 86f;   // 70 + 上下各 8 的留白
+        private const float InputBarHeight = 100f;  // 与 ChatWindow.prefab 的 input 高度一致（不再运行期增高）
         private const float InputInnerMargin = 8f;
         private const float ToolBarHeight = 24f;    // tool-bar
         private const float ToolIconsWidth = 88f;   // icons
@@ -166,7 +166,7 @@ namespace IcarusII.EditorTools
         private const float ScrollBarWidth = 6f;
         private const float ContentMargin = 20f;
         private const float ContentTop = 72f;       // 让开标题（标题到 y=-60）
-        private const float ContentBottom = InputBarHeight + 8f;
+        private const float ContentBottom = 142f;  // 40 底边 + 100 input + 2 间隙，与 prefab 一致
 
         [MenuItem("Icarus II/Rebuild Window Prefab (会覆盖手改)")]
         public static void BuildFromMenu()
@@ -626,14 +626,14 @@ namespace IcarusII.EditorTools
             content.anchorMax = new Vector2(1f, 1f);
             content.pivot = new Vector2(0.5f, 1f);
             content.anchoredPosition = Vector2.zero;
-            content.sizeDelta = new Vector2(0f, 63f);  // 与输入栏最小可视高度一致；运行期按文字增高
+            content.sizeDelta = new Vector2(0f, 63f);  // 固定为输入栏可视高度；多行由 ScrollRect 滚动
 
             var fieldHolder = Node("InputField", content);
             fieldHolder.anchorMin = new Vector2(0f, 1f);
             fieldHolder.anchorMax = new Vector2(1f, 1f);
             fieldHolder.pivot = new Vector2(0.5f, 1f);
             fieldHolder.anchoredPosition = Vector2.zero;
-            fieldHolder.sizeDelta = new Vector2(-8f, 63f);    // 运行期与 content 同步增高
+            fieldHolder.sizeDelta = new Vector2(-8f, 63f);    // 固定高度；不再由运行期改尺寸
 
             var input = Node("input", fieldHolder);
             Stretch(input);

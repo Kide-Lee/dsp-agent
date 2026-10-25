@@ -23,6 +23,7 @@ export function isWriteToolName(name: string): boolean {
 
 export const WRITE_TOOL_NAMES = [
   'game_focus_camera',
+  'game_place_marker',
   'game_open_panel',
   'game_set_research',
   'game_drop_item',
@@ -37,7 +38,6 @@ export const WRITE_TOOL_NAMES = [
   'game_tether_add',
   'game_tether_clear',
   'game_take_output',
-  'game_dismantle',
   'game_undo_last_write',
 ] as const;
 
@@ -115,6 +115,33 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         target: Type.Union([Type.String(), Type.Integer()], {
           description: '目标：planet:102 / star:1 / entity:34；纯数字会按行星→当前建筑→星系推断',
         }),
+      }),
+      timeoutMs: 10000,
+      risk: 1,
+    }),
+    writeTool(host, {
+      name: 'game_place_marker',
+      label: '新建标记',
+      description:
+        '在当前行星或指定行星上新建一个地图标记。写操作：执行前玩家必须确认。' +
+        '用 latitude/longitude 指定位置（可从 game_get_entity 的 location 读取），text 是标记文字。',
+      promptSnippet: '在行星上新建标记（需要玩家确认）',
+      promptGuidelines: [
+        'Use game_place_marker 当玩家明确要求“在这里做个标记/标个点”时。',
+        '坐标必须来自游戏数据或玩家给出；不要凭截图猜坐标。优先使用 game_get_entity 返回的 location.latitude/longitude。',
+      ],
+      parameters: Type.Object({
+        planetId: Type.Optional(Type.Integer({ description: '行星 id；省略为当前行星' })),
+        latitude: Type.Optional(Type.Number({ description: '纬度（-90..90）' })),
+        longitude: Type.Optional(Type.Number({ description: '经度（-180..180）' })),
+        altitude: Type.Optional(Type.Number({ description: '海拔（米），默认 0' })),
+        position: Type.Optional(Type.Object({
+          x: Type.Number(),
+          y: Type.Number(),
+          z: Type.Number(),
+        }, { description: '旧版行星局部坐标，仅兼容用' })),
+        text: Type.String({ description: '标记完整文字；地图简述只显示前 2 个字，详情保存完整名称' }),
+        icon: Type.Optional(Type.Integer({ description: '标记图标 id，可选' })),
       }),
       timeoutMs: 10000,
       risk: 1,
@@ -365,44 +392,23 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       risk: 2,
     }),
     writeTool(host, {
-      name: 'game_dismantle',
-      label: '拆除建筑',
-      description:
-        '拆除一批建筑（最多 50 个），走游戏原生 DismantleFinally。写操作，风险 2：执行前玩家必须确认。' +
-        '拆除不可撤销；游戏会按正常规则退料/清理，但建筑本身不会恢复。',
-      promptSnippet: '批量拆除建筑（高风险、不可撤销）',
-      promptGuidelines: [
-        'Use game_dismantle 当玩家明确要求拆除建筑时；先用 game_get_entities 确认 id 和范围。',
-        '一次最多 50 个；确认卡会强调不可撤销。',
-        '不要用它拆除玩家基地的关键建筑，除非玩家明确指定。',
-      ],
-      parameters: Type.Object({
-        buildingIds: Type.Array(Type.Integer({ description: '建筑 entityId' }), {
-          minItems: 1,
-          maxItems: 50,
-          description: '最多 50 个；不能重复',
-        }),
-      }),
-      timeoutMs: 15000,
-      risk: 2,
-    }),
-    writeTool(host, {
       name: 'game_tether_add',
       label: '方位指示',
       description:
-        '建立机甲到行星/建筑物方位指示，可同时建立多个（最多 20 个）。本星球的每个建筑各画一条 LineGizmo；' +
+        '建立机甲到行星/建筑/矿脉的方位指示，可同时建立多个（最多 20 个）。本星球的每个建筑/矿脉各画一条 LineGizmo；' +
         '跨行星时用原生 navigation.indicatorAstroId 指向其中一个目标行星（游戏一次只支持一个导航朝向），' +
-        '落到该行星后，该行星上的所有建筑都切换为自绘线。写操作，风险 1：执行前玩家必须确认。',
-      promptSnippet: '建立多个机甲→行星/建筑方位指示',
+        '落到该行星后，该行星上的所有建筑/矿脉都切换为自绘线。写操作，风险 1：执行前玩家必须确认。',
+      promptSnippet: '建立多个机甲→行星/建筑/矿脉方位指示',
       promptGuidelines: [
-        'Use game_tether_add 当玩家说“给这些建筑/星球都做个方位指示”时；先用 game_get_entities/game_get_planet 确认目标。',
-        'kind=planet 时用 planetId（缺省当前星球）；kind=building 时用 buildingId，可选 planetId；可以多次调用添加多个目标。',
-        '本星球建筑会同时显示多条线；跨行星原生导航一次只指一个目标行星，不要声称所有跨行星线都同时可见。',
+        'Use game_tether_add 当玩家说“给这些建筑/星球/矿脉都做个方位指示”时；先用 game_get_entities/game_get_planet 确认目标。',
+        'kind=planet 时用 planetId（缺省当前星球）；kind=building 时用 buildingId，可选 planetId；kind=vein 时用 veinId，可选 planetId。',
+        '本星球建筑/矿脉会同时显示多条线；跨行星原生导航一次只指一个目标行星，不要声称所有跨行星线都同时可见。',
       ],
       parameters: Type.Object({
-        kind: Type.String({ enum: ['planet', 'building'], description: 'planet 或 building' }),
+        kind: Type.String({ enum: ['planet', 'building', 'vein'], description: 'planet / building / vein' }),
         planetId: Type.Optional(Type.Integer({ description: '行星 id，缺省当前星球' })),
         buildingId: Type.Optional(Type.Integer({ description: 'kind=building 时必填' })),
+        veinId: Type.Optional(Type.Integer({ description: 'kind=vein 时必填' })),
       }),
       timeoutMs: 8000,
       risk: 1,
@@ -420,7 +426,7 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
     writeTool(host, {
       name: 'game_tether_list',
       label: '方位列表',
-      description: '列出当前方位指示（行星/建筑及名称）。只读，不弹确认。',
+      description: '列出当前方位指示（行星/建筑/矿脉及名称）。只读，不弹确认。',
       promptSnippet: '查看当前方位指示',
       promptGuidelines: ['Use game_tether_list 当玩家问“现在连了哪些目标”时。'],
       parameters: Type.Object({}),
@@ -431,16 +437,17 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       name: 'game_undo_last_write',
       label: '撤销上一步',
       description:
-        '撤销最近一次由本 mod 执行的写操作（视角、标记、面板、研究）。' +
-        '只保留一层撤销栈；没有可撤销操作时返回明确错误。',
-      promptSnippet: '撤销上一步写操作',
+        '撤销最近一次由本 mod 执行的写操作（视角、标记、面板、研究、配方、存储、投料等）。' +
+        '只保留一层撤销栈；最近一次写操作不可撤销（如丢物品/取成品/方位指示）时返回明确错误；' +
+        '写操作，执行前玩家必须确认。',
+      promptSnippet: '撤销上一步写操作（需要确认）',
       promptGuidelines: [
         'Use game_undo_last_write 当玩家说“撤销/恢复刚才那一步”时。',
-        '撤销不是写操作确认流程的一部分；只撤销最近一次，不要连续撤销多次。',
+        '只撤销最近一次，不要连续撤销多次；不可撤销的操作会返回错误。',
       ],
       parameters: Type.Object({}),
       timeoutMs: 8000,
-      risk: 0,
+      risk: 1,
     }),
   ];
 }

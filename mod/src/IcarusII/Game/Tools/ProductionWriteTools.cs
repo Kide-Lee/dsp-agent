@@ -38,7 +38,7 @@ namespace IcarusII.Game.Tools
             if (!GameRefs.IsInGame || GameMain.mainPlayer == null)
                 throw Fail("当前不在游戏内");
 
-            var planet = GameToolFormat.ResolvePlanet(args);
+            var planet = GameToolFormat.ResolvePlanetStrict(args);
             if (planet == null || planet.factory == null)
                 throw Fail("目标行星的工厂尚未加载");
 
@@ -164,6 +164,10 @@ namespace IcarusII.Game.Tools
             if (recipe.Type != expected)
                 throw Fail("配方 " + recipe.name + " 的类型与建筑不匹配（需要 "
                     + expected.ToString() + "，实际 " + recipe.Type.ToString() + "）");
+
+            var history = GameMain.history;
+            if (history == null || !history.RecipeUnlocked(recipeId))
+                throw Fail("配方 " + recipe.name + " 尚未解锁");
         }
 
         private static void ApplyRecipe(PlanetFactory factory, Player player, int buildingId, int recipeId)

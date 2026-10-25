@@ -31,7 +31,7 @@ VERSION="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['versi
 [[ -n "$VERSION" ]] || die "manifest.json 里没有 version_number"
 
 MOD_VERSION="$(grep -oP 'PluginVersion\s*=\s*"\K[^"]+' "$ROOT/mod/src/IcarusII/Plugin.cs" || true)"
-[[ "$MOD_VERSION" == "$VERSION" ]] || warn "manifest 版本 $VERSION 与 PluginVersion $MOD_VERSION 不一致"
+[[ "$MOD_VERSION" == "$VERSION" ]] || die "manifest 版本 $VERSION 与 PluginVersion $MOD_VERSION 不一致"
 
 # ---------------------------------------------------------------- 编译
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
@@ -84,11 +84,11 @@ fi
 
 # ---------------------------------------------------------------- 校验
 log "校验"
-python3 - "$STAGE" "$VERSION" <<'PY'
+python3 - "$STAGE" "$VERSION" "${SKIP_UI:-0}" <<'PY'
 import json, os, re, sys
 from struct import unpack
 
-stage, version = sys.argv[1], sys.argv[2]
+stage, version, skip_ui = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 fail = []
 
 def check(cond, msg):
@@ -114,8 +114,9 @@ else:
 base = os.path.join(stage, "plugins", "IcarusII")
 check(os.path.isfile(os.path.join(base, "IcarusII.dll")), "plugins/IcarusII/IcarusII.dll")
 check(os.path.isfile(os.path.join(base, "sidecar", "icarus-ii-sidecar.exe")), "sidecar 在 plugins/IcarusII/sidecar/")
-check(os.path.isfile(os.path.join(base, "ui", "icarusii-ui")) or True,
-      "ui bundle（可选，SKIP_UI=1 时没有）")
+ui_path = os.path.join(base, "ui", "icarusii-ui")
+check(os.path.isfile(ui_path) != skip_ui,
+      "ui bundle 与 SKIP_UI 一致" + ("（变体包不应有）" if skip_ui else ""))
 
 sys.exit(1 if fail else 0)
 PY

@@ -510,7 +510,10 @@ namespace IcarusII.Tests
             Eq("game_tether_clear 工具名", "game_tether_clear", Protocol.ToolTetherClear);
             Eq("game_tether_list 工具名", "game_tether_list", Protocol.ToolTetherList);
             Eq("game_take_output 工具名", "game_take_output", Protocol.ToolTakeOutput);
-            Eq("game_dismantle 工具名", "game_dismantle", Protocol.ToolDismantle);
+            Eq("game_place_marker 工具名", "game_place_marker", Protocol.ToolPlaceMarker);
+            Check("写工具表含撤销", Protocol.IsWriteTool(Protocol.ToolUndoLastWrite));
+            Check("写工具表含标记", Protocol.IsWriteTool(Protocol.ToolPlaceMarker));
+            Check("写工具表不含只读工具", !Protocol.IsWriteTool("game_get_entity"));
 
             // ---- 受控写脚本：一次确认的脚本租约 ----
             Eq("confirm_release 类型名", "confirm_release", Protocol.ConfirmRelease);
@@ -551,6 +554,43 @@ namespace IcarusII.Tests
             Check("脚本租约次数用尽",
                 !leases.TryConsume(scriptWriteCall, out var leaseErr3) &&
                 leaseErr3 == Protocol.CodeConfirmationExpired);
+
+            var badNames = ConfirmRequestInfo.Parse(JsonValue.Parse(
+                @"{
+                    ""requestId"": ""r2"", ""callId"": ""script"", ""tool"": ""run_script"",
+                    ""argsHash"": ""abc"", ""token"": ""tok2"", ""title"": ""x"",
+                    ""body"": ""x"", ""risk"": 2, ""timeoutMs"": 60000, ""maxWrites"": 3,
+                    ""writeNames"": []
+                }"));
+            var badNamesSvc = new ConfirmationService();
+            Check("空 writeNames 可注册", badNamesSvc.TryRegister(badNames, out _));
+            Check("空 writeNames 租约被拒绝", !badNamesSvc.TryResolve("r2", true, out _));
+
+            var wrongTool = ConfirmRequestInfo.Parse(JsonValue.Parse(
+                @"{
+                    ""requestId"": ""r3"", ""callId"": ""call"", ""tool"": ""game_focus_camera"",
+                    ""argsHash"": ""abc"", ""token"": ""tok3"", ""title"": ""x"",
+                    ""body"": ""x"", ""risk"": 2, ""timeoutMs"": 60000, ""maxWrites"": 3,
+                    ""writeNames"": [""game_set_recipe""]
+                }"));
+            var wrongToolSvc = new ConfirmationService();
+            Check("非 run_script 可注册", wrongToolSvc.TryRegister(wrongTool, out _));
+            Check("非 run_script 租约被拒绝", !wrongToolSvc.TryResolve("r3", true, out _));
+
+            // ---- link_card 载荷 ----
+            var linkPlanet = LinkCardInfo.Parse(JsonValue.Parse(
+                "{\"kind\":\"planet\",\"planetId\":103,\"name\":\"文昌六\"}"));
+            Check("link_card 星球卡", linkPlanet != null && linkPlanet.Kind == "planet");
+            var linkBuilding = LinkCardInfo.Parse(JsonValue.Parse(
+                "{\"kind\":\"building\",\"planetId\":103,\"buildingId\":6956,\"name\":\"制造台\"}"));
+            Check("link_card 建筑卡", linkBuilding != null && linkBuilding.BuildingId == 6956);
+            var linkVein = LinkCardInfo.Parse(JsonValue.Parse(
+                "{\"kind\":\"vein\",\"planetId\":103,\"veinId\":415,\"name\":\"铁矿脉\"}"));
+            Check("link_card 矿脉卡", linkVein != null && linkVein.VeinId == 415);
+            Check("link_card 缺 name 拒绝", LinkCardInfo.Parse(JsonValue.Parse(
+                "{\"kind\":\"planet\",\"planetId\":103}")) == null);
+            Check("link_card 建筑缺 id 拒绝", LinkCardInfo.Parse(JsonValue.Parse(
+                "{\"kind\":\"building\",\"planetId\":103,\"name\":\"x\"}")) == null);
 
             // 名字可改，但键必须稳定：键里不允许出现存档名
             Check("saveKey 不含存档名", !bind["saveKey"].AsString().Contains("我的档"));

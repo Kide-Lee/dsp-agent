@@ -169,7 +169,7 @@ async function run() {
       check('方位添加工具存在', !!tools.find((tool) => tool.name === 'game_tether_add'));
       check('方位清除工具存在', !!tools.find((tool) => tool.name === 'game_tether_clear'));
       check('方位列表工具存在', !!tools.find((tool) => tool.name === 'game_tether_list'));
-      check('拆除工具存在', !!tools.find((tool) => tool.name === 'game_dismantle'));
+      check('拆除工具已按 design §9.1 移除', !tools.find((tool) => tool.name === 'game_dismantle'));
     }
 
     const empty = makeSession();
@@ -655,28 +655,27 @@ async function run() {
   }
 
 
-  console.log('── 15. 拆除确认：不可撤销警告 ──');
+  console.log('── 15. 标记确认：可撤销写操作 ──');
   {
     const { socket, session, state } = makeSession({
       callOptions: {
-        name: 'game_dismantle',
-        args: { buildingIds: [11, 12] },
-        risk: 2,
+        name: 'game_place_marker',
+        args: { latitude: 1.5, longitude: 2.5, text: '矿点' },
+        risk: 1,
         timeoutMs: 800,
       },
     });
-    session.handleFrame(Buffer.from(JSON.stringify(hello(['game.build.v1']))), false);
+    session.handleFrame(Buffer.from(JSON.stringify(hello(['game.write.v1']))), false);
     session.handleFrame(
-      Buffer.from(JSON.stringify({ v: 1, id: 'm-150', type: 'prompt', payload: { text: '拆掉这两个' } })),
+      Buffer.from(JSON.stringify({ v: 1, id: 'm-150', type: 'prompt', payload: { text: '在这里标一下' } })),
       false,
     );
     const confirm = await waitFor(() => socket.frames.some((f) => f.type === 'confirm_request')) &&
       socket.frames.find((f) => f.type === 'confirm_request');
-    check('拆除先发 confirm_request', !!confirm);
-    check('拆除确认 title', confirm?.payload?.title === '拆除建筑？');
-    check('拆除确认警告不可撤销', String(confirm?.payload?.body ?? '').includes('不可撤销'));
-    check('拆除确认 body 含建筑 id', String(confirm?.payload?.body ?? '').includes('#11'));
-    check('拆除确认 risk=2', confirm?.payload?.risk === 2);
+    check('标记先发 confirm_request', !!confirm);
+    check('标记确认 title', confirm?.payload?.title === '新增标记？');
+    check('标记确认 body 含文字', String(confirm?.payload?.body ?? '').includes('矿点'));
+    check('标记确认 risk=1', confirm?.payload?.risk === 1);
     session.handleFrame(
       Buffer.from(
         JSON.stringify({
@@ -689,8 +688,8 @@ async function run() {
       false,
     );
     await waitFor(() => state.result !== null);
-    check('拆除拒绝后不执行', state.result?.error?.code === 'confirmation_denied');
-    check('拆除拒绝后没有 tool_call', !socket.frames.some((f) => f.type === 'tool_call'));
+    check('标记拒绝后不执行', state.result?.error?.code === 'confirmation_denied');
+    check('标记拒绝后没有 tool_call', !socket.frames.some((f) => f.type === 'tool_call'));
   }
 
   console.log();

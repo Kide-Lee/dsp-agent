@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-/** 实体链接卡片提取/历史挂接测试（离线，协议附录 A.15）。 */
+/** 实体链接卡片提取/历史挂接/持久化校验测试（离线，协议附录 A.9.1）。 */
 import {
   extractLinkCard,
   attachLinkCards,
   compactLinkCard,
+  isStoredLinkCard,
 } from '../dist/link/card.js';
 import { buildLinkCardPayload } from '../dist/protocol.js';
 
@@ -74,6 +75,25 @@ const messages = [
 ];
 const attached = attachLinkCards(messages, [{ prompt: '给 6956 做方位指示', card: b }]);
 check('按提问挂到最终回答', attached[1].linkCards?.length === 1 && attached[3].linkCards === undefined);
+
+check('持久化校验接受建筑卡', isStoredLinkCard(b));
+check('持久化校验接受星球卡', isStoredLinkCard(p));
+check('持久化校验接受矿脉卡', isStoredLinkCard(v));
+check('持久化校验拒绝缺 veinId', !isStoredLinkCard({ kind: 'vein', planetId: 1, name: 'x' }));
+check('持久化校验拒绝空名', !isStoredLinkCard({ kind: 'planet', planetId: 1, name: '  ' }));
+
+const dupMessages = [
+  { role: 'user', text: '现在什么情况' },
+  { role: 'assistant', text: '回答 A' },
+  { role: 'user', text: '现在什么情况' },
+  { role: 'assistant', text: '回答 B' },
+];
+const dupAttached = attachLinkCards(dupMessages, [
+  { prompt: '现在什么情况', reply: '回答 A', card: p },
+  { prompt: '现在什么情况', reply: '回答 B', card: b },
+]);
+check('重复提问按回答消歧 A', dupAttached[1].linkCards?.[0]?.kind === 'planet');
+check('重复提问按回答消歧 B', dupAttached[3].linkCards?.[0]?.kind === 'building');
 
 console.log(failed === 0 ? `\n✅ link-card 测试全部通过（${passed} 项）` : `\n❌ ${failed}/${passed + failed} 项失败`);
 process.exit(failed === 0 ? 0 : 1);

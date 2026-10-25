@@ -117,6 +117,7 @@ namespace IcarusII.Game.Tools
             Register(new PlanetsTool());
             Register(new LogisticsTool());
             Register(new FocusCameraTool());
+            Register(new PlaceMarkerTool());
             Register(new OpenPanelTool());
             Register(new SetResearchTool());
             Register(new DropItemTool());
@@ -132,23 +133,12 @@ namespace IcarusII.Game.Tools
             Register(new TetherClearTool());
             Register(new TetherListTool());
             Register(new TakeOutputTool());
-            Register(new DismantleTool());
             Register(new UndoLastWriteTool());
         }
 
         private static bool IsWriteTool(string name)
         {
-            return name == "game_focus_camera"
-                || name == "game_open_panel" || name == "game_set_research"
-                || name == "game_drop_item" || name == "game_set_recipe"
-                || name == "game_set_assembler_batch" || name == "game_storage_set_filter"
-                || name == "game_storage_set_limit" || name == "game_storage_move"
-                || name == "game_storage_deposit" || name == "game_storage_withdraw"
-                || name == "game_feed_input" || name == "game_tether_add"
-                || name == "game_tether_clear"
-                || name == "game_take_output"
-                || name == "game_dismantle" || name == "game_tether_add"
-                || name == "game_tether_clear" || name == "game_undo_last_write";
+            return Protocol.IsWriteTool(name);
         }
 
         private void Register(IGameToolHandler handler)
@@ -300,6 +290,12 @@ namespace IcarusII.Game.Tools
                     call.StartTick, GameMain.gameTick, false);
                 _log?.LogInfo($"[tool] 完成 {call.Name} callId={call.CallId} elapsed={elapsed}ms"
                     + " truncated=" + (result.Truncated ? "true" : "false"));
+                if (IsWriteTool(call.Name))
+                {
+                    // 写操作后读缓存全部失效：否则随后的 game_get_* / tether_list
+                    // 可能在 5 秒内返回写之前的状态。
+                    _cache.Clear();
+                }
                 if (call.Name != "game_export_prototypes" && call.Name != "game_export_text"
                     && !IsWriteTool(call.Name))
                 {

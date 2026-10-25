@@ -110,20 +110,14 @@ namespace IcarusII.UI
         private Text _transcript;
         private ScrollRect _scroll;
         private InputField _input;
-        private ScrollRect _inputScrollRect;
-        private RectTransform _inputViewport;
-        private RectTransform _inputContent;
-        /// <summary>输入栏根节点；ask 期间被 choose 替换。</summary>
+        /// <summary>输入栏根节点；ask 期间被 choose 替换（只切 active，不改尺寸）。</summary>
         private RectTransform _inputRoot;
-        /// <summary>输出区根节点；底部让给输入栏/choose 时改它的 offsetMin.y。</summary>
+        /// <summary>输出区根节点；尺寸/底边由 prefab 固定，运行期只做滚动。</summary>
         private RectTransform _outputRoot;
         /// <summary>当前替换输入栏的面板（目前是 choose；将来可扩展其它面板）。</summary>
         private RectTransform _bottomReplacement;
         private RectTransform _chooseRoot;
-        private RectTransform _inputFieldRect;
         private AskPanel _askPanel;
-        private float _inputHeight = 100f;
-        private bool _inputHeightDirty;
         private bool _caretPrimed;
         private int _iconMapTick;
         private bool _iconMapReady;
@@ -1133,26 +1127,7 @@ namespace IcarusII.UI
             }
             var inputImage = input != null ? input.GetComponent<Image>() : null;
 
-            // scroll-view 的位置/大小完全由 prefab 决定（底边距 37、工具栏 36，
-            // 正好 1px）。这里只记录 viewport/content，供文字被 ScrollRect 贴底时
-            // 做内容高度校正；不再改 scroll-view 的 anchors/offset。
-            var inputScroll = FindNode(panel, "input/editor/scroll-view", "editor/scroll-view") as RectTransform;
-            if (inputScroll != null)
-            {
-                // 输入区 content 的高度原本只有 40（小于 viewport），ScrollRect 会把它
-                // 贴到 viewport 底部，文字就跑到 toolbar 那一行。撑到 viewport 高度并
-                // 归位到顶部，文字才落在输入区里。
-                var inputViewport = inputScroll.Find("viewport") as RectTransform;
-                var inputContent = inputViewport != null
-                    ? inputViewport.Find("content") as RectTransform
-                    : null;
-                if (inputViewport != null && inputContent != null)
-                {
-                    _inputScrollRect = inputScroll.GetComponent<ScrollRect>();
-                    _inputViewport = inputViewport;
-                    _inputContent = inputContent;
-                }
-            }
+            // 输入区的位置/大小完全由 prefab 决定；运行期只查 input 节点，不碰 scroll-view。
 
             // 前四个必需；对不上就退回代码构建的界面
             if (panelImage == null || frame == null || glass == null || input == null)
@@ -1607,7 +1582,6 @@ namespace IcarusII.UI
                     if (_titleFromPrefab && ReferenceEquals(t, _titleText)) continue;
                     ApplyBodyFont(t);
                 }
-                _inputHeightDirty = true;
             }
 
             // 正文与状态栏的文字颜色（聊天内容配色，不是窗口外观）。
@@ -1665,7 +1639,6 @@ namespace IcarusII.UI
             IsOpen = open;
             _root.SetActive(open);
             if (!open) { _wantInputFocus = false; _textMaterialRebound = false; HideToolMenu(); }
-            else _inputHeightDirty = true;
 
             ApplyOpenState(open);
             if (open)
@@ -2282,8 +2255,15 @@ namespace IcarusII.UI
         {
             if (reply == null || reply.BlueprintCards == null || target == null) return null;
             var template = target.Kind == "planet" ? reply.StarCardTemplate : reply.BuildingCardTemplate;
-            if (template == null) return null;
-            if (HasLinkCard(target)) return null;
+            if (template == null)
+            {
+                // prefab 被整窗重建时，link 模板可能缺失；退回蓝图卡模板，
+                // 至少保留名称/描述/聚焦，不要静默丢功能。
+                template = reply.CardTemplate;
+                Plugin.Log.LogWarning("[link] 缺少建筑/星球卡模板，回退蓝图卡模板");
+                if (template == null) return null;
+            }
+            if (HasLinkCard(reply, target)) return null;
 
             var go = UnityEngine.Object.Instantiate(template.gameObject, reply.BlueprintCards, false);
             go.name = "link-card-" + (++_itemSeq);
@@ -2309,18 +2289,25 @@ namespace IcarusII.UI
                 if (targets[i] != null) AddLinkCard(reply, targets[i]);
         }
 
-        private bool HasLinkCard(GameTether.Target target)
+        /// <summary>只在本条回答内去重：同一实体在不同回合被再次引用时，应各有自己的卡片。</summary>
+        private static bool HasLinkCard(ReplyView reply, GameTether.Target target)
         {
-            if (target == null) return false;
-            for (int i = 0; i < _items.Count; i++)
+            if (reply == null || target == null) return false;
+            for (int c = 0; c < reply.LinkCards.Count; c++)
             {
-                var reply = _items[i].Reply;
-                if (reply == null) continue;
-                for (int c = 0; c < reply.LinkCards.Count; c++)
-                {
-                    var link = reply.LinkCards[c];
-                    if (link != null && link.LinkTarget != null && link.LinkTarget.Key == target.Key) return true;
-                }
+                var link = reply.LinkCards[c];
+                if (link != null && link.LinkTarget != null && link.LinkTarget.Key == target.Key) return true;
+            }
+            return false;
+        }
+
+        private static bool LineHasLinkTarget(Line line, GameTether.Target target)
+        {
+            if (line.LinkTargets == null || target == null) return false;
+            for (int i = 0; i < line.LinkTargets.Count; i++)
+            {
+                var existing = line.LinkTargets[i];
+                if (existing != null && existing.Key == target.Key) return true;
             }
             return false;
         }
@@ -2398,16 +2385,13 @@ namespace IcarusII.UI
 
         private void OnTetherAdded(GameTether.Target target)
         {
-            if (target == null) { Plugin.Log.LogWarning("[link] Added 事件 target=null"); return; }
-            Plugin.Log.LogInfo("[link] Added " + target.Key + " name=" + target.Name +
-                " content=" + (_content != null) + " replyTemplate=" + (_replyTemplate != null));
+            if (target == null) return;
             AppendLinkTarget(target);
         }
 
         private void AppendLinkTarget(GameTether.Target target)
         {
             if (target == null) return;
-            if (HasLinkCard(target)) { Plugin.Log.LogInfo("[link] 卡片已存在，只刷新"); RefreshLinkCards(); return; }
             if (_content == null || _replyTemplate == null)
             {
                 // 窗口还没创建（历史回放）：先记在最后一条助手行上，Create 后补建。
@@ -2415,6 +2399,7 @@ namespace IcarusII.UI
                 {
                     var line = _lines[i];
                     if (line.Kind != LineKind.Assistant || line.TurnId != _currentTurnId) continue;
+                    if (LineHasLinkTarget(line, target)) return;
                     if (line.LinkTargets == null) line.LinkTargets = new List<GameTether.Target>();
                     line.LinkTargets.Add(target);
                     _lines[i] = line;
@@ -2434,16 +2419,16 @@ namespace IcarusII.UI
                 return;
             }
             int index = FindReplyItemForCard();
-            Plugin.Log.LogInfo("[link] reply index=" + index + " items=" + _items.Count);
             if (index < 0 || index >= _items.Count || _items[index].Reply == null) return;
             var item = _items[index];
+            if (HasLinkCard(item.Reply, target)) { RefreshLinkCards(); return; }
             var view = AddLinkCard(item.Reply, target);
-            Plugin.Log.LogInfo("[link] AddLinkCard result=" + (view != null));
             if (view == null) return;
             var lineIndex = FindLineIndex(item.Go);
             if (lineIndex >= 0)
             {
                 var line = _lines[lineIndex];
+                if (LineHasLinkTarget(line, target)) return;
                 if (line.LinkTargets == null) line.LinkTargets = new List<GameTether.Target>();
                 line.LinkTargets.Add(target);
                 _lines[lineIndex] = line;
@@ -2482,11 +2467,7 @@ namespace IcarusII.UI
                     changed = true;
                 }
             }
-            if (changed)
-            {
-                _dirty = true;
-                Plugin.Log.LogInfo("[link] 聊天窗打开，已刷新 " + _items.Count + " 组卡片快照");
-            }
+            if (changed) _dirty = true;
         }
 
         private void OnTetherChanged()
@@ -2497,7 +2478,8 @@ namespace IcarusII.UI
         private void FocusLinkCard(CardView view)
         {
             if (view == null || view.LinkTarget == null) return;
-            GameLinkFocus.Focus(view.LinkTarget);
+            if (!GameLinkFocus.Focus(view.LinkTarget))
+                SetStatus(Strings.Get("link.focus.failed"), WarnColor);
         }
 
         private void ToggleLinkCard(CardView view)
@@ -6595,7 +6577,6 @@ namespace IcarusII.UI
             if (IsOpen && _input != null && _input.text != _lastInputText)
             {
                 _lastInputText = _input.text;
-                _inputHeightDirty = true;
                 // 文本变化后 InputField 可能重建 Caret 网格，下一帧重新补一次。
                 _caretPrimed = false;
                 if (!string.IsNullOrEmpty(_input.text) && !_textMaterialRebound)
@@ -6604,8 +6585,6 @@ namespace IcarusII.UI
                     RebindInputTextMaterial(_input.textComponent, "首次输入");
                 }
             }
-
-            if (IsOpen && _inputHeightDirty && !AskShowing) UpdateInputHeight();
         }
 
 
@@ -7049,16 +7028,10 @@ namespace IcarusII.UI
             _outputRoot = FindNode(panel, "output") as RectTransform;
             _inputRoot = FindNode(panel, "input") as RectTransform;
             _chooseRoot = FindNode(panel, "choose") as RectTransform;
-            _inputFieldRect = _inputContent != null
-                ? _inputContent.Find("InputField") as RectTransform
-                : null;
 
             // prefab 里 choose 是设计态可见的；运行时默认收起，输入栏默认展开。
             if (_inputRoot != null) _inputRoot.gameObject.SetActive(true);
             if (_chooseRoot != null) _chooseRoot.gameObject.SetActive(false);
-
-            _inputHeightDirty = true;
-            ApplyBottomLayout();
         }
 
         private void WireAskPanel(RectTransform panel)
@@ -7131,7 +7104,7 @@ namespace IcarusII.UI
         public bool ConfirmationShowing => _askPanel != null && _askPanel.IsConfirming;
 
         /// <summary>
-        /// 用另一个底部面板替换 input（ask 用 choose）。只切 active 和输出区高度，
+        /// 用另一个底部面板替换 input（ask 用 choose）。只切 active，
         /// 不改任何静态 RectTransform 尺寸；将来别的面板也可以复用。
         /// </summary>
         private void BeginBottomReplacement(RectTransform panel)
@@ -7140,7 +7113,6 @@ namespace IcarusII.UI
             if (_inputRoot != null) _inputRoot.gameObject.SetActive(false);
             _bottomReplacement = panel;
             panel.gameObject.SetActive(true);
-            ApplyBottomLayout();
         }
 
         private void EndBottomReplacement()
@@ -7148,9 +7120,6 @@ namespace IcarusII.UI
             if (_bottomReplacement != null) _bottomReplacement.gameObject.SetActive(false);
             _bottomReplacement = null;
             if (_inputRoot != null) _inputRoot.gameObject.SetActive(true);
-            _inputHeightDirty = true;
-            UpdateInputHeight(force: true);
-            ApplyBottomLayout();
         }
 
         private void OnAskCompleted(List<AskAnswer> answers)
@@ -7171,96 +7140,13 @@ namespace IcarusII.UI
             ConfirmationChosen?.Invoke(accepted);
         }
 
-        /// <summary>输出区底边 = 底部面板顶边 + 2px。input 和 choose 共用这条规则。</summary>
-        private void ApplyBottomLayout()
-        {
-            if (_outputRoot == null) return;
-
-            var height = _bottomReplacement != null
-                ? _bottomReplacement.rect.height
-                : _inputHeight;
-            if (height <= 0f) height = _inputHeight > 0f ? _inputHeight : InputMinHeight;
-
-            var target = BottomMargin + height + BottomPanelGap;
-            var min = _outputRoot.offsetMin;
-            if (Mathf.Abs(min.y - target) < 0.1f) return;
-
-            var atBottom = _scroll != null && _scroll.verticalNormalizedPosition <= 0.01f;
-            min.y = target;
-            _outputRoot.offsetMin = min;
-            if (atBottom) ScrollToBottomAfterContentChange();
-        }
-
-        /// <summary>
-        /// 按输入文字高度把 input 从 100 撑到 choose 的高度（200），
-        /// 到顶后才让内部 ScrollRect 出现滚动条，并同步收缩 output。
-        /// </summary>
-        private void UpdateInputHeight(bool force = false)
-        {
-            if (_input == null || _inputRoot == null || _inputContent == null || _inputFieldRect == null)
-                return;
-            if (AskShowing) return;
-
-            var text = _input.textComponent;
-            if (text == null) return;
-
-            var width = text.rectTransform.rect.width;
-            if (width <= 1f)
-            {
-                _inputHeightDirty = true;
-                return;
-            }
-
-            var textHeight = text.preferredHeight;
-            if (textHeight < 1f) textHeight = text.fontSize * 1.2f;
-
-            var maxHeight = _chooseRoot != null && _chooseRoot.rect.height > 0f
-                ? _chooseRoot.rect.height
-                : InputMaxHeight;
-            var desired = InputToolbarHeight + Mathf.Max(InputMinViewport, textHeight + InputTextPadding);
-            desired = Mathf.Clamp(desired, InputMinHeight, maxHeight);
-            var viewport = desired - InputToolbarHeight;
-            var contentHeight = Mathf.Max(viewport, textHeight + InputTextPadding);
-
-            var rootSize = _inputRoot.sizeDelta;
-            var contentSize = _inputContent.sizeDelta;
-            var fieldSize = _inputFieldRect.sizeDelta;
-            var changed = force
-                          || Mathf.Abs(rootSize.y - desired) > 0.5f
-                          || Mathf.Abs(contentSize.y - contentHeight) > 0.5f
-                          || Mathf.Abs(fieldSize.y - contentHeight) > 0.5f;
-
-            _inputHeight = desired;
-            _inputHeightDirty = false;
-            if (!changed) return;
-
-            rootSize.y = desired;
-            _inputRoot.sizeDelta = rootSize;
-            contentSize.y = contentHeight;
-            _inputContent.sizeDelta = contentSize;
-            fieldSize.y = contentHeight;
-            _inputFieldRect.sizeDelta = fieldSize;
-
-            Canvas.ForceUpdateCanvases();
-            ApplyBottomLayout();
-
-            if (_inputScrollRect != null)
-            {
-                if (contentHeight <= viewport + 0.5f)
-                    _inputScrollRect.verticalNormalizedPosition = 1f;
-                else if (_input.isFocused && _input.caretPosition >= (_input.text != null ? _input.text.Length : 0))
-                    _inputScrollRect.verticalNormalizedPosition = 0f;
-            }
-        }
-
-        /// <summary>输入栏高度上限（= choose 高度；prefab 里是 200）。</summary>
-        private const float InputMaxHeight = 200f;
-        private const float InputMinHeight = 100f;
-        private const float InputToolbarHeight = 37f;
-        private const float InputMinViewport = 63f;
-        private const float InputTextPadding = 8f;
-        private const float BottomMargin = 40f;
-        private const float BottomPanelGap = 2f;
+        /*
+         * 底部区域的 RectTransform 完全由 prefab 决定：
+         *   - input 固定 100 高，内部 scroll-view 自己滚动；
+         *   - output 的底边在 prefab 里已经是 142（40 + 100 + 2），与 input 顶边对齐；
+         *   - choose 是 200 高的模态面板，显示时覆盖聊天区底部，不再运行期改 output 尺寸。
+         * 运行期只切换 input/choose 的 active，不写 sizeDelta/offsetMin。
+         */
 
         /// <summary>连接断开时清空目录，避免还显示一份已经不可用的工具。</summary>
         public void ClearToolCatalog()
@@ -7349,7 +7235,6 @@ namespace IcarusII.UI
 
         private void OnInputValueChanged(string value)
         {
-            _inputHeightDirty = true;
             if (_suppressToolMenuEvents || _keyEntryMode || !IsOpen) return;
 
             var text = value ?? string.Empty;
@@ -7544,7 +7429,6 @@ namespace IcarusII.UI
         private void SetInputText(string value, int caret)
         {
             if (_input == null) return;
-            _inputHeightDirty = true;
             _suppressToolMenuEvents = true;
             try
             {

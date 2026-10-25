@@ -111,6 +111,7 @@
 | 工具 | 说明 |
 | --- | --- |
 | `game_focus_camera` | 聚焦行星/星系/建筑；目标支持 `planet:` / `star:` / `entity:` 前缀 |
+| `game_place_marker` | 在行星上新建标记；可撤销 |
 | `game_open_panel` | 打开背包/科技树/星图/标记/机甲/复制器/统计/蓝图面板 |
 | `game_set_research` | 切换当前研究目标；只允许前置科技已满足的科技 |
 | `game_drop_item` | 把背包物品丢到当前行星地面；需手动拾回，不进入撤销栈 |
@@ -122,12 +123,11 @@
 | `game_storage_deposit` | 把背包物品存入存储；满时退剩余 |
 | `game_storage_withdraw` | 从存储取出物品到背包；背包满时留剩余 |
 | `game_feed_input` | 把背包原料直接投进生产建筑（绕过分拣器/传送带） |
-| `game_tether_add` | 建立机甲到行星/建筑的方位指示 |
+| `game_tether_add` | 建立机甲到行星/建筑/矿脉的方位指示 |
 | `game_tether_clear` | 清除本 mod 建立的方位指示 |
 | `game_tether_list` | 列出当前方位指示 |
-| `game_take_output` | 取出一台生产建筑的成品，保留配方 |
-| `game_dismantle` | 批量拆除建筑（≤50）；不可撤销 |
-| `game_undo_last_write` | 撤销最近一次写操作（单层栈） |
+| `game_take_output` | 取出一台生产建筑的成品，保留配方（不进入撤销栈） |
+| `game_undo_last_write` | 撤销最近一次可撤销写操作（单层栈；也需确认） |
 
 写操作采用 sidecar 确认 + mod 一次性令牌双门禁；拒绝、超时、换档、断线都会取消。
 

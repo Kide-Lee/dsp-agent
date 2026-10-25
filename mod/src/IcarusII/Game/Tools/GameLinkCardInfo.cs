@@ -244,7 +244,9 @@ namespace IcarusII.Game.Tools
             float perMin = period > 0f ? 60f / period : 0f;
             float speed = (float)(0.0001 * a.speedOverride * ratio);
             if (!a.replicating) speed = 0f;
-            perMin *= speed < 0.00001f ? 0f : speed * (1f + a.extraSpeed * 0.1f / a.speedOverride);
+            perMin *= speed < 0.00001f || a.speedOverride < 0.0001f
+                ? 0f
+                : speed * (1f + a.extraSpeed * 0.1f / a.speedOverride);
             bool productive = a.recipeExecuteData.productive && !a.forceAccMode;
             double inc = 0;
             if (a.speed > 0) inc = productive ? (double)(a.extraSpeed * 10.0) / a.speed : (double)(a.speedOverride * 100.0) / a.speed - 100.0;
@@ -539,10 +541,9 @@ namespace IcarusII.Game.Tools
             if (entity.tankId <= 0 || factory.factoryStorage == null) return string.Empty;
             ref var t = ref factory.factoryStorage.tankPool[entity.tankId];
             var proto = t.fluidId > 0 && LDB.items != null ? LDB.items.Select(t.fluidId) : null;
-            string name = proto != null ? proto.name : "空";
-            string icon = proto != null ? proto.iconTagString : string.Empty;
+            string label = proto != null ? proto.iconTagString + proto.name : "空";
             return string.Format(CultureInfo.InvariantCulture,
-                "{0} 储量: {1}/{2}", icon, t.fluidCount, t.fluidCapacity);
+                "{0} 储量: {1}/{2}", label, t.fluidCount, t.fluidCapacity);
         }
 
         private static string Lab(PlanetFactory factory, EntityData entity)
@@ -568,7 +569,8 @@ namespace IcarusII.Game.Tools
             ref var f = ref factory.factorySystem.fractionatorPool[entity.fractionatorId];
             string power = PowerLine(factory, f.pcId, out float ratio);
             string status = ratio < PowerSystem.kOffPower ? "电力不足" : f.isWorking ? "正常运转" : "待机";
-            return string.Format(CultureInfo.InvariantCulture, "电力: {0}\n状态: {1}\n产物: {2}", power, status, f.productId);
+            string product = f.productId > 0 ? GameToolFormat.ItemName(f.productId) : "无";
+            return string.Format(CultureInfo.InvariantCulture, "电力: {0}\n状态: {1}\n产物: {2}", power, status, product);
         }
     }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Reflection;
 using IcarusII.Common.Json;
 using UnityEngine;
 
@@ -10,6 +11,13 @@ namespace IcarusII.Game.Tools
     /// 一层撤销栈：写工具成功后压入，`game_undo_last_write` 弹出并执行。
     /// 只保留最近一次；换档/断线时清空，避免跨存档误撤销。
     /// </summary>
+    internal enum UndoResult
+    {
+        None,
+        Undone,
+        NotUndoable,
+    }
+
     internal static class WriteActionStack
     {
         private sealed class Entry
@@ -25,17 +33,27 @@ namespace IcarusII.Game.Tools
             _last = new Entry { Description = description, Undo = undo };
         }
 
-        public static bool TryUndo(out string description)
+        /// <summary>
+        /// 记录一次已经发生、但无法一键撤销的写操作。
+        /// 必须占用栈顶：否则 `game_undo_last_write` 会跳过它，去撤销更早的无关操作。
+        /// </summary>
+        public static void MarkNonUndoable(string description)
+        {
+            _last = new Entry { Description = description, Undo = null };
+        }
+
+        public static UndoResult TryUndo(out string description)
         {
             description = null;
             var entry = _last;
-            if (entry == null) return false;
+            if (entry == null) return UndoResult.None;
             _last = null;
+            description = entry.Description;
+            if (entry.Undo == null) return UndoResult.NotUndoable;
             try
             {
-                entry.Undo?.Invoke();
-                description = entry.Description;
-                return true;
+                entry.Undo();
+                return UndoResult.Undone;
             }
             catch
             {
@@ -228,6 +246,85 @@ namespace IcarusII.Game.Tools
         }
     }
 
+    /// <summary>
+    /// 新建标记（M4）。M5 曾删除该工具，导致老 sidecar + 新 mod 出现 tool_not_found；
+    /// 这里恢复实现并保留原有的两字简述限制，保证 game.write.v1 的工具集合不缩水。
+    /// </summary>
+    internal sealed class PlaceMarkerTool : WriteToolBase
+    {
+        public override string Name => "game_place_marker";
+
+        private static void SetMarkerVisual(MarkerComponent marker, float height, float radius)
+        {
+            // MarkerComponent.height/radius 只有 getter；用 backing field 设置默认可视高度。
+            var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+            var h = typeof(MarkerComponent).GetField("<height>k__BackingField", flags);
+            var r = typeof(MarkerComponent).GetField("<radius>k__BackingField", flags);
+            h?.SetValue(marker, height);
+            r?.SetValue(marker, radius);
+        }
+
+        protected override GameToolJobResult Execute(JsonValue args)
+        {
+            if (!GameRefs.IsInGame) throw Fail("当前不在游戏内");
+            var data = GameMain.data;
+            if (data == null || data.galacticDigital == null) throw Fail("银河数字系统尚未就绪");
+
+            int planetId = args["planetId"].AsInt(0);
+            var planet = planetId > 0
+                ? GameMain.galaxy?.PlanetById(planetId)
+                : GameMain.mainPlayer?.planetData;
+            if (planet == null) throw Fail("行星不存在或尚未加载");
+
+            var text = args["text"].AsString(null);
+            if (string.IsNullOrWhiteSpace(text)) throw Fail("text 不能为空");
+
+            // MarkerUIRenderer.PopulateMinimal 内部固定只有 2 个 quad 缓冲：
+            // word 超过 2 个字符会直接抛 IndexOutOfRangeException。
+            // 游戏原生标记的“简述”也只有两字，完整内容放 name。
+            var brief = text.Trim();
+            if (brief.Length > 2) brief = brief.Substring(0, 2);
+
+            var marker = new MarkerComponent();
+            marker.Reset();
+            marker.astroId = planet.id;
+            var lat = args["latitude"];
+            var lon = args["longitude"];
+            if (lat != null && lon != null && !lat.IsNull && !lon.IsNull)
+            {
+                var altitude = args["altitude"] != null ? args["altitude"].AsDouble(0) : 0.0;
+                marker.pos = GameToolFormat.PositionFromLatLon(planet, lat.AsDouble(0), lon.AsDouble(0), altitude);
+            }
+            else
+            {
+                // 兼容旧调用；新工具链应优先用经纬度。
+                var position = args["position"];
+                if (position == null || !position.IsObject) throw Fail("需要 latitude+longitude，或兼容的 position{x,y,z}");
+                marker.pos = new Vector3(
+                    (float)position["x"].AsDouble(0),
+                    (float)position["y"].AsDouble(0),
+                    (float)position["z"].AsDouble(0));
+            }
+            marker.word = brief;
+            marker.name = text;
+            marker.icon = args["icon"].AsInt(0);
+            marker.color = 0;
+            SetMarkerVisual(marker, 12.5f, 1.5f);
+            marker.visibility = EMarkerVisibility.LocalPlanet;
+            marker.detailLevel = EMarkerDetailLevel.BriefInfo;
+
+            var gid = data.galacticDigital.AddMarkerComponent(marker);
+            if (gid <= 0) throw Fail("新增标记失败（可能已达到上限）");
+            WriteActionStack.Push("删除刚新增的标记", () =>
+            {
+                var digital = GameMain.data?.galacticDigital;
+                if (digital != null) digital.RemoveMarkerComponent(gid);
+            });
+            var note = brief == text.Trim() ? string.Empty : "（地图简述显示前两字，完整名称保存在标记详情）";
+            return Ok($"已在 {planet.displayName} 新建标记「{text}」{note}");
+        }
+    }
+
     internal sealed class OpenPanelTool : WriteToolBase
     {
         public override string Name => "game_open_panel";
@@ -344,7 +441,18 @@ namespace IcarusII.Game.Tools
             // 不再用反射直接写 currentTech。
             history.ResumeTechQueue();
             if (history.currentTech != proto.ID)
+            {
+                // ResumeTechQueue 可能已经改过队列/currentTech；失败时恢复现场，
+                // 不能把“半切换”的研究队列留给存档。
+                try
+                {
+                    Array.Copy(previousQueue, queue, Math.Min(previousQueue.Length, queue.Length));
+                    if (previousCurrent > 0) history.ResumeTechQueue();
+                    else history.PauseTechQueue();
+                }
+                catch { /* 游戏状态异常时保留原始错误 */ }
                 throw Fail("游戏拒绝切换研究目标（前置或队列状态不满足）");
+            }
 
             WriteActionStack.Push($"恢复研究目标 {previousCurrent}", () =>
             {
@@ -409,6 +517,8 @@ namespace IcarusII.Game.Tools
                 throw Fail("从背包取物失败（可能物品已被其他操作移走）");
 
             player.ThrowTrash(itemId, count, itemInc, 0, 0);
+            WriteActionStack.MarkNonUndoable("丢弃 " + proto.name + " ×" + count.ToString(CultureInfo.InvariantCulture)
+                + "（落在地面，需手动拾回）");
 
             var extra = JsonValue.NewObject();
             extra.Set("itemId", itemId);
@@ -454,8 +564,12 @@ namespace IcarusII.Game.Tools
 
         protected override GameToolJobResult Execute(JsonValue args)
         {
-            if (!WriteActionStack.TryUndo(out var description))
+            if (!GameRefs.IsInGame) throw Fail("当前不在游戏内");
+            var result = WriteActionStack.TryUndo(out var description);
+            if (result == UndoResult.None)
                 throw Fail("没有可撤销的写操作");
+            if (result == UndoResult.NotUndoable)
+                throw Fail("最近一次写操作不可撤销：" + description);
             return Ok($"已撤销：{description}");
         }
     }

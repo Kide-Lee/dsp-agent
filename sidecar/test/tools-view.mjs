@@ -109,7 +109,7 @@ function testToolGating() {
   check('game.build.v1 ⇒ 改配方工具', build.includes('game_set_recipe'));
   check('game.build.v1 ⇒ 批量改配方工具', build.includes('game_set_assembler_batch'));
   check('game.build.v1 ⇒ 取成品工具', build.includes('game_take_output'));
-  check('game.build.v1 ⇒ 拆除工具', build.includes('game_dismantle'));
+  check('game.build.v1 不含拆除工具', !build.includes('game_dismantle'));
   check('game.build.v1 ⇒ 投料工具', build.includes('game_feed_input'));
   check('game.write.v1 不含改配方工具', !writeOnly.includes('game_set_recipe'));
 

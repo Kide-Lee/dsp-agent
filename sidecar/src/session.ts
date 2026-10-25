@@ -162,6 +162,13 @@ function describeConfirmation(
   switch (name) {
     case 'game_focus_camera':
       return { title: '移动视角？', body: `目标：${fmt(args['target'])}` };
+    case 'game_place_marker':
+      return {
+        title: '新增标记？',
+        body: `行星：${fmt(args['planetId'] ?? '当前')}\n` +
+          `坐标：${fmt(args['latitude'])} / ${fmt(args['longitude'])}\n` +
+          `文字：${fmt(args['text'])}`,
+      };
     case 'game_open_panel':
       return { title: '打开游戏面板？', body: `面板：${fmt(args['panel'])}` };
     case 'game_set_research':
@@ -232,8 +239,11 @@ function describeConfirmation(
         body: args['kind'] === 'planet'
           ? `目标：行星 #${fmt(args['planetId'] ?? '当前')}\n` +
             '会设置机甲导航朝向；可同时建多个，但游戏一次只显示一个跨行星导航朝向。'
-          : `目标：建筑 #${fmt(args['buildingId'])}（行星 #${fmt(args['planetId'] ?? '当前')}）\n` +
-            '本星球会自绘机甲→建筑线；跨行星先指向目标行星，落地后切换。',
+          : args['kind'] === 'vein'
+            ? `目标：矿脉 #${fmt(args['veinId'])}（行星 #${fmt(args['planetId'] ?? '当前')}）\n` +
+              '本星球会自绘机甲→矿脉线；跨行星先指向目标行星，落地后切换。'
+            : `目标：建筑 #${fmt(args['buildingId'])}（行星 #${fmt(args['planetId'] ?? '当前')}）\n` +
+              '本星球会自绘机甲→建筑线；跨行星先指向目标行星，落地后切换。',
       };
     case 'game_tether_clear':
       return {
@@ -252,16 +262,11 @@ function describeConfirmation(
         body: `建筑：#${fmt(args['buildingId'])}\n` +
           '会把当前成品放进背包，保留配方；背包满时只取能放下的部分。',
       };
-    case 'game_dismantle': {
-      const ids = Array.isArray(args['buildingIds']) ? args['buildingIds'] : [];
-      const preview = ids.slice(0, 8).map((id) => `#${fmt(id)}`).join('、');
-      const more = ids.length > 8 ? ` 等 ${ids.length} 个` : '';
+    case 'game_undo_last_write':
       return {
-        title: '拆除建筑？',
-        body: `将拆除：${preview}${more}\n` +
-          '拆除不可撤销；游戏会按正常规则退料/清理，但建筑不会恢复。',
+        title: '撤销上一步？',
+        body: '会撤销最近一次写操作；如果最近一次是不可撤销操作（丢物品/取成品/方位指示），会返回错误。',
       };
-    }
     default:
       return { title: '确认写操作？', body: `${name}\n${stableJson(args)}` };
   }
@@ -297,6 +302,13 @@ export class Session {
 
   /** prompt 串行队列：保证同一连接上不会出现交错的流式输出。 */
   private promptChain: Promise<void> = Promise.resolve();
+
+  /**
+   * 存档切换/历史删除的串行队列。
+   * 这两个操作都要 await 会话文件，如果并发执行，后到的存档可能先回执，
+   * 让 A 存档的历史挂到 B 的会话上。
+   */
+  private bindChain: Promise<void> = Promise.resolve();
 
   /** 已发出、尚未收到 tool_result 的调用。 */
   private readonly pendingTools = new Map<string, PendingToolCall>();
@@ -442,13 +454,13 @@ export class Session {
         this.handleConfigSet(env);
         return;
       case MessageType.SaveBind:
-        void this.handleSaveBind(env);
+        this.queueBind(() => this.handleSaveBind(env));
         return;
       case MessageType.HistoryDelete:
-        void this.handleHistoryDelete(env);
+        this.queueBind(() => this.handleHistoryDelete(env));
         return;
       case MessageType.HistoryUndoCompaction:
-        void this.handleHistoryUndoCompaction(env);
+        this.queueBind(() => this.handleHistoryUndoCompaction(env));
         return;
       case MessageType.ReplyTime:
         this.handleReplyTime(env);
@@ -767,6 +779,15 @@ export class Session {
         payload: buildConfigStatePayload(view),
       }),
     );
+  }
+
+  /** 把存档切换/历史删除排到同一队列，避免异步回执乱序。 */
+  private queueBind(work: () => Promise<void>): void {
+    const run = this.bindChain.then(work);
+    this.bindChain = run.catch((err: unknown) => {
+      this.logger.error('存档/历史操作失败', errorFields(err));
+      this.sendError('internal', 'save operation failed', null);
+    });
   }
 
   /**

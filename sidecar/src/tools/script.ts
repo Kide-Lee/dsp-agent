@@ -93,14 +93,65 @@ interface WriteLease {
   token: string;
   scriptHash: string;
   maxWrites: number;
+  /** 确认卡上列出的写工具；运行期只允许这些名字。 */
+  allowedNames: readonly string[];
 }
 
-/** 只扫描字面量 dsp.call("name")；动态调用在运行期由 writeLease 兜底。 */
+/**
+ * 标记注释/字符串区域，供字面量扫描排除误报。
+ * 只用于“哪些位置是代码”；真正的参数校验仍由 mod 租约兜底。
+ */
+function codeMask(code: string): boolean[] {
+  const mask = new Array<boolean>(code.length).fill(true);
+  let i = 0;
+  while (i < code.length) {
+    const ch = code[i];
+    const next = code[i + 1];
+    if (ch === '/' && next === '/') {
+      while (i < code.length && code[i] !== '\n') { mask[i] = false; i += 1; }
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      mask[i] = false; mask[i + 1] = false; i += 2;
+      while (i < code.length && !(code[i] === '*' && code[i + 1] === '/')) {
+        mask[i] = false; i += 1;
+      }
+      if (i < code.length) { mask[i] = false; mask[i + 1] = false; i += 2; }
+      continue;
+    }
+    if (ch === '\'' || ch === '"' || ch === '`') {
+      const quote = ch;
+      mask[i] = false;
+      i += 1;
+      while (i < code.length) {
+        if (code[i] === '\\') {
+          mask[i] = false;
+          if (i + 1 < code.length) mask[i + 1] = false;
+          i += 2;
+          continue;
+        }
+        mask[i] = false;
+        if (code[i] === quote) { i += 1; break; }
+        i += 1;
+      }
+      continue;
+    }
+    i += 1;
+  }
+  return mask;
+}
+
+/**
+ * 扫描字面量 `dsp.call("name")` / `dsp["call"]("name")`。
+ * 注释和字符串里的伪调用不算；运行期仍由 writeLease.allowedNames + mod 双保险。
+ */
 function detectWriteTools(code: string): string[] {
   const found: string[] = [];
-  const re = /dsp\s*\.\s*call\s*\(\s*['"]([A-Za-z0-9_]+)['"]/g;
+  const mask = codeMask(code);
+  const re = /dsp\s*(?:\??\.\s*call|\[\s*['"]call['"]\s*\])\s*\(\s*['"]([A-Za-z0-9_]+)['"]/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(code)) !== null) {
+    if (!mask[match.index]) continue;
     const name = match[1] ?? '';
     if (isWriteToolName(name) && !found.includes(name)) found.push(name);
   }
@@ -117,6 +168,7 @@ async function runScript(
   code: string,
   limits: ScriptLimit,
   writeLease?: WriteLease,
+  signal?: AbortSignal,
 ): Promise<ToolReply> {
   const allowed = new Set(host.tools().map((tool) => tool.name));
   if (allowed.size === 0) {
@@ -131,6 +183,7 @@ async function runScript(
   let executedWrites = 0;
 
   for (let attempt = 0; attempt <= limits.maxCalls; attempt += 1) {
+    if (signal?.aborted) return fail('cancelled', '脚本已被取消');
     if (Date.now() > deadline) {
       return fail('script_timeout', `脚本在 ${limits.timeoutMs}ms 内没有结束（已中断）`);
     }
@@ -223,13 +276,22 @@ async function runScript(
                 '写工具必须在脚本里写成字面量 dsp.call("工具名", …)，由 run_script 在执行前统一确认。',
             );
           }
+          if (lease && !lease.allowedNames.includes(name)) {
+            return fail(
+              'script_error',
+              `脚本调用了未在确认卡中列出的写工具 ${name}；` +
+                '写工具必须写成字面量 dsp.call("工具名", …)。',
+            );
+          }
           if (lease && executedWrites >= lease.maxWrites) {
             return fail('script_error', `脚本写调用超过本次确认上限 ${lease.maxWrites}`);
           }
+          if (signal?.aborted) return fail('cancelled', '脚本已被取消');
 
           const remaining = Math.max(1, Math.min(8000, deadline - Date.now()));
           const result = await host.call(name, args, {
             timeoutMs: remaining,
+            signal,
             ...(lease
               ? {
                   risk: 2,
@@ -321,6 +383,7 @@ export function createScriptTool(host: GameToolHost): ToolDefinition {
   return {
     name: SCRIPT_TOOL_NAME,
     label: '脚本',
+    executionMode: 'sequential',
     description:
       '在沙箱里执行一段 JavaScript，用来批量取数、循环、条件判断、聚合，或在确认后批量执行写操作。' +
       '可用 `dsp.call(工具名, 参数)`（同步）调用当前已注册的 game_* 工具，返回 JSON 字符串；' +
@@ -347,7 +410,7 @@ export function createScriptTool(host: GameToolHost): ToolDefinition {
         Type.Integer({ minimum: 1, maximum: MAX_MAX_CALLS, description: '工具调用次数上限，默认 100，最大 10000' }),
       ),
     }),
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, signal) {
       const args = (params ?? {}) as JsonObject;
       const code = typeof args['code'] === 'string' ? args['code'] : '';
       if (!code.trim()) return fail('bad_request', 'code 不能为空');
@@ -374,11 +437,16 @@ export function createScriptTool(host: GameToolHost): ToolDefinition {
         const scriptHash = createHash('sha256').update(code, 'utf8').digest('hex');
         const approved = await host.confirmScript({ scriptHash, writeNames: writes, maxWrites });
         if (!approved) return fail('confirmation_denied', '玩家拒绝了脚本中的写操作，脚本未执行');
-        lease = { token: approved.token, scriptHash: approved.scriptHash, maxWrites };
+        lease = {
+          token: approved.token,
+          scriptHash: approved.scriptHash,
+          maxWrites,
+          allowedNames: writes,
+        };
       }
 
       try {
-        return await runScript(host, code, { timeoutMs, maxCalls }, lease ?? undefined);
+        return await runScript(host, code, { timeoutMs, maxCalls }, lease ?? undefined, signal);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return fail('script_error', message);

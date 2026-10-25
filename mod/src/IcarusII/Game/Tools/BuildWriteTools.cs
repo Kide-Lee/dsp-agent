@@ -20,7 +20,7 @@ namespace IcarusII.Game.Tools
         {
             if (!GameRefs.IsInGame || GameMain.mainPlayer == null)
                 throw Fail("当前不在游戏内");
-            var planet = GameToolFormat.ResolvePlanet(args);
+            var planet = GameToolFormat.ResolvePlanetStrict(args);
             if (planet == null || planet.factory == null)
                 throw Fail("目标行星的工厂尚未加载");
             var factory = planet.factory;
@@ -68,6 +68,9 @@ namespace IcarusII.Game.Tools
             if (totalAdded <= 0)
                 throw Fail("背包无法再放入该建筑的成品（可能已满）");
 
+            WriteActionStack.MarkNonUndoable("取出建筑 #" + entity.id.ToString(CultureInfo.InvariantCulture)
+                + " 的成品 ×" + totalAdded.ToString(CultureInfo.InvariantCulture));
+
             var data = JsonValue.NewObject();
             data.Set("buildingId", entity.id);
             data.Set("taken", totalAdded);
@@ -80,63 +83,6 @@ namespace IcarusII.Game.Tools
         }
     }
 
-    internal sealed class DismantleTool : WriteToolBase
-    {
-        public override string Name => "game_dismantle";
-        private const int MaxBatch = 50;
-
-        protected override GameToolJobResult Execute(JsonValue args)
-        {
-            if (!GameRefs.IsInGame || GameMain.mainPlayer == null)
-                throw Fail("当前不在游戏内");
-            var planet = GameToolFormat.ResolvePlanet(args);
-            if (planet == null || planet.factory == null)
-                throw Fail("目标行星的工厂尚未加载");
-            var factory = planet.factory;
-            var player = GameMain.mainPlayer;
-            var values = args["buildingIds"];
-            if (values == null || !values.IsArray || values.Count == 0)
-                throw Fail("buildingIds 必须是非空数组");
-            if (values.Count > MaxBatch)
-                throw Fail("一次最多拆除 " + MaxBatch.ToString(CultureInfo.InvariantCulture) + " 个建筑");
-
-            var ids = new List<int>(values.Count);
-            var seen = new HashSet<int>();
-            for (int i = 0; i < values.Count; i++)
-            {
-                var id = values[i].AsInt(0);
-                if (id <= 0) throw Fail("buildingIds 必须都是正整数");
-                if (!seen.Add(id)) throw Fail("buildingIds 重复：" + id.ToString(CultureInfo.InvariantCulture));
-                if (!EntityToolUtil.HasEntity(factory, id))
-                    throw Fail("找不到建筑 #" + id.ToString(CultureInfo.InvariantCulture));
-                var entity = factory.entityPool[id];
-                if (entity.id != id) throw Fail("建筑 #" + id.ToString(CultureInfo.InvariantCulture) + " 已失效");
-                var offset = entity.pos - player.position;
-                if (offset.sqrMagnitude > player.mecha.buildArea * player.mecha.buildArea)
-                    throw Fail("建筑 #" + id.ToString(CultureInfo.InvariantCulture) + " 超出机甲建造范围");
-                ids.Add(id);
-            }
-
-            var rows = JsonValue.NewArray();
-            foreach (var id in ids)
-            {
-                var protoId = 0;
-                factory.DismantleFinally(player, id, ref protoId);
-                var row = JsonValue.NewObject();
-                row.Set("buildingId", id);
-                row.Set("protoId", protoId);
-                row.Set("name", EntityToolUtil.ProtoName(protoId));
-                rows.Add(row);
-            }
-
-            var data = JsonValue.NewObject();
-            data.Set("planetId", planet.id);
-            data.Set("dismantled", ids.Count);
-            data.Set("items", rows);
-            data.Set("undoable", false);
-            return Ok("已拆除 " + ids.Count.ToString(CultureInfo.InvariantCulture) + " 个建筑（不可撤销）", data);
-        }
-    }
     /// <summary>
     /// 从背包直接把原料放进生产建筑的输入缓冲（served/incServed）。
     /// 这条路径不经过分拣器/传送带，玩家确认卡会明确说明；只填配方需要的物品。
@@ -150,7 +96,7 @@ namespace IcarusII.Game.Tools
         {
             if (!GameRefs.IsInGame || GameMain.mainPlayer == null)
                 throw Fail("当前不在游戏内");
-            var planet = GameToolFormat.ResolvePlanet(args);
+            var planet = GameToolFormat.ResolvePlanetStrict(args);
             if (planet == null || planet.factory == null)
                 throw Fail("目标行星的工厂尚未加载");
             var factory = planet.factory;

@@ -26,7 +26,7 @@ namespace IcarusII.Game.Tools
         {
             if (!GameRefs.IsInGame || GameMain.mainPlayer == null)
                 throw Fail("当前不在游戏内");
-            var planet = GameToolFormat.ResolvePlanet(args);
+            var planet = GameToolFormat.ResolvePlanetStrict(args);
             if (planet == null || planet.factory == null)
                 throw Fail("目标行星的工厂尚未加载");
             return ResolveStorage(planet.factory, args["buildingId"].AsInt(0));
@@ -52,6 +52,30 @@ namespace IcarusII.Game.Tools
             if (storage.type != EStorageType.Default && storage.type != EStorageType.Filtered)
                 throw Fail("该存储类型不支持此操作（仅普通箱子/储液罐/物流站仓储）");
             return new Target { Factory = factory, Entity = entity, Storage = storage };
+        }
+
+        /// <summary>
+        /// 目标存储还能放多少个 itemId。必须遵守 bans（SetLimit）和过滤格，
+        /// 否则预检会高估容量，AddItem 只能放一部分，进而触发回退失败。
+        /// </summary>
+        protected static long FreeSpace(StorageComponent storage, int itemId, ItemProto item)
+        {
+            if (storage == null || storage.grids == null || item == null) return 0;
+            int usable = Math.Max(0, storage.size - storage.bans);
+            long free = 0;
+            for (int i = 0; i < usable; i++)
+            {
+                var grid = storage.grids[i];
+                if (grid.itemId == itemId)
+                    free += Math.Max(0, grid.stackSize - grid.count);
+                else if (grid.itemId == 0)
+                {
+                    if (storage.type == EStorageType.Filtered && grid.filter > 0 && grid.filter != itemId)
+                        continue;
+                    free += Math.Max(0, grid.stackSize > 0 ? grid.stackSize : item.StackSize);
+                }
+            }
+            return free;
         }
     }
 
@@ -158,7 +182,7 @@ namespace IcarusII.Game.Tools
         {
             if (!GameRefs.IsInGame || GameMain.mainPlayer == null)
                 throw Fail("当前不在游戏内");
-            var planet = GameToolFormat.ResolvePlanet(args);
+            var planet = GameToolFormat.ResolvePlanetStrict(args);
             if (planet == null || planet.factory == null)
                 throw Fail("目标行星的工厂尚未加载");
             var sourceId = args["sourceId"].AsInt(0);
@@ -179,23 +203,8 @@ namespace IcarusII.Game.Tools
             if (available <= 0)
                 throw Fail("源存储里没有物品 " + GameToolFormat.ItemName(itemId));
 
-            // 计算目标能接收多少；过滤/类型不匹配的格子跳过。
-            var free = 0L;
-            for (int i = 0; i < target.Storage.size; i++)
-            {
-                var grid = target.Storage.grids[i];
-                if (grid.itemId == itemId)
-                {
-                    free += Math.Max(0, grid.stackSize - grid.count);
-                }
-                else if (grid.itemId == 0)
-                {
-                    if (target.Storage.type == EStorageType.Filtered && grid.filter > 0 && grid.filter != itemId)
-                        continue;
-                    var stack = grid.stackSize > 0 ? grid.stackSize : item.StackSize;
-                    free += Math.Max(0, stack);
-                }
-            }
+            // 计算目标能接收多少；过滤/容量上限/类型不匹配的格子跳过。
+            var free = FreeSpace(target.Storage, itemId, item);
             if (free <= 0)
                 throw Fail("目标存储没有空间接收该物品（检查过滤器/容量上限）");
             if (free < count)
@@ -204,13 +213,12 @@ namespace IcarusII.Game.Tools
 
             var take = source.Storage.TakeItem(itemId, count, out var inc);
             if (take <= 0) throw Fail("源存储没有可移动的该物品");
-            var added = target.Storage.AddItem(itemId, take, inc, out var remainInc);
+            var added = target.Storage.AddItem(itemId, take, inc, out var remainInc, true);
             if (added < take)
             {
-                var restored = source.Storage.AddItem(itemId, take - added, remainInc, out _);
+                var restored = source.Storage.AddItem(itemId, take - added, remainInc, out _, true);
                 if (restored < take - added)
                     throw Fail("目标存储只接收了部分物品，且剩余无法放回源存储；请检查存储状态");
-                added = take - (take - added);
             }
             source.Storage.NotifyStorageChange();
             target.Storage.NotifyStorageChange();
@@ -219,7 +227,16 @@ namespace IcarusII.Game.Tools
                 + GameToolFormat.ItemName(itemId) + " 移回存储 #" + sourceId.ToString(CultureInfo.InvariantCulture), () =>
             {
                 var back = target.Storage.TakeItem(itemId, added, out var backInc);
-                if (back > 0) source.Storage.AddItem(itemId, back, backInc, out _);
+                if (back > 0)
+                {
+                    var restored = source.Storage.AddItem(itemId, back, backInc, out var unplaced, true);
+                    if (restored < back)
+                    {
+                        // 源存储放不下时退回目标，避免撤销把物品弄丢。
+                        target.Storage.AddItem(itemId, back - restored, unplaced, out _, true);
+                        throw new InvalidOperationException("源存储空间不足，撤销失败");
+                    }
+                }
                 source.Storage.NotifyStorageChange();
                 target.Storage.NotifyStorageChange();
             });
@@ -258,21 +275,33 @@ namespace IcarusII.Game.Tools
             var count = args["count"].AsInt(0);
             if (itemId <= 0) throw Fail("itemId 必须是正整数");
             if (count <= 0) throw Fail("count 必须是正整数");
-            if (LDB.items == null || LDB.items.Select(itemId) == null)
+            var item = LDB.items != null ? LDB.items.Select(itemId) : null;
+            if (item == null)
                 throw Fail("找不到物品 #" + itemId.ToString(CultureInfo.InvariantCulture));
+
+            // 先按目标真实容量（bans + 过滤）裁剪，再动背包；
+            // 否则“先取物再发现放不下”会把剩余物品丢在半路。
+            var free = FreeSpace(target.Storage, itemId, item);
+            if (free <= 0)
+                throw Fail("存储没有空间接收该物品（检查过滤器/容量上限）");
 
             var player = GameMain.mainPlayer;
             var takeId = itemId;
-            var takeCount = count;
+            var takeCount = (int)Math.Min(count, free);
             player.TakeItemFromPlayer(ref takeId, ref takeCount, out var inc, true, null);
             if (takeCount <= 0) throw Fail("背包里没有该物品");
 
-            var added = target.Storage.AddItem(itemId, takeCount, inc, out var remainInc);
+            var added = target.Storage.AddItem(itemId, takeCount, inc, out var remainInc, true);
             if (added < takeCount)
             {
                 var back = player.TryAddItemToPackage(itemId, takeCount - added, remainInc, false, target.Entity.id);
                 if (back < takeCount - added)
+                {
+                    // 理论上不会走到这里：容量已按 FreeSpace 裁剪。真发生就把剩余塞回存储，
+                    // 至少不丢物品。
+                    target.Storage.AddItem(itemId, takeCount - added, remainInc, out _, true);
                     throw Fail("存储已满，且剩余物品无法放回背包；请先整理背包");
+                }
             }
             target.Storage.NotifyStorageChange();
 
@@ -282,7 +311,15 @@ namespace IcarusII.Game.Tools
                 + GameToolFormat.ItemName(itemId), () =>
             {
                 var take = target.Storage.TakeItem(itemId, moved, out var backInc);
-                if (take > 0) player.TryAddItemToPackage(itemId, take, backInc, false, target.Entity.id);
+                if (take > 0)
+                {
+                    var back = player.TryAddItemToPackage(itemId, take, backInc, false, target.Entity.id);
+                    if (back < take)
+                    {
+                        target.Storage.AddItem(itemId, take - back, backInc, out _, true);
+                        throw new InvalidOperationException("背包已满，撤销失败");
+                    }
+                }
                 target.Storage.NotifyStorageChange();
             });
 
@@ -317,7 +354,7 @@ namespace IcarusII.Game.Tools
             var added = GameMain.mainPlayer.TryAddItemToPackage(itemId, taken, inc, false, target.Entity.id);
             if (added < taken)
             {
-                var back = target.Storage.AddItem(itemId, taken - added, 0, out _);
+                var back = target.Storage.AddItem(itemId, taken - added, inc, out _, true);
                 if (back < taken - added)
                     throw Fail("背包已满，且剩余物品无法放回存储；请先整理背包");
             }
@@ -331,7 +368,15 @@ namespace IcarusII.Game.Tools
                 var takeId = itemId;
                 var takeCount = moved;
                 GameMain.mainPlayer.TakeItemFromPlayer(ref takeId, ref takeCount, out var backInc, true, null);
-                if (takeCount > 0) target.Storage.AddItem(itemId, takeCount, backInc, out _);
+                if (takeCount > 0)
+                {
+                    var back = target.Storage.AddItem(itemId, takeCount, backInc, out var unplaced, true);
+                    if (back < takeCount)
+                    {
+                        GameMain.mainPlayer.TryAddItemToPackage(itemId, takeCount - back, unplaced, false, target.Entity.id);
+                        throw new InvalidOperationException("存储空间不足，撤销失败");
+                    }
+                }
                 target.Storage.NotifyStorageChange();
             });
 

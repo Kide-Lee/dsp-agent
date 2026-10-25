@@ -57,11 +57,6 @@ namespace IcarusII.UI
         private Button _backButton;
         private Button _rejectButton;
         private Text _rejectLabel;
-        private RectTransform _skipRect;
-        private RectTransform _backRect;
-        private Vector2 _skipDefaultMin;
-        private Vector2 _skipDefaultMax;
-        private Vector2 _skipDefaultPos;
         private GameObject _explainRoot;
         private Text _explainText;
         private ScrollRect _explainScroll;
@@ -162,14 +157,6 @@ namespace IcarusII.UI
             _rejectButton = FindButton(chooseRoot, "voting-device/btn-grop/reject-button");
             _submitLabel = FindText(chooseRoot, "voting-device/btn-grop/agree-button/text");
             _rejectLabel = FindText(chooseRoot, "voting-device/btn-grop/reject-button/text");
-            _skipRect = _skipButton != null ? _skipButton.transform as RectTransform : null;
-            _backRect = _backButton != null ? _backButton.transform as RectTransform : null;
-            if (_skipRect != null)
-            {
-                _skipDefaultMin = _skipRect.offsetMin;
-                _skipDefaultMax = _skipRect.offsetMax;
-                _skipDefaultPos = _skipRect.anchoredPosition;
-            }
             _explainRoot = chooseRoot.Find("voting-device/explain") != null
                 ? chooseRoot.Find("voting-device/explain").gameObject
                 : null;
@@ -383,28 +370,9 @@ namespace IcarusII.UI
             }
 
             if (_backButton != null) _backButton.gameObject.SetActive(index > 0);
-            PositionSkip(index == 0);
             LayoutRebuilder.ForceRebuildLayoutImmediate(_optionRoot);
             Canvas.ForceUpdateCanvases();
             if (restoreFocus && _customSelected) FocusCustom();
-        }
-
-        /// <summary>第一题没有返回键，跳过键占返回键的位置；后续题恢复左侧位置。</summary>
-        private void PositionSkip(bool middle)
-        {
-            if (_skipRect == null) return;
-            if (middle && _backRect != null)
-            {
-                _skipRect.offsetMin = _backRect.offsetMin;
-                _skipRect.offsetMax = _backRect.offsetMax;
-                _skipRect.anchoredPosition = _backRect.anchoredPosition;
-            }
-            else
-            {
-                _skipRect.offsetMin = _skipDefaultMin;
-                _skipRect.offsetMax = _skipDefaultMax;
-                _skipRect.anchoredPosition = _skipDefaultPos;
-            }
         }
 
         private void ConfigureMultiSelectVisuals(int optionCount)
@@ -462,11 +430,11 @@ namespace IcarusII.UI
             _optionRoot.gameObject.SetActive(false);
             if (_explainRoot != null) _explainRoot.SetActive(true);
             _questionText.text = title ?? string.Empty;
-            if (_numberText != null) _numberText.text = "确认";
+            if (_numberText != null) _numberText.text = Strings.Get("confirm.step");
             if (_explainText != null) _explainText.text = details ?? string.Empty;
-            if (_submitLabel != null) _submitLabel.text = "同意";
+            if (_submitLabel != null) _submitLabel.text = Strings.Get("confirm.agree");
             if (_submitButton != null) _submitButton.gameObject.SetActive(true);
-            if (_rejectLabel != null) _rejectLabel.text = "拒绝";
+            if (_rejectLabel != null) _rejectLabel.text = Strings.Get("confirm.reject");
             if (_skipButton != null) _skipButton.gameObject.SetActive(false);
             if (_backButton != null) _backButton.gameObject.SetActive(false);
             if (_rejectButton != null) _rejectButton.gameObject.SetActive(true);
@@ -495,7 +463,7 @@ namespace IcarusII.UI
                     if (option >= 0 && option < q.Options.Count) answers.Add(q.Options[option].Label);
                 }
                 if (state.CustomSelected && !string.IsNullOrEmpty(state.Custom)) answers.Add(state.Custom);
-                if (state.Skipped || answers.Count == 0) sb.Append("（跳过）");
+                if (state.Skipped || answers.Count == 0) sb.Append(Strings.Get("ask.review.skip"));
                 else sb.Append(string.Join("、", answers));
             }
             return sb.ToString();

@@ -11,7 +11,10 @@ namespace IcarusII.Core
     /// 玩家允许时把同一个 token 回给 sidecar。真正的 tool_call 必须带该 token，
     /// 且 callId/tool/argsHash 与确认时一致；令牌 60 秒过期、只能消费一次。
     ///
-    /// 这层校验在 mod 内，sidecar 即使被替换/绕过也无法直接执行写操作。
+    /// 这层校验在 mod 内，sidecar 即使被替换/绕过也无法执行**未经玩家确认**的写操作。
+    /// 注意：argsHash 由 sidecar 提供，mod 不持有原始 args、无法重算，
+    /// 因此它只能发现 sidecar 两条消息自相矛盾，不能阻止替换后的 sidecar 换参数。
+    /// 真正的边界是“玩家确认 + 一次性 token + 工具名白名单”。
     /// </summary>
     internal sealed class ConfirmationService
     {
@@ -87,17 +90,28 @@ namespace IcarusII.Core
 
             if (request.MaxWrites > 0)
             {
+                // 租约只由 run_script 创建，且必须绑定非空脚本哈希与明确的写工具名。
+                // 空 writeNames 曾经等于“放行全部写工具”，这里直接拒绝。
+                if (!string.Equals(request.Tool, Protocol.ToolRunScript, StringComparison.Ordinal) ||
+                    string.IsNullOrWhiteSpace(request.ArgsHash) ||
+                    request.WriteNames == null || request.WriteNames.Count == 0)
+                    return false;
+                foreach (var name in request.WriteNames)
+                    if (!Protocol.IsWriteTool(name)) return false;
+
                 var lease = new ScriptLease
                 {
-                    ScriptHash = request.ArgsHash ?? string.Empty,
+                    ScriptHash = request.ArgsHash,
                     Remaining = request.MaxWrites,
                     ExpiresAtMs = NowMs() + Protocol.ScriptLeaseMs,
                 };
-                if (request.WriteNames != null)
-                    foreach (var name in request.WriteNames) lease.WriteNames.Add(name);
+                foreach (var name in request.WriteNames) lease.WriteNames.Add(name);
                 _leases[request.Token] = lease;
                 return true;
             }
+
+            if (!Protocol.IsWriteTool(request.Tool))
+                return false;
 
             _allowed[request.Token] = new Allowed
             {
@@ -132,7 +146,7 @@ namespace IcarusII.Core
                     error = Protocol.CodeConfirmationInvalid;
                     return false;
                 }
-                if (lease.WriteNames.Count > 0 && !lease.WriteNames.Contains(call.Name))
+                if (!lease.WriteNames.Contains(call.Name))
                 {
                     error = Protocol.CodeConfirmationInvalid;
                     return false;
@@ -184,7 +198,8 @@ namespace IcarusII.Core
             }
             foreach (var pair in new List<KeyValuePair<string, ScriptLease>>(_leases))
             {
-                if (now > pair.Value.ExpiresAtMs || pair.Value.Remaining <= 0) _leases.Remove(pair.Key);
+                // 用尽后保留到 TTL，下一次调用能拿到明确的 expired，而不是 invalid。
+                if (now > pair.Value.ExpiresAtMs) _leases.Remove(pair.Key);
             }
             return expiredCurrent;
         }

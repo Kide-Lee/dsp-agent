@@ -117,7 +117,9 @@ export type ErrorCode =
   | 'confirmation_required'
   | 'confirmation_invalid'
   | 'confirmation_expired'
-  | 'confirmation_denied';
+  | 'confirmation_denied'
+  // M5：沙盒门禁
+  | 'sandbox_required';
 
 export type StatusState =
   | 'idle'

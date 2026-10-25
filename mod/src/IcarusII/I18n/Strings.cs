@@ -34,7 +34,11 @@ namespace IcarusII.I18n
             ["ask.next"] = "下一个",
             ["ask.submit"] = "提交",
             ["ask.waiting"] = "等待你的回答…",
+            ["ask.review.skip"] = "（跳过）",
             ["confirm.waiting"] = "等待你的确认…",
+            ["confirm.step"] = "确认",
+            ["confirm.agree"] = "同意",
+            ["confirm.reject"] = "拒绝",
             ["key.placeholder"] = "粘贴 DeepSeek API Key 后回车…",
             ["key.prompt"] =
                 "尚未配置 API Key。请把 DeepSeek 的 API Key 粘贴到下面并回车。\n" +
@@ -112,6 +116,7 @@ namespace IcarusII.I18n
             ["blueprint.card.no_file"] = "找不到蓝图文件：{0}",
             ["link.card.locate"] = "定位",
             ["link.card.located"] = "已定位",
+            ["link.focus.failed"] = "目标不在当前行星，无法在当前视角聚焦。",
             ["blueprint.card.bad_file"] = "蓝图文件无法读取或已损坏。",
             ["blueprint.card.open_failed"] = "无法打开蓝图浏览器（当前界面不允许或蓝图界面未就绪）。",
             ["blueprint.card.paste_unavailable"] = "尚未解锁蓝图粘贴，或当前状态不允许粘贴。",

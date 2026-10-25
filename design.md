@@ -606,7 +606,8 @@ AgentRoot (RectTransform, 默认 inactive)
 **门禁实现（双重）**：
 
 1. sidecar 侧：`pi.on("tool_call")` 钩子对 L2 工具调用 `ctx.ui.confirm()`，玩家拒绝则 `{ block: true }`。
-2. mod 侧：`confirm_result` 携带一次性 `token`，`ActionService` 校验 token（未过期、未被使用、匹配 `callId`）后才执行。**即使 sidecar 被替换/被绕过，mod 仍不会执行未确认的写操作。**
+2. mod 侧：`confirm_result` 携带一次性 `token`，`ActionService` 校验 token（未过期、未被使用、匹配 `callId`）后才执行。**即使 sidecar 被替换/被绕过，mod 仍不会执行未经玩家确认的写操作。**
+   注意：`argsHash` 由 sidecar 计算并在两条消息里复用，mod 不持有原始 args、无法重算；它只能发现 sidecar 内部不一致，不能阻止被替换的 sidecar 在玩家确认后替换参数。参数完整性依赖确认卡文案 + 玩家判断，这是 v1 的已知边界。
 
 **执行约束**：
 
@@ -1064,7 +1065,7 @@ function gameTool<T>(spec: {
 | `game.set_logistics_route` | 2 | `stationId`, `route` | 修改物流航线 |
 | `game.paste_blueprint` | 2 | `blueprintId`/`data`, `anchor` | 大规模建造（二次确认 + 占地/建筑数预览） |
 | `game.add_to_build_bar` | 2 | `itemId`, `slot` | 修改建造栏 |
-| `game.dismantle` | 2 | `buildingIds[]` | 拆除建筑（二次确认 + 影响预览） |
+| ~~`game.dismantle`~~ | — | — | 按 §9.1「不可撤销的 L2 默认不实现」不提供 |
 | `game.take_output` | 2 | `buildingId` | 取出生产建筑成品，保留配方 |
 | `game.feed_input` | 2 | `buildingId`, `itemId`, `count` | 背包原料直接进生产建筑输入缓冲 |
 | `game.storage_set_filter` | 2 | `buildingId`, `itemId` | 设置/清除存储过滤器 |
@@ -1303,9 +1304,9 @@ icarus-ii/
 | **M4i 能看卡片** | 协议 A.9 `blueprint_card` + 聊天窗数据驱动卡片 + 历史回放 | 生成/下载/复制后出现卡片；重进存档可回放；删除回合一起消失 |
 | **M4j 能出蓝图** | `blueprint_generate`：KB `kb_plan` 的真实机器数 → dsp-calc 布局 → 写入蓝图目录；`from` 起点、rows 拆阶段、超高产量拆多张、save.bind 被动档位 | 60/min 电磁涡轮 29 台机器/7 阶段；300/min→3 张、600/min→5 张 |
 | **M4 能动手** | 确认 UI + 令牌门禁 + `focus_camera`/`open_panel`/`set_research` + 撤销 | 拒绝确认时无任何副作用（重点测试） |
-| **M5 完善** | 错误处理全覆盖、i18n 结构、**打包流水线（cjs bundle + SEA 注入 + 双平台产物）+ 体积优化评估**、README/安装文档、性能调优 | 冷启动 < 2s；连续对话 30 轮无卡顿与内存增长；发布包在干净机器上零附加依赖可用 |
-| **M6 扩展**（可选） | 更多 L2 工具（配方/物流/蓝图）、`DshAcpRuntime`、Web 配置页 | — |
-| **M7 候选**（D1–D5 已拍板） | §20 的候选能力；沙盒门禁、读侧、丢弃已完成；下一步生产/存储写工具；自动驾驶暂不做 | 见 §20.2、§20.3 |
+| **M5 写工具/实体链接** | 受控写脚本、丢弃/配方/存储/投料/取成品、tether、实体链接卡、沙盒门禁、读侧优化；打包流水线与 i18n 作为发布收尾 | 离线测试通过；实机逐项验收见 §20.3 |
+| **M6 扩展**（可选） | 更多 L2 工具（物流/蓝图）、`DshAcpRuntime`、Web 配置页 | — |
+| **M7 候选**（D1–D5 已拍板） | §20 剩余的合成器队列/仪表盘等；自动驾驶暂不做 | 见 §20.2、§20.3 |
 
 ---
 
@@ -1328,7 +1329,7 @@ icarus-ii/
 | R13 | **Proton 的 `AppDefaults\DSPGAME.exe\DllOverrides` 是否被尊重** | 中 | 决定"能否不改 Steam 启动项就 drop-in"（§2.3.2）。本机前缀已有 27 条 Steam 自写的同类条目，可信度高；M0 实测确认。失败则回退到文档化启动项 |
 | R14 | **沙盒门禁与能力协商** | 中 | 已实现 `save_bind.sandbox` + mod/sidecar 双重拒绝 + 回合边界重建；接第一个沙盒工具时补聊天窗工具列表刷新与 `tools_changed`（§20.2 第 8 项） |
 | R15 | **长任务（未来）** | 中 | D2=B 暂不做自动驾驶；未来重启需要 start/progress/cancel 与玩家抢占，并先复议 §1.2（§20.1） |
-| R16 | **丢弃/拆除的不可逆性** | 中 | D1=B 用丢弃替代摧毁：物品以 trash 落地、可撤销（需手动拾回）但不是一键撤销；拆除仍不可复原。确认卡要如实标注（§20.1 D1） |
+| R16 | **丢弃/拆除的不可逆性** | 中 | D1=B 用丢弃替代摧毁：物品以 trash 落地、可撤销（需手动拾回）但不是一键撤销；拆除按 §9.1 不实现。确认卡要如实标注（§20.1 D1） |
 
 ---
 
@@ -1577,10 +1578,10 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 矿脉位置/储量 | 扩 `game_get_planet`（`veins` / `veinOffset` / `veinLimit`） | 0 | 任意 | 只读 | 扩 `game.read.v1` 参数（向后兼容） | **已实现（2026-10-24）** |
 | 2 | 仪表盘编辑 | `game_dashboard_get` / `game_dashboard_apply`（批量） | 2 | 任意 | 按批次记录 diff，可回滚 | 新 `game.dashboard.v1` | 需先定义语义 |
-| 3 | 实体链接 | 无新工具；扩展 `GameRichText` + `ChatWindow` 分发 | 0 | 任意 | 只读 | `ui.richtext.v3` 或 `ui.link.entity.v1` | 未做；本轮先做原生 tether |
+| 3 | 实体链接 | 无新工具；扩展 `GameRichText` + `ChatWindow` 分发 | 0 | 任意 | 只读 | 扩 `ui.richtext.v2` 的 `dsp://entity/...` | **已实现 planet/building/vein 点击聚焦（2026-10-25）** |
 | 4 | 实体连接（tether） | `game_tether_add` / `game_tether_list` / `game_tether_clear` | 1 | 任意 | 瞬态，可清除 | 新 `game.tether.v1` | **已实现多目标（≤20；本星球多建筑多线，跨行星原生导航一次一个，落地后切换，2026-10-24）；link 卡片持久化/统计/备忘录已接** |
 | 5 | 合成器队列 | `game_craft_queue_get` / `game_craft_queue_add` / `game_craft_queue_cancel` | 2 | 任意 | 部分可撤销（退料可能失败） | 新 `game.craft.v1` | 可做，需预检 |
-| 6 | 生产建筑 | `game_set_recipe` / `game_set_assembler_batch` / `game_take_output` / `game_dismantle` / `game_feed_input` | 2 | 任意 | 拆除不可复原；改配方先退料；取成品保留配方 | 新 `game.build.v1` | **已实现改配方/取成品/拆除/投料（2026-10-24）** |
+| 6 | 生产建筑 | `game_set_recipe` / `game_set_assembler_batch` / `game_take_output` / `game_feed_input` | 2 | 任意 | 改配方先退料；取成品保留配方 | 新 `game.build.v1` | **已实现改配方/取成品/投料（2026-10-25）；拆除按 §9.1 不实现** |
 | 7 | 存储建筑 | `game_storage_set_filter` / `game_storage_set_limit` / `game_storage_move` / `game_storage_deposit` / `game_storage_withdraw` | 2 | 任意 | 记录原过滤器/限制，可回滚 | 新 `game.storage.v1` | **已实现 filter/limit/move + 背包存取（2026-10-24）** |
 | 8 | 沙盒门禁（D5=A） | 无新工具；`save_bind.sandbox` + 工具集刷新 | — | 全局 | — | `save_bind` 可选字段 + 回合边界重建会话 | **已实现门禁（2026-10-24）**；沙盒工具未实现 |
 | 9 | 丢弃物品（D1=B） | `game_drop_item` | 2 | 任意 | 可撤销（需手动拾回） | 新 `game.drop.v1` | **已实现（2026-10-24，待实机）** |
@@ -1600,7 +1601,7 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 3. 点击实体链接：当前星球定位并显示连线；再次点击消失；跨行星不画伪连线；`game_capture_view` 的取景符合预期；ID 段不与网页/科技/配方/成就冲突。
 4. `tether_add` 出现卡片且可取消；换档/实体失效自动清理；数量上限生效；历史回放不重复创建。
 5. `add` 走 `TryAddTask`；取消只撤 AI 创建的任务；背包满时明确报告退料失败与级联影响。
-6. 拆除走 `DismantleFinally`；改配方前退料；取成品保留配方；范围外/工厂未加载/实体失效有明确错误码；`feed_input` 暂不做（直接写 `served` 会绕过分拣器/传送带）。
+6. 拆除按 §9.1 不实现；改配方前退料；取成品保留配方；范围外/工厂未加载/实体失效有明确错误码；`feed_input` 走确认 + 租约/可撤销。
 7. 过滤器设置读回校验；`bans` 与游戏 UI 一致；箱子/储液罐/物流站分别可用；部分转移返回剩余。
 8. 非沙盒下 spawn/teleport 不可见且 mod 拒绝；载入界面开关沙盒后，下一回合的工具列表/提示立即变化；AI 永不写 `sandboxToolsEnabled`；UI 显示当前权限。
 9. 丢弃：从背包取出的 item/count/inc 正确；物品以 trash 落地/漂浮、可拾回；背包不足/物品不存在有明确错误码；不复制物品；确认卡标注"可撤销（需手动拾回）"，不是一键撤销。

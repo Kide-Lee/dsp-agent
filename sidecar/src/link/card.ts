@@ -11,6 +11,8 @@ import { promptMatchesHistory } from '../blueprint/card.js';
 
 export interface LinkCardRecord {
   prompt: string;
+  /** 本轮最终回答原文；用于区分重复提问（「现在什么情况」）。 */
+  reply?: string;
   timestamp?: number;
   card: LinkCardPayload;
 }
@@ -63,6 +65,20 @@ export function extractLinkCard(
   return card;
 }
 
+/** 持久化记录的校验；planet/building/vein 三类都必须能回放，缺 id 的坏行跳过。 */
+export function isStoredLinkCard(value: unknown): value is LinkCardPayload {
+  const card = asRecord(value);
+  if (!card) return false;
+  if (card['kind'] !== 'planet' && card['kind'] !== 'building' && card['kind'] !== 'vein') return false;
+  if (typeof card['planetId'] !== 'number' || card['planetId'] <= 0) return false;
+  if (typeof card['name'] !== 'string' || card['name'].trim().length === 0) return false;
+  if (card['kind'] === 'building' &&
+      (typeof card['buildingId'] !== 'number' || card['buildingId'] <= 0)) return false;
+  if (card['kind'] === 'vein' &&
+      (typeof card['veinId'] !== 'number' || card['veinId'] <= 0)) return false;
+  return true;
+}
+
 export function compactLinkCard(card: LinkCardPayload): LinkCardPayload {
   const clip = (value: string | undefined, max: number): string | undefined => {
     if (value === undefined) return undefined;
@@ -77,37 +93,37 @@ export function compactLinkCard(card: LinkCardPayload): LinkCardPayload {
   };
 }
 
-/** 把记录挂到每一轮的最后一条 assistant；同一 prompt 的多张卡按记录顺序。 */
+/** 回答原文匹配；历史可能被截断（末尾省略号），两种形态都要能对上。 */
+function replyMatchesHistory(historyText: string, reply: string): boolean {
+  if (!reply) return true;
+  if (historyText === reply) return true;
+  if (historyText.endsWith('…')) {
+    const prefix = historyText.slice(0, -1);
+    return prefix.length > 0 && reply.startsWith(prefix);
+  }
+  return false;
+}
+
+/**
+ * 把记录挂到每一轮的最后一条 assistant。
+ * 优先用「提问 + 回答原文」双匹配，避免重复提问时把卡片串到别的回合；
+ * 老记录没有 reply 时退回只匹配提问。
+ */
 export function attachLinkCards(
   messages: HistoryMessage[],
   records: readonly LinkCardRecord[],
 ): HistoryMessage[] {
   if (messages.length === 0 || records.length === 0) return messages;
 
-  const groups = new Map<string, LinkCardPayload[]>();
-  for (const record of records) {
-    const prompt = record.prompt.trim();
-    if (!prompt || !record.card) continue;
-    const list = groups.get(prompt) ?? [];
-    list.push(record.card);
-    groups.set(prompt, list);
-  }
-  if (groups.size === 0) return messages;
+  const pending = records.filter(
+    (record) => record.prompt.trim().length > 0 && record.card !== null,
+  );
+  if (pending.length === 0) return messages;
 
-  const consumed = new Set<string>();
+  const consumed = new Set<number>();
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
     if (!message || message.role !== 'user') continue;
-
-    let matched: string | null = null;
-    for (const prompt of groups.keys()) {
-      if (consumed.has(prompt)) continue;
-      if (promptMatchesHistory(message.text, prompt)) {
-        matched = prompt;
-        break;
-      }
-    }
-    if (matched === null) continue;
 
     let assistantIndex = -1;
     for (let j = i + 1; j < messages.length; j++) {
@@ -117,14 +133,22 @@ export function attachLinkCards(
       if (next.role === 'assistant') assistantIndex = j;
     }
     if (assistantIndex < 0) continue;
+    const assistant = messages[assistantIndex]!;
 
-    consumed.add(matched);
-    const cards = groups.get(matched) ?? [];
+    const cards: LinkCardPayload[] = [];
+    for (let r = 0; r < pending.length; r++) {
+      if (consumed.has(r)) continue;
+      const record = pending[r]!;
+      if (!promptMatchesHistory(message.text, record.prompt.trim())) continue;
+      if (record.reply !== undefined && !replyMatchesHistory(assistant.text, record.reply)) continue;
+      consumed.add(r);
+      cards.push(record.card);
+    }
     if (cards.length === 0) continue;
-    const target = messages[assistantIndex]!;
+
     messages[assistantIndex] = {
-      ...target,
-      linkCards: [...(target.linkCards ?? []), ...cards],
+      ...assistant,
+      linkCards: [...(assistant.linkCards ?? []), ...cards],
     };
   }
   return messages;

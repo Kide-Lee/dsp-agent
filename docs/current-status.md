@@ -1,6 +1,6 @@
 # 当前状态与下一步
 
-> 更新时间：2026-10-24。M4（M4a–M4j + 写操作）已完成并通过实机验收。
+> 更新时间：2026-10-25。M4（M4a–M4j + 写操作）已完成并通过实机验收；M5 离线实现完成，待实机验收。
 > 本页是当前唯一的状态/计划入口；验收用的临时清单和提示词文档已移除。
 
 ## 1. 已完成
@@ -20,15 +20,15 @@
 | M4g/M4h Wiki、蓝图仓库、`blueprint_save` | 已完成并通过实机验收 |
 | M4i 蓝图卡片 | 已完成并通过实机验收 |
 | M4j `blueprint_generate` | 已完成并通过实机验收 |
-| M4 写操作（确认/令牌/四个写工具/撤销） | 已完成并通过实机验收 |
+| M4 写操作（确认/令牌/焦点/标记/面板/研究/撤销） | 已完成并通过实机验收 |
 | M5 前置：沙盒门禁基础设施 | 已完成（`save.bind.sandbox` + 双重拒绝 + UI 提醒 + 离线测试）；沙盒工具未实现 |
 | M5 前置：读侧优化 | 已实现（`game_get_entity` 的 `fields`/`entityIds`；`game_get_planet` 的矿脉群/逐矿脉节点）；离线构建/测试通过，待实机冒烟 |
 | M5 前置：丢弃工具 | 已实现 `game_drop_item`（`game.drop.v1`，risk 2，落地可拾回、不进入撤销栈）；已修复 system prompt 仍称“只能读”导致模型拒调；代理实测会调用并进入确认页，待实机确认 |
 | M5 前置：生产配方写工具 | 已实现 `game_set_recipe` / `game_set_assembler_batch`（`game.build.v1`，risk 2，批量一次确认/一层撤销，先退料）；离线测试通过，待实机 |
 | M5 受控写脚本 | `run_script` 默认只读；脚本含字面量写工具时先弹一次脚本级确认，mod 发脚本租约（token+脚本哈希+写工具名+最多 10000 次），结束立即释放；动态拼写写工具名拒绝；离线测试通过，待实机 |
-| M5 存储/生产写工具 | 已实现存储 filter/limit/move + 背包存入/取出、`game_feed_input`、`game_take_output`、`game_dismantle`；存储/投料可撤销，取成品/拆除不可撤销；离线测试通过，待实机 |
-| M5 实体链接 | 富文本 `dsp://entity/planet/<id>` / `dsp://entity/building/<planet>/<building>` 已支持点击聚焦；800000–899999 段；与卡片共用聚焦逻辑 |
-| M5 link 卡片持久化 | sidecar 按提问写入 `link-cards.jsonl`，历史 `linkCards` 回放；建筑卡统计、星球备忘录、图标解析已接 |
+| M5 存储/生产写工具 | 已实现存储 filter/limit/move + 背包存入/取出、`game_feed_input`、`game_take_output`；存储/投料可撤销，取成品不可撤销（栈顶标记）。按 design §9.1 未实现 `game_dismantle`；离线测试通过，待实机 |
+| M5 实体链接 | 富文本 `dsp://entity/planet/<id>` / `dsp://entity/building/<planet>/<building>` / `dsp://entity/vein/<planet>/<vein>` 已支持点击聚焦；800000–899999 段；与卡片共用聚焦逻辑 |
+| M5 link 卡片持久化 | sidecar 按「提问 + 回答」写入 `link-cards.jsonl`，历史 `linkCards` 回放（含矿脉卡）；建筑卡统计、星球备忘录、图标解析已接 |
 | M5 link 卡片详情 | 聊天窗每次打开刷新一次卡片快照；建筑按装配/电力/采矿/传送带/分拣/分流/监测/喷涂/存储/配送/物流站/武器/护盾/弹射/发射井等类型生成描述与角标 |
 | M5 link 卡片 | 运行期接 `cards-group` 三模板；整卡聚焦、`定位/已定位` 双向连线；多行 ContentSizeFitter；建筑统计/星球备忘录与图标已接 |
 | M5 矿脉卡片 | 复用建筑卡模板：矿脉图标/#id、标题、储量+经纬度、星系/行星、定位；支持 `dsp://entity/vein/<planet>/<vein>` 与历史持久化 |
@@ -49,12 +49,13 @@
 ## 2. 本地验证结果
 
 - `scripts/build-mod.sh`：0 warning / 0 error。
-- `dotnet run --project tests/ProtocolTests`：457 项断言全部通过。
+- `dotnet run --project tests/ProtocolTests`：通过（M5 新增租约/工具表断言）。
 - `cd sidecar && npm test`：退出码 0。
 - UI AssetBundle 与 `mod/unity/Prefab/ChatWindow.prefab` 快照已同步。
 - `scripts/package.sh` 成功；Steam 安装目录通过 SHA-256 校验更新。
 - sidecar `config.json` 的 provider/model/key 迁移自检通过；玩家配置未被覆盖。
 - M4 实机验收：用户确认全部通过（M4a–M4j + 写操作）。
+- M5：离线构建/测试通过；实机验收待做。
 
 ## 3. 已知限制
 
@@ -77,15 +78,13 @@
 
 M4 已收口，下一步从“继续验收”转为“发布与后续规划”：
 
-1. **发布收尾**：更新版本号、Thunderstore CHANGELOG/README，重新跑
-   `scripts/build-sidecar.sh windows-x64` + `scripts/package.sh`，再做一次 Steam 安装校验。
-2. **回归冒烟**：新档/旧档各启动一次，确认 R 开窗、握手、KB 导出、只读工具、
-   截图、蓝图卡片和写操作确认页均正常。
+1. **M5 实机验收**：新档/旧档各启动一次，逐项确认丢弃、配方、存储、投料、取成品、tether、
+   link 卡片、矿脉卡、脚本租约与撤销栈。
+2. **发布收尾**：确认 0.3.3 的 sidecar/UI/Thunderstore 产物与 Steam 安装一致。
 3. **清理已知限制**：优先上下文压缩后的历史删除、建筑聚焦的单层撤销覆盖、
    高产量/多副产物蓝图。
-4. **M5 起步**：沙盒门禁、读侧优化、丢弃、生产配方写工具已完成。下一步做合成器队列/存储写工具；
-   其余候选能力（D1–D5 已拍板，工具待实现）见
-   [../design.md §20](../design.md#20-候选能力清单m5待实现)。
+4. **M5 之后**：合成器队列、仪表盘等候选能力仍需逐条设计（D1–D5 已拍板）；
+   见 [../design.md §20](../design.md#20-候选能力清单m5待实现)。
 
 ## 5. 文档说明
 

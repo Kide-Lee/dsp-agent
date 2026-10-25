@@ -110,6 +110,7 @@ import {
   attachLinkCards,
   compactLinkCard,
   extractLinkCard,
+  isStoredLinkCard,
   type LinkCardRecord,
 } from './link/card.js';
 import { attachGameTimes, type GameTimeRecord } from './history/game-time.js';
@@ -1240,12 +1241,14 @@ export class PiAgent implements AgentRunner {
   private appendLinkCards(
     saveKey: string | null,
     prompt: string,
+    reply: string,
     cards: readonly LinkCardPayload[],
   ): void {
     const path = this.linkCardLogPath(saveKey);
     if (!path || cards.length === 0) return;
     const text = prompt.trim();
     if (!text) return;
+    const answer = reply.trim().slice(0, 4000);
     try {
       mkdirSync(dirname(path), { recursive: true });
       const now = Date.now();
@@ -1253,6 +1256,7 @@ export class PiAgent implements AgentRunner {
         .map((card) =>
           JSON.stringify({
             prompt: text,
+            ...(answer ? { reply: answer } : {}),
             timestamp: now,
             card: compactLinkCard(card),
           } satisfies LinkCardRecord),
@@ -1279,12 +1283,13 @@ export class PiAgent implements AgentRunner {
       if (!line.trim()) continue;
       try {
         const parsed = JSON.parse(line) as Partial<LinkCardRecord>;
-        if (typeof parsed.prompt !== 'string' || !parsed.card) continue;
+        if (typeof parsed.prompt !== 'string' || !isStoredLinkCard(parsed.card)) continue;
         const card = parsed.card;
-        if ((card.kind !== 'planet' && card.kind !== 'building') ||
-            typeof card.planetId !== 'number' || typeof card.name !== 'string') continue;
         records.push({
           prompt: parsed.prompt,
+          ...(typeof parsed.reply === 'string' && parsed.reply.trim()
+            ? { reply: parsed.reply }
+            : {}),
           ...(typeof parsed.timestamp === 'number' ? { timestamp: parsed.timestamp } : {}),
           card,
         });
@@ -1856,7 +1861,7 @@ export class PiAgent implements AgentRunner {
       uniqueLinks.push(card);
     }
     if (uniqueLinks.length > 0) {
-      this.appendLinkCards(run.saveKey, run.userText, uniqueLinks);
+      this.appendLinkCards(run.saveKey, run.userText, run.text, uniqueLinks);
       for (const card of uniqueLinks) emit.linkCard?.(card);
     }
 

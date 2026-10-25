@@ -61,14 +61,15 @@
 
 - `ui.richtext.v2`：mod 的输出渲染支持 Markdown + 小型 HTML 子集（`color/size/tint/box/sqrt/sup/sub/i/a/icon`）。sidecar 可据此选用新版格式提示词；没有该能力时继续用旧的“只用游戏标签”提示。
 - `ui.ask.v1`：mod 支持 `ask_user` 交互问答（玩家在游戏窗口里选择/输入答案）。sidecar 据此注册问答工具；老 mod 不会看到该工具。
-- `game.write.v1`：mod 支持写操作确认与一次性令牌；sidecar 据此注册 `game_focus_camera` / `game_open_panel` / `game_set_research` / `game_undo_last_write`。老 mod 不会看到这些工具。
+- `game.write.v1`：mod 支持写操作确认与一次性令牌；sidecar 据此注册 `game_focus_camera` / `game_place_marker` / `game_open_panel` / `game_set_research` / `game_undo_last_write`。老 mod 不会看到这些工具。
 - `game.sandbox.v1`：mod 支持沙盒门禁：会在 `save.bind.sandbox` 上报本次载入是否启用游戏沙盒工具，
   并在 mod 侧拒绝沙盒专属工具。sidecar 据此在非沙盒时隐藏/拒绝沙盒专属工具；老 mod 不声明时
-  一律按“非沙盒”处理。
+  一律按“非沙盒”处理。当前预留的沙盒专属名为 `game_spawn_item` / `game_teleport`（尚未实现）。
 - `game.drop.v1`：mod 支持 `game_drop_item`（把背包物品丢到地面）。新写工具用独立能力串，
   避免老 mod 被注册它并不存在的工具。
-- `game.build.v1`：mod 支持生产建筑写操作：`game_set_recipe`（单台改配方）与
-  `game_set_assembler_batch`（最多 20 台，一次确认、一层撤销）。改配方前会把机器内原料/产物退回背包。
+- `game.build.v1`：mod 支持生产建筑写操作：`game_set_recipe`（单台改配方）、
+  `game_set_assembler_batch`（最多 20 台，一次确认、一层撤销）、`game_take_output`（取成品）、
+  `game_feed_input`（背包原料直接投料）。改配方前会把机器内原料/产物退回背包。
 - `script.write.v1`：mod 支持受控写脚本：`run_script` 检测到字面量写工具时，先弹一次脚本级确认，
   mod 发放短期脚本租约（token + 脚本哈希 + 写工具名 + 最多 10000 次），脚本结束立即释放。
 - `game.storage.v1`：mod 支持存储建筑写操作：`game_storage_set_filter`、`game_storage_set_limit`、
@@ -757,10 +758,10 @@ mod                                   sidecar
   assistant 消息上以可选 `cards` 字段带回；mod 回放时在回答后重建卡片。
   记录损坏/找不到对应回合时只是不回放，不影响历史文本。
 
-### A.15 `link_card` — 实体链接卡片（sidecar → mod）
+### A.9.1 `link_card` — 实体链接卡片（sidecar → mod）
 
-`game_tether_add` 成功后，sidecar 在本轮收尾时发一条 `link_card`。mod 用它回放/重建
-建筑卡或星球卡；实时 tether 事件也会先自动建卡，mod 以目标 key 去重。
+`game_tether_add` 成功后，sidecar 在本轮收尾时按目标逐条发 `link_card`。mod 用它回放/重建
+建筑卡、星球卡或矿脉卡；实时 tether 事件也会先自动建卡，mod 只在同一回合内按目标 key 去重。
 
 ```jsonc
 {
@@ -788,14 +789,15 @@ mod                                   sidecar
 | `description` | 否 | 建筑统计或星球备忘录快照 |
 | `iconLabel` | 否 | 缩略图占位文字 |
 
-- sidecar 按「用户提问原文」把卡片持久化到存档会话的 `link-cards.jsonl`；
+- sidecar 按「用户提问原文 + 回答原文」把卡片持久化到存档会话的 `link-cards.jsonl`；
   `save.bound.history` 的 assistant 消息用可选 `linkCards` 字段带回，mod 回放时重建。
-- 卡片只描述目标，不传图标；mod 用 `planetId`/`buildingId` 从当前存档资源解析图标。
+  只按提问匹配会在重复提问（「现在什么情况」）时错配，因此回答原文也参与消歧。
+- 卡片只描述目标，不传图标；mod 用 `planetId`/`buildingId`/`veinId` 从当前存档资源解析图标。
 - 卡片点击是聚焦；按钮是 tether 连线，已连线显示 `已定位`。
 
-### A.16 `dsp://entity/...` — 聊天实体链接
+### A.9.2 `dsp://entity/...` — 聊天实体链接
 
-富文本可用两种 URL：
+富文本可用三种 URL：
 
 - `dsp://entity/planet/<planetId>`
 - `dsp://entity/building/<planetId>/<buildingId>`
@@ -908,6 +910,10 @@ pi 的自动压缩完成后，sidecar 把摘要作为一条**只给 UI** 的记�
 **同意** 后 mod 原样回传 token，sidecar 才把 token 放进 `tool_call.confirmToken`
 发给 mod 执行。普通 token 60 秒有效、单次使用，并绑定 `callId + tool + argsHash`。
 
+> **v1 边界**：mod 不持有原始 args，无法重算 `argsHash`；该字段只能发现 sidecar
+> 两条消息自相矛盾，不能阻止被替换的 sidecar 在玩家确认后替换参数。真正的安全边界是
+> “玩家确认 + 一次性 token + 工具名白名单”；确认卡文案必须如实描述影响面。
+
 `run_script` 的写模式使用**脚本写租约**：`tool` 为 `run_script`，`argsHash` 是脚本
 SHA-256，并可带 `maxWrites`（1–10000）与 `writeNames`（脚本里出现的写工具名）。
 玩家同意后，mod 在 300 秒内只允许该 token + 同一脚本哈希 + `writeNames` 内的工具，
@@ -929,10 +935,18 @@ SHA-256，并可带 `maxWrites`（1–10000）与 `writeNames`（脚本里出现
     "title": "切换研究目标？",
     "body": "科技：电磁学\n可能浪费当前研究已投入的进度。",
     "risk": 2,
-    "timeoutMs": 60000
+    "timeoutMs": 60000,
+    // 仅脚本租约（tool=run_script）时可选；普通写操作不带这两个字段。
+    "maxWrites": 10000,
+    "writeNames": ["game_set_recipe", "game_feed_input"]
   }
 }
 ```
+
+- `maxWrites`：可选，1–10000；缺省/0 表示普通单次 token。
+  mod 只接受 `tool=run_script` 且 `argsHash` 非空、`writeNames` 非空且全部属于写工具表的租约；
+  空 `writeNames` 会被 mod 直接拒绝，不再等于“放行全部写工具”。
+- `writeNames`：可选，脚本里出现的写工具名；租约内每次 `tool_call` 都必须命中其一。
 
 mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右下角显示
 红色「拒绝」和蓝色「同意」；关窗、Esc、超时都按拒绝处理。
@@ -1067,8 +1081,9 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 
 - 沙箱里没有 `process` / `require` / `fetch` / 文件系统；能力面只有注入的 `dsp.call`。
 - `dsp.call` 走同一个 `GameToolHost`，白名单来自当前连接的 `host.tools()`，
-  因此自动继承 risk / 路由 / 超时；v1 只允许只读工具。
-- 预算：`maxCalls` ≤ 50、`timeoutMs` ≤ 10s、返回 ≤ 6KB；超时由 QuickJS 中断处理器打断。
+  因此自动继承 risk / 路由 / 超时；写工具必须写成字面量 `dsp.call("工具名", …)` 并由 `script.write.v1` 租约放行。
+- 预算：`maxCalls` 默认 100 / 最大 10000、`timeoutMs` 默认 30s / 最大 120s、返回 ≤ 6KB；
+  超时由 QuickJS 中断处理器打断。
 - **协议层没有新帧**：脚本完全在 sidecar 内执行，`dsp.call` 复用既有的 `tool_call`/`tool_result`，
   因此游戏内仍会出现这些调用的工具卡（`internal=false`）。
 - 实现细节：同步变体 + "挂起 → 宿主执行 → 重放"（memo 已完成的调用），
@@ -1152,6 +1167,7 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | 工具 | risk | 参数 | 说明 |
 | --- | --- | --- | --- |
 | `game_focus_camera` | 1 | `target`（行星/星系/建筑 id） | 移动视角；确认后执行 |
+| `game_place_marker` | 1 | `planetId?`, `latitude`, `longitude`, `altitude?`, `text`, `icon?` | 新建标记；确认后执行；可撤销 |
 | `game_open_panel` | 1 | `panel`（inventory/tech/starmap/marker/mecha/replicator/statistics/blueprint） | 打开面板；确认后执行 |
 | `game_set_research` | 2 | `techId`（id 或名称） | 切换研究目标；确认后执行 |
 | `game_drop_item` | 2 | `itemId`（id 或名称）, `count?` | 丢弃背包物品到地面；确认后执行；需手动拾回，不进入撤销栈 |
@@ -1163,18 +1179,18 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | `game_storage_deposit` | 2 | `buildingId`, `itemId`, `count` | 背包→存储；满时退剩余；可撤销 |
 | `game_storage_withdraw` | 2 | `buildingId`, `itemId`, `count` | 存储→背包；背包满时留剩余；可撤销 |
 | `game_feed_input` | 2 | `buildingId`, `itemId`, `count`（≤500） | 背包原料直接进生产建筑输入缓冲；不经过分拣器/传送带；可撤销 |
-| `game_tether_add` | 1 | `kind`（planet/building）, `planetId?`, `buildingId?` | 建立机甲到行星/建筑的方位指示；使用游戏原生动线 |
+| `game_tether_add` | 1 | `kind`（planet/building/vein）, `planetId?`, `buildingId?`, `veinId?` | 建立机甲到行星/建筑/矿脉的方位指示；使用游戏原生动线 |
 | `game_tether_clear` | 1 | 无 | 清除本 mod 建立的所有方位指示 |
 | `game_tether_list` | 0 | 无 | 列出当前方位指示 |
-| `game_take_output` | 2 | `buildingId` | 取生产建筑成品；保留配方；背包满返回剩余 |
-| `game_dismantle` | 2 | `buildingIds[]`（≤50） | 批量拆除；不可撤销；确认卡明确警告 |
-| `game_undo_last_write` | 0 | 无 | 撤销最近一次写操作；没有可撤销项时返回错误 |
+| `game_take_output` | 2 | `buildingId` | 取生产建筑成品；保留配方；背包满返回剩余；不进入撤销栈 |
+| `game_undo_last_write` | 1 | 无 | 撤销最近一次可撤销写操作；最近一次不可撤销时返回错误 |
 
-- `game_focus_camera` / `game_open_panel` / `game_set_research` / `game_undo_last_write` 需要 `game.write.v1`；`game_drop_item` 需要 `game.drop.v1`；`game_set_recipe` / `game_set_assembler_batch` / `game_take_output` / `game_dismantle` / `game_feed_input` 需要 `game.build.v1`；存储五件套需要 `game.storage.v1`；方位三件套需要 `game.tether.v1`。
+- `game_focus_camera` / `game_place_marker` / `game_open_panel` / `game_set_research` / `game_undo_last_write` 需要 `game.write.v1`；`game_drop_item` 需要 `game.drop.v1`；`game_set_recipe` / `game_set_assembler_batch` / `game_take_output` / `game_feed_input` 需要 `game.build.v1`；存储五件套需要 `game.storage.v1`；方位三件套需要 `game.tether.v1`。
 - risk 1/2 的工具都会先走 A.12；拒绝确认时 mod 不执行、无任何副作用。
-- 除 `game_drop_item` 外，写操作只保留一层撤销；`game_set_assembler_batch` 整批算一层。换档/断线清空撤销栈。
-- `game_drop_item` 不进入撤销栈：物品落在当前行星地面，需玩家手动拾回。
-- `game_undo_last_write` 本身不再弹确认，但只撤销 mod 记录的一步。
+- 写操作只保留一层撤销；`game_set_assembler_batch` 整批算一层。换档/断线清空撤销栈。
+- `game_drop_item`、`game_take_output`、`game_tether_add/clear` 不进入撤销栈：
+  它们会把栈顶标记为“不可撤销”，随后 `game_undo_last_write` 返回明确错误，不会去撤销更早的无关操作。
+- `game_undo_last_write` 也走 A.12 确认；只撤销 mod 记录的一步。
 
 ### B.2 `tool_call`（sidecar → mod）
 
@@ -1232,7 +1248,7 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 - `meta` 必带 `gameTick`、`saveKey`、`tickAtStart`、`tickAtEnd`；列表截断时带
   `truncated:true` 与 `nextOffset`。
 - 错误码：`tool_not_found`、`tool_unavailable`、`not_in_game`、`invalid_args`、
-  `timeout`、`busy`、`internal`、`cancelled`。
+  `timeout`、`busy`、`internal`、`cancelled`、`sandbox_required`。
 - 断线、换档、退游戏时 sidecar 立即以 `tool_unavailable` / `not_in_game` 结束 pending 调用，
   不等待 mod 回复。
 

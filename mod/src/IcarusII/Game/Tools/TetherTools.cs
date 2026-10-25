@@ -240,11 +240,14 @@ namespace IcarusII.Game.Tools
                 {
                     var nav = GameMain.mainPlayer != null ? GameMain.mainPlayer.navigation : null;
                     if (nav != null && _navOwned && nav.indicatorAstroId == targetPlanetAstro(target))
+                    {
                         nav.indicatorAstroId = 0;
+                        _navAstroId = 0;
+                        _navOwned = false;
+                    }
                 }
                 catch { }
-                _navAstroId = 0;
-                _navOwned = false;
+                // 删的不是当前导航目标时不要丢弃所有权；Update 会按剩余目标重算。
                 try { Changed?.Invoke(); } catch { }
                 return true;
             }
@@ -353,78 +356,6 @@ namespace IcarusII.Game.Tools
                 GameLinkCardInfo.ResolveIcons(factory, entity, target);
             }
             catch { /* 资源未加载 */ }
-        }
-
-        /// <summary>
-        /// 按游戏 UIAssemblerWindow 的口径生成建筑卡描述：
-        /// 生产速度、电力（实际供给/比例）、增产效果、状态。
-        /// 没有装配器的建筑返回普通建筑 id，避免伪造数据。
-        /// </summary>
-        private static string BuildAssemblerDescription(PlanetFactory factory, EntityData entity)
-        {
-            if (factory == null || factory.factorySystem == null || factory.powerSystem == null ||
-                entity.assemblerId <= 0 || entity.assemblerId >= factory.factorySystem.assemblerPool.Length)
-                return "建筑 #" + entity.id.ToString(CultureInfo.InvariantCulture);
-
-            ref var asm = ref factory.factorySystem.assemblerPool[entity.assemblerId];
-            if (asm.recipeExecuteData == null || asm.recipeExecuteData.timeSpend <= 0)
-                return "建筑 #" + entity.id.ToString(CultureInfo.InvariantCulture);
-
-            float powerRatio = 0f;
-            long servedWatt = 0;
-            try
-            {
-                var consumer = factory.powerSystem.consumerPool[asm.pcId];
-                int netId = consumer.networkId;
-                var net = factory.powerSystem.netPool[netId];
-                powerRatio = net != null && netId > 0 ? (float)net.consumerRatio : 0f;
-                servedWatt = (long)(consumer.requiredEnergy * 60L * powerRatio + 0.5);
-            }
-            catch { }
-
-            string power = powerRatio <= PowerSystem.kOffPower
-                ? "未供电"
-                : FormatWatt(servedWatt) + "|" + ((int)(powerRatio * 100f)).ToString(CultureInfo.InvariantCulture) + "%";
-
-            float period = (float)((double)asm.recipeExecuteData.timeSpend / 600000.0);
-            float productPerMin = period > 0f ? 60f / period : 0f;
-            float speed = (float)(0.0001 * asm.speedOverride * powerRatio);
-            if (!asm.replicating) speed = 0f;
-            productPerMin *= speed < 0.00001f ? 0f : speed * (1f + asm.extraSpeed * 0.1f / asm.speedOverride);
-
-            bool productive = asm.recipeExecuteData.productive && !asm.forceAccMode;
-            double inc = 0.0;
-            if (asm.speed > 0)
-                inc = productive ? (double)(asm.extraSpeed * 10.0) / asm.speed
-                                 : (double)(asm.speedOverride * 100.0) / asm.speed - 100.0;
-
-            string status;
-            if (asm.replicating)
-                status = powerRatio == 1f ? "正常运转" : powerRatio > PowerSystem.kOffPower ? "电力不足" : "停止运转";
-            else if (asm.time >= asm.recipeExecuteData.timeSpend)
-                status = "产物堆积";
-            else
-            {
-                bool lack = false;
-                var needs = asm.recipeExecuteData.requireCounts;
-                for (int i = 0; i < needs.Length; i++)
-                {
-                    if (i >= asm.served.Length || asm.served[i] < needs[i]) { lack = true; break; }
-                }
-                if (lack) status = "缺少原材料";
-                else status = powerRatio == 1f ? "待机" : powerRatio > PowerSystem.kOffPower ? "电力不足" : "停止运转";
-            }
-
-            return string.Format(CultureInfo.InvariantCulture,
-                "生产速度: {0:0.0}/min\n电力: {1}\n增产效果: +{2:0.0}% {3}\n状态: {4}",
-                productPerMin, power, inc, productive ? "额外产出" : "加速生产", status);
-        }
-
-        private static string FormatWatt(long watt)
-        {
-            if (watt >= 1000000L) return (watt / 1000000.0).ToString("0.0", CultureInfo.InvariantCulture) + "MW";
-            if (watt >= 1000L) return (watt / 1000.0).ToString("0.0", CultureInfo.InvariantCulture) + "kW";
-            return watt.ToString(CultureInfo.InvariantCulture) + "W";
         }
 
         private static int targetPlanetAstro(Target target)
@@ -597,7 +528,7 @@ namespace IcarusII.Game.Tools
             var kind = (args["kind"].AsString("") ?? string.Empty).Trim().ToLowerInvariant();
             if (kind != "planet" && kind != "building" && kind != "vein")
                 throw Fail("kind 只能是 planet、building 或 vein");
-            var planet = GameToolFormat.ResolvePlanet(args);
+            var planet = GameToolFormat.ResolvePlanetStrict(args);
             if (planet == null) throw Fail("找不到行星");
 
             if (kind == "planet")
@@ -611,6 +542,7 @@ namespace IcarusII.Game.Tools
                 data.Set("subtitle", target != null ? target.Subtitle : string.Empty);
                 data.Set("description", target != null ? target.Description : string.Empty);
                 data.Set("iconLabel", target != null ? target.IconLabel : string.Empty);
+                WriteActionStack.MarkNonUndoable("建立到行星「" + planet.displayName + "」的方位指示");
                 return Ok("已建立机甲到行星「" + planet.displayName + "」的方位指示", data);
             }
 
@@ -629,6 +561,7 @@ namespace IcarusII.Game.Tools
                 vdata.Set("subtitle", vtarget != null ? vtarget.Subtitle : string.Empty);
                 vdata.Set("description", vtarget != null ? vtarget.Description : string.Empty);
                 vdata.Set("iconLabel", vtarget != null ? vtarget.IconLabel : string.Empty);
+                WriteActionStack.MarkNonUndoable("建立到矿脉 #" + veinId.ToString(CultureInfo.InvariantCulture) + " 的方位指示");
                 return Ok("已建立机甲到矿脉 #" + veinId.ToString(CultureInfo.InvariantCulture) + " 的方位指示", vdata);
             }
 
@@ -646,6 +579,7 @@ namespace IcarusII.Game.Tools
             data2.Set("subtitle", built != null ? built.Subtitle : planet.displayName);
             data2.Set("description", built != null ? built.Description : string.Empty);
             data2.Set("iconLabel", built != null ? built.IconLabel : "#" + buildingId.ToString(CultureInfo.InvariantCulture));
+            WriteActionStack.MarkNonUndoable("建立到建筑 #" + buildingId.ToString(CultureInfo.InvariantCulture) + " 的方位指示");
             return Ok("已建立机甲到建筑 #" + buildingId.ToString(CultureInfo.InvariantCulture) + " 的方位指示", data2);
         }
     }
@@ -658,6 +592,7 @@ namespace IcarusII.Game.Tools
         {
             if (!GameRefs.IsInGame || GameMain.mainPlayer == null) throw Fail("当前不在游戏内");
             GameTether.Clear();
+            WriteActionStack.MarkNonUndoable("清除所有方位指示");
             return Ok("已清除所有方位指示");
         }
     }

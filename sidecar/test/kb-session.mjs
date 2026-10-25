@@ -131,6 +131,10 @@ try {
     })),
     false,
   );
+  const boundDeadline = Date.now() + 1000;
+  while (!socket.frames.some((frame) => frame.type === 'save.bound') && Date.now() < boundDeadline) {
+    await delay(5);
+  }
   check('收到 save.bound', socket.frames.some((frame) => frame.type === 'save.bound'));
 
   // 模拟 mod：回应所有 internal tool_call。
