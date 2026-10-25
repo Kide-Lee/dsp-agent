@@ -120,6 +120,19 @@
 
 可以提交的是 `mod/unity/Prefab/ChatWindow.prefab` 快照及其 `.meta`；`dsp-game/` 里的实际 prefab 不入库。
 
+### 2.6 每次更改必须部署并提交
+
+**任何代码、UI、协议、配置或文档更改完成后，都必须部署到 Steam 游戏目录并做一次 git 提交；不得只改代码不部署，也不得留下未提交的工作区。**
+
+每次收尾按顺序执行：
+
+1. 运行受影响的测试：`scripts/build-mod.sh`、`dotnet run --project tests/ProtocolTests`、`cd sidecar && npm test`（按改动范围）。
+2. 按改动类型构建产物：mod DLL、sidecar、UI bundle。
+3. `scripts/package.sh` 打包，再运行 `.dsh/skills/update-steam-mod/scripts/update-steam-mod.sh` 部署到 Steam；脚本的 SHA-256 校验必须通过。
+4. `git add -A && git commit`。提交前确认 `git status --short` 为空；不要把 `dist/`、`dsp-game/`、`.deps/`、密钥或运行期数据带进提交。
+
+如果游戏正在运行、Steam 路径不可用或部署脚本拒绝执行，必须先停止游戏/解决环境问题，或明确报告阻塞原因；**不能静默跳过部署**。仅文档改动也必须提交；如果确实不影响发布包，仍应执行打包/部署步骤并记录结果，避免安装目录与仓库状态不一致。
+
 ---
 
 ## 3. 仓库地图
@@ -296,13 +309,15 @@ scripts/package.sh
 
 ## 8. 完成定义（DoD）
 
-提交前至少确认：
+每次更改完成前至少确认：
 
 - [ ] `scripts/build-mod.sh` 0 error。
 - [ ] `cd sidecar && npm test` 通过（改了 sidecar/协议/KB 时必跑）。
 - [ ] `dotnet run --project tests/ProtocolTests` 通过（改了协议/传输时必跑）。
 - [ ] 改了 prefab/UI：`scripts/build-ui-bundle.sh` 成功，快照已更新。
 - [ ] 改了 UI 静态布局：没有新增运行期永久布局补丁；值在 prefab/构建器里。
-- [ ] 改了发布内容：`scripts/package.sh` 成功，Steam 更新脚本通过 SHA-256 校验。
+- [ ] `scripts/package.sh` 成功。
+- [ ] `.dsh/skills/update-steam-mod/scripts/update-steam-mod.sh` 已部署到 Steam，并通过 SHA-256 校验。
+- [ ] 已执行 `git commit`，且 `git status --short` 为空。
 - [ ] 没有提交 `dsp-game/`、`dist/`、`.deps/`、密钥或运行期数据。
 - [ ] 协议/验收文档已同步（涉及协议或玩家可见行为时）。
