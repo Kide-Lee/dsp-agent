@@ -124,7 +124,7 @@ DSP 每次大版本更新都可能改动内部类型。看日志里的报错，�
 
 ```
 icarus-ii-sidecar.exe   SHA256 3c9c209ec252f4a9c9dfa36e79b4ac7b9a3a33146018b37b0c440948427cdb76
-IcarusII.dll            SHA256 e41174ea989bfa96d9ec34c3f8119c79bb7d45f57436c8bb021a1f81a0950d06
+IcarusII.dll            SHA256 9516120c09e4c8a4edcefdb07a0f2b910d5c40b6d3b39c5c8d8c1a04868dd595
 ```
 
 ---
