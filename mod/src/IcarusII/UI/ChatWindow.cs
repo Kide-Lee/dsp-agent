@@ -611,9 +611,6 @@ namespace IcarusII.UI
         /// <summary>正文字体：输入框与聊天正文都用它。</summary>
         private Font _bodyFont;
 
-        /// <summary>prefab 里写的输入框提示文案；运行期**不覆盖**它，key 录入结束后还原用。</summary>
-        private string _authoredPlaceholder;
-
         private bool _dirty;
         private bool _suppressAutoScrollOnce;
         /// <summary>
@@ -636,7 +633,6 @@ namespace IcarusII.UI
         private bool _savedInputing;
         private bool _autoFocusInput;
         private bool _wantInputFocus;
-        private bool _keyEntryMode;
 
         /// <summary>多行输入框按回车后待提交（见 `OnInputNewLine`）。</summary>
         private bool _submitPending;
@@ -772,15 +768,6 @@ namespace IcarusII.UI
         /// </summary>
         public event Action<BlueprintCardInfo, BlueprintCardAction> BlueprintCardActionRequested;
 
-        /// <summary>
-        /// 处于"录入 API Key"状态时，用户回车提交的是密钥（而不是聊天消息）。
-        /// 密钥**不会**进入聊天记录，也**不会**被写进日志。
-        /// </summary>
-        public event Action<string> KeySubmitted;
-
-        /// <summary>是否正在等待用户录入 API Key。</summary>
-        public bool KeyEntryMode => _keyEntryMode;
-
         public bool IsOpen { get; private set; }
 
         /// <summary>GameObject 仍然存活（Unity 的 == null 对已销毁对象返回 true）。</summary>
@@ -840,7 +827,6 @@ namespace IcarusII.UI
             _currentTurnId = 0;
             _focusedTurnId = 0;
             _bodyFont = null;
-            _authoredPlaceholder = null;
             _dirty = false;
             IsOpen = false;
             _wantInputFocus = false;
@@ -1263,15 +1249,6 @@ namespace IcarusII.UI
             if (title != null && !authoredTitle) title.text = Strings.Get("title");
             _titleText = title;
             _titleFromPrefab = authoredTitle;
-            // 输入框提示**尊重 prefab 里写的文案**，运行期不改它。
-            // （key 录入态会临时换成 key.placeholder，退出时还原成这里记下的原文。）
-            var placeholder = input.transform.Find("Placeholder");
-            if (placeholder != null)
-            {
-                var ph = placeholder.GetComponent<Text>();
-                if (ph != null) _authoredPlaceholder = ph.text;
-            }
-
             // 字体：prefab 里填的是内置 Arial 占位（原生字体 SAIRAB/SAIRASB 不含中文），
             // 这里**无条件**换成游戏当前语言的字体——中文能不能显示全靠这一步。
             // 字号按 prefab 里烘焙的值整体缩放，尊重你在 Unity 里的排版。
@@ -1537,7 +1514,6 @@ namespace IcarusII.UI
             placeholder.supportRichText = false;
             placeholder.horizontalOverflow = HorizontalWrapMode.Overflow;
             placeholder.text = Strings.Get("input.placeholder");
-            _authoredPlaceholder = placeholder.text;
 
             _input = inputRt.gameObject.AddComponent<InputField>();
             _input.textComponent = text;
@@ -1778,8 +1754,7 @@ namespace IcarusII.UI
                 if (_input != null) RebindInputTextMaterial(_input.textComponent, "开窗");
                 // 默认不自动聚焦：这样打开后按键仍可立即关窗。
                 // 需要"开窗即打字"的玩家可在配置里打开 AutoFocusInput。
-                // 密钥录入态总是自动聚焦：此时玩家唯一要做的事就是填 Key
-                if ((_autoFocusInput || _keyEntryMode) && !AskShowing) FocusInput();
+                if (_autoFocusInput && !AskShowing) FocusInput();
                 EnsureThinkingComboText();
                 EnsureModelComboText();
                 // 刚 SetActive(true)，布局还没重建：直接贴底只能按旧高度算，
@@ -6505,7 +6480,7 @@ namespace IcarusII.UI
                 if (UnityEngine.Input.GetKeyDown(KeyCode.DownArrow)) MoveToolSelection(1);
                 if (UnityEngine.Input.GetKeyDown(KeyCode.UpArrow)) MoveToolSelection(-1);
             }
-            if (IsOpen && !_keyEntryMode && VFInput.escape)
+            if (IsOpen && VFInput.escape)
             {
                 VFInput.UseEscape();
                 SetOpen(false);
@@ -6635,56 +6610,6 @@ namespace IcarusII.UI
             _scrollBottomFrames = 2;
         }
 
-        // ---------------------------------------------------------------- 首次配置
-
-        /// <summary>
-        /// 进入密钥录入态：输入框切为密码模式（不回显明文），并自动聚焦
-        /// ——这是唯一"开窗即聚焦"的场景，因为此时玩家唯一能做的事就是填 Key。
-        /// </summary>
-        public void EnterKeyEntry(string reason)
-        {
-            if (_input == null) return;
-
-            var first = !_keyEntryMode;
-            _keyEntryMode = true;
-            HideToolMenu();
-
-            _input.contentType = InputField.ContentType.Password;
-            _input.characterLimit = 0;
-            _input.text = string.Empty;
-            if (_input.placeholder is Text ph) ph.text = Strings.Get("key.placeholder");
-
-            if (first)
-            {
-                var message = string.IsNullOrEmpty(reason)
-                    ? Strings.Get("key.prompt")
-                    : reason + "\n" + Strings.Get("key.prompt");
-                AppendSystem(message);
-            }
-
-            SetStatus(Strings.Get("status.needkey"), _textDim);
-            FocusInput();
-        }
-
-        /// <summary>退出密钥录入态，恢复正常聊天输入。</summary>
-        public void ExitKeyEntry()
-        {
-            if (_input == null) return;
-
-            // 关键：config.state 每次变化都会调用 ExitKeyEntry()。之前这里无条件
-            // `_input.text = ""`，导致切换模型/思考档位收到 config.state 时把玩家
-            // 正在输入的内容清空。只有确实处于密钥录入态才需要清理和恢复。
-            if (!_keyEntryMode) return;
-
-            _keyEntryMode = false;
-            _input.contentType = InputField.ContentType.Standard;
-            _input.text = string.Empty;
-            if (_input.placeholder is Text ph)
-                ph.text = _authoredPlaceholder ?? Strings.Get("input.placeholder");
-
-            AppendSystem(Strings.Get("key.saved"));
-        }
-
         // ---------------------------------------------------------------- 输入
 
         /// <summary>
@@ -6779,14 +6704,7 @@ namespace IcarusII.UI
 
             try
             {
-                if (_keyEntryMode)
-                {
-                    KeySubmitted?.Invoke(value);
-                }
-                else
-                {
-                    Submitted?.Invoke(value);
-                }
+                Submitted?.Invoke(value);
             }
             catch (Exception ex)
             {
@@ -7203,7 +7121,7 @@ namespace IcarusII.UI
 
         private void ToggleToolMenu()
         {
-            if (_toolMenu == null || _keyEntryMode) return;
+            if (_toolMenu == null) return;
             if (_toolMenuOpen)
             {
                 HideToolMenu();
@@ -7235,7 +7153,7 @@ namespace IcarusII.UI
 
         private void OnInputValueChanged(string value)
         {
-            if (_suppressToolMenuEvents || _keyEntryMode || !IsOpen) return;
+            if (_suppressToolMenuEvents || !IsOpen) return;
 
             var text = value ?? string.Empty;
             if (TryLeadingSlashToken(text, out var token, out var end) && end == text.Length)
@@ -7269,7 +7187,7 @@ namespace IcarusII.UI
 
         private void ShowToolMenu()
         {
-            if (_toolMenu == null || !IsOpen || _keyEntryMode) return;
+            if (_toolMenu == null || !IsOpen) return;
             _toolMenuOpen = true;
             _toolMenu.gameObject.SetActive(true);
             _toolMenu.SetAsLastSibling();
@@ -7748,15 +7666,7 @@ namespace IcarusII.UI
 
             try
             {
-                if (_keyEntryMode)
-                {
-                    // 密钥走独立通道：绝不进聊天记录，绝不写日志
-                    KeySubmitted?.Invoke(text);
-                }
-                else
-                {
-                    Submitted?.Invoke(text);
-                }
+                Submitted?.Invoke(text);
             }
             catch (Exception ex)
             {

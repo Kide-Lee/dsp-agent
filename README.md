@@ -2,7 +2,8 @@
 
 [《戴森球计划》(Dyson Sphere Program)](https://store.steampowered.com/app/1366540/) 的游戏内 AI 助手 mod。
 
-首次使用：打开窗口后按提示粘贴 DeepSeek API Key（输入不回显，也不会进聊天记录）。
+首次使用：按 `R` 打开聊天窗后，点击窗口右上角的**设置按钮**，在「模型」页填写
+DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）。
 
 游戏里按 **`R`** 打开聊天窗，可以问机制、要攻略、让 AI 读取你当前的存档状态给建议，
 也可以在**你确认之后**让 AI 执行游戏内操作。
@@ -10,7 +11,7 @@
 > 状态：**M4 已完成并通过实机验收**（2026-10-24）。
 > - M0 已完成并实机验证：插件加载 → 窗口开关（`R`）→ 与 sidecar 握手 → 消息回显。
 > - M1 已完成：sidecar 接入 [pi](https://github.com/earendil-works/pi) + DeepSeek，
->   mod 侧实现首次密钥引导与配置上报。
+>   mod 侧实现首次配置引导（指向右上角设置按钮）与配置上报。
 > - M2 已实现：`tool_call`/`tool_result` 协议、按连接路由的 ToolHost、六个只读工具
 >   （overview / player / planet / power / research / production）、分帧采集与快照缓存、
 >   聊天窗工具卡片、按存档隔离的对话 session（再次进入存档自动回放最近对话）、工具结果图标短码。

@@ -63,6 +63,14 @@ namespace IcarusII
         private bool _initFailed;
         private ConfigState _lastConfig;
 
+        /// <summary>
+        /// 上一次真正应用到 UI 的配置状态。
+        ///
+        /// 用来避免每收到一次 `config.state` 就重复追加同一条引导；
+        /// 场景切换后窗口会重建，这里也要清空，让新窗口重新显示一次引导。
+        /// </summary>
+        private string _lastConfigState;
+
         /// <summary>思考档位在本地改过、但还没成功发给 sidecar（下次 ready 时补发）。</summary>
         private bool _thinkingLevelDirty;
 
@@ -133,7 +141,6 @@ namespace IcarusII
                 _hotkey = new HotkeyService(_config);
                 _chat = new ChatWindow();
                 _chat.Submitted += OnUserSubmitted;
-                _chat.KeySubmitted += OnKeySubmitted;
                 _chat.ThinkingLevelChanged += OnThinkingLevelChanged;
                 _chat.ModelSelectionChanged += OnModelSelectionChanged;
                 _chat.TurnDeleted += OnTurnDeleted;
@@ -196,6 +203,7 @@ namespace IcarusII
                 _streaming = false;
                 _chat.Reset();
                 AgentMenuButton.Reset();
+                _lastConfigState = null;
                 Log.LogInfo("UI 随场景销毁，将在新场景中重建。");
             }
 
@@ -1101,30 +1109,6 @@ namespace IcarusII
             TryApplyGameStyle();
         }
 
-        /// <summary>用户提交了 API Key：上报给 sidecar，然后等 config.state 回来。</summary>
-        private void OnKeySubmitted(string apiKey)
-        {
-            if (string.IsNullOrEmpty(apiKey)) return;
-
-            // 只记录长度，绝不记录内容
-            Log.LogInfo($"[配置] 收到 API Key（长度 {apiKey.Length}），上报给 sidecar…");
-
-            if (_client == null)
-            {
-                _chat.AppendSystem("连接未就绪，请稍后重试。");
-                return;
-            }
-
-            var id = _client.SendConfigSet(apiKey: apiKey);
-            if (id == null)
-            {
-                _chat.AppendSystem("连接未就绪，请稍后重试。");
-                return;
-            }
-
-            _chat.SetStatus("校验中…", null);
-        }
-
         /// <summary>
         /// 玩家在聊天窗右下角切换了「思考」档位。
         ///
@@ -1251,9 +1235,9 @@ namespace IcarusII
             //
             // 关键：config 状态几乎总是**早于 UI 创建**到达（握手在插件加载后
             // 0.3 秒内完成，而 UI 要等 UIRoot 与样式捕获就绪）。如果只在这里
-            // 应用一次，EnterKeyEntry 会因为 _input 还是 null 而静默返回，
-            // 首次引导就永远不会出现（实测踩到）。因此必须缓存，
-            // 并在 UI 建好后由 ApplyConfigState 再应用一次。
+            // 应用一次，那时还没有可追加消息的控件，首次引导就永远不会出现
+            // （实测踩到）。因此必须缓存，并在 UI 建好后由 ApplyConfigState
+            // 再应用一次。
             _lastConfig = config;
             Post(ApplyConfigState);
         }
@@ -1278,24 +1262,34 @@ namespace IcarusII
             // 模型列表/当前模型：sidecar 的 config.state 是权威来源。
             _chat.ApplyModels(config);
 
+            // 只在状态真正变化时追加引导，避免切换模型/思考档位收到
+            // 重复的 config.state 时刷屏。
+            var previous = _lastConfigState;
+            var changed = !string.Equals(previous, config.State, StringComparison.Ordinal);
+            _lastConfigState = config.State;
+
             switch (config.State)
             {
                 case P.ConfigMissingKey:
-                    _chat.EnterKeyEntry(null);
+                    if (changed) _chat.AppendSystem(Strings.Get("config.missing_key"));
+                    _chat.SetStatus(Strings.Get("status.needkey"), null);
                     break;
 
                 case P.ConfigInvalidKey:
-                    _chat.EnterKeyEntry(Strings.Get("key.invalid"));
+                    if (changed) _chat.AppendSystem(Strings.Get("config.invalid_key"));
+                    _chat.SetStatus(Strings.Get("status.needkey"), null);
                     break;
 
                 case P.ConfigUnreachable:
-                    _chat.AppendSystem(Strings.Get("key.unreachable"));
-                    _chat.EnterKeyEntry(null);
+                    if (changed) _chat.AppendSystem(Strings.Get("config.unreachable"));
+                    _chat.SetStatus(Strings.Get("status.needkey"), null);
                     break;
 
                 case P.ConfigReady:
-                    _chat.ExitKeyEntry();
                     _chat.SetStatus(Strings.Get("status.ready"), null);
+                    // 从缺 Key/失效/连不上恢复时给一次确认；启动时就已配好则不打扰。
+                    if (changed && previous != null && previous != P.ConfigReady)
+                        _chat.AppendSystem(Strings.Get("config.ready"));
                     break;
             }
         }
@@ -1865,6 +1859,17 @@ namespace IcarusII
 
             // M4m：调试命令在 AppendUser 之前拦截，不进入 AI/会话历史。
             if (_config != null && _config.DebugToolConsole && TryHandleDebugCommand(text)) return;
+
+            // 没有可用 Key 时不把提问送进会话：旧版这里会把输入当成 Key 吞掉，
+            // 现在统一引导到右上角设置按钮，避免 sidecar 再回一条 config_required。
+            if (_lastConfig != null && _lastConfig.NeedsKey)
+            {
+                _chat.AppendSystem(_lastConfig.State == P.ConfigInvalidKey
+                    ? Strings.Get("config.invalid_key")
+                    : Strings.Get("config.missing_key"));
+                _chat.SetStatus(Strings.Get("status.needkey"), null);
+                return;
+            }
 
             _chat.AppendUser(text);   // 用户消息走气泡样式
 

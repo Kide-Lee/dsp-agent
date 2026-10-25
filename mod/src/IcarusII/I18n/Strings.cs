@@ -39,13 +39,13 @@ namespace IcarusII.I18n
             ["confirm.step"] = "确认",
             ["confirm.agree"] = "同意",
             ["confirm.reject"] = "拒绝",
-            ["key.placeholder"] = "粘贴 DeepSeek API Key 后回车…",
-            ["key.prompt"] =
-                "尚未配置 API Key。请把 DeepSeek 的 API Key 粘贴到下面并回车。\n" +
-                "输入内容不会显示在屏幕上，也不会写入聊天记录；它只保存在本机 sidecar 的数据目录里。",
-            ["key.saved"] = "API Key 已保存，可以开始提问了。",
-            ["key.invalid"] = "API Key 被服务端拒绝，请检查后重新输入。",
-            ["key.unreachable"] = "无法连通 DeepSeek，请检查网络后重试。",
+            ["config.missing_key"] =
+                "尚未配置 AI。请点击窗口右上角的设置按钮，在「模型」页填写 API Key 并保存。",
+            ["config.invalid_key"] =
+                "API Key 被服务端拒绝。请点击窗口右上角的设置按钮检查或更换 Key。",
+            ["config.unreachable"] =
+                "无法连通 AI 服务。请检查网络；如果使用了自定义 API 地址，请在右上角设置里修改。",
+            ["config.ready"] = "AI 配置已就绪，可以开始提问了。",
             ["status.needkey"] = "待配置",
             ["save.bound"] = "已绑定存档「{0}」的对话（恢复 {1} 条历史）。",
             ["save.bound.nocount"] = "已绑定存档「{0}」的对话。",
