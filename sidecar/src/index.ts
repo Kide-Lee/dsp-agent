@@ -36,7 +36,7 @@ import { toolNamesForCapabilities } from './tools/registry.js';
  * 打包成单文件（esbuild --bundle，见 scripts/build-sidecar.sh）后 `__dirname` 里没有
  * package.json，所以版本号内嵌一份，package.json 只用来交叉核对（不一致时警告）。
  */
-const SERVER_VERSION = '0.3.3';
+const SERVER_VERSION = '0.4.0';
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_DATA_DIR_NAME = '.icarus-ii-dev';
