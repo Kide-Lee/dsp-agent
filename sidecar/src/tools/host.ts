@@ -10,8 +10,9 @@
 
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { JsonObject, ToolResultPayload } from '../protocol.js';
+import { isSandboxOnlyTool } from './sandbox.js';
 
-/** 只读脚本工具名（sidecar 本地执行）。 */
+/** 脚本工具名（sidecar 本地执行）。 */
 export const SCRIPT_TOOL_NAME = 'run_script';
 
 export interface ToolCallOptions {
@@ -21,11 +22,31 @@ export interface ToolCallOptions {
   internal?: boolean;
   /** 写操作风险等级；>0 时走 confirm_request + 一次性令牌。 */
   risk?: number;
+  /** 已由脚本写租约确认的 token；提供时跳过单次 confirm。 */
+  confirmToken?: string;
+  /** 脚本写租约绑定的脚本哈希。 */
+  confirmArgsHash?: string;
+}
+
+/** run_script 的脚本级确认（一次确认，允许最多 maxWrites 次写调用）。 */
+export interface ScriptConfirmRequest {
+  scriptHash: string;
+  writeNames: string[];
+  maxWrites: number;
+}
+
+export interface ScriptConfirmResult {
+  token: string;
+  scriptHash: string;
 }
 
 /** Session 实现它；工具宿主只依赖这个窄接口。 */
 export interface ToolTransport {
   callTool(name: string, args: JsonObject, options: ToolCallOptions): Promise<ToolResultPayload>;
+  /** 脚本包含写操作时，向玩家确认整段脚本；null = 拒绝。 */
+  confirmScript?(request: ScriptConfirmRequest): Promise<ScriptConfirmResult | null>;
+  /** 脚本结束/失败后释放租约。 */
+  releaseScript?(token: string): void;
 }
 
 export function toolError(code: string, message: string): ToolResultPayload {
@@ -40,6 +61,7 @@ export function toolError(code: string, message: string): ToolResultPayload {
 export class GameToolHost {
   private transport: ToolTransport | null = null;
   private capabilities: string[] = [];
+  private sandboxEnabled = false;
   private cachedTools: ToolDefinition[] | null = null;
   /** 调试直调期间把 host 调用标记为 internal，mod 不显示普通工具卡。 */
   private debugMode = false;
@@ -54,6 +76,30 @@ export class GameToolHost {
     this.capabilities = normalized;
     this.cachedTools = null;
     return true;
+  }
+
+  /**
+   * 本次载入是否启用游戏沙盒工具。返回是否真的变化；
+   * 变化时必须让 agent 在回合边界重建 pi 会话，否则模型仍拿着旧工具集。
+   */
+  setSandbox(enabled: boolean): boolean {
+    if (this.sandboxEnabled === enabled) return false;
+    this.sandboxEnabled = enabled;
+    this.cachedTools = null;
+    return true;
+  }
+
+  get sandbox(): boolean {
+    return this.sandboxEnabled;
+  }
+
+  async confirmScript(request: ScriptConfirmRequest): Promise<ScriptConfirmResult | null> {
+    if (!this.transport?.confirmScript) return null;
+    return this.transport.confirmScript(request);
+  }
+
+  releaseScript(token: string): void {
+    this.transport?.releaseScript?.(token);
   }
 
   has(capability: string): boolean {
@@ -87,7 +133,10 @@ export class GameToolHost {
     if (!factory) {
       throw new Error('game tools factory 尚未注册（index.ts 必须先 import tools/registry.js）');
     }
-    this.cachedTools = factory(this);
+    const tools = factory(this);
+    this.cachedTools = this.sandboxEnabled
+      ? tools
+      : tools.filter((tool) => !isSandboxOnlyTool(tool.name));
     return this.cachedTools;
   }
 
@@ -96,6 +145,13 @@ export class GameToolHost {
     args: JsonObject,
     options: ToolCallOptions,
   ): Promise<ToolResultPayload> {
+    if (!this.sandboxEnabled && isSandboxOnlyTool(name)) {
+      return toolError(
+        'sandbox_required',
+        '当前存档未启用游戏沙盒工具，沙盒专属工具不可用',
+      );
+    }
+
     const transport = this.transport;
     if (!transport) {
       return toolError('tool_unavailable', '当前没有绑定到游戏连接（可能已断线或尚未进入存档）');

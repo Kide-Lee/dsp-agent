@@ -150,6 +150,37 @@ namespace IcarusII.Tests
                 linkResolvers);
             Eq("成就链接 SID", "<link=20001>成就</link>", achievementSid.Rich);
 
+            var entityBuilding = GameRichText.Format(
+                "[建筑](dsp://entity/building/103/6956)", RichTextProfile.Body);
+            Eq("实体建筑链接 ID", "<link=800000>建筑</link>", entityBuilding.Rich);
+            Check("实体建筑链接有动作", entityBuilding.HasEntityLinks && entityBuilding.HasGameLinks);
+            var entityPlanet = GameRichText.Format(
+                "[星球](dsp://entity/planet/103)", RichTextProfile.Body);
+            Eq("实体星球链接 ID（每个 Text 独立分配）", "<link=800000>星球</link>", entityPlanet.Rich);
+            Check("实体星球链接有动作", entityPlanet.HasEntityLinks);
+            Check("实体 URL 建筑解析",
+                GameRichText.TryParseEntityUrl("dsp://entity/building/103/6956", out var eb) &&
+                eb == "dsp://entity/building/103/6956");
+            Check("实体 URL 星球解析",
+                GameRichText.TryParseEntityUrl("dsp://entity/planet/103", out var ep) &&
+                ep == "dsp://entity/planet/103");
+            Check("实体 URL 拒绝非法段", !GameRichText.TryParseEntityUrl("dsp://entity/building/0/1", out _));
+            var entityVein = GameRichText.Format(
+                "[矿脉](dsp://entity/vein/103/415)", RichTextProfile.Body);
+            Eq("实体矿脉链接 ID", "<link=800000>矿脉</link>", entityVein.Rich);
+            Check("实体矿脉链接有动作", entityVein.HasEntityLinks && entityVein.HasGameLinks);
+            Check("实体 URL 矿脉解析",
+                GameRichText.TryParseEntityUrl("dsp://entity/vein/103/415", out var ev) &&
+                ev == "dsp://entity/vein/103/415");
+            Check("实体 URL 矿脉拒绝零 id", !GameRichText.TryParseEntityUrl("dsp://entity/vein/103/0", out _));
+            var entityAllocator = new RichTextLinkAllocator();
+            Eq("实体 ID 从 800000 开始", 800000, entityAllocator.AllocateEntity("dsp://entity/planet/1"));
+            Eq("实体 ID 顺序递增", 800001, entityAllocator.AllocateEntity("dsp://entity/planet/2"));
+            Check("实体 ID 边界", RichTextLinkAllocator.IsEntityLinkId(800000) &&
+                RichTextLinkAllocator.IsEntityLinkId(899999) &&
+                !RichTextLinkAllocator.IsEntityLinkId(799999) &&
+                !RichTextLinkAllocator.IsEntityLinkId(900000));
+
             var unknownRecipe = GameRichText.Format(
                 "[未知](dsp://recipe/nope)", RichTextProfile.Body, null, null,
                 new RichTextLinkResolvers());
@@ -192,14 +223,13 @@ namespace IcarusII.Tests
                 !RichTextLinkAllocator.IsTechLinkId(10000));
 
             var rawTech = GameRichText.Format("<link=1001>电磁学</link>", RichTextProfile.Body);
-            Check("裸 link 不再解析为科技", !rawTech.HasTechLinks && !rawTech.HasLinks);
-            Eq("裸 link 按字面量转义", "<\u200Blink=1001>电磁学<\u200B/link>", rawTech.Rich);
+            Check("游戏原生 link 标记科技动作", rawTech.HasTechLinks);
             var rawRecipe = GameRichText.Format("<link=11101>铁块</link>", RichTextProfile.Body);
-            Check("裸 link 不再解析为配方", !rawRecipe.HasRecipeLinks && !rawRecipe.HasLinks);
+            Check("游戏原生 link 标记配方动作", rawRecipe.HasRecipeLinks);
             var rawAchievement = GameRichText.Format("<link=20001>成就</link>", RichTextProfile.Body);
-            Check("裸 link 不再解析为成就", !rawAchievement.HasAchievementLinks && !rawAchievement.HasLinks);
+            Check("游戏原生 link 标记成就动作", rawAchievement.HasAchievementLinks);
             var bareLink = GameRichText.Format("<link>裸链接</link>", RichTextProfile.Body);
-            Eq("裸 link 按字面量转义", "<\u200Blink>裸链接<\u200B/link>", bareLink.Rich);
+            Eq("裸 link 避开科技/配方/成就/网页段", "<link=21001>裸链接</link>", bareLink.Rich);
 
             var bareUrl = GameRichText.Format("来源：https://example.com/a.txt。", RichTextProfile.Body);
             Eq("裸 URL 自动链接", "来源：<link=900000>https://example.com/a.txt</link>。", bareUrl.Rich);
@@ -231,15 +261,17 @@ namespace IcarusII.Tests
             Eq("图标 + 着色", "<tint=#FFD966>\\tk;</tint>",
                 Body("<tint value=\"#FFD966\"><icon tag=\"tk\" /></tint>"));
 
-            // ---- 非法裸游戏标签一律按字面量处理 ----
-            Eq("裸 color 按字面量转义",
-                "<\u200Bcolor=#FFD966>重点<\u200B/color>",
-                Body("<color=#FFD966>重点</color>"));
-            Eq("裸 color 漏等号也按字面量转义",
+            // ---- 游戏原生语法：精确兼容，不放宽到错误变体 ----
+            Eq("游戏原生 color", "<color=#FFD966>重点</color>", Body("<color=#FFD966>重点</color>"));
+            Eq("游戏原生 size", "<size=20>大字</size>", Body("<size=20>大字</size>"));
+            Eq("游戏原生 sqrt", "<sqrt=√>x</sqrt>", Body("<sqrt=√>x</sqrt>"));
+            Eq("游戏原生 tint", "<tint=#FFD966>重点</tint>", Body("<tint=#FFD966>重点</tint>"));
+            Eq("漏等号的颜色仍按字面量转义",
                 "<\u200Bcolor#FFD966>重点<\u200B/color>",
                 Body("<color#FFD966>重点</color>"));
-            Eq("裸 size 按字面量转义", "<\u200Bsize=20>大字<\u200B/size>", Body("<size=20>大字</size>"));
-            Eq("裸 sqrt 按字面量转义", "<\u200Bsqrt=√>x<\u200B/sqrt>", Body("<sqrt=√>x</sqrt>"));
+            Eq("非游戏标签带等号仍按字面量转义",
+                "<\u200Bdiv=foo>x<\u200B/div>",
+                Body("<div=foo>x</div>"));
 
             // ---- 未知标签必须转义，不能吞内容 ----
             Eq("未知 HTML 转义", "<\u200Bdiv>x<\u200B/div>", Body("<div>x</div>"));

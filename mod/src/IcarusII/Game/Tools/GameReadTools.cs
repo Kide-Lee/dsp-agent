@@ -493,6 +493,9 @@ namespace IcarusII.Game.Tools
             private readonly Dictionary<string, VeinAgg> _veins =
                 new Dictionary<string, VeinAgg>(StringComparer.Ordinal);
             private readonly Dictionary<int, int> _buildings = new Dictionary<int, int>();
+            private readonly string _veinsMode;
+            private readonly int _veinOffset;
+            private readonly int _veinLimit;
 
             private int _phase;
             private int _veinIndex = 1;
@@ -506,6 +509,16 @@ namespace IcarusII.Game.Tools
                 _args = args;
                 _planet = GameToolFormat.ResolvePlanet(args);
                 if (_planet == null) throw new ArgumentException("找不到行星");
+
+                _veinsMode = (args["veins"].AsString("summary") ?? "summary").Trim().ToLowerInvariant();
+                if (_veinsMode != "summary" && _veinsMode != "groups" &&
+                    _veinsMode != "nodes" && _veinsMode != "all")
+                    throw new ArgumentException("veins 只能是 summary / groups / nodes / all");
+
+                _veinOffset = Math.Max(0, args["veinOffset"].AsInt(0));
+                _veinLimit = args["veinLimit"].AsInt(50);
+                if (_veinLimit <= 0) _veinLimit = 50;
+                if (_veinLimit > 200) _veinLimit = 200;
             }
 
             public bool Step(int budgetMs)
@@ -626,6 +639,9 @@ namespace IcarusII.Game.Tools
                 }
                 data.Set("veins", veinArr);
 
+                if (_veinsMode == "groups" || _veinsMode == "all") AppendVeinGroups(data);
+                if (_veinsMode == "nodes" || _veinsMode == "all") AppendVeinNodes(data);
+
                 var buildingList = new List<KeyValuePair<int, int>>(_buildings);
                 buildingList.Sort((a, b) =>
                 {
@@ -661,6 +677,10 @@ namespace IcarusII.Game.Tools
                 var display = (_planet.displayName ?? _planet.name ?? "行星")
                     + " · 矿 " + veinList.Count.ToString(CultureInfo.InvariantCulture) + " 类"
                     + " · 建筑 " + total.ToString(CultureInfo.InvariantCulture) + " 类";
+                if (_veinsMode == "groups" || _veinsMode == "all")
+                    display += " · 矿群按位置见 veinGroups";
+                if (_veinsMode == "nodes" || _veinsMode == "all")
+                    display += " · 逐矿脉见 veinNodes";
                 data.Set("display", display);
 
                 return new GameToolJobResult
@@ -669,6 +689,131 @@ namespace IcarusII.Game.Tools
                     Truncated = offset + returned < total,
                     NextOffset = offset + returned < total ? offset + returned : -1,
                 };
+            }
+
+            private static int VeinProductId(EVeinType type)
+            {
+                try
+                {
+                    var proto = LDB.veins != null ? LDB.veins.Select((int)type) : null;
+                    if (proto != null && proto.MiningItem > 0) return proto.MiningItem;
+                }
+                catch { /* LDB 尚未加载 */ }
+                return 0;
+            }
+
+            /// <summary>
+            /// 矿脉群：`VeinGroup.pos` 是归一化方向，乘行星半径还原成表面位置，
+            /// 再走统一的经纬度格式；远程已扫描行星用 PlanetData.veinGroups。
+            /// </summary>
+            private void AppendVeinGroups(JsonValue data)
+            {
+                VeinGroup[] groups = null;
+                if (_planet.factory != null && _planet.factory.veinGroups != null &&
+                    _planet.factory.veinGroups.Length > 0)
+                    groups = _planet.factory.veinGroups;
+                else
+                    groups = _planet.veinGroups;
+
+                if (groups == null || groups.Length <= 1)
+                {
+                    data.Set("veinGroupsAvailable", false);
+                    data.Set("veinGroupsReason", _planet.factory != null ? "vein_groups_not_ready" : "planet_not_scanned");
+                    return;
+                }
+
+                var arr = JsonValue.NewArray();
+                int total = 0;
+                for (int i = 1; i < groups.Length; i++)
+                {
+                    var group = groups[i];
+                    if (group.isNull || group.count <= 0) continue;
+
+                    var productId = VeinProductId(group.type);
+                    var obj = JsonValue.NewObject();
+                    obj.Set("groupIndex", i);
+                    obj.Set("type", group.type.ToString());
+                    obj.Set("productId", productId);
+                    obj.Set("name", productId > 0
+                        ? GameToolFormat.ItemName(productId)
+                        : GameToolFormat.VeinName(group.type));
+                    obj.Set("iconTag", productId > 0
+                        ? GameToolFormat.ItemIconTag(productId)
+                        : GameToolFormat.VeinIconTag(group.type));
+                    obj.Set("count", group.count);
+                    obj.Set("amount", group.amount);
+                    if (group.pos.sqrMagnitude > 0.000001f)
+                        GameToolFormat.SetLocation(obj, _planet, group.pos * _planet.realRadius, "location");
+                    else
+                        GameToolFormat.SetLocation(obj, _planet, Vector3.up * _planet.realRadius, "location");
+                    arr.Add(obj);
+                    total++;
+                }
+
+                data.Set("veinGroupsAvailable", true);
+                data.Set("veinGroupCount", total);
+                data.Set("veinGroups", arr);
+            }
+
+            /// <summary>
+            /// 逐矿脉节点：只有工厂已加载的行星才有 `vein.pos`；分页返回，
+            /// 避免一次把几千个节点塞进模型上下文。
+            /// </summary>
+            private void AppendVeinNodes(JsonValue data)
+            {
+                if (_planet.factory == null)
+                {
+                    data.Set("veinNodesAvailable", false);
+                    data.Set("veinNodesReason", "factory_not_loaded");
+                    return;
+                }
+
+                var pool = _planet.runtimeVeinPool;
+                if (pool == null || pool.Length == 0)
+                {
+                    data.Set("veinNodesAvailable", false);
+                    data.Set("veinNodesReason", "vein_pool_empty");
+                    return;
+                }
+
+                var cursor = Math.Min(_planet.runtimeVeinCursor, pool.Length);
+                var arr = JsonValue.NewArray();
+                int total = 0;
+                int emitted = 0;
+                for (int i = 1; i < cursor; i++)
+                {
+                    var vein = pool[i];
+                    if (vein.id == 0) continue;
+                    total++;
+                    if (total <= _veinOffset || emitted >= _veinLimit) continue;
+
+                    var obj = JsonValue.NewObject();
+                    obj.Set("id", vein.id);
+                    obj.Set("type", vein.type.ToString());
+                    obj.Set("productId", vein.productId);
+                    obj.Set("name", vein.productId > 0
+                        ? GameToolFormat.ItemName(vein.productId)
+                        : GameToolFormat.VeinName(vein.type));
+                    obj.Set("iconTag", vein.productId > 0
+                        ? GameToolFormat.ItemIconTag(vein.productId)
+                        : GameToolFormat.VeinIconTag(vein.type));
+                    obj.Set("amount", vein.amount);
+                    obj.Set("groupIndex", (int)vein.groupIndex);
+                    obj.Set("minerCount", vein.minerCount);
+                    GameToolFormat.SetLocation(obj, _planet, vein.pos);
+                    arr.Add(obj);
+                    emitted++;
+                }
+
+                var nodes = JsonValue.NewObject();
+                nodes.Set("items", arr);
+                nodes.Set("total", total);
+                nodes.Set("offset", _veinOffset);
+                nodes.Set("limit", _veinLimit);
+                nodes.Set("truncated", _veinOffset + emitted < total);
+                nodes.Set("nextOffset", _veinOffset + emitted < total ? _veinOffset + emitted : -1);
+                data.Set("veinNodesAvailable", true);
+                data.Set("veinNodes", nodes);
             }
 
             private sealed class VeinAgg

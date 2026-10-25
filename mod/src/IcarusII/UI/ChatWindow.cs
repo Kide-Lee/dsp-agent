@@ -9,6 +9,7 @@ using IcarusII.Common.Protocol;
 using IcarusII.Common.Text;
 using IcarusII.Config;
 using IcarusII.Game;
+using IcarusII.Game.Tools;
 using IcarusII.I18n;
 
 namespace IcarusII.UI
@@ -163,6 +164,8 @@ namespace IcarusII.UI
             public Block Block;
             /// <summary>这条回复里的蓝图卡片（可多张，一行 2~3 张）。</summary>
             public List<BlueprintCardInfo> Cards;
+            /// <summary>这条回复里的链接卡片（建筑/星球）；按钮状态跟随 GameTether。</summary>
+            public List<GameTether.Target> LinkTargets;
 
             /// <summary>
             /// 助手回复里的思考块，按出现顺序一段一个。一次提问里模型可能
@@ -515,7 +518,10 @@ namespace IcarusII.UI
             public RectTransform ToolTemplate;
             public RectTransform BlueprintCards;
             public RectTransform CardTemplate;
+            public RectTransform BuildingCardTemplate;
+            public RectTransform StarCardTemplate;
             public readonly List<CardView> CardViews = new List<CardView>();
+            public readonly List<CardView> LinkCards = new List<CardView>();
             public string CopyText = string.Empty;
             /// <summary>这段回复属于哪一轮（footer 的刷新按钮用它找回提问）。</summary>
             public int TurnId;
@@ -531,6 +537,8 @@ namespace IcarusII.UI
             public GameObject ThumbIconRoot;
             public Image ThumbIcon;
             public GameObject ThumbFallback;
+            public GameObject ThumbRecipeRoot;
+            public Image ThumbRecipe;
             public Text ThumbLabel;
             public Text Name;
             public Text Description;
@@ -540,6 +548,8 @@ namespace IcarusII.UI
             public Button UseButton;
             public Text ViewLabel;
             public Text UseLabel;
+            /// <summary>链接卡片对应的 tether 目标；蓝图卡片为 null。</summary>
+            public GameTether.Target LinkTarget;
         }
 
         /// <summary>正在流式输出的那条消息（下标指向 _items）；-1 表示没有。</summary>
@@ -558,6 +568,7 @@ namespace IcarusII.UI
         private RectTransform _assistantTemplate;
         /// <summary>完整回复模板（思考块 + 工具容器 + 正文 + 蓝图卡片 + 时间/复制）。</summary>
         private RectTransform _replyTemplate;
+        private bool _tetherHooked;
 
         // ---- chat-index：左侧提问索引 ----
         private RectTransform _chatIndex;
@@ -789,6 +800,12 @@ namespace IcarusII.UI
         /// </summary>
         public void Reset()
         {
+            if (_tetherHooked)
+            {
+                GameTether.Added -= OnTetherAdded;
+                GameTether.Changed -= OnTetherChanged;
+                _tetherHooked = false;
+            }
             _root = null;
             _canvas = null;
             _hostCanvas = null;
@@ -906,6 +923,14 @@ namespace IcarusII.UI
             // 窗口可能是在收到 save.bound/欢迎语之后才第一次打开的：
             // 那时消息只进了 _lines，还没有可用的 _content。这里统一补建可见项。
             RebuildTranscript();
+
+            if (!_tetherHooked)
+            {
+                GameTether.Added += OnTetherAdded;
+                GameTether.Changed += OnTetherChanged;
+                _tetherHooked = true;
+                Plugin.Log.LogInfo("[link] ChatWindow 已订阅 tether 事件");
+            }
 
             SetStatus(Strings.Get("status.disconnected"), _textDim);
             _root.SetActive(false);
@@ -1643,7 +1668,11 @@ namespace IcarusII.UI
             else _inputHeightDirty = true;
 
             ApplyOpenState(open);
-            if (open) EnsureIconMappings();
+            if (open)
+            {
+                EnsureIconMappings();
+                RefreshLinkCardInfos();
+            }
         }
 
         /// <summary>
@@ -2249,6 +2278,241 @@ namespace IcarusII.UI
             }
         }
 
+        private CardView AddLinkCard(ReplyView reply, GameTether.Target target)
+        {
+            if (reply == null || reply.BlueprintCards == null || target == null) return null;
+            var template = target.Kind == "planet" ? reply.StarCardTemplate : reply.BuildingCardTemplate;
+            if (template == null) return null;
+            if (HasLinkCard(target)) return null;
+
+            var go = UnityEngine.Object.Instantiate(template.gameObject, reply.BlueprintCards, false);
+            go.name = "link-card-" + (++_itemSeq);
+            go.SetActive(true);
+            var view = BindCardView(go);
+            if (view == null)
+            {
+                UnityEngine.Object.Destroy(go);
+                return null;
+            }
+            view.LinkTarget = target;
+            reply.BlueprintCards.gameObject.SetActive(true);
+            ApplyLinkCard(view);
+            reply.CardViews.Add(view);
+            reply.LinkCards.Add(view);
+            return view;
+        }
+
+        private void AddLinkCards(ReplyView reply, List<GameTether.Target> targets)
+        {
+            if (reply == null || targets == null) return;
+            for (int i = 0; i < targets.Count; i++)
+                if (targets[i] != null) AddLinkCard(reply, targets[i]);
+        }
+
+        private bool HasLinkCard(GameTether.Target target)
+        {
+            if (target == null) return false;
+            for (int i = 0; i < _items.Count; i++)
+            {
+                var reply = _items[i].Reply;
+                if (reply == null) continue;
+                for (int c = 0; c < reply.LinkCards.Count; c++)
+                {
+                    var link = reply.LinkCards[c];
+                    if (link != null && link.LinkTarget != null && link.LinkTarget.Key == target.Key) return true;
+                }
+            }
+            return false;
+        }
+
+        private void ApplyLinkCard(CardView view)
+        {
+            if (view == null || view.LinkTarget == null) return;
+            var target = view.LinkTarget;
+            if (view.Name != null) view.Name.text = target.Name;
+            if (view.Description != null) view.Description.text = target.Description;
+            if (view.Meta != null) view.Meta.text = target.Subtitle;
+            if (view.ThumbLabel != null) view.ThumbLabel.text = target.IconLabel;
+            if (view.ThumbIconRoot != null)
+            {
+                view.ThumbIconRoot.SetActive(target.MainIcon != null);
+                if (view.ThumbIcon != null) view.ThumbIcon.sprite = target.MainIcon;
+            }
+            if (view.ThumbFallback != null) view.ThumbFallback.SetActive(target.MainIcon == null);
+            if (view.ThumbRecipeRoot != null)
+            {
+                view.ThumbRecipeRoot.SetActive(target.RecipeIcon != null);
+                if (view.ThumbRecipe != null) view.ThumbRecipe.sprite = target.RecipeIcon;
+            }
+            if (view.UseLabel != null)
+                view.UseLabel.text = GameTether.Contains(target)
+                    ? Strings.Get("link.card.located")
+                    : Strings.Get("link.card.locate");
+
+            if (view.CardButton != null)
+            {
+                view.CardButton.onClick.RemoveAllListeners();
+                view.CardButton.onClick.AddListener(() => FocusLinkCard(view));
+            }
+            if (view.UseButton != null)
+            {
+                view.UseButton.onClick.RemoveAllListeners();
+                view.UseButton.onClick.AddListener(() => ToggleLinkCard(view));
+            }
+        }
+
+        private void RefreshLinkCards()
+        {
+            for (int i = 0; i < _items.Count; i++)
+            {
+                var reply = _items[i].Reply;
+                if (reply == null) continue;
+                for (int c = 0; c < reply.LinkCards.Count; c++)
+                {
+                    var view = reply.LinkCards[c];
+                    if (view == null || view.LinkTarget == null || view.UseLabel == null) continue;
+                    view.UseLabel.text = GameTether.Contains(view.LinkTarget)
+                        ? Strings.Get("link.card.located")
+                        : Strings.Get("link.card.locate");
+                }
+            }
+        }
+
+        /// <summary>sidecar 回放/重放 link 卡：只带实体 ID 和文案，图标按当前存档资源补。</summary>
+        public void AppendLinkCard(LinkCardInfo info)
+        {
+            if (info == null) return;
+            var target = new GameTether.Target
+            {
+                Kind = info.Kind,
+                TargetId = info.Kind == "building" ? info.BuildingId : info.Kind == "vein" ? info.VeinId : info.PlanetId,
+                PlanetId = info.PlanetId,
+                Name = info.Name,
+                Subtitle = info.Subtitle,
+                Description = info.Description,
+                IconLabel = info.IconLabel,
+            };
+            GameTether.ResolveIcons(target);
+            AppendLinkTarget(target);
+        }
+
+        private void OnTetherAdded(GameTether.Target target)
+        {
+            if (target == null) { Plugin.Log.LogWarning("[link] Added 事件 target=null"); return; }
+            Plugin.Log.LogInfo("[link] Added " + target.Key + " name=" + target.Name +
+                " content=" + (_content != null) + " replyTemplate=" + (_replyTemplate != null));
+            AppendLinkTarget(target);
+        }
+
+        private void AppendLinkTarget(GameTether.Target target)
+        {
+            if (target == null) return;
+            if (HasLinkCard(target)) { Plugin.Log.LogInfo("[link] 卡片已存在，只刷新"); RefreshLinkCards(); return; }
+            if (_content == null || _replyTemplate == null)
+            {
+                // 窗口还没创建（历史回放）：先记在最后一条助手行上，Create 后补建。
+                for (int i = _lines.Count - 1; i >= 0; i--)
+                {
+                    var line = _lines[i];
+                    if (line.Kind != LineKind.Assistant || line.TurnId != _currentTurnId) continue;
+                    if (line.LinkTargets == null) line.LinkTargets = new List<GameTether.Target>();
+                    line.LinkTargets.Add(target);
+                    _lines[i] = line;
+                    _dirty = true;
+                    return;
+                }
+                _lines.Add(new Line
+                {
+                    Kind = LineKind.Assistant,
+                    Text = string.Empty,
+                    TurnId = _currentTurnId,
+                    LinkTargets = new List<GameTether.Target> { target },
+                    Time = GameClock(),
+                });
+                TrimHistory();
+                _dirty = true;
+                return;
+            }
+            int index = FindReplyItemForCard();
+            Plugin.Log.LogInfo("[link] reply index=" + index + " items=" + _items.Count);
+            if (index < 0 || index >= _items.Count || _items[index].Reply == null) return;
+            var item = _items[index];
+            var view = AddLinkCard(item.Reply, target);
+            Plugin.Log.LogInfo("[link] AddLinkCard result=" + (view != null));
+            if (view == null) return;
+            var lineIndex = FindLineIndex(item.Go);
+            if (lineIndex >= 0)
+            {
+                var line = _lines[lineIndex];
+                if (line.LinkTargets == null) line.LinkTargets = new List<GameTether.Target>();
+                line.LinkTargets.Add(target);
+                _lines[lineIndex] = line;
+            }
+            else
+            {
+                _lines.Add(new Line
+                {
+                    Kind = LineKind.Assistant,
+                    Text = string.Empty,
+                    TurnId = _currentTurnId,
+                    Go = item.Go,
+                    LinkTargets = new List<GameTether.Target> { target },
+                    Time = GameClock(),
+                });
+            }
+            TrimHistory();
+            _dirty = true;
+            ScrollToBottomAfterContentChange();
+        }
+
+        /// <summary>窗口每次打开时刷新一次建筑/星球卡片快照；运行中不逐帧采样。</summary>
+        private void RefreshLinkCardInfos()
+        {
+            bool changed = false;
+            for (int i = 0; i < _items.Count; i++)
+            {
+                var reply = _items[i].Reply;
+                if (reply == null || reply.LinkCards == null) continue;
+                for (int j = 0; j < reply.LinkCards.Count; j++)
+                {
+                    var view = reply.LinkCards[j];
+                    if (view == null || view.LinkTarget == null) continue;
+                    GameTether.RefreshInfo(view.LinkTarget);
+                    ApplyLinkCard(view);
+                    changed = true;
+                }
+            }
+            if (changed)
+            {
+                _dirty = true;
+                Plugin.Log.LogInfo("[link] 聊天窗打开，已刷新 " + _items.Count + " 组卡片快照");
+            }
+        }
+
+        private void OnTetherChanged()
+        {
+            RefreshLinkCards();
+        }
+
+        private void FocusLinkCard(CardView view)
+        {
+            if (view == null || view.LinkTarget == null) return;
+            GameLinkFocus.Focus(view.LinkTarget);
+        }
+
+        private void ToggleLinkCard(CardView view)
+        {
+            if (view == null || view.LinkTarget == null) return;
+            if (GameTether.Contains(view.LinkTarget))
+            {
+                GameTether.Remove(view.LinkTarget);
+            }
+            else
+            {
+                GameTether.ReAdd(view.LinkTarget);
+            }
+        }
+
         /// <summary>绑定一张固定卡片：只查节点、接回调，不改固定布局。</summary>
         private CardView BindCardView(GameObject go)
         {
@@ -2264,6 +2528,9 @@ namespace IcarusII.UI
                 view.ThumbIcon = icon != null ? icon.GetComponent<Image>() : null;
                 var fallback = thumb.Find("fallback");
                 view.ThumbFallback = fallback != null ? fallback.gameObject : null;
+                var recipe = thumb.Find("recipe");
+                view.ThumbRecipeRoot = recipe != null ? recipe.gameObject : null;
+                view.ThumbRecipe = recipe != null ? recipe.GetComponent<Image>() : null;
                 view.ThumbLabel = FindChildText(thumb, "label");
             }
 
@@ -2297,7 +2564,6 @@ namespace IcarusII.UI
                 view.ViewLabel = FindChildText(viewButton, "label");
             }
             if (view.ViewLabel != null) view.ViewLabel.text = Strings.Get("blueprint.card.view");
-            if (view.UseLabel != null) view.UseLabel.text = Strings.Get("blueprint.card.paste");
 
             // 旧 prefab 仍然有独立“查看”按钮时保持兼容。
             if (view.ViewButton != null)
@@ -4209,6 +4475,8 @@ namespace IcarusII.UI
             if (view == null || card == null) return;
 
             view.Card = card;
+            view.LinkTarget = null;
+            if (view.UseLabel != null) view.UseLabel.text = Strings.Get("blueprint.card.paste");
             if (view.Name != null)
                 view.Name.text = FormatInline(CardTitle(card));
             if (view.Description != null)
@@ -4488,6 +4756,7 @@ namespace IcarusII.UI
                         var oldLine = _lines[lineIndex];
                         line.Thinking = oldLine.Thinking;
                         line.Cards = oldLine.Cards;
+                        line.LinkTargets = oldLine.LinkTargets;
                         _lines[lineIndex] = line;
                     }
                     else
@@ -4627,6 +4896,7 @@ namespace IcarusII.UI
                         // 补建的都是已经结束的内容：loading 显示“已完成”并收起。
                         if (item.Reply.Loading != null) MarkLoadingDone(item.Reply);
                         AddCards(item.Reply, line.Cards);
+                        AddLinkCards(item.Reply, line.LinkTargets);
                         if (item.Reply.Body != null)
                             RenderReplyBody(item.Reply, line.Text);
                         ApplyReplyFooter(item.Reply, line.Text, line.Time);
@@ -5468,13 +5738,23 @@ namespace IcarusII.UI
                 view.Loading.gameObject.SetActive(false);
             }
 
-            var cards = t.Find("blueprint-cards") as RectTransform;
+            var cards = t.Find("cards-group") as RectTransform;
+            if (cards == null) cards = t.Find("blueprint-cards") as RectTransform;
             if (cards != null)
             {
                 view.BlueprintCards = cards;
-                view.CardTemplate = cards.Find("blueprint-card-template") as RectTransform;
+                view.CardTemplate = cards.Find("blueprint-card") as RectTransform;
+                if (view.CardTemplate == null) view.CardTemplate = cards.Find("blueprint-card-template") as RectTransform;
+                view.BuildingCardTemplate = cards.Find("building-card") as RectTransform;
+                view.StarCardTemplate = cards.Find("star-card") as RectTransform;
                 if (view.CardTemplate != null) view.CardTemplate.gameObject.SetActive(false);
+                if (view.BuildingCardTemplate != null) view.BuildingCardTemplate.gameObject.SetActive(false);
+                if (view.StarCardTemplate != null) view.StarCardTemplate.gameObject.SetActive(false);
                 cards.gameObject.SetActive(false);
+                Plugin.Log.LogInfo("[link] BindReply cards-group=" + (view.BlueprintCards != null) +
+                    " blueprint=" + (view.CardTemplate != null) +
+                    " building=" + (view.BuildingCardTemplate != null) +
+                    " star=" + (view.StarCardTemplate != null));
             }
 
             var footer = t.Find("footer");
@@ -7702,7 +7982,8 @@ namespace IcarusII.UI
                 for (var i = 0; i < links.Count; i++)
                 {
                     var link = links[i];
-                    if (link == null || !RichTextLinkAllocator.IsWebId(link.Id)) continue;
+                    if (link == null ||
+                        (!RichTextLinkAllocator.IsWebId(link.Id) && !RichTextLinkAllocator.IsEntityLinkId(link.Id))) continue;
                     if (string.IsNullOrEmpty(link.Url)) continue;
                     map[link.Id] = link.Url;
                 }
@@ -7780,6 +8061,14 @@ namespace IcarusII.UI
                 return;
             }
 
+            if (RichTextLinkAllocator.IsEntityLinkId(bounds.linkId))
+            {
+                if (!_linkTargets.TryGetValue(label, out var entityMap)) return;
+                if (!entityMap.TryGetValue(bounds.linkId, out var entityUrl) || string.IsNullOrEmpty(entityUrl)) return;
+                OpenEntityLink(entityUrl);
+                return;
+            }
+
             if (!RichTextLinkAllocator.IsWebId(bounds.linkId)) return;
             if (!_linkTargets.TryGetValue(label, out var map)) return;
             if (!map.TryGetValue(bounds.linkId, out var url) || string.IsNullOrEmpty(url)) return;
@@ -7796,6 +8085,29 @@ namespace IcarusII.UI
             {
                 GUIUtility.systemCopyBuffer = url;
                 SetStatus(Strings.Get("reply.link.open_failed"), _accent);
+            }
+        }
+
+        /// <summary>聊天里的实体链接：建筑/星球；复用卡片整卡聚焦的同一套游戏相机。</summary>
+        private void OpenEntityLink(string url)
+        {
+            if (!GameRichText.TryParseEntityUrl(url, out var canonical)) return;
+            var parts = canonical.Substring("dsp://entity/".Length).Split('/');
+            if (parts.Length == 2 && parts[0] == "planet" &&
+                int.TryParse(parts[1], out var planetId))
+            {
+                GameLinkFocus.Focus(new GameTether.Target { Kind = "planet", PlanetId = planetId, TargetId = planetId });
+                return;
+            }
+            if (parts.Length == 3 && (parts[0] == "building" || parts[0] == "vein") &&
+                int.TryParse(parts[1], out var pId) && int.TryParse(parts[2], out var targetId))
+            {
+                GameLinkFocus.Focus(new GameTether.Target
+                {
+                    Kind = parts[0],
+                    PlanetId = pId,
+                    TargetId = targetId,
+                });
             }
         }
 

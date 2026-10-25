@@ -29,10 +29,24 @@ namespace IcarusII.Core
             public long ExpiresAtMs;
         }
 
+        /// <summary>
+        /// 脚本写租约：玩家确认的是整段脚本，允许脚本在 TTL 内调用最多 N 次写工具。
+        /// 只由 run_script 的确认请求创建；mod 仍要求每个写调用带同一个租约 token + 脚本哈希。
+        /// </summary>
+        private sealed class ScriptLease
+        {
+            public string ScriptHash;
+            public int Remaining;
+            public long ExpiresAtMs;
+            public HashSet<string> WriteNames = new HashSet<string>(StringComparer.Ordinal);
+        }
+
         private readonly Dictionary<string, Pending> _pending =
             new Dictionary<string, Pending>(StringComparer.Ordinal);
         private readonly Dictionary<string, Allowed> _allowed =
             new Dictionary<string, Allowed>(StringComparer.Ordinal);
+        private readonly Dictionary<string, ScriptLease> _leases =
+            new Dictionary<string, ScriptLease>(StringComparer.Ordinal);
 
         public ConfirmRequestInfo Current { get; private set; }
 
@@ -71,6 +85,20 @@ namespace IcarusII.Core
             request = pending.Request;
             if (!allow) return true;
 
+            if (request.MaxWrites > 0)
+            {
+                var lease = new ScriptLease
+                {
+                    ScriptHash = request.ArgsHash ?? string.Empty,
+                    Remaining = request.MaxWrites,
+                    ExpiresAtMs = NowMs() + Protocol.ScriptLeaseMs,
+                };
+                if (request.WriteNames != null)
+                    foreach (var name in request.WriteNames) lease.WriteNames.Add(name);
+                _leases[request.Token] = lease;
+                return true;
+            }
+
             _allowed[request.Token] = new Allowed
             {
                 CallId = request.CallId,
@@ -89,6 +117,29 @@ namespace IcarusII.Core
             {
                 error = Protocol.CodeConfirmationRequired;
                 return false;
+            }
+            if (_leases.TryGetValue(call.ConfirmToken, out var lease))
+            {
+                if (NowMs() > lease.ExpiresAtMs || lease.Remaining <= 0)
+                {
+                    _leases.Remove(call.ConfirmToken);
+                    error = Protocol.CodeConfirmationExpired;
+                    return false;
+                }
+                if (!string.Equals(lease.ScriptHash, call.ConfirmArgsHash ?? string.Empty,
+                        StringComparison.Ordinal))
+                {
+                    error = Protocol.CodeConfirmationInvalid;
+                    return false;
+                }
+                if (lease.WriteNames.Count > 0 && !lease.WriteNames.Contains(call.Name))
+                {
+                    error = Protocol.CodeConfirmationInvalid;
+                    return false;
+                }
+                lease.Remaining -= 1;
+                // 用尽后保留到 TTL/Release，下一次调用能得到明确的 expired，而不是 invalid。
+                return true;
             }
             if (!_allowed.TryGetValue(call.ConfirmToken, out var allowed))
             {
@@ -131,13 +182,24 @@ namespace IcarusII.Core
             {
                 if (now > pair.Value.ExpiresAtMs) _allowed.Remove(pair.Key);
             }
+            foreach (var pair in new List<KeyValuePair<string, ScriptLease>>(_leases))
+            {
+                if (now > pair.Value.ExpiresAtMs || pair.Value.Remaining <= 0) _leases.Remove(pair.Key);
+            }
             return expiredCurrent;
+        }
+
+        /// <summary>脚本正常结束/失败时释放租约，缩短 token 的有效窗口。</summary>
+        public void Release(string token)
+        {
+            if (!string.IsNullOrEmpty(token)) _leases.Remove(token);
         }
 
         public void Clear()
         {
             _pending.Clear();
             _allowed.Clear();
+            _leases.Clear();
             Current = null;
         }
 

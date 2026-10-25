@@ -260,8 +260,16 @@ console.log('\n── 5. PiAgent.debugTool 实际执行 ──');
   const blocked = await agent.debugTool('run_script', { code: 'return 1' }, emit);
   check('PiAgent 拒绝写工具', blocked.ok === false && blocked.error?.code === 'debug_not_allowed');
 
-  const invalid = await agent.debugTool('game_get_entity', {}, emit);
+  // entityId 现在可为空（批量走 entityIds），用错误的字段类型验证 schema 仍会拦截。
+  const invalid = await agent.debugTool('game_get_entity', { entityId: 'bad' }, emit);
   check('PiAgent schema 校验', invalid.ok === false && invalid.error?.code === 'invalid_args');
+
+  const fieldsArray = await agent.debugTool('game_get_entity', { entityId: 1, fields: ['assembler'] }, emit);
+  check('game_get_entity fields 数组可校验', fieldsArray.ok === true, fieldsArray.error?.code);
+  const fieldsString = await agent.debugTool('game_get_entity', { entityId: 1, fields: 'assembler' }, emit);
+  check('game_get_entity fields 字符串可校验', fieldsString.ok === true, fieldsString.error?.code);
+  const batchIds = await agent.debugTool('game_get_entity', { entityIds: [1, 2] }, emit);
+  check('game_get_entity entityIds 可校验', batchIds.ok === true, batchIds.error?.code);
 
   const shot = await agent.debugTool('game_capture_view', { width: 320, height: 200 }, emit);
   check('PiAgent 截图成功', shot.ok === true, shot.error?.code);

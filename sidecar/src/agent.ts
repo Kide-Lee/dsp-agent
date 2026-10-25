@@ -24,6 +24,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -79,9 +80,9 @@ import type {
   ToolDebugResultPayload,
   ToolResultPayload,
 } from './protocol.js';
-import type { GameToolHost } from './tools/host.js';
+import type { GameToolHost, ScriptConfirmRequest, ScriptConfirmResult } from './tools/host.js';
 import { createKbTools } from './kb/tools.js';
-import type { BlueprintCardPayload, ContextCompactedPayload, ToolActivityPayload } from './protocol.js';
+import type { BlueprintCardPayload, ContextCompactedPayload, LinkCardPayload, ToolActivityPayload } from './protocol.js';
 import {
   parseSessionLines,
   removeCompactionFromEntries,
@@ -90,6 +91,7 @@ import {
 } from './history.js';
 import { createScriptTool } from './tools/script.js';
 import { CAPABILITY_UI_ASK, createAskTool } from './tools/ask.js';
+import { CAPABILITY_GAME_SANDBOX } from './tools/sandbox.js';
 import { isDebugToolAllowed } from './tools/debug.js';
 import { createWikiTools } from './wiki/tools.js';
 import { WikiClient } from './wiki/client.js';
@@ -104,11 +106,17 @@ import {
   extractBlueprintCard,
   type BlueprintCardRecord,
 } from './blueprint/card.js';
+import {
+  attachLinkCards,
+  compactLinkCard,
+  extractLinkCard,
+  type LinkCardRecord,
+} from './link/card.js';
 import { attachGameTimes, type GameTimeRecord } from './history/game-time.js';
 import type { KnowledgeStore } from './kb/store.js';
 
 /** 会话目录里的元数据日志；它们不是 pi 会话文件，不能被当成会话读取/删除。 */
-const SESSION_METADATA_FILES = new Set(['blueprint-cards.jsonl', 'reply-times.jsonl']);
+const SESSION_METADATA_FILES = new Set(['blueprint-cards.jsonl', 'link-cards.jsonl', 'reply-times.jsonl']);
 
 /** 判断一个文件名是否是可读的 pi 会话 JSONL。 */
 function isSessionFile(name: string): boolean {
@@ -145,10 +153,16 @@ export interface AgentEmitter {
     args: JsonObject,
     options: { timeoutMs: number; signal?: AbortSignal },
   ): Promise<ToolResultPayload>;
+  /** run_script 包含写操作时的脚本级确认；null = 玩家拒绝。 */
+  confirmScript?(request: ScriptConfirmRequest): Promise<ScriptConfirmResult | null>;
+  /** 脚本结束/失败后释放写租约。 */
+  releaseScript?(token: string): void;
   /** 本地工具（kb_* / run_script）的 UI 事件；协议附录 A.8。 */
   toolActivity?(payload: ToolActivityPayload): void;
   /** 蓝图卡片；协议附录 A.9。由 agent 在本轮收尾时统一发出。 */
   blueprintCard?(payload: BlueprintCardPayload): void;
+  /** 实体链接卡片；本轮收尾时统一发出。 */
+  linkCard?(payload: LinkCardPayload): void;
   /** 上下文压缩完成；协议附录 A.11。只给 UI，不进入模型上下文。 */
   compacted?(payload: ContextCompactedPayload): void;
 }
@@ -179,6 +193,8 @@ export interface AgentRunner {
   onClientCapabilities?(capabilities: readonly string[]): void;
   /** 切换存档；null = 回到主菜单。agent 应在回合边界重建会话。 */
   onSaveChanged?(saveKey: string | null): void;
+  /** 当前载入是否启用游戏沙盒工具；变化时 agent 应在回合边界重建会话。 */
+  onSandboxChanged?(enabled: boolean): void;
   /** save.bind 带来的玩家已解锁蓝图档位；null = 未知/解绑。 */
   onBlueprintTiers?(tiers: BlueprintTiers | null): void;
   /**
@@ -561,6 +577,8 @@ interface RunState {
    * 因此先入队，等 final message（或失败 error）之后再 flush。
    */
   cards: BlueprintCardPayload[];
+  /** 本轮成功建立的实体链接卡片。 */
+  linkCards: LinkCardPayload[];
 
   /**
    * M4l：玩家用 /<工具名> 指定本轮必须调用的工具。
@@ -708,6 +726,8 @@ export function extractSlashTool(text: string, available: ReadonlySet<string>): 
 export function forcedToolInstruction(tool: string): string {
   return `【本轮强制工具】玩家在输入里用 /${tool} 明确要求必须调用工具 ${tool}。
 - 这是硬性要求：本轮至少调用一次 ${tool}，不要跳过它直接回答。
+- **本轮工具列表是唯一权威**：即使历史对话说过“没有这个工具/做不到”，也以本轮提供的函数为准。
+- 不要因为工具名字陌生、或历史回答里否定过它，就拒绝调用；先直接发起调用。
 - 如果 ${tool} 返回错误，如实说明错误，不要编造结果。
 - 调用 ${tool} 之后，可以继续调用其他工具或直接回答。`;
 }
@@ -1018,6 +1038,8 @@ export class PiAgent implements AgentRunner {
   private pendingTeardown = false;
   /** 当前绑定的存档；每个存档使用独立的 session 目录。 */
   private saveKey: string | null = null;
+  /** 当前载入是否启用游戏沙盒工具（由 save.bind 上报）。 */
+  private sandboxEnabled = false;
   /** mod 在 save.bind 里被动上报的蓝图档位；模型不需要调用查询工具。 */
   private blueprintTiers: BlueprintTiers | null = null;
   /** 进程内全局串行：多连接共用同一个 pi 会话。 */
@@ -1081,6 +1103,19 @@ export class PiAgent implements AgentRunner {
     this.teardown();
   }
 
+  onSandboxChanged(enabled: boolean): void {
+    this.sandboxEnabled = enabled;
+    const changed = this.host.setSandbox(enabled);
+    if (!changed) return;
+
+    this.logger.info('沙盒状态变化，工具集将按新状态重建', { sandbox: enabled });
+    if (this.active) {
+      this.pendingTeardown = true;
+      return;
+    }
+    this.teardown();
+  }
+
   onSaveChanged(saveKey: string | null): void {
     this.blueprintTiers = null;
     this.blueprintWorkspace.resetCwd();
@@ -1110,12 +1145,15 @@ export class PiAgent implements AgentRunner {
     const messages = extractHistoryMessages(manager.getBranch());
     const records = this.readBlueprintCards(saveKey);
     const withCards = attachBlueprintCards(messages, records);
+    const linkRecords = this.readLinkCards(saveKey);
+    const withLinks = attachLinkCards(withCards, linkRecords);
     const timeRecords = this.readReplyTimes(saveKey);
-    const withTimes = attachGameTimes(withCards, timeRecords);
+    const withTimes = attachGameTimes(withLinks, timeRecords);
     this.logger.info('读取存档历史', {
       saveKey,
       messages: withTimes.length,
       blueprintCards: records.length,
+      linkCards: linkRecords.length,
       replyTimes: timeRecords.length,
     });
     return withTimes;
@@ -1190,6 +1228,90 @@ export class PiAgent implements AgentRunner {
       }
     }
     return records;
+  }
+
+  // ---------------------------------------------------------------- 实体链接卡片持久化
+
+  private linkCardLogPath(saveKey: string | null): string | null {
+    if (!saveKey) return null;
+    return join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey), 'link-cards.jsonl');
+  }
+
+  private appendLinkCards(
+    saveKey: string | null,
+    prompt: string,
+    cards: readonly LinkCardPayload[],
+  ): void {
+    const path = this.linkCardLogPath(saveKey);
+    if (!path || cards.length === 0) return;
+    const text = prompt.trim();
+    if (!text) return;
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      const now = Date.now();
+      const lines = cards
+        .map((card) =>
+          JSON.stringify({
+            prompt: text,
+            timestamp: now,
+            card: compactLinkCard(card),
+          } satisfies LinkCardRecord),
+        )
+        .join('\n');
+      appendFileSync(path, `${lines}\n`, { encoding: 'utf8', mode: 0o600 });
+    } catch (err) {
+      this.logger.warn('写实体链接卡片记录失败', { saveKey, ...errorFields(err) });
+    }
+  }
+
+  private readLinkCards(saveKey: string | null): LinkCardRecord[] {
+    const path = this.linkCardLogPath(saveKey);
+    if (!path || !existsSync(path)) return [];
+    let raw: string;
+    try {
+      raw = readFileSync(path, 'utf8');
+    } catch (err) {
+      this.logger.warn('读实体链接卡片记录失败', { saveKey, ...errorFields(err) });
+      return [];
+    }
+    const records: LinkCardRecord[] = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as Partial<LinkCardRecord>;
+        if (typeof parsed.prompt !== 'string' || !parsed.card) continue;
+        const card = parsed.card;
+        if ((card.kind !== 'planet' && card.kind !== 'building') ||
+            typeof card.planetId !== 'number' || typeof card.name !== 'string') continue;
+        records.push({
+          prompt: parsed.prompt,
+          ...(typeof parsed.timestamp === 'number' ? { timestamp: parsed.timestamp } : {}),
+          card,
+        });
+      } catch {
+        // 坏行跳过，不能因为一条记录损坏就丢掉整段历史。
+      }
+    }
+    return records;
+  }
+
+  /** 删除某个提问对应的实体链接卡片记录（回合被删时调用）。 */
+  private removeLinkCardRecords(saveKey: string, prompt: string): void {
+    const path = this.linkCardLogPath(saveKey);
+    const text = prompt.trim();
+    if (!path || !text || !existsSync(path)) return;
+    const records = this.readLinkCards(saveKey);
+    const kept = records.filter((record) => record.prompt.trim() !== text);
+    if (kept.length === records.length) return;
+    const tmp = `${path}.tmp-${process.pid}`;
+    try {
+      const body = kept.map((record) => JSON.stringify(record)).join('\n');
+      writeFileSync(tmp, kept.length > 0 ? `${body}\n` : '', { encoding: 'utf8', mode: 0o600 });
+      renameSync(tmp, path);
+    } catch (err) {
+      try { unlinkSync(tmp); } catch { /* ignore */ }
+      this.logger.warn('删除实体链接卡片记录失败', { saveKey, ...errorFields(err) });
+    }
   }
 
   // ---------------------------------------------------------------- 回答游戏时间持久化
@@ -1366,6 +1488,7 @@ export class PiAgent implements AgentRunner {
 
     // 卡片/时间记录跟着回合一起删；否则重进存档时旧记录可能挂到同一句提问的新回答上。
     this.removeBlueprintCardRecords(saveKey, text);
+    this.removeLinkCardRecords(saveKey, text);
     this.removeReplyTimeRecords(saveKey, text);
 
     // 上下文必须重建，否则被删的回合还在内存会话里继续发给模型。
@@ -1524,6 +1647,7 @@ export class PiAgent implements AgentRunner {
       error: null,
       stopReason: null,
       cards: [],
+      linkCards: [],
       requiredTool,
       requiredToolSatisfied: false,
       requiredToolAttempts: 0,
@@ -1721,6 +1845,19 @@ export class PiAgent implements AgentRunner {
       // 先落盘再发帧：即使这一帧没送到，重进存档仍能从历史里回放。
       this.appendBlueprintCards(run.saveKey, run.userText, uniqueCards);
       for (const card of uniqueCards) emit.blueprintCard?.(card);
+    }
+
+    const uniqueLinks: LinkCardPayload[] = [];
+    const seenLinks = new Set<string>();
+    for (const card of run.linkCards) {
+      const key = `${card.kind}:${card.planetId}:${card.kind === 'vein' ? card.veinId ?? 0 : card.buildingId ?? 0}`;
+      if (seenLinks.has(key)) continue;
+      seenLinks.add(key);
+      uniqueLinks.push(card);
+    }
+    if (uniqueLinks.length > 0) {
+      this.appendLinkCards(run.saveKey, run.userText, uniqueLinks);
+      for (const card of uniqueLinks) emit.linkCard?.(card);
     }
 
     emit.status('idle');
@@ -2019,6 +2156,26 @@ export class PiAgent implements AgentRunner {
   }
 
   /**
+   * 每轮 system prompt 的附加段：强制工具 + 当前沙盒状态。
+   * 沙盒状态按当前 save.bind 实时读取，不写进人格常量，避免旧 mod 被误导。
+   */
+  private currentExtraPrompt(): string | null {
+    const parts: string[] = [];
+    const forced = this.currentForcedToolPrompt();
+    if (forced) parts.push(forced);
+
+    if (this.host.has(CAPABILITY_GAME_SANDBOX)) {
+      parts.push(
+        this.sandboxEnabled
+          ? '当前存档启用了游戏沙盒工具。工具列表中若有沙盒专属工具，执行前仍需玩家确认。'
+          : '当前存档未启用游戏沙盒工具。沙盒专属工具不会出现在工具列表中，不要尝试调用。',
+      );
+    }
+
+    return parts.length > 0 ? parts.join('\n\n') : null;
+  }
+
+  /**
    * 构造本次能力下实际注册的全部工具定义。
    * ensureSession 与 ready.payload.toolCatalog 共用，避免两处工具集漂移。
    */
@@ -2270,7 +2427,7 @@ export class PiAgent implements AgentRunner {
         cwd: this.dataDir,
         agentDir: this.agentDir,
       },
-      () => this.currentForcedToolPrompt(),
+      () => this.currentExtraPrompt(),
       () => this.host.has(CAPABILITY_RICH_TEXT_V2),
     );
     // pi 只有在「自己创建 loader」时才自动 reload；外部传入的 loader 必须我们自己 reload，
@@ -2448,6 +2605,8 @@ export class PiAgent implements AgentRunner {
         // 蓝图工具成功 ⇒ 记一张卡片，等 final message 后统一发，保证排在对话末尾。
         const card = extractBlueprintCard(event.toolName, event.result, event.isError);
         if (card) run.cards.push(card);
+        const linkCard = extractLinkCard(event.toolName, event.result, event.isError);
+        if (linkCard) run.linkCards.push(linkCard);
         return;
       }
 

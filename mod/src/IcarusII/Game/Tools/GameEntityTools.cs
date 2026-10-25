@@ -162,19 +162,39 @@ namespace IcarusII.Game.Tools
         public string Name => "game_get_entity";
         public int TimeoutMs => 6000;
 
+        /// <summary>批量上限：详情对象很大，超过这个数即使字段裁剪也不值得。</summary>
+        private const int MaxBatch = 10;
+
+        /// <summary>批量默认只返回 core；需要别的段必须显式传 fields。</summary>
+        private static readonly HashSet<string> CoreFields =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "core" };
+
         public IGameToolJob Start(JsonValue args)
         {
             var planet = GameToolFormat.ResolvePlanet(args);
             if (planet == null) throw new ArgumentException("找不到行星");
 
-            var entityId = args["entityId"].AsInt(0);
-            if (entityId <= 0) throw new ArgumentException("entityId 必须是正整数");
-
+            var fields = ParseFields(args);
             var expectProtoId = args["expectProtoId"].AsInt(0);
-            return new OneShotJob(() => Build(planet, entityId, expectProtoId));
+            var entityIds = ParseEntityIds(args);
+            if (entityIds != null)
+            {
+                if (entityIds.Count > MaxBatch)
+                    throw new ArgumentException("entityIds 一次最多 " + MaxBatch.ToString(CultureInfo.InvariantCulture) + " 个");
+                return new OneShotJob(() => BuildMany(planet, entityIds, expectProtoId, fields ?? CoreFields));
+            }
+
+            var entityId = args["entityId"].AsInt(0);
+            if (entityId <= 0) throw new ArgumentException("entityId 必须是正整数，或传 entityIds[]");
+
+            return new OneShotJob(() => new GameToolJobResult
+            {
+                Data = BuildData(planet, entityId, expectProtoId, fields),
+            });
         }
 
-        private static GameToolJobResult Build(PlanetData planet, int entityId, int expectProtoId)
+        private static JsonValue BuildData(PlanetData planet, int entityId, int expectProtoId,
+            HashSet<string> fields)
         {
             var data = JsonValue.NewObject();
             data.Set("planetId", planet.id);
@@ -186,7 +206,7 @@ namespace IcarusII.Game.Tools
                 data.Set("available", false);
                 data.Set("reason", "factory_not_loaded");
                 data.Set("display", "该行星的工厂尚未加载（远程行星只能看矿脉）");
-                return new GameToolJobResult { Data = data };
+                return data;
             }
 
             if (!EntityToolUtil.HasEntity(factory, entityId))
@@ -194,7 +214,7 @@ namespace IcarusII.Game.Tools
                 data.Set("available", false);
                 data.Set("reason", "not_found");
                 data.Set("display", "没有这个 id 的建筑");
-                return new GameToolJobResult { Data = data };
+                return data;
             }
 
             var entity = factory.entityPool[entityId];
@@ -203,7 +223,7 @@ namespace IcarusII.Game.Tools
                 data.Set("available", false);
                 data.Set("reason", "empty_slot");
                 data.Set("display", "该 id 目前没有建筑（可能已被拆除）");
-                return new GameToolJobResult { Data = data };
+                return data;
             }
 
             data.Set("available", true);
@@ -222,17 +242,101 @@ namespace IcarusII.Game.Tools
                 data.Set("expectProtoId", expectProtoId);
             }
 
-            AppendCategoryDetail(data, factory, entity);
-            AppendComponents(data, factory, entity);
+            AppendCategoryDetail(data, factory, entity, fields);
+            if (Wants(fields, "components")) AppendComponents(data, factory, entity);
             data.Set("display", BuildDisplay(data));
+            return data;
+        }
+
+        private static GameToolJobResult BuildMany(PlanetData planet, List<int> entityIds,
+            int expectProtoId, HashSet<string> fields)
+        {
+            var entities = JsonValue.NewArray();
+            foreach (var entityId in entityIds)
+                entities.Add(BuildData(planet, entityId, expectProtoId, fields));
+
+            var data = JsonValue.NewObject();
+            data.Set("planetId", planet.id);
+            data.Set("count", entityIds.Count);
+            data.Set("entities", entities);
+            data.Set("display", "已读取 " + entityIds.Count.ToString(CultureInfo.InvariantCulture)
+                + " 个建筑（批量默认只含核心字段，可用 fields 展开）");
             return new GameToolJobResult { Data = data };
         }
 
-        private static void AppendCategoryDetail(JsonValue data, PlanetFactory factory, EntityData entity)
+        private static HashSet<string> ParseFields(JsonValue args)
+        {
+            var value = args["fields"];
+            if (value == null || value.IsNull) return null;
+            if (!value.IsArray && !value.IsString)
+                throw new ArgumentException("fields 必须是字符串或字符串数组");
+
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (value.IsArray)
+            {
+                for (int i = 0; i < value.Count; i++)
+                {
+                    var item = value[i].AsString(null);
+                    if (!string.IsNullOrWhiteSpace(item)) set.Add(item.Trim());
+                }
+            }
+            else
+            {
+                var text = value.AsString(null);
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    foreach (var part in text.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries))
+                        set.Add(part.Trim());
+                }
+            }
+            return set.Count > 0 ? set : null;
+        }
+
+        private static List<int> ParseEntityIds(JsonValue args)
+        {
+            var value = args["entityIds"];
+            if (value == null || value.IsNull) return null;
+            if (!value.IsArray && !value.IsString)
+                throw new ArgumentException("entityIds 必须是整数数组或逗号分隔字符串");
+
+            var ids = new List<int>();
+            if (value.IsArray)
+            {
+                for (int i = 0; i < value.Count; i++)
+                {
+                    var id = value[i].AsInt(0);
+                    if (id > 0 && !ids.Contains(id)) ids.Add(id);
+                }
+            }
+            else
+            {
+                var text = value.AsString(null);
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    foreach (var part in text.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        int id;
+                        if (int.TryParse(part, NumberStyles.Integer, CultureInfo.InvariantCulture, out id) &&
+                            id > 0 && !ids.Contains(id))
+                            ids.Add(id);
+                    }
+                }
+            }
+            return ids.Count > 0 ? ids : null;
+        }
+
+        /// <summary>fields 为空 = 全量；含 all = 全量；否则只放行列出的段。</summary>
+        private static bool Wants(HashSet<string> fields, string section)
+        {
+            return fields == null || fields.Contains("all") || fields.Contains(section);
+        }
+
+        private static void AppendCategoryDetail(JsonValue data, PlanetFactory factory, EntityData entity,
+            HashSet<string> fields)
         {
             var system = factory.factorySystem;
 
-            if (entity.assemblerId > 0 && system != null && system.assemblerPool != null &&
+            if (Wants(fields, "assembler") && entity.assemblerId > 0 && system != null && system.assemblerPool != null &&
                 entity.assemblerId < system.assemblerPool.Length)
             {
                 var assembler = system.assemblerPool[entity.assemblerId];
@@ -315,7 +419,7 @@ namespace IcarusII.Game.Tools
                 data.Set("assembler", detail);
             }
 
-            if (entity.minerId > 0 && system != null && system.minerPool != null &&
+            if (Wants(fields, "miner") && entity.minerId > 0 && system != null && system.minerPool != null &&
                 entity.minerId < system.minerPool.Length)
             {
                 var miner = system.minerPool[entity.minerId];
@@ -333,7 +437,7 @@ namespace IcarusII.Game.Tools
                 data.Set("miner", detail);
             }
 
-            if (entity.inserterId > 0 && system != null && system.inserterPool != null &&
+            if (Wants(fields, "inserter") && entity.inserterId > 0 && system != null && system.inserterPool != null &&
                 entity.inserterId < system.inserterPool.Length)
             {
                 var inserter = system.inserterPool[entity.inserterId];
@@ -359,7 +463,7 @@ namespace IcarusII.Game.Tools
                 data.Set("inserter", detail);
             }
 
-            if (entity.beltId > 0 && factory.cargoTraffic != null &&
+            if (Wants(fields, "belt") && entity.beltId > 0 && factory.cargoTraffic != null &&
                 factory.cargoTraffic.beltPool != null &&
                 entity.beltId < factory.cargoTraffic.beltPool.Length)
             {
@@ -398,7 +502,7 @@ namespace IcarusII.Game.Tools
                 data.Set("belt", detail);
             }
 
-            if (entity.storageId > 0 && factory.factoryStorage != null &&
+            if (Wants(fields, "storage") && entity.storageId > 0 && factory.factoryStorage != null &&
                 factory.factoryStorage.storagePool != null &&
                 entity.storageId < factory.factoryStorage.storagePool.Length)
             {
@@ -414,7 +518,7 @@ namespace IcarusII.Game.Tools
                 data.Set("storage", storageDetail);
             }
 
-            if (entity.stationId > 0 && factory.transport != null &&
+            if (Wants(fields, "station") && entity.stationId > 0 && factory.transport != null &&
                 factory.transport.stationPool != null &&
                 entity.stationId < factory.transport.stationPool.Length)
             {

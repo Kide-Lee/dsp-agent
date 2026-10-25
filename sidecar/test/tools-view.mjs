@@ -100,6 +100,33 @@ function testToolGating() {
   check('game.view.v1 ⇒ 截图', view.includes('game_capture_view'));
   check('game.view.v1 不含 game.read 工具', !view.includes('game_get_power'));
 
+  const drop = toolNamesForCapabilities(['game.drop.v1']);
+  check('game.drop.v1 ⇒ 丢弃工具', drop.includes('game_drop_item'));
+  const writeOnly = toolNamesForCapabilities(['game.write.v1']);
+  check('game.write.v1 不含丢弃工具', !writeOnly.includes('game_drop_item'));
+
+  const build = toolNamesForCapabilities(['game.build.v1']);
+  check('game.build.v1 ⇒ 改配方工具', build.includes('game_set_recipe'));
+  check('game.build.v1 ⇒ 批量改配方工具', build.includes('game_set_assembler_batch'));
+  check('game.build.v1 ⇒ 取成品工具', build.includes('game_take_output'));
+  check('game.build.v1 ⇒ 拆除工具', build.includes('game_dismantle'));
+  check('game.build.v1 ⇒ 投料工具', build.includes('game_feed_input'));
+  check('game.write.v1 不含改配方工具', !writeOnly.includes('game_set_recipe'));
+
+  const tether = toolNamesForCapabilities(['game.tether.v1']);
+  check('game.tether.v1 ⇒ 添加方位', tether.includes('game_tether_add'));
+  check('game.tether.v1 ⇒ 清除方位', tether.includes('game_tether_clear'));
+  check('game.tether.v1 ⇒ 方位列表', tether.includes('game_tether_list'));
+  check('game.write.v1 不含方位工具', !writeOnly.includes('game_tether_add'));
+
+  const storage = toolNamesForCapabilities(['game.storage.v1']);
+  check('game.storage.v1 ⇒ 存储过滤器', storage.includes('game_storage_set_filter'));
+  check('game.storage.v1 ⇒ 存储上限', storage.includes('game_storage_set_limit'));
+  check('game.storage.v1 ⇒ 移库', storage.includes('game_storage_move'));
+  check('game.storage.v1 ⇒ 存入', storage.includes('game_storage_deposit'));
+  check('game.storage.v1 ⇒ 取出', storage.includes('game_storage_withdraw'));
+  check('game.write.v1 不含存储写工具', !writeOnly.includes('game_storage_set_filter'));
+
   const progress = toolNamesForCapabilities(['game.progress.v1']);
   check('game.progress.v1 ⇒ 进度', progress.includes('game_get_progress'));
 

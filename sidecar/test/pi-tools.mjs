@@ -217,11 +217,11 @@ async function main() {
       modVersion: 'test',
       gameVersion: 'test',
       gameLanguage: 'zh-CN',
-      capabilities: ['game.read.v1'],
+      capabilities: ['game.read.v1', 'game.drop.v1'],
     },
   });
   const ready = await client.waitForType('ready');
-  check('ready.tools 含 18 个工具（6 game + 4 kb + 2 wiki + 5 蓝图 + 脚本）', (ready.payload?.tools ?? []).length === 18);
+  check('ready.tools 含 19 个工具（6 game read + drop + 4 kb + 2 wiki + 5 蓝图 + 脚本）', (ready.payload?.tools ?? []).length === 19);
 
   // 配置假上游。
   client.send({
@@ -297,6 +297,8 @@ async function main() {
     ? systemMessage.content
     : (systemMessage?.content ?? []).map((b) => b?.text ?? '').join('');
   check('system prompt 未被 pi 的 “Available tools” 段落污染', !systemText.includes('Available tools:'));
+  check('system prompt 不再声称只能读', !systemText.includes('你只能读取当前存档'));
+  check('system prompt 列出写工具边界', systemText.includes('game_drop_item') && systemText.includes('game_set_research') && systemText.includes('game_set_assembler_batch'));
 
   const secondBody = upstream.requests[1]?.body ?? {};
   const hasToolMessage = (secondBody.messages ?? []).some((m) => m?.role === 'tool');
@@ -586,6 +588,24 @@ async function main() {
     .filter((m) => m?.role === 'assistant' && Array.isArray(m.cards))
     .flatMap((m) => m.cards);
   check('删除回合后卡片不再回放', replayCards2.length === 0, JSON.stringify(replayCards2));
+
+  // 强制工具回归：确认 pi 的请求体里真的带上了 game_drop_item。
+  upstream.mode = 'text';
+  const dropMark = upstream.requests.length;
+  client.send({
+    v: 1,
+    id: 'drop-forced',
+    type: 'prompt',
+    payload: { text: '/game_drop_item 测试', requiredTool: 'game_drop_item' },
+  });
+  await client.waitFor(
+    (f) => f?.type === 'error' && f.replyTo === 'drop-forced',
+    15000,
+    'error(drop forced)',
+  );
+  const dropBody = upstream.requests[dropMark]?.body ?? {};
+  const dropTools = (dropBody.tools ?? []).map((t) => t?.function?.name);
+  check('强制 drop 请求体包含 game_drop_item', dropTools.includes('game_drop_item'), JSON.stringify(dropTools));
 
   clearTimeout(watchdog);
   cleanup();

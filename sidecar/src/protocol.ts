@@ -60,6 +60,8 @@ export const MessageType = {
   ToolActivity: 'tool_activity',
   // M4i：蓝图卡片（附录 A.9）
   BlueprintCard: 'blueprint_card',
+  // 实体链接卡片（建筑/星球）
+  LinkCard: 'link_card',
   // 回存回答完成时的游戏时间（附录 A.10）
   ReplyTime: 'reply.time',
   // M3：拉取供应商的可用模型目录 / 检测 Key
@@ -73,6 +75,7 @@ export const MessageType = {
   // M4：写操作确认（附录 A.12）
   ConfirmRequest: 'confirm_request',
   ConfirmResult: 'confirm_result',
+  ConfirmRelease: 'confirm_release',
 } as const;
 
 export type MessageTypeName = (typeof MessageType)[keyof typeof MessageType];
@@ -175,6 +178,10 @@ export interface ConfirmRequestPayload {
   body: string;
   risk: 1 | 2;
   timeoutMs: number;
+  /** run_script 的脚本写租约：允许的写调用次数；0/缺省 = 普通单次确认。 */
+  maxWrites?: number;
+  /** 脚本确认时列出的写工具名；租约只允许这些工具。 */
+  writeNames?: string[];
 }
 
 /** `confirm_result`（mod → sidecar）。 */
@@ -522,6 +529,8 @@ export interface SaveBindPayload {
   saveName: string | null;
   /** 可选：玩家已解锁的蓝图档位；缺失时 sidecar 用默认档。 */
   blueprintTiers?: BlueprintTiers | null;
+  /** 可选：本次载入是否启用了游戏沙盒工具；缺失/非法按 false（安全默认）。 */
+  sandbox: boolean;
 }
 
 function clampTier(value: unknown, min: number, max: number): number | undefined {
@@ -561,6 +570,9 @@ export function parseSaveBindPayload(payload: JsonObject): SaveBindPayload | nul
     saveKey: key === null ? null : key,
     saveName: typeof name === 'string' && name.length > 0 ? name : null,
     blueprintTiers: parseBlueprintTiers(payload['blueprintTiers']),
+    // 旧 mod 不发该字段；非法类型也按 false 处理，绝不能因为门禁字段把存档解绑掉。
+    // 解绑（saveKey=null）时一律 false；字段只描述当前载入会话。
+    sandbox: key !== null && payload['sandbox'] === true,
   };
 }
 
@@ -601,6 +613,8 @@ export interface HistoryMessage {
    * 老客户端忽略该字段，行为不变。
    */
   cards?: BlueprintCardPayload[];
+  /** 该回答产出的实体链接卡片（建筑/星球）；可选。 */
+  linkCards?: LinkCardPayload[];
   /** 该回答完成时的游戏时间 HH:mm:ss（附录 A.6/A.10）。 */
   gameTime?: string;
   /**
@@ -613,6 +627,33 @@ export interface HistoryMessage {
   /** 压缩前/后的估算 token（只用于展示）。 */
   tokensBefore?: number;
   estimatedTokensAfter?: number;
+}
+
+/** 实体链接卡片：只描述目标，图标由 mod 按 ID 解析。 */
+export interface LinkCardPayload {
+  kind: 'planet' | 'building' | 'vein';
+  planetId: number;
+  buildingId?: number;
+  veinId?: number;
+  name: string;
+  subtitle?: string;
+  description?: string;
+  iconLabel?: string;
+}
+
+export function buildLinkCardPayload(args: LinkCardPayload): JsonObject {
+  const payload: JsonObject = {
+    kind: args.kind,
+    planetId: args.planetId,
+    name: args.name,
+  };
+  if (args.buildingId !== undefined) payload.buildingId = args.buildingId;
+  if (args.veinId !== undefined) payload.veinId = args.veinId;
+  for (const key of ['subtitle', 'description', 'iconLabel'] as const) {
+    const value = args[key];
+    if (value !== undefined && value !== '') payload[key] = value;
+  }
+  return payload;
 }
 
 /** `reply.time` 载荷（附录 A.10）：mod 回存回答完成时的游戏时间。 */

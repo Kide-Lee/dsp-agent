@@ -97,6 +97,12 @@ namespace IcarusII
         /// <summary>当前存档标识是否已经同步给服务端。</summary>
         private bool _saveSynced;
 
+        /// <summary>最近一次上报给 sidecar 的沙盒状态（用于同档内开关变化时重发）。</summary>
+        private bool _sandboxValue;
+
+        /// <summary>已经提示过沙盒状态的存档；同一存档不重复提示。</summary>
+        private string _sandboxNoticeFor;
+
         /// <summary>每个存档只扫描一次旧标记，避免每帧遍历 markerPool。</summary>
         private bool _markersSanitized;
 
@@ -176,6 +182,9 @@ namespace IcarusII
 
             // 先同步存档绑定：换档后旧工具调用必须在同帧被取消，不能带着新档的数据返回。
             SyncSaveBinding();
+
+            // 建筑 tether 的自绘线每帧跟随玩家/建筑；跨行星不画伪连线。
+            GameTether.Update();
 
             // 工具采集必须在 UI 就绪之前也持续运行：模型可能在窗口关闭时仍在用工具。
             _tools.Tick(2, OnToolDone);
@@ -260,7 +269,7 @@ namespace IcarusII
         private void OnDestroy()
         {
             try { CancelPendingAsk("插件卸载", Protocol.CodeCancelled); } catch { /* ignore */ }
-            try { CancelPendingConfirm("插件卸载"); _confirmation.Clear(); } catch { /* ignore */ }
+            try { CancelPendingConfirm("插件卸载"); _confirmation.Clear(); GameTether.Clear(); } catch { /* ignore */ }
             try { _chat?.Destroy(); } catch (Exception ex) { Log?.LogWarning($"清理 UI 失败：{ex.Message}"); }
             try { _tools?.CancelAll("插件卸载"); } catch { /* ignore */ }
             try { _client?.Stop(); } catch (Exception ex) { Log?.LogWarning($"停止客户端失败：{ex.Message}"); }
@@ -332,7 +341,9 @@ namespace IcarusII
                         _tools.CancelAll("连接断开");
                         CancelPendingAsk("连接断开", Protocol.CodeToolUnavailable);
                         CancelPendingConfirm("连接断开");
+                        _confirmation.Clear();
                         WriteActionStack.Clear();
+                        GameTether.Clear();
                         _regenerateDeleteId.Clear();
                         CancelPendingDebug();
                         _chat.ClearToolCatalog();
@@ -427,6 +438,13 @@ namespace IcarusII
                     var card = BlueprintCardInfo.Parse(payload);
                     if (card != null && (!string.IsNullOrEmpty(card.FileName) || !string.IsNullOrEmpty(card.Path)))
                         _chat.AppendBlueprintCard(card);
+                    break;
+                }
+
+                case Protocol.LinkCard:
+                {
+                    var card = LinkCardInfo.Parse(payload);
+                    if (card != null) _chat.AppendLinkCard(card);
                     break;
                 }
 
@@ -588,6 +606,10 @@ namespace IcarusII
                     OnConfirmRequest(payload);
                     break;
 
+                case Protocol.ConfirmRelease:
+                    OnConfirmRelease(payload);
+                    break;
+
                 case Protocol.ToolCall:
                     OnToolCall(payload, replyTo);
                     break;
@@ -643,6 +665,15 @@ namespace IcarusII
             if (call.Name == Protocol.ToolAskUser || call.Name == Protocol.ToolUiAskUser)
             {
                 HandleAskCall(call);
+                return;
+            }
+
+            // 沙盒门禁的 mod 侧：即使 sidecar 被替换/绕过，也不执行沙盒专属工具。
+            if (!Protocol.SandboxAllows(call.Name, GameRefs.SandboxToolsEnabled))
+            {
+                _client?.SendToolResult(call.CallId, false, JsonValue.Null,
+                    Protocol.CodeSandboxRequired, Strings.Get("sandbox.required"), JsonValue.NewObject());
+                _chat?.SetStatus(Strings.Get("sandbox.required"), WarnColor);
                 return;
             }
 
@@ -722,8 +753,16 @@ namespace IcarusII
 
         private static bool IsWriteToolName(string name)
         {
-            return name == Protocol.ToolFocusCamera || name == Protocol.ToolPlaceMarker
-                || name == Protocol.ToolOpenPanel || name == Protocol.ToolSetResearch;
+            return name == Protocol.ToolFocusCamera
+                || name == Protocol.ToolOpenPanel || name == Protocol.ToolSetResearch
+                || name == Protocol.ToolDropItem || name == Protocol.ToolSetRecipe
+                || name == Protocol.ToolSetAssemblerBatch || name == Protocol.ToolStorageSetFilter
+                || name == Protocol.ToolStorageSetLimit || name == Protocol.ToolStorageMove
+                || name == Protocol.ToolStorageDeposit || name == Protocol.ToolStorageWithdraw
+                || name == Protocol.ToolFeedInput || name == Protocol.ToolTetherAdd
+                || name == Protocol.ToolTetherClear
+                || name == Protocol.ToolTakeOutput
+                || name == Protocol.ToolDismantle;
         }
 
         /// <summary>sidecar 请求写操作确认：用 choose 的 question/explain + 红拒绝/蓝同意。</summary>
@@ -764,6 +803,14 @@ namespace IcarusII
             if (!_confirmation.TryResolve(request.RequestId, accepted, out var resolved)) return;
             SendConfirmResult(resolved, accepted);
             _chat?.SetStatus(Strings.Get("status.ready"), accepted ? OkColor : WarnColor);
+        }
+
+        private void OnConfirmRelease(JsonValue payload)
+        {
+            var token = payload["token"].AsString(null);
+            if (string.IsNullOrEmpty(token)) return;
+            _confirmation.Release(token);
+            Log.LogInfo("[confirm] 脚本写租约已释放");
         }
 
         private void SendConfirmResult(ConfirmRequestInfo request, bool accepted)
@@ -1259,22 +1306,34 @@ namespace IcarusII
             if (_client == null) return;
 
             var key = GameRefs.CurrentSaveKey();
+            var sandbox = key != null && GameRefs.SandboxToolsEnabled;
             if (key != _saveKey)
             {
                 CancelPendingAsk("存档切换", Protocol.CodeCancelled);
                 CancelPendingConfirm("存档切换");
+                _confirmation.Clear();
                 WriteActionStack.Clear();
+                GameTether.Clear();
+                GameTether.SanitizeInvalidWarnings();
                 _markersSanitized = false;
                 _tools?.CancelAll("存档切换", OnToolDone);
                 _tools?.ClearCache();
                 _saveKey = key;
                 _saveSynced = false;
+                _sandboxValue = sandbox;
+                _sandboxNoticeFor = null;
                 _historyReplayedFor = null;
                 _internalCalls.Clear();
                 // 对话串也必须跟着换档：否则新存档里还挂着旧档的消息，
                 // 即使 sidecar 已经换了会话，看起来仍然不是“新对话”。
                 if (_chat != null && _chat.Created) _chat.ClearTranscript();
                 Log.LogInfo($"[存档] 当前存档变化：{key ?? "(无，主菜单)"}");
+            }
+            else if (sandbox != _sandboxValue)
+            {
+                // 同一存档重载后玩家可能改了“启用沙盒工具”；即使 saveKey 没变也要重报。
+                _sandboxValue = sandbox;
+                _saveSynced = false;
             }
 
             if (_saveSynced) return;
@@ -1295,10 +1354,11 @@ namespace IcarusII
                     tiers.Set("stacking", info.Stacking);
                 }
             }
-            if (_client.SendSaveBind(key, name, tiers) == null) return;
+            if (_client.SendSaveBind(key, name, tiers, sandbox) == null) return;
 
             _saveSynced = true;
-            Log.LogInfo($"[存档] 已上报绑定：{key ?? "(解绑)"} / {name ?? "-"}");
+            _sandboxValue = sandbox;
+            Log.LogInfo($"[存档] 已上报绑定：{key ?? "(解绑)"} / {name ?? "-"} / sandbox={sandbox}");
         }
 
         /// <summary>连接重新就绪时，存档绑定需要重新上报（新连接上服务端一无所知）。</summary>
@@ -1313,6 +1373,7 @@ namespace IcarusII
                 if (string.IsNullOrEmpty(info.SaveKey))
                 {
                     _historyReplayedFor = null;
+                    _sandboxNoticeFor = null;
                     _chat.AppendSystem(Strings.Get("save.unbound"));
                     return;
                 }
@@ -1330,6 +1391,13 @@ namespace IcarusII
                     _chat.AppendSystem(Strings.Get("save.bound", name, info.MessageCount));
                 else
                     _chat.AppendSystem(Strings.Get("save.bound.nocount", name));
+
+                // 沙盒工具会关闭该存档的成就，玩家必须知道 AI 当前拿到了这部分权限。
+                if (GameRefs.SandboxToolsEnabled && info.SaveKey != _sandboxNoticeFor)
+                {
+                    _chat.AppendSystem(Strings.Get("save.sandbox"));
+                    _sandboxNoticeFor = info.SaveKey;
+                }
 
                 if (replay)
                 {
@@ -1368,6 +1436,11 @@ namespace IcarusII
                                         }
                                         _chat.AppendBlueprintCard(card);
                                     }
+                                }
+                                if (message.LinkCards != null)
+                                {
+                                    foreach (var link in message.LinkCards)
+                                        if (link != null) _chat.AppendLinkCard(link);
                                 }
                             }
                             replayed++;

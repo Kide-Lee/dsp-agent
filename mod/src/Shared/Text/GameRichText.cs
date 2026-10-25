@@ -41,11 +41,15 @@ namespace IcarusII.Common.Text
     {
         public const int WebMin = 900000;
         public const int WebMax = 999999;
+        /// <summary>实体链接段：800000–899999（与设计 §20.2 一致）。</summary>
+        public const int EntityMin = 800000;
+        public const int EntityMax = 899999;
 
         private readonly Dictionary<string, int> _urlToId =
             new Dictionary<string, int>(StringComparer.Ordinal);
         private readonly HashSet<int> _used = new HashSet<int>();
         private int _next = WebMin;
+        private int _nextEntity = EntityMin;
 
         public int Allocate(string url)
         {
@@ -63,6 +67,21 @@ namespace IcarusII.Common.Text
             return id;
         }
 
+        /// <summary>实体链接单独分配，避免占用网页段；同一个 URL 复用。</summary>
+        public int AllocateEntity(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return 0;
+            var key = url.Trim();
+            if (key.Length == 0) return 0;
+            if (_urlToId.TryGetValue(key, out var existing)) return existing;
+            while (_nextEntity <= EntityMax && _used.Contains(_nextEntity)) _nextEntity++;
+            if (_nextEntity > EntityMax) return 0;
+            var id = _nextEntity++;
+            _urlToId[key] = id;
+            _used.Add(id);
+            return id;
+        }
+
         /// <summary>把游戏原生 &lt;link=N&gt; 已占用的 ID 登记进来，网页分配时跳过。</summary>
         public void Reserve(int id)
         {
@@ -72,6 +91,11 @@ namespace IcarusII.Common.Text
         public static bool IsWebId(int id)
         {
             return id >= WebMin && id <= WebMax;
+        }
+
+        public static bool IsEntityLinkId(int id)
+        {
+            return id >= EntityMin && id <= EntityMax;
         }
 
         /// <summary>1000–9999 是科技链接；1 不再分配给科技。</summary>
@@ -110,7 +134,8 @@ namespace IcarusII.Common.Text
         public bool HasTechLinks;
         public bool HasRecipeLinks;
         public bool HasAchievementLinks;
-        public bool HasGameLinks => HasTechLinks || HasRecipeLinks || HasAchievementLinks;
+        public bool HasEntityLinks;
+        public bool HasGameLinks => HasTechLinks || HasRecipeLinks || HasAchievementLinks || HasEntityLinks;
         public bool HasCheckBoxes;
         public bool Truncated;
         public readonly List<RichTextLink> Links = new List<RichTextLink>();
@@ -163,7 +188,7 @@ namespace IcarusII.Common.Text
         private static readonly HashSet<string> TagNames = new HashSet<string>(StringComparer.Ordinal)
         {
             "color", "size", "tint", "box", "sqrt", "sup", "sub",
-            "i", "em", "b", "strong", "a", "icon",
+            "i", "em", "b", "strong", "a", "icon", "link",
         };
 
         public static RichTextResult Format(
@@ -744,6 +769,7 @@ namespace IcarusII.Common.Text
             public string Name;
             public bool Closing;
             public bool SelfClosing;
+            public string GameArg;
             public Dictionary<string, string> Attributes;
         }
 
@@ -785,13 +811,25 @@ namespace IcarusII.Common.Text
                 return true;
             }
 
-            if (rest.Length > 0)
+            if (rest.StartsWith("=", StringComparison.Ordinal) && IsGameTag(name))
+            {
+                // 游戏文本自身就是这种写法；模型从游戏文本抄进上下文时
+                // 必须能按原样识别，但不能放宽到任意缺属性名的标签。
+                tagValue.GameArg = rest.Substring(1).Trim();
+            }
+            else if (rest.Length > 0)
             {
                 if (!TryParseAttributes(rest, out tagValue.Attributes)) return false;
             }
 
             tag = tagValue;
             return true;
+        }
+
+        private static bool IsGameTag(string name)
+        {
+            return name == "color" || name == "tint" || name == "size" ||
+                   name == "sqrt" || name == "link";
         }
 
         private static bool TryParseAttributes(string text, out Dictionary<string, string> attributes)
@@ -903,6 +941,38 @@ namespace IcarusII.Common.Text
                     }
                     return true;
                 }
+                case "link":
+                {
+                    // 真正的 HTML <link> 是 void 元素；带属性但没有游戏语法参数时
+                    // 不要把它当游戏链接，避免把后面的正文整段吞成链接。
+                    if (tag.Attributes != null && tag.Attributes.Count > 0 &&
+                        string.IsNullOrEmpty(tag.GameArg))
+                        return false;
+
+                    var arg = ValueOf(tag);
+                    if (string.IsNullOrEmpty(arg))
+                    {
+                        // 裸 <link> 借用 21001–899999，避开科技/配方/成就/网页段。
+                        var rawId = ctx.NextRawLinkId++;
+                        style.LinkId = rawId >= 21001 && rawId < RichTextLinkAllocator.WebMin ? rawId : 0;
+                    }
+                    else if (int.TryParse(arg, out var id) && id > 0 && id <= 999999)
+                    {
+                        // 游戏原生 link 可能落在网页段；先登记，网页分配时跳过。
+                        ctx.LinkAllocator.Reserve(id);
+                        style.LinkId = id;
+                        if (RichTextLinkAllocator.IsTechLinkId(id)) ctx.HasTechLinks = true;
+                        if (RichTextLinkAllocator.IsRecipeLinkId(id)) ctx.HasRecipeLinks = true;
+                        if (RichTextLinkAllocator.IsAchievementLinkId(id)) ctx.HasAchievementLinks = true;
+                        if (RichTextLinkAllocator.IsEntityLinkId(id)) ctx.HasEntityLinks = true;
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                    if (style.LinkId > 0) ctx.HasLinks = true;
+                    return true;
+                }
                 default:
                     return false;
             }
@@ -910,6 +980,7 @@ namespace IcarusII.Common.Text
 
         private static string ValueOf(Tag tag)
         {
+            if (!string.IsNullOrEmpty(tag.GameArg)) return Unquote(tag.GameArg);
             return Attr(tag, "value");
         }
 
@@ -1300,7 +1371,8 @@ namespace IcarusII.Common.Text
         {
             return TryParseTechUrl(url, out _) ||
                    TryParseRecipeUrl(url, out _) ||
-                   TryParseAchievementUrl(url, out _);
+                   TryParseAchievementUrl(url, out _) ||
+                   TryParseEntityUrl(url, out _);
         }
 
         private static int ResolveTechId(string techKey, Func<string, int> techTagResolver)
@@ -1399,6 +1471,53 @@ namespace IcarusII.Common.Text
                 return true;
             }
 
+            if (TryParseEntityUrl(url, out var entityKey))
+            {
+                var id = ctx.LinkAllocator.AllocateEntity(entityKey);
+                if (id > 0)
+                {
+                    style.LinkId = id;
+                    ctx.Links.Add(new RichTextLink { Id = id, Url = entityKey, Text = string.Empty });
+                    ctx.HasLinks = true;
+                    ctx.HasEntityLinks = true;
+                }
+                else
+                {
+                    style.LinkId = 0;
+                }
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// dsp://entity/building/{planetId}/{buildingId}
+        /// dsp://entity/planet/{planetId}
+        /// 只接受正整数，避免把任意字符串带进 UI 分发。
+        /// </summary>
+        public static bool TryParseEntityUrl(string url, out string canonical)
+        {
+            canonical = null;
+            if (string.IsNullOrEmpty(url)) return false;
+            const string prefix = "dsp://entity/";
+            if (!url.StartsWith(prefix, StringComparison.Ordinal)) return false;
+            var rest = url.Substring(prefix.Length);
+            var parts = rest.Split('/');
+            if (parts.Length == 2 && parts[0] == "planet")
+            {
+                if (!int.TryParse(parts[1], out var planetId) || planetId <= 0) return false;
+                canonical = prefix + "planet/" + planetId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return true;
+            }
+            if (parts.Length == 3 && (parts[0] == "building" || parts[0] == "vein"))
+            {
+                if (!int.TryParse(parts[1], out var planetId) || planetId <= 0) return false;
+                if (!int.TryParse(parts[2], out var targetId) || targetId <= 0) return false;
+                canonical = prefix + parts[0] + "/" + planetId.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                    "/" + targetId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return true;
+            }
             return false;
         }
 
@@ -1722,6 +1841,7 @@ namespace IcarusII.Common.Text
             public bool HasTechLinks;
             public bool HasRecipeLinks;
             public bool HasAchievementLinks;
+            public bool HasEntityLinks;
             public bool HasCheckBoxes;
             public bool Truncated;
 
@@ -1807,6 +1927,7 @@ namespace IcarusII.Common.Text
                     HasTechLinks = HasTechLinks,
                     HasRecipeLinks = HasRecipeLinks,
                     HasAchievementLinks = HasAchievementLinks,
+                    HasEntityLinks = HasEntityLinks,
                     HasCheckBoxes = HasCheckBoxes,
                     Truncated = Truncated,
                 };

@@ -47,6 +47,9 @@ namespace IcarusII.I18n
             ["save.bound.nocount"] = "已绑定存档「{0}」的对话。",
             ["save.new"] = "已为存档「{0}」开启新对话。",
             ["save.unbound"] = "已离开存档，对话暂时解绑。",
+            ["save.sandbox"] =
+                "该存档已启用游戏沙盒工具（该存档的成就已关闭）。AI 的沙盒专属工具只在此时可用。",
+            ["sandbox.required"] = "当前存档未启用游戏沙盒工具，该操作被拒绝。",
             ["welcome"] = "我是伊卡洛斯·贰。可以问我《戴森球计划》的机制、产线排布、或者卡住了该先修什么。",
             ["chat.index.empty"] = "暂无提问",
             ["chat.index.delete.tip"] = "删除",
@@ -107,6 +110,8 @@ namespace IcarusII.I18n
             ["blueprint.card.meta.version"] = "版本 {0}",
             ["blueprint.card.meta.license"] = "许可 {0}",
             ["blueprint.card.no_file"] = "找不到蓝图文件：{0}",
+            ["link.card.locate"] = "定位",
+            ["link.card.located"] = "已定位",
             ["blueprint.card.bad_file"] = "蓝图文件无法读取或已损坏。",
             ["blueprint.card.open_failed"] = "无法打开蓝图浏览器（当前界面不允许或蓝图界面未就绪）。",
             ["blueprint.card.paste_unavailable"] = "尚未解锁蓝图粘贴，或当前状态不允许粘贴。",

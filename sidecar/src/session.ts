@@ -38,6 +38,7 @@ import {
   buildStreamPayload,
   buildToolActivityPayload,
   buildBlueprintCardPayload,
+  buildLinkCardPayload,
   buildToolCallPayload,
   buildToolDebugResultPayload,
   buildConfirmRequestPayload,
@@ -60,6 +61,7 @@ import {
   type ErrorCode,
   type JsonObject,
   type BlueprintCardPayload,
+  type LinkCardPayload,
   type ContextCompactedPayload,
   type ModelCatalogResult,
   type ProviderTestResult,
@@ -70,6 +72,7 @@ import {
 } from './protocol.js';
 import { UI_ASK_TOOL_NAME, UI_ASK_TOOL_NAME_ALIASES, UI_ASK_TIMEOUT_MS } from './tools/ask.js';
 import type { AgentEmitter, AgentRunner } from './agent.js';
+import type { ScriptConfirmRequest, ScriptConfirmResult } from './tools/host.js';
 import { maskSecret, redactSecrets, type ConfigStore } from './config.js';
 import type { KbTransport, KnowledgeManager } from './kb/manager.js';
 import { errorFields, type Logger, log as rootLog } from './log.js';
@@ -159,11 +162,6 @@ function describeConfirmation(
   switch (name) {
     case 'game_focus_camera':
       return { title: '移动视角？', body: `目标：${fmt(args['target'])}` };
-    case 'game_place_marker':
-      return {
-        title: '新增标记？',
-        body: `行星：${fmt(args['planetId'] ?? '当前')}\n坐标：${fmt(args['position'])}\n文字：${fmt(args['text'])}`,
-      };
     case 'game_open_panel':
       return { title: '打开游戏面板？', body: `面板：${fmt(args['panel'])}` };
     case 'game_set_research':
@@ -171,6 +169,99 @@ function describeConfirmation(
         title: '切换研究目标？',
         body: `科技：${fmt(args['techId'])}\n可能浪费当前研究已投入的进度。`,
       };
+    case 'game_drop_item':
+      return {
+        title: '丢弃物品？',
+        body: `物品：${fmt(args['itemId'])}\n数量：${fmt(args['count'] ?? 1)}\n` +
+          '会丢到地面，需要手动拾回；不进入撤销栈。',
+      };
+    case 'game_set_recipe':
+      return {
+        title: '更换配方？',
+        body: `建筑：#${fmt(args['buildingId'])}\n配方：#${fmt(args['recipeId'])}（0 = 清空）\n` +
+          '会先退回机器内原料/产物；撤销只恢复配方。',
+      };
+    case 'game_set_assembler_batch': {
+      const rows = Array.isArray(args['selections']) ? args['selections'] : [];
+      const preview = rows.slice(0, 6).map((row) => {
+        const item = (row ?? {}) as Record<string, unknown>;
+        return `#${fmt(item['buildingId'])} → #${fmt(item['recipeId'])}`;
+      });
+      const more = rows.length > preview.length ? `\n…还有 ${rows.length - preview.length} 台` : '';
+      return {
+        title: '批量更换配方？',
+        body: `${rows.length} 台生产建筑：\n${preview.join('\n')}${more}\n` +
+          '每台会先退回机器内原料/产物；整批只压一层撤销，撤销只恢复配方。',
+      };
+    }
+    case 'game_storage_set_filter':
+      return {
+        title: '设置存储过滤器？',
+        body: `建筑：#${fmt(args['buildingId'])}\n` +
+          (Number(args['itemId'] ?? 0) === 0 ? '清除过滤器' : `只放物品 #${fmt(args['itemId'])}`) +
+          '\n已占用且物品不同的格子会跳过。',
+      };
+    case 'game_storage_set_limit':
+      return {
+        title: '设置存储容量上限？',
+        body: `建筑：#${fmt(args['buildingId'])}\n允许使用：${fmt(args['limit'])} 格\n` +
+          '会限制该存储可用的格子数。',
+      };
+    case 'game_storage_move':
+      return {
+        title: '移动物品？',
+        body: `从 #${fmt(args['sourceId'])} 到 #${fmt(args['targetId'])}\n` +
+          `物品：#${fmt(args['itemId'])}，数量：${fmt(args['count'])}\n` +
+          '目标空间不足会整笔失败；源不足只移动可用部分。',
+      };
+    case 'game_storage_deposit':
+      return {
+        title: '存入存储？',
+        body: `存储：#${fmt(args['buildingId'])}\n物品：#${fmt(args['itemId'])}，数量：${fmt(args['count'])}\n` +
+          '存储满时只放入能放下的部分，剩余退回背包。',
+      };
+    case 'game_storage_withdraw':
+      return {
+        title: '从存储取出？',
+        body: `存储：#${fmt(args['buildingId'])}\n物品：#${fmt(args['itemId'])}，数量：${fmt(args['count'])}\n` +
+          '背包满时只取能放下的部分，剩余留在存储。',
+      };
+    case 'game_tether_add':
+      return {
+        title: '建立方位指示？',
+        body: args['kind'] === 'planet'
+          ? `目标：行星 #${fmt(args['planetId'] ?? '当前')}\n` +
+            '会设置机甲导航朝向；可同时建多个，但游戏一次只显示一个跨行星导航朝向。'
+          : `目标：建筑 #${fmt(args['buildingId'])}（行星 #${fmt(args['planetId'] ?? '当前')}）\n` +
+            '本星球会自绘机甲→建筑线；跨行星先指向目标行星，落地后切换。',
+      };
+    case 'game_tether_clear':
+      return {
+        title: '清除方位指示？',
+        body: '会移除本 mod 建立的所有导航朝向和建筑追踪线。',
+      };
+    case 'game_feed_input':
+      return {
+        title: '直接投料？',
+        body: `建筑：#${fmt(args['buildingId'])}\n物品：#${fmt(args['itemId'])}，数量：${fmt(args['count'])}\n` +
+          '会直接写入机器输入缓冲，不经过分拣器/传送带；只接受当前配方需要的物品。',
+      };
+    case 'game_take_output':
+      return {
+        title: '取出成品？',
+        body: `建筑：#${fmt(args['buildingId'])}\n` +
+          '会把当前成品放进背包，保留配方；背包满时只取能放下的部分。',
+      };
+    case 'game_dismantle': {
+      const ids = Array.isArray(args['buildingIds']) ? args['buildingIds'] : [];
+      const preview = ids.slice(0, 8).map((id) => `#${fmt(id)}`).join('、');
+      const more = ids.length > 8 ? ` 等 ${ids.length} 个` : '';
+      return {
+        title: '拆除建筑？',
+        body: `将拆除：${preview}${more}\n` +
+          '拆除不可撤销；游戏会按正常规则退料/清理，但建筑不会恢复。',
+      };
+    }
     default:
       return { title: '确认写操作？', body: `${name}\n${stableJson(args)}` };
   }
@@ -703,10 +794,12 @@ export class Session {
       saveName: bind.saveName,
       existed: known,
       blueprintTiers: bind.blueprintTiers ?? null,
+      sandbox: bind.sandbox,
     });
 
     try {
       this.options.agent.onSaveChanged?.(bind.saveKey);
+      this.options.agent.onSandboxChanged?.(bind.sandbox);
       this.options.agent.onBlueprintTiers?.(bind.blueprintTiers ?? null);
     } catch (err) {
       this.logger.warn('切换存档会话失败', errorFields(err));
@@ -1000,7 +1093,14 @@ export class Session {
   private async callTool(
     name: string,
     args: JsonObject,
-    options: { timeoutMs: number; signal?: AbortSignal; internal?: boolean; risk?: number },
+    options: {
+      timeoutMs: number;
+      signal?: AbortSignal;
+      internal?: boolean;
+      risk?: number;
+      confirmToken?: string;
+      confirmArgsHash?: string;
+    },
   ): Promise<ToolResultPayload> {
     if (this._state !== 'ready' || !this.socket.isOpen) {
       return toolFailure('tool_unavailable', 'mod 连接未就绪');
@@ -1012,9 +1112,9 @@ export class Session {
     const callId = `call_${(this.toolSeq += 1)}`;
     const risk = options.risk ?? 0;
 
-    let token: string | undefined;
-    let argsHash: string | undefined;
-    if (risk > 0 && options.internal !== true) {
+    let token: string | undefined = options.confirmToken;
+    let argsHash: string | undefined = options.confirmArgsHash;
+    if (!token && risk > 0 && options.internal !== true) {
       const approved = await this.requestConfirmation(callId, name, args, risk, options.signal);
       if (!approved) {
         return toolFailure('confirmation_denied', '玩家拒绝了这次写操作，未执行');
@@ -1071,17 +1171,64 @@ export class Session {
     });
   }
 
+  /**
+   * run_script 的脚本级确认：一次确认授权脚本最多 maxWrites 次写调用。
+   * token 绑定脚本哈希；mod 只接受该 token + 同一哈希的写 tool_call。
+   */
+  private async confirmScript(request: ScriptConfirmRequest): Promise<ScriptConfirmResult | null> {
+    const writeNames = request.writeNames.slice(0, 12);
+    const more = request.writeNames.length > writeNames.length ? '…' : '';
+    const approved = await this.requestConfirmation(
+      'script',
+      'run_script',
+      {},
+      2,
+      undefined,
+      {
+        argsHash: request.scriptHash,
+        title: '脚本包含写操作？',
+        body:
+          `脚本将调用写工具：${writeNames.join(', ')}${more}\n` +
+          `本次最多允许 ${request.maxWrites} 次写调用；执行期间不再逐次确认。`,
+        maxWrites: request.maxWrites,
+        writeNames: request.writeNames,
+      },
+    );
+    if (!approved) return null;
+    return { token: approved.token, scriptHash: request.scriptHash };
+  }
+
+  private releaseScript(token: string): void {
+    if (!token || this._state !== 'ready' || !this.socket.isOpen) return;
+    const payload = { token };
+    this.sendEnvelope(
+      buildEnvelope({
+        type: MessageType.ConfirmRelease,
+        payload,
+      }),
+    );
+  }
+
   private requestConfirmation(
     callId: string,
     name: string,
     args: JsonObject,
     risk: number,
     signal?: AbortSignal,
+    override?: {
+      argsHash?: string;
+      title?: string;
+      body?: string;
+      maxWrites?: number;
+      writeNames?: string[];
+    },
   ): Promise<{ token: string; argsHash: string } | null> {
     const requestId = `confirm_${(this.confirmSeq += 1)}`;
     const token = randomBytes(32).toString('hex');
-    const argsHash = hashArgs(args);
-    const copy = describeConfirmation(name, args);
+    const argsHash = override?.argsHash ?? hashArgs(args);
+    const copy = override
+      ? { title: override.title ?? '确认写操作？', body: override.body ?? '' }
+      : describeConfirmation(name, args);
 
     return new Promise((resolve) => {
       let cleanup = (): void => {};
@@ -1134,6 +1281,8 @@ export class Session {
             body: copy.body,
             risk: risk as 1 | 2,
             timeoutMs: 60000,
+            ...(override?.maxWrites ? { maxWrites: override.maxWrites } : {}),
+            ...(override?.writeNames ? { writeNames: override.writeNames } : {}),
           } satisfies ConfirmRequestPayload),
         }),
         (err) => {
@@ -1301,6 +1450,14 @@ export class Session {
         return session.callTool(name, args, options);
       },
 
+      confirmScript(request) {
+        return session.confirmScript(request);
+      },
+
+      releaseScript(token) {
+        session.releaseScript(token);
+      },
+
       toolActivity(payload) {
         session.sendEnvelope(
           buildEnvelope({
@@ -1315,6 +1472,15 @@ export class Session {
           buildEnvelope({
             type: MessageType.BlueprintCard,
             payload: buildBlueprintCardPayload(payload),
+          }),
+        );
+      },
+
+      linkCard(payload: LinkCardPayload) {
+        session.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.LinkCard,
+            payload: buildLinkCardPayload(payload),
           }),
         );
       },

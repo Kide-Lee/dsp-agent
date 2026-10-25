@@ -55,6 +55,8 @@
 - **不做**模型微调或本地模型权重分发。
 - **不把** `bash`/文件系统能力暴露给模型。
 
+> §20.1 D2 = **暂不做自动驾驶**（2026-10-24）：本条保持有效；未来重启需先复议本条与 §20.1。
+
 ---
 
 ## 2. 运行环境（已核实）
@@ -557,7 +559,7 @@ AgentRoot (RectTransform, 默认 inactive)
   - `TextLayoutLocale`：按语言提供字体替换对（`LanguageFontPair {oldFont, newFont}`）与字距/缩进参数 ⇒ **中文字体由游戏自动处理**，无需自带字体。
   - `TextIconMapping`：把文本标签映射为内嵌图标（`GetIconInString`）⇒ AI 回复里可直接内联物品/建筑图标。
   - `TextEventTrigger` / `TextTriggerBounds`：文本区间级触发器 ⇒ 支持"点击回复中的物品名 → 打开该物品详情"。
-- 输出富文本由 `mod/src/Shared/Text/GameRichText.cs` 编译：外层用标准 Markdown，游戏样式用一小撮内联 HTML（`color/size/tint/box/sqrt/sup/sub/i/a/icon`），裸游戏标签只作为游戏输出，不作为输入解析；Markdown 表格由 `SplitTables` 切成独立 Text 段，用游戏 `tableColWidths/tableRowHeights` 做真表格；网页链接使用 900000–999999 的顺序 ID，点击打开外部浏览器（失败时复制 URL）；科技链接使用 1000–9999，输出 `dsp://tech/<iconTag>`（如 `dsp://tech/dcx`），点击打开科技树并定位、展开对应科技；配方链接使用 10000–19999，输出 `dsp://recipe/<itemIconTag>`，点击打开合成器并选中对应物品主配方；成就链接使用 20000–21000，输出 `dsp://achievement/<id>`，点击打开成就页并定位条目；裸 `http(s)://...` 也自动转成网页链接（代码除外）；块级排版在标题/段落/列表组/引用/代码块/分隔线之间保留一个空行，连续空行折叠；段落内单换行按 Markdown 软换行合并（中文不加空格、英文补空格），行尾两空格/反斜杠作为硬换行。详细映射见 `mod/src/Shared/Text/GameRichText.cs` 与 §6.5；**不**引入第三方 Markdown 渲染器。
+- 输出富文本由 `mod/src/Shared/Text/GameRichText.cs` 编译：外层用标准 Markdown，游戏样式用一小撮内联 HTML（`color/size/tint/box/sqrt/sup/sub/i/a/icon`），游戏原生 `<color=...>`/`<size=...>`/`<link=...>` 语法精确兼容输入（模型可能从游戏文本抄入），错误变体转义；Markdown 表格由 `SplitTables` 切成独立 Text 段，用游戏 `tableColWidths/tableRowHeights` 做真表格；网页链接使用 900000–999999 的顺序 ID，点击打开外部浏览器（失败时复制 URL）；科技链接使用 1000–9999，输出 `dsp://tech/<iconTag>`（如 `dsp://tech/dcx`），点击打开科技树并定位、展开对应科技；配方链接使用 10000–19999，输出 `dsp://recipe/<itemIconTag>`，点击打开合成器并选中对应物品主配方；成就链接使用 20000–21000，输出 `dsp://achievement/<id>`，点击打开成就页并定位条目；裸 `http(s)://...` 也自动转成网页链接（代码除外）；块级排版在标题/段落/列表组/引用/代码块/分隔线之间保留一个空行，连续空行折叠；段落内单换行按 Markdown 软换行合并（中文不加空格、英文补空格），行尾两空格/反斜杠作为硬换行。详细映射见 `mod/src/Shared/Text/GameRichText.cs` 与 §6.5；**不**引入第三方 Markdown 渲染器。
 - 流式显示：`stream.delta` 到达即追加到当前气泡；渲染节流到**每帧最多一次**（避免逐字触发重建布局）。
 - 历史上限：内存中保留最近 N 条（默认 200），更早的由 sidecar 会话文件承载，可通过"打开完整历史"分页拉取。
 
@@ -993,7 +995,7 @@ function gameTool<T>(spec: {
 | --- | --- | --- | --- |
 | `game.get_overview` | — | 存档名、游戏时刻、模式、当前行星/星系、玩家位置 | `GameMain.data.gameName` / `gameDesc` / `localPlanet` / `localStar` |
 | `game.get_player` | `detail?` | 机甲能量/护盾/核心、背包物品（id+名称+数量） | `GameMain.data.mainPlayer` |
-| `game.get_planet` | `planetId?`, `detail?` | 行星类型、矿脉汇总、建筑计数、面积/经纬 | `PlanetData`、`PlanetFactory` |
+| `game.get_planet` | `planetId?`, `detail?`, `veins?`（summary/groups/nodes）, `veinOffset?`, `veinLimit?` | 行星类型、矿脉汇总/矿脉群/逐矿脉（经纬度，分页）、建筑计数、面积/经纬 | `PlanetData`、`PlanetFactory`、`VeinGroup`/`VeinData` |
 | `game.get_production` | `planetId?`, `itemFilter?`, `offset/limit` | 各物品产能/消耗/净额、堵塞建筑 | `PlanetFactory` 生产统计 |
 | `game.get_power` | `planetId?` | 发电/耗电/储能、电网余量、告警 | 电力系统 |
 | `game.get_logistics` | `planetId?` | 物流塔/站、航线、运输船与翘曲器状态 | `galacticTransport`、`PlanetFactory` |
@@ -1009,7 +1011,7 @@ function gameTool<T>(spec: {
 
 | 工具 | 能力 | 参数 | 返回 | 对应游戏 API |
 | --- | --- | --- | --- | --- |
-| `game_get_entity` | `game.entity.v1` | `planetId?`, `entityId`, `expectProtoId?` | 单建筑：原型、配方、功率、分拣器/传送带/仓储/物流塔、星系/行星/经纬度、`stale` | `PlanetFactory.entityPool` + `factorySystem` / `cargoTraffic` / `transport` |
+| `game_get_entity` | `game.entity.v1` | `planetId?`, `entityId?`, `entityIds?`（≤10）, `expectProtoId?`, `fields?` | 单/批量建筑：原型、配方、功率、分拣器/传送带/仓储/物流塔、星系/行星/经纬度、`stale`；`fields` 裁剪段 | `PlanetFactory.entityPool` + `factorySystem` / `cargoTraffic` / `transport` |
 | `game_get_entities` | `game.entity.v1` | `planetId?`, `protoId?`, `protoName?`, `recipeId?`, `offset/limit` | 建筑分页列表 | 同上 |
 | `game_get_progress` | `game.progress.v1` | — | 派生阶段 + 判定信号、已解锁科技、里程碑、教程、研究队列 | `GameHistoryData`、`GameMain.data.milestoneSystem` |
 | `game_capture_view` | `game.view.v1` | `width?`, `height?`, `includeEntities?` | JPEG 图片 + 可见实体屏幕坐标与经纬度 | `GameCamera.CaptureScreenshot` |
@@ -1029,6 +1031,8 @@ function gameTool<T>(spec: {
 > 并自动展开。纹理/精灵的所有权交给节点上的 `ToolImageSprite`，随节点销毁释放
 > （`TrimHistory` / `ClearTranscript` / `RemoveBlock` 三条路径都覆盖）。
 > 这是数据驱动内容，不改 prefab 静态布局。
+>
+> **高频读工具**：`game_get_entity` 是 AI 最常反复调用的详情工具（§20.1 D4）。实现时优先做字段裁剪（`fields`）、按实体/帧缓存、批量 `entityIds` 和统一结果上限，避免每次返回完整详情把上下文和延迟吃掉。
 
 ### 8.2 知识工具（risk 0，sidecar 本地）
 
@@ -1038,7 +1042,7 @@ function gameTool<T>(spec: {
 | `kb_get` | `kind`, `idOrName` | 精确取一条（含 M3b 文本类） |
 | `kb_recipe_tree` | `item`, `amount?`, `rate?`, `depth?`, `recipeId?` | 递归配方展开 + 原料汇总（纯计算，副产物抵扣） |
 | `kb_plan` | `item`, `rate`, `depth?`, `recipeId?`, `buildingTier?`, `buildingId?`, `beltSpeed?` | 产线规划：机器数/电力/传送带 + 复用配方树的原料（M4b） |
-| `run_script` | `code`, `timeoutMs?`, `maxCalls?` | 只读脚本：QuickJS 沙箱 + `dsp.call` 复用同一工具注册表（M4d） |
+| `run_script` | `code`, `timeoutMs?`, `maxCalls?` | 脚本：QuickJS 沙箱 + `dsp.call` 复用同一工具注册表；默认只读，脚本含字面量写工具时先做一次脚本级确认（M4d/M5） |
 
 > 本地工具（`kb_*` / `run_script`）不经过 `tool_call`，默认在聊天窗里不可见；
 > sidecar 通过 `tool_activity`（协议 A.8）补发 start/end，mod 用同一套工具卡渲染。
@@ -1052,17 +1056,29 @@ function gameTool<T>(spec: {
 | 工具 | risk | 参数 | 影响面说明（确认卡中展示） |
 | --- | --- | --- | --- |
 | `game.focus_camera` | 1 | `target`（行星/星系/建筑 id） | 视角移动 |
-| `game.place_marker` | 1 | `planetId`, `position`, `text`, `icon?` | 新增一个标记 |
 | `game.open_panel` | 1 | `panel`（inventory/tech/starmap/…） | 打开游戏面板 |
 | `game.set_research` | 2 | `techId` | 切换研究目标（可能浪费已投入） |
+| `game.drop_item` | 2 | `itemId`, `count?` | 丢弃背包物品到地面；需手动拾回，不进入撤销栈 |
 | `game.set_recipe` | 2 | `buildingId`, `recipeId` | 改变一台建筑的生产配方 |
 | `game.set_assembler_batch` | 2 | `selections[]` | 批量设置（二次确认） |
 | `game.set_logistics_route` | 2 | `stationId`, `route` | 修改物流航线 |
 | `game.paste_blueprint` | 2 | `blueprintId`/`data`, `anchor` | 大规模建造（二次确认 + 占地/建筑数预览） |
 | `game.add_to_build_bar` | 2 | `itemId`, `slot` | 修改建造栏 |
 | `game.dismantle` | 2 | `buildingIds[]` | 拆除建筑（二次确认 + 影响预览） |
+| `game.take_output` | 2 | `buildingId` | 取出生产建筑成品，保留配方 |
+| `game.feed_input` | 2 | `buildingId`, `itemId`, `count` | 背包原料直接进生产建筑输入缓冲 |
+| `game.storage_set_filter` | 2 | `buildingId`, `itemId` | 设置/清除存储过滤器 |
+| `game.storage_set_limit` | 2 | `buildingId`, `limit` | 设置存储可用格数上限 |
+| `game.storage_move` | 2 | `sourceId`, `targetId`, `itemId`, `count` | 存储间移动物品 |
+| `game.storage_deposit` | 2 | `buildingId`, `itemId`, `count` | 背包→存储 |
+| `game.storage_withdraw` | 2 | `buildingId`, `itemId`, `count` | 存储→背包 |
+| `game.tether_add` | 1 | `kind`, `planetId?`, `buildingId?` | 建立机甲到行星/建筑的方位指示 |
+| `game.tether_clear` | 1 | 无 | 清除方位指示 |
+| `game.tether_list` | 0 | 无 | 列出方位指示 |
 
-> 首期只实现 `focus_camera` / `place_marker` / `open_panel` / `set_research`，其余按里程碑推进（§15）。写工具集是风险最高的部分，必须逐个设计撤销语义。
+> 当前实现 `focus_camera` / `open_panel` / `set_research` / `drop_item` / `set_recipe` / `set_assembler_batch` / 撤销；其余按里程碑推进（§15）。写工具集是风险最高的部分，必须逐个设计撤销语义。
+>
+> §20 的候选工具尚未实现，**不注册**。新增写工具必须使用新的能力串（如 `game.build.v1` / `game.storage.v1`），不能继续挂在 `game.write.v1` 下，否则老 mod 会被注册它并不存在的工具（§20.5）。
 
 ### 8.4 交互工具（risk 0）
 
@@ -1281,14 +1297,15 @@ icarus-ii/
 | **M4a 能看** | `game.entity.v1` / `game.progress.v1` / `game.view.v1`：建筑详情、建筑列表、进度阶段、截图（JPEG 进模型上下文）；协议 `tool_result.image`；模型 `input` 覆盖 | 截图不含 UI 且模型能描述画面；建筑字段与游戏面板一致；id 回收返回 `stale` |
 | **M4b 能算** | `kb_plan`：按目标产量计算机器数/电力/传送带；KB 增加 `building.assemblerRecipeType`，缓存换 `r2` 强制重导 | 机器数与游戏面板一致（base/mk2 档位）；缺建筑参数时降级为 1x 并 warning |
 | **M4c 能析** | `game_analyze_area`：范围聚合建筑/配方/装机产能/耗电/物流设施/电网 | 与目测数量一致；装机口径与实际产出分开陈述 |
-| **M4d 能编** | `run_script`：QuickJS-WASM 只读沙箱 + `dsp.call` 复用同一工具注册表；单文件内联 WASM | 脚本可批量取数并聚合；越权工具/超时/无宿主全局都有测试；SEA 打包后仍可运行 |
+| **M4d 能编** | `run_script`：QuickJS-WASM 沙箱 + `dsp.call` 复用同一工具注册表；默认只读，含写工具时脚本级确认后凭租约执行；单文件内联 WASM | 脚本可批量取数/受控写入；越权/超时/无宿主全局、写租约和释放都有测试；SEA 打包后仍可运行 |
 | **M4g 能查外网** | `wiki_search` / `wiki_page`：中英 DSP Wiki，带来源链接 | 外部内容显式标注不可信；失败返回 `wiki_unavailable` |
 | **M4h 能取蓝图** | `blueprint_search` / `blueprint_info` / `blueprint_save`：社区蓝图仓库检索、格式体检、直接保存 | 带作者/仓库/许可署名；路径清洗；同名不覆盖 |
 | **M4i 能看卡片** | 协议 A.9 `blueprint_card` + 聊天窗数据驱动卡片 + 历史回放 | 生成/下载/复制后出现卡片；重进存档可回放；删除回合一起消失 |
 | **M4j 能出蓝图** | `blueprint_generate`：KB `kb_plan` 的真实机器数 → dsp-calc 布局 → 写入蓝图目录；`from` 起点、rows 拆阶段、超高产量拆多张、save.bind 被动档位 | 60/min 电磁涡轮 29 台机器/7 阶段；300/min→3 张、600/min→5 张 |
-| **M4 能动手** | 确认 UI + 令牌门禁 + `focus_camera`/`place_marker`/`open_panel`/`set_research` + 撤销 | 拒绝确认时无任何副作用（重点测试） |
+| **M4 能动手** | 确认 UI + 令牌门禁 + `focus_camera`/`open_panel`/`set_research` + 撤销 | 拒绝确认时无任何副作用（重点测试） |
 | **M5 完善** | 错误处理全覆盖、i18n 结构、**打包流水线（cjs bundle + SEA 注入 + 双平台产物）+ 体积优化评估**、README/安装文档、性能调优 | 冷启动 < 2s；连续对话 30 轮无卡顿与内存增长；发布包在干净机器上零附加依赖可用 |
 | **M6 扩展**（可选） | 更多 L2 工具（配方/物流/蓝图）、`DshAcpRuntime`、Web 配置页 | — |
+| **M7 候选**（D1–D5 已拍板） | §20 的候选能力；沙盒门禁、读侧、丢弃已完成；下一步生产/存储写工具；自动驾驶暂不做 | 见 §20.2、§20.3 |
 
 ---
 
@@ -1309,6 +1326,9 @@ icarus-ii/
 | R11 | **Wiki 站点协议/反爬变化** | 低 | 限流 + 缓存 + 可关闭；失败不影响离线功能 |
 | R12 | **Wine 内 `Process.Start` 的路径与权限** | 中 | 仅 Windows 原生使用 `spawnNode`；Proton 走 `connectOnly` |
 | R13 | **Proton 的 `AppDefaults\DSPGAME.exe\DllOverrides` 是否被尊重** | 中 | 决定"能否不改 Steam 启动项就 drop-in"（§2.3.2）。本机前缀已有 27 条 Steam 自写的同类条目，可信度高；M0 实测确认。失败则回退到文档化启动项 |
+| R14 | **沙盒门禁与能力协商** | 中 | 已实现 `save_bind.sandbox` + mod/sidecar 双重拒绝 + 回合边界重建；接第一个沙盒工具时补聊天窗工具列表刷新与 `tools_changed`（§20.2 第 8 项） |
+| R15 | **长任务（未来）** | 中 | D2=B 暂不做自动驾驶；未来重启需要 start/progress/cancel 与玩家抢占，并先复议 §1.2（§20.1） |
+| R16 | **丢弃/拆除的不可逆性** | 中 | D1=B 用丢弃替代摧毁：物品以 trash 落地、可撤销（需手动拾回）但不是一键撤销；拆除仍不可复原。确认卡要如实标注（§20.1 D1） |
 
 ---
 
@@ -1488,6 +1508,8 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 | 5 | **不做写前自动存档** | §3.5、§6.5、§6.7、§9.1、§16 R7 |
 | 6 | **接受发布包变大**，`icarus-ii-sidecar.exe` 直接内置 | §2.2、§12、§16 R9 |
 
+> §20 的候选能力不在本表内。D1=B（丢弃替代摧毁）与 D2=B（暂不做自动驾驶）均不修改本表与 §1.2；实现约束见 §20.1。
+
 ### 19.1 仍需在实现阶段坐实的技术项（非产品决策）
 
 | 项 | 何时 | 验证方法 |
@@ -1498,3 +1520,144 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 | `R` / `Shift+R` 的确切绑键与是否还有第三个动作占用裸 `R` | M0 | 运行时打印 `KeyConfig.builtinKeys`；游戏内「设置 → 按键」 |
 | DeepSeek 当前的 `contextWindow` / `maxTokens` 实际值 | M1 | 设计阶段 `api-docs.deepseek.com` 被 DNS 拦截，未能核实；实现时按官方文档填入 `models.json` 默认值 |
 | `deepseek-reasoner` 是否支持 function calling | M1 | 配置面板的最小工具调用自检（§7.2） |
+
+## 20. 候选能力清单（M5+，待实现）
+
+> 本节由 2026-10-24 提出的 13 条需求整理而来。**D1–D5 已于 2026-10-24 拍板**，
+> 但除 §20.1 结论外，各工具仍需逐条设计（schema / 确认卡 / 撤销语义 / 能力串 / 验收）后才注册；
+> §1.2 非目标、§9.1 硬约束、§16 R7 仍然有效。
+
+### 20.0 需求原文（保留用于对照）
+
+```text
+1. AI应该能查询到星球上各矿脉的位置和储量
+2. AI应该能编辑`仪表盘`
+3. 将链接ID的800000-899999分配给“游戏实体”，包括建筑、星球、黑雾单位等，点击链接可定位那个实体（在机甲和实体之间出现连线），再点击即消失。
+4. AI应该可以主动连接某个游戏实体和机甲，但在这么做之后，对话的末尾应当出现这个实体的卡片，以便玩家自行取消连接。
+5. AI应当可以在玩家的合成器中增加和撤销任务
+6. 对于玩家范围内的一个生产建筑，AI应该可以
+   1. 拆除
+   2. 改变配方
+   3. 取出成品到背包，只要背包有富裕空位
+   4. 将背包中的原料塞到产线中
+7. 对于玩家范围内的一个存储建筑，AI应该可以
+   1. 拆除
+   2. 设置各个格子的过滤器
+   3. 设置自动化输入限制
+   4. 在玩家的背包和建筑之间交流物品
+8. 各工具应当区分沙盒模式和非沙盒模式。在非沙盒模式下，AI的工具应当依据游戏性有必要的限制，并隐藏部分工具
+9. AI应当有直接摧毁玩家背包中某物品的能力
+10. 在沙盒模式下，AI应当有在玩家背包中直接生成某物品的能力
+11. AI应当有生成一些**游戏目标**的能力，包括文案和完成此项目标的触发器
+12. AI应当有自动驾驶的功能，也就是给定一个目标后，规划自有能量和翘曲器，以各种方式控制机甲抵达目标。移动方式包括
+    1.  走过去。需要注意绕开障碍物
+    2.  低空飞行。可绕开绝大多数障碍物，但保持飞行时要消耗较多能量
+    3.  星际飞行。几乎没有障碍物，匀速直线时不消耗能量，加速、减速、拐弯时要消耗很多能量，需要考虑行星的引力和一定的能量规划，而且在恒星际间“硬飞”极耗时间
+    4.  曲速飞行。几乎没有障碍物，非常快，但也会消耗大量能量，需要消耗翘曲器
+    5.  网上有现成的自动驾驶mod，可以把他的源码下载过来参照实现
+13. 在沙盒模式下，AI应当有控制玩家瞬移的能力
+```
+
+### 20.1 已拍板：5 个决策（2026-10-24）
+
+| 编号 | 问题 | 选项 | 结论 |
+| --- | --- | --- | --- |
+| D1 | 第 9 条"摧毁背包物品"是否实现？ | A 不做；B 改"丢弃到地面"；C 仅沙盒 + 二次确认 + 不可撤销 | **B 丢弃**。实现用 `Player.TakeItemFromPlayer(..., true, ...)` 从背包取出，再 `Player.ThrowTrash(..., life=0)`；物品以可拾回的 trash 落地/漂浮。按 risk 2 实现；确认卡标注"可撤销（需手动拾回）"，不是一键撤销。这不属于 R7 的"无法撤销" |
+| D2 | 第 12 条"自动驾驶"与 §1.2"不做全自动代打"冲突 | A 改为"确认后的一次性长任务"；B 保持 §1.2 不做；C 独立扩展模块 | **B 暂不做**。§1.2 保持有效；不排期、不注册、不写实现承诺。未来重启需复议本条与 §1.2，并先补长任务协议 + 导航 spike |
+| D3 | 第 11 条"游戏目标"用原生还是 mod 侧 | A 原生 `TodoModule` + mod 侧有界触发器；B 注入 `GoalProto`；C 只在聊天窗做任务卡 | **A**。先 spike `TodoModule` 的落盘/重载；不注入 `GoalProto` |
+| D4 | 高频 risk 2 的确认方式 | A 批量工具，一次确认、一次撤销；B 会话级租约（需改 §9.3）；C 每次确认 | **A 批量工具**。补充：`game_get_entity` 是高频**读**工具（risk 0），不走确认，但要按读侧优化：字段裁剪、按实体/帧缓存、批量 id、结果上限（2026-10-24 已实现 fields/entityIds，缓存沿用 dispatcher 5s） |
+| D5 | 新增工具的能力串粒度 | A 每族一个新能力串 + `save_bind.sandbox`；B hello 里带工具清单；C 继续复用 `game.write.v1`/`game.read.v1` | **A**。新增工具按族拆能力串；不继续复用粗粒度能力串 |
+
+### 20.2 能力与工具（草案）
+
+> 工具名都是**草案**，未注册；risk 是建议值，最终以确认卡设计为准。
+> 第 3/8 条不是新工具，而是渲染/门禁能力。
+
+| # | 能力 | 草案工具 | risk | 沙盒门禁 | 撤销语义 | 协议/能力 | 状态 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 矿脉位置/储量 | 扩 `game_get_planet`（`veins` / `veinOffset` / `veinLimit`） | 0 | 任意 | 只读 | 扩 `game.read.v1` 参数（向后兼容） | **已实现（2026-10-24）** |
+| 2 | 仪表盘编辑 | `game_dashboard_get` / `game_dashboard_apply`（批量） | 2 | 任意 | 按批次记录 diff，可回滚 | 新 `game.dashboard.v1` | 需先定义语义 |
+| 3 | 实体链接 | 无新工具；扩展 `GameRichText` + `ChatWindow` 分发 | 0 | 任意 | 只读 | `ui.richtext.v3` 或 `ui.link.entity.v1` | 未做；本轮先做原生 tether |
+| 4 | 实体连接（tether） | `game_tether_add` / `game_tether_list` / `game_tether_clear` | 1 | 任意 | 瞬态，可清除 | 新 `game.tether.v1` | **已实现多目标（≤20；本星球多建筑多线，跨行星原生导航一次一个，落地后切换，2026-10-24）；link 卡片持久化/统计/备忘录已接** |
+| 5 | 合成器队列 | `game_craft_queue_get` / `game_craft_queue_add` / `game_craft_queue_cancel` | 2 | 任意 | 部分可撤销（退料可能失败） | 新 `game.craft.v1` | 可做，需预检 |
+| 6 | 生产建筑 | `game_set_recipe` / `game_set_assembler_batch` / `game_take_output` / `game_dismantle` / `game_feed_input` | 2 | 任意 | 拆除不可复原；改配方先退料；取成品保留配方 | 新 `game.build.v1` | **已实现改配方/取成品/拆除/投料（2026-10-24）** |
+| 7 | 存储建筑 | `game_storage_set_filter` / `game_storage_set_limit` / `game_storage_move` / `game_storage_deposit` / `game_storage_withdraw` | 2 | 任意 | 记录原过滤器/限制，可回滚 | 新 `game.storage.v1` | **已实现 filter/limit/move + 背包存取（2026-10-24）** |
+| 8 | 沙盒门禁（D5=A） | 无新工具；`save_bind.sandbox` + 工具集刷新 | — | 全局 | — | `save_bind` 可选字段 + 回合边界重建会话 | **已实现门禁（2026-10-24）**；沙盒工具未实现 |
+| 9 | 丢弃物品（D1=B） | `game_drop_item` | 2 | 任意 | 可撤销（需手动拾回） | 新 `game.drop.v1` | **已实现（2026-10-24，待实机）** |
+| 10 | 生成物品 | `game_spawn_item` | 2 | 仅沙盒 | 可撤销（移除刚生成） | 新 `game.sandbox.v1` | 待拍板 |
+| 11 | 游戏目标/待办（D3=A） | `game_todo_add` / `game_todo_list` / `game_todo_remove`（触发器在 mod 侧） | 1/2 | 任意 | 可撤销 | 新 `game.todo.v1`（对用户称"目标"） | 可做，先 spike |
+| 12 | 自动驾驶（D2=B） | `game_autopilot_start` / `game_autopilot_status` / `game_autopilot_cancel` | 2 + 租约 | 任意 | 可取消；位置不可逆 | 新 `game.task.v1`（长任务） | **暂不做**；重启需复议 |
+| 13 | 瞬移 | `game_teleport` | 2 | 仅沙盒 | 不可撤销（可再传送返回） | 新 `game.sandbox.v1` | 待拍板 |
+
+**范围口径**：第 6/7 条的"玩家范围内"统一按 `mecha.buildArea` 定义，并在执行时用实体当前位置重新校验；令牌只绑定参数，不绑定世界状态，确认后玩家走开也必须失败。
+
+**链接段口径**：第 3 条暂用 800000–899999；实现时要同步改 `GameRichText` 的段注释、`Reserve`、`IsEntityLinkId`、`NextRawLinkId` 上限和 `ChatWindow` 分发，并补测试。实体身份不要编码进数字（planetId+entityId 可能超出段宽），用每个 Text 的 URL map；同星球连线用 `LineGizmo` 局部坐标，跨行星不要画伪连线（只做定位/星图指示）。
+
+### 20.3 验收要点
+
+1. 已加载星球：矿脉群聚合与逐矿脉分页一致；未加载/未扫描明确返回 `unavailable`；原油/水返回"流速"而不是"储量"。
+2. 加/删图表后仪表盘立即正确；删除共享 stat plan 不留下悬空 chart；面板打开/拖动时无布局错乱；重进存档保持。
+3. 点击实体链接：当前星球定位并显示连线；再次点击消失；跨行星不画伪连线；`game_capture_view` 的取景符合预期；ID 段不与网页/科技/配方/成就冲突。
+4. `tether_add` 出现卡片且可取消；换档/实体失效自动清理；数量上限生效；历史回放不重复创建。
+5. `add` 走 `TryAddTask`；取消只撤 AI 创建的任务；背包满时明确报告退料失败与级联影响。
+6. 拆除走 `DismantleFinally`；改配方前退料；取成品保留配方；范围外/工厂未加载/实体失效有明确错误码；`feed_input` 暂不做（直接写 `served` 会绕过分拣器/传送带）。
+7. 过滤器设置读回校验；`bans` 与游戏 UI 一致；箱子/储液罐/物流站分别可用；部分转移返回剩余。
+8. 非沙盒下 spawn/teleport 不可见且 mod 拒绝；载入界面开关沙盒后，下一回合的工具列表/提示立即变化；AI 永不写 `sandboxToolsEnabled`；UI 显示当前权限。
+9. 丢弃：从背包取出的 item/count/inc 正确；物品以 trash 落地/漂浮、可拾回；背包不足/物品不存在有明确错误码；不复制物品；确认卡标注"可撤销（需手动拾回）"，不是一键撤销。
+10. 仅沙盒；校验 itemId/数量/背包空间；刚生成的物品可撤销。
+11. （D3=A）Todo 文案正确落盘/可删除；触发器只在有界 DSL 内（物品数/科技/建筑数/电力/时间）；跨存档不串；有 i18n；先验证 `TodoModule` 的重载引用。
+12. （D2=B 暂不做）若未来重启：起/停/取消/到站/玩家抢占/死亡/翘曲器不足都正确；不阻塞聊天；时间/能量估算有明确口径。
+13. 仅沙盒；走原生快速旅行；目标行星/坐标语义明确；失败有错误码。
+
+> 高频读工具（`game_get_entity`）不属于本表 13 项，但按 D4 要求单独验收：同一实体重复查询命中缓存；支持字段裁剪；支持批量 id；结果不超过统一上限。
+
+### 20.4 已核实的事实（设计依据）
+
+以下均来自本地游戏工程或现有仓库代码，不是推测。游戏路径相对 `dsp-game/Assets/Scripts/`，仓库路径相对仓库根。
+
+| 主题 | 事实 | 依据 |
+| --- | --- | --- |
+| 沙盒标志 | `GameMain.sandboxToolsEnabled` 是当前载入会话的开关；`GameDesc.isSandboxMode` 是"曾用过沙盒工具"的粘性标记；`GameHistoryData.AfterTick` 只要 `sandboxToolsEnabled` 为真就会把它置 true | `Toplevel/GameMain.cs:52-56,333`；`Data/GameDesc.cs:44-49`；`Data/GameHistoryData.cs:657-659`；`Toplevel/DSPGame.cs:191,209` |
+| 载入时开关 | 玩家可在载入界面为任意存档启用沙盒工具；启用后该存档成就失效 | `UI/Window/UILoadGameWindow.cs:213-215,354-356` |
+| 矿脉 | `VeinGroup` 有 type/pos/count/amount；`pos` 是归一化方向；逐矿脉位置仅工厂加载时可得；扫描过的远程星球才有群数据 | `Data/VeinData.cs:195-200`；`Data/PlanetData.cs:81,130,756,1685` |
+| 原油/水 | 按流速而非储量；`VeinData.oilSpeedMultiplier` | `Data/VeinData.cs:44` |
+| 仪表盘 | 数据在 `GameMain.statistics.charts`（存档内）；`DashboardLayout` 最多 10 页；`ChartData`/`StatPlan`；`UIDashboard.RefreshGrid()` | `Toplevel/GameMain.cs:92`；`Data/GameData.cs:238,770`；`Data/Dashboard/DashboardLayout.cs:8`；`Data/Dashboard/ChartData.cs:4-15`；`UI/Dashboard/UIDashboard.cs:217` |
+| 合成器 | `mainPlayer.mecha.forge`；`AddTask` 不校验材料，`TryAddTask` 才校验；`CancelTask` 只退 `served`，背包满会失败并级联删除 | `UI/Window/UIReplicatorWindow.cs:282`；`Controller/Player/Mecha/MechaForge.cs:178-273,429,665` |
+| 配方 | `AssemblerComponent.SetRecipe` 整体替换 `served/produced`；原生"选配方"路径未先退料 | `Component/Assembler/AssemblerComponent.cs:383`；`UI/Window/UIAssemblerWindow.cs:787` |
+| 拆除 | `PlanetFactory.DismantleFinally` 处理退料/成就/场景通知/沙盒即时拆除 | `Data/PlanetFactory.cs:5042,5059` |
+| 存储 | `SetFilter` 对已占用且物品不同的格子只告警不生效；`SetBans` 是输入限制；`SetFilter` 不触发 `onStorageChange` | `Component/Storage/StorageComponent.cs:258-267,372-402` |
+| 丢弃 | `Player.TakeItemFromPlayer(..., true, ...)` 从背包取；`Player.ThrowTrash(..., life=0)` 生成 trash；trash 落地后可被 `PlayerAction_Pick` 拾回，`life=0` 不过期 | `Controller/Player/Player.cs:297,437`；`Component/Systems/TrashSystem.cs:163`；`Controller/Player/Action/PlayerAction_Pick.cs:41` |
+| 导航 | `Player.navigation` 公开；`Navigate/Abort/Pause/Resume` 可用；`GameTick` 被禁用；移动脚本在 `navigating` 时调用 `Determine*`；直线转向、无绕障；翘曲器/能量由 `UseWarper`/`UseWarpEnergy` 处理 | `Controller/Player/PlayerNavigation.cs:273,367,475`；`Controller/Player/Action/PlayerMove_Sail.cs:177,1000`；`Controller/Player/Mecha/Mecha.cs:1352` |
+| 目标 | 原生目标由 LDB `GoalProto` 驱动；`DeterminatorName` 反射创建；`DeterminatorParams` 仅 `long[]`；文案在原型 | `Prototypes/Tables/GoalProto.cs:8-16`；`Scenario/Goal/GoalLogic.cs:310` |
+| Todo | 原生 `TodoModule` 有 title/content/owner（Global/Astro/Entity），随存档保存；`AddTodoModule`/`RemoveTodoModule` 公开 | `Component/Todo Module/TodoModule.cs:13-14,174-179`；`Component/Systems/GalacticDigitalSystem.cs:173,181` |
+| Marker/Tether | `MarkerComponent` 可挂 `entityId`、`todo`、name/icon/visibility，上限 256；`SetHeight`/`SetRadius` 公开；`LineGizmo` 在 `GameGizmo.gizmoGroup`，`ClearGizmos` 会统一清空 | `Component/Marker/MarkerComponent.cs:9,32,48,83,94`；`UI/Gizmo/GameGizmo.cs:6-28`；`UI/Gizmo/LineGizmo.cs:8` |
+| 能力协商 | 工具按 hello 的 `capabilities` 注册；`game.write.v1` 是粗粒度能力；`save_bind` 只有 key/name/tiers | `Shared/Protocol/Protocol.cs:108-126,277-281`；`sidecar/src/tools/registry.ts:39-60`；`docs/protocol-v1.md:54,888-896` |
+| 撤销栈 | 只保留最近一次；换档/断线清空 | `Game/Tools/WriteTools.cs:11-45` |
+| 链接段 | 科技 1000–9999、配方 10000–19999、成就 20000–21000、网页 900000–999999；裸 link 从 21001 起；`Reserve` 只登记 ≤ WebMax | `Shared/Text/GameRichText.cs:36-37,80-95,931,1765` |
+
+### 20.5 跨条目设计缺口
+
+- **工具级设计**：每个能力都要有工具名、参数 schema、risk、确认卡文案、撤销语义、失败码、分页/上限、沙盒门禁、能力串、里程碑、验收。
+- **能力粒度**：D5=A，新增工具按族拆新能力串，不能继续挂在 `game.write.v1` / `game.read.v1` 下，否则老 mod 会被注册它不存在的工具。
+- **高频操作**：取成品/转移物品这类小步写操作若每次确认，体验不可用；D4=A 采用批量工具。另：`game_get_entity` 是高频**读**工具（risk 0），已实现 `fields`/`entityIds`；缓存沿用 dispatcher 5s，接真实高频用法后再评估是否要更细的实体级缓存。
+- **撤销**：`WriteActionStack` 只有一层且换档清空；批量改配方/批量转移必须一次 undo 或明确不可撤销。D1=B 的丢弃是"可撤销（需手动拾回）"，不是一键撤销；确认卡不能简化成"一键撤销"。
+- **读侧配套**：AI 需要发现"附近实体、当前 tether、当前任务、仪表盘现状"；`game_get_entities` 没有距离过滤，`game_analyze_area` 有（center 默认玩家、`includeEntities`），但 limit 100 且是 XZ 球，建议补 `game_get_nearby`；`game_get_entity` 也归入高频读侧，优化口径见上一条。
+- **长任务/并发**：D2=B 暂不做自动驾驶；若未来重启，需要 start/progress/cancel/event，且要能被玩家输入抢占、切档取消，当前没有这套协议。
+- **状态可见性**：tether/任务/目标/仪表盘改动都要有 `game_get_*` 或系统提示注入，否则模型无法"取消/避免重复"。
+- **第三方代码**：第 12 条提到的现成自动驾驶 mod 不直接复制；本仓库仍只用公开 API、无 Harmony（`AGENTS.md` 2.3），如确需参考源码，先做许可审查并记录在 `THIRD-PARTY.md`。
+- **性能/隐私/i18n/测试**：矿脉/范围扫描走分帧预算；连线/标记可能进截图（需确认图层）；目标文案和卡片文案进 i18n；范围外、实体失效、背包满、沙盒关闭、翘曲器不足都要有离线测试。
+
+### 20.6 排序与 spike
+
+1. **§20.2 第 8 项已完成**（`save_bind.sandbox` + mod/sidecar 双重拒绝 + 回合边界重建）；接第一个沙盒工具时再补聊天窗工具列表刷新。
+2. **spike（目标）**：验证 `TodoModule` 的增删/落盘/重载；若走 `GoalProto`，另验注入与卸载后残留（不推荐）。
+3. **实现顺序**：8（沙盒门禁，已完成）→ 1/2（读侧，已完成）→ 9（丢弃，已完成）→ 6（改配方/取成品/拆除/投料，已完成）→ 7（存储 filter/limit/move + 背包存取，已完成）→ 4（tether：行星导航 + 建筑自绘线，已完成）→ 5（合成器队列）→ 3（富文本实体链接）→ 10/13（沙盒，待拍板）→ 11（目标）。
+4. **自动驾驶 D2=B**：不排期、不做 spike；未来重启需先复议 §1.2，并补长任务协议与导航 spike。
+5. 所有新工具默认不注册；完成决策 + 验收后再从 §20.2 移入 §8.1/§8.3 并排期。
+
+### 20.7 同步约定
+
+- 本节不修改协议 v1；新增能力串/字段都必须是可选，旧端忽略。
+- 实现任一工具前，先按 `AGENTS.md` 2.1 改 `docs/protocol-v1.md`，再同步 `Protocol.cs` / `protocol.ts` / 测试。
+- 第 3 条是渲染/交互能力，不新增工具；第 8 条是门禁，不新增工具。
+- 本节与 §1.2、§8.3、§15、§16、§19 的指针已加；未实现项保持"不注册"。

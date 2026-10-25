@@ -451,8 +451,12 @@ async function main() {
     }
     // coding agent 之外，还要确认"它没在承诺自己没有的能力"这件事靠 prompt 兜住了。
     check(
-      'system message 说明只读工具与写操作边界',
-      systemText.includes('只能读取当前存档') && systemText.includes('game_get_overview'),
+      'system message 说明读工具与已提供的写工具边界',
+      systemText.includes('如果本次会话提供了写工具') &&
+        systemText.includes('game_get_overview') &&
+        systemText.includes('game_drop_item') &&
+        systemText.includes('game_set_assembler_batch') &&
+        !systemText.includes('你只能读取当前存档'),
     );
   }
 

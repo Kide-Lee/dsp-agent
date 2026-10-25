@@ -21,11 +21,11 @@
 > - M2.7 已实现：左侧 **chat-index** 提问索引——每条用户提问一个可点击链接，点击定位到对应消息；
 >   每行带删除按钮：同时删掉聊天窗显示、会话文件条目与模型上下文（`history.delete`）。
 > - M4a–M4j 已实现并通过实机验收：建筑详情/建筑列表/进度阶段/截图（含聊天窗缩略图）、
->   `kb_plan` 量化计算、`game_analyze_area` 区域产线、`run_script` 只读脚本沙箱、
+>   `kb_plan` 量化计算、`game_analyze_area` 区域产线、`run_script` 脚本沙箱（默认只读，写脚本需一次确认）、
 >   Wiki/蓝图仓库、蓝图卡片，以及按知识库真实配方生成的**完整产线蓝图**。
 > - M4 写操作已实现并通过实机验收：复用 `choose` 的确认页（`question/explain` + 红拒绝/蓝同意）、
 >   sidecar 确认钩子 + mod 一次性令牌（绑定 callId/tool/argsHash，60s 单次），
->   以及 `game_focus_camera` / `game_place_marker` / `game_open_panel` / `game_set_research`
+>   以及 `game_focus_camera` / `game_open_panel` / `game_set_research`
 >   + `game_undo_last_write`。确认页崩溃、原生按钮动效、`explain` 垂直居中、建筑经纬度输出、
 >   行星视图聚焦和研究切换判定已修复。
 >   当前状态与后续计划见 [docs/current-status.md](docs/current-status.md)。
@@ -104,16 +104,29 @@
 | `blueprint_save` | 直接把蓝图保存到游戏蓝图目录，打开蓝图界面即可用，无需退出游戏下载 |
 | `blueprint_generate` | 按知识库真实配方生成完整产线（各阶段机器 + 带 + 爪）；单张总线容量不足时自动拆成多张 |
 | `blueprint_fs` | 在蓝图目录里 `ls/cd/pwd/cat/mkdir/write/rm/rmdir`；默认保存到 `IcarusII/`，不能越出蓝图根 |
-| `run_script` | 在 QuickJS-WASM 沙箱里跑只读脚本：`dsp.call` 同步调用 game_* 工具，可循环/筛选/求和；无 fs/net/process，调用与时长都有上限 |
+| `run_script` | 在 QuickJS-WASM 沙箱里跑脚本：`dsp.call` 同步调用 game_* 工具，可循环/筛选/求和；默认只读，含写工具时先弹一次脚本级确认，执行期凭租约最多写 10000 次；无 fs/net/process |
 
-## AI 能做什么写操作（M4）
+## AI 能做什么写操作（M4/M5）
 
 | 工具 | 说明 |
 | --- | --- |
 | `game_focus_camera` | 聚焦行星/星系/建筑；目标支持 `planet:` / `star:` / `entity:` 前缀 |
-| `game_place_marker` | 按经纬度新建地图标记；简述最多两字，完整名称保存到详情 |
 | `game_open_panel` | 打开背包/科技树/星图/标记/机甲/复制器/统计/蓝图面板 |
 | `game_set_research` | 切换当前研究目标；只允许前置科技已满足的科技 |
+| `game_drop_item` | 把背包物品丢到当前行星地面；需手动拾回，不进入撤销栈 |
+| `game_set_recipe` | 更换一台生产建筑的配方；先把机器内原料/产物退回背包 |
+| `game_set_assembler_batch` | 批量更换生产建筑配方（≤20 台）；一次确认、一层撤销 |
+| `game_storage_set_filter` | 设置/清除存储建筑过滤器；可撤销 |
+| `game_storage_set_limit` | 设置存储建筑可用格数上限；可撤销 |
+| `game_storage_move` | 在两台存储建筑之间移动物品；预检目标容量 |
+| `game_storage_deposit` | 把背包物品存入存储；满时退剩余 |
+| `game_storage_withdraw` | 从存储取出物品到背包；背包满时留剩余 |
+| `game_feed_input` | 把背包原料直接投进生产建筑（绕过分拣器/传送带） |
+| `game_tether_add` | 建立机甲到行星/建筑的方位指示 |
+| `game_tether_clear` | 清除本 mod 建立的方位指示 |
+| `game_tether_list` | 列出当前方位指示 |
+| `game_take_output` | 取出一台生产建筑的成品，保留配方 |
+| `game_dismantle` | 批量拆除建筑（≤50）；不可撤销 |
 | `game_undo_last_write` | 撤销最近一次写操作（单层栈） |
 
 写操作采用 sidecar 确认 + mod 一次性令牌双门禁；拒绝、超时、换档、断线都会取消。

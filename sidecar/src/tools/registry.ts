@@ -14,7 +14,15 @@ import { WIKI_TOOL_NAMES } from '../wiki/tools.js';
 import { BLUEPRINT_TOOL_NAMES } from '../blueprint/tools.js';
 import { KB_TOOL_NAMES } from '../kb/tools.js';
 import { CAPABILITY_UI_ASK, UI_ASK_TOOL_NAME } from './ask.js';
-import { CAPABILITY_GAME_WRITE, WRITE_TOOL_NAMES, createWriteTools } from './write.js';
+import {
+  CAPABILITY_GAME_BUILD,
+  CAPABILITY_GAME_DROP,
+  CAPABILITY_GAME_STORAGE,
+  CAPABILITY_GAME_TETHER,
+  CAPABILITY_GAME_WRITE,
+  WRITE_TOOL_NAMES,
+  createWriteTools,
+} from './write.js';
 
 export const CAPABILITY_GAME_READ = 'game.read.v1';
 export const CAPABILITY_GAME_ENTITY = 'game.entity.v1';
@@ -54,9 +62,22 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_get_logistics: CAPABILITY_GAME_ENTITY,
   game_trace_line: CAPABILITY_GAME_ENTITY,
   game_focus_camera: CAPABILITY_GAME_WRITE,
-  game_place_marker: CAPABILITY_GAME_WRITE,
   game_open_panel: CAPABILITY_GAME_WRITE,
   game_set_research: CAPABILITY_GAME_WRITE,
+  game_drop_item: CAPABILITY_GAME_DROP,
+  game_set_recipe: CAPABILITY_GAME_BUILD,
+  game_set_assembler_batch: CAPABILITY_GAME_BUILD,
+  game_take_output: CAPABILITY_GAME_BUILD,
+  game_dismantle: CAPABILITY_GAME_BUILD,
+  game_storage_set_filter: CAPABILITY_GAME_STORAGE,
+  game_storage_set_limit: CAPABILITY_GAME_STORAGE,
+  game_storage_move: CAPABILITY_GAME_STORAGE,
+  game_storage_deposit: CAPABILITY_GAME_STORAGE,
+  game_storage_withdraw: CAPABILITY_GAME_STORAGE,
+  game_feed_input: CAPABILITY_GAME_BUILD,
+  game_tether_add: CAPABILITY_GAME_TETHER,
+  game_tether_clear: CAPABILITY_GAME_TETHER,
+  game_tether_list: CAPABILITY_GAME_TETHER,
   game_undo_last_write: CAPABILITY_GAME_WRITE,
 };
 
@@ -196,13 +217,23 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       label: '行星状态',
       description:
         '读取指定行星（省略则为当前行星）的类型、半径、矿脉按资源汇总、建筑按原型计数。' +
-        '远程行星未加载工厂时只返回静态矿脉，并明确标注 factoryLoaded=false。',
-      promptSnippet: '读取行星矿脉汇总与建筑计数',
+        'veins=groups 返回按位置聚合的矿脉群（已扫描的远程行星也可）；veins=nodes 分页返回逐矿脉节点' +
+        '（仅工厂已加载的行星）。远程行星未加载工厂时明确标注 factoryLoaded=false。',
+      promptSnippet: '读取行星矿脉汇总/矿脉群/逐矿脉节点与建筑计数',
       promptGuidelines: [
-        'Use game_get_planet 当玩家询问某个星球有什么矿、建了多少建筑时。',
+        'Use game_get_planet 当玩家询问某个星球有什么矿、矿在哪、建了多少建筑时。',
+        '需要矿脉位置时用 veins="groups"；需要单个矿脉的精确经纬度时用 veins="nodes" 并配合 veinOffset/veinLimit。',
+        '矿脉群/节点可能很多，不要一次拉全量。',
       ],
       parameters: Type.Object({
         planetId: planetArg,
+        veins: Type.Optional(
+          Type.String({
+            description: 'summary（默认，按资源汇总）/ groups（矿脉群+位置）/ nodes（逐矿脉+位置，需工厂已加载）/ all',
+          }),
+        ),
+        veinOffset: Type.Optional(Type.Integer({ description: '逐矿脉分页起点，默认 0' })),
+        veinLimit: Type.Optional(Type.Integer({ description: '逐矿脉每页数量，默认 50，最大 200' })),
         offset: offsetArg,
         limit: limitArg,
       }),
@@ -263,20 +294,32 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       name: 'game_get_entity',
       label: '建筑详情',
       description:
-        '按 entityId 读取单个建筑的实际情况，尽量对齐游戏面板：原型、配方、输入/输出槽（数量/需求/增产）、' +
+        '按 entityId 读取单个建筑（或用 entityIds 批量读取）的实际情况，尽量对齐游戏面板：原型、配方、输入/输出槽（数量/需求/增产）、' +
         '功率与供电满足率、工作状态（缺料/没电/运行/待机）、分拣器目标、传送带线路容量/节点/货物数与区间、' +
         '仓储容量、物流塔槽位（当前/在途/上限/供需模式）、无人机/运输船/翘曲器与充电状态。' +
+        'fields 可裁剪返回段（assembler/miner/inserter/belt/storage/station/components；默认全量）；' +
+        '批量 entityIds 默认只返回 core，最多 10 个。' +
         'id 来自 game_get_entities 或截图标注；id 会被回收，返回里的 stale=true 表示该 id 已被别的建筑占用。',
-      promptSnippet: '按 id 读取单个建筑的配方、功率与连接配置',
+      promptSnippet: '按 id 读取单个/多个建筑的配方、功率与连接配置（可裁剪字段）',
       promptGuidelines: [
         'Use game_get_entity 当玩家问某一栋建筑为什么不动、配方是什么、插了什么、有没有电时。',
+        '先只取需要的段：例如只关心缺料时传 fields=["assembler"]；要逐字段调试才传 components。',
+        '检查多栋建筑时用 entityIds（最多 10 个）并配合 fields，避免一次返回完整详情。',
         '如果返回 stale=true，不要使用这条数据：id 已被回收，重新用 game_get_entities 定位。',
       ],
       parameters: Type.Object({
         planetId: planetArg,
-        entityId: Type.Integer({ description: '建筑 id（PlanetFactory.entityPool 的下标）' }),
+        entityId: Type.Optional(Type.Integer({ description: '单个建筑 id（PlanetFactory.entityPool 的下标）' })),
+        entityIds: Type.Optional(
+          Type.Array(Type.Integer(), { description: '批量建筑 id，最多 10 个；与 entityId 二选一' }),
+        ),
         expectProtoId: Type.Optional(
           Type.Integer({ description: '期望的原型 id；不匹配时返回 stale=true' }),
+        ),
+        fields: Type.Optional(
+          Type.Union([Type.String(), Type.Array(Type.String())], {
+            description: '要返回的段：core/assembler/miner/inserter/belt/storage/station/components；也接受逗号分隔字符串',
+          }),
         ),
       }),
       timeoutMs: 6000,

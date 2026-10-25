@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * M4d 只读脚本层测试（离线）。
+ * M4d/M5 脚本层测试（离线）：只读 + 受控写脚本。
  *
  *   node test/script.mjs
  *
@@ -18,17 +18,28 @@ const ok = (name) => { passed++; console.log(`  ok   ${name}`); };
 const fail = (name, detail) => { failed++; console.log(`  FAIL ${name}${detail ? `：${detail}` : ''}`); };
 const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
 
-function makeHost() {
+function makeHost({ approve = true } = {}) {
   const calls = [];
+  const confirms = [];
+  const releases = [];
   return {
     calls,
+    confirms,
+    releases,
     host: {
+      has: (capability) => capability === 'script.write.v1',
       tools: () => [
         { name: 'game_get_power' },
         { name: 'game_get_entities' },
+        { name: 'game_set_recipe' },
       ],
-      call: async (name, args) => {
-        calls.push({ name, args });
+      confirmScript: async (request) => {
+        confirms.push(request);
+        return approve ? { token: 'lease-token', scriptHash: request.scriptHash } : null;
+      },
+      releaseScript: (token) => releases.push(token),
+      call: async (name, args, options) => {
+        calls.push({ name, args, options });
         return { ok: true, data: { name, args } };
       },
     },
@@ -36,6 +47,7 @@ function makeHost() {
 }
 
 const emptyHost = {
+  has: () => false,
   tools: () => [],
   call: async () => ({ ok: true, data: null }),
 };
@@ -48,7 +60,7 @@ async function run(tool, code, extra = {}) {
 // ---------------------------------------------------------------- 1. 正常往返
 
 console.log('── 1. dsp.call 往返与返回值 ──');
-const { host, calls } = makeHost();
+const { host, calls, confirms } = makeHost();
 const tool = createScriptTool(host);
 
 {
@@ -66,6 +78,7 @@ const tool = createScriptTool(host);
   check('值正确', payload.value?.total === 2 && payload.value?.names?.length === 2, out.text.slice(0, 200));
   check('console.log 被收集', payload.logs?.some((line) => line.includes('saw game_get_power game_get_entities')));
   check('调用次数统计', payload.calls === 2);
+  check('纯读脚本不弹写确认', confirms.length === 0);
   check('宿主收到两次调用', calls.length === 2);
   check('参数被透传', calls[1].args?.limit === 2 && calls[1].name === 'game_get_entities');
 }
@@ -80,11 +93,42 @@ console.log('\n── 2. 顶层 return 与表达式 ──');
 
 // ---------------------------------------------------------------- 3. 白名单
 
-console.log('\n── 3. 白名单与预算 ──');
+console.log('\n── 3. 白名单、写确认与预算 ──');
 {
-  const out = await run(tool, `dsp.call('game_set_recipe', {});`);
-  check('非白名单工具被拒绝', out.text.includes('不在脚本白名单'), out.text.slice(0, 160));
+  const out = await run(tool, `dsp.call('game_not_a_tool', {});`);
+  check('未知工具被拒绝', out.text.includes('不在脚本白名单'), out.text.slice(0, 160));
   check('错误码是 script_error', out.text.includes('[script_error]'));
+}
+
+{
+  const dynamic = await run(
+    tool,
+    `const n = 'game_set_recipe'; dsp.call(n, { buildingId: 1, recipeId: 2 });`,
+  );
+  check('动态拼写写工具名被拒绝', dynamic.text.includes('未确认的写操作'), dynamic.text.slice(0, 160));
+}
+
+{
+  const denied = makeHost({ approve: false });
+  const deniedTool = createScriptTool(denied.host);
+  const out = await run(deniedTool, `dsp.call('game_set_recipe', { buildingId: 1, recipeId: 2 });`);
+  check('写脚本未确认被拒绝', out.text.includes('[confirmation_denied]'), out.text.slice(0, 160));
+  check('拒绝时没有执行写工具', denied.calls.length === 0);
+}
+
+{
+  const approved = makeHost({ approve: true });
+  const approvedTool = createScriptTool(approved.host);
+  const out = await run(
+    approvedTool,
+    `dsp.call('game_set_recipe', { buildingId: 1, recipeId: 2 }); return 1;`,
+  );
+  check('写脚本确认后执行', JSON.parse(out.text).ok === true, out.text.slice(0, 160));
+  check('只确认一次', approved.confirms.length === 1);
+  check('确认包含写工具名', approved.confirms[0]?.writeNames?.includes('game_set_recipe'));
+  check('写调用携带租约 token', approved.calls[0]?.options?.confirmToken === 'lease-token');
+  check('写调用携带脚本哈希', typeof approved.calls[0]?.options?.confirmArgsHash === 'string');
+  check('脚本结束释放租约', approved.releases.includes('lease-token'));
 }
 
 {

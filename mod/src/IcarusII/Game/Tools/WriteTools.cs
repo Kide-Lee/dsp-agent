@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Reflection;
 using IcarusII.Common.Json;
 using UnityEngine;
 
@@ -229,81 +228,6 @@ namespace IcarusII.Game.Tools
         }
     }
 
-    internal sealed class PlaceMarkerTool : WriteToolBase
-    {
-        public override string Name => "game_place_marker";
-
-        private static void SetMarkerVisual(MarkerComponent marker, float height, float radius)
-        {
-            // MarkerComponent.height/radius 只有 getter；用 backing field 设置默认可视高度。
-            var flags = BindingFlags.NonPublic | BindingFlags.Instance;
-            var h = typeof(MarkerComponent).GetField("<height>k__BackingField", flags);
-            var r = typeof(MarkerComponent).GetField("<radius>k__BackingField", flags);
-            h?.SetValue(marker, height);
-            r?.SetValue(marker, radius);
-        }
-
-        protected override GameToolJobResult Execute(JsonValue args)
-        {
-            if (!GameRefs.IsInGame) throw Fail("当前不在游戏内");
-            var data = GameMain.data;
-            if (data == null || data.galacticDigital == null) throw Fail("银河数字系统尚未就绪");
-
-            int planetId = args["planetId"].AsInt(0);
-            var planet = planetId > 0
-                ? GameMain.galaxy?.PlanetById(planetId)
-                : GameMain.mainPlayer?.planetData;
-            if (planet == null) throw Fail("行星不存在或尚未加载");
-
-            var text = args["text"].AsString(null);
-            if (string.IsNullOrWhiteSpace(text)) throw Fail("text 不能为空");
-
-            // MarkerUIRenderer.PopulateMinimal 内部固定只有 2 个 quad 缓冲：
-            // word 超过 2 个字符会直接抛 IndexOutOfRangeException。
-            // 游戏原生标记的“简述”也只有两字，完整内容放 name。
-            var brief = text.Trim();
-            if (brief.Length > 2) brief = brief.Substring(0, 2);
-
-            var marker = new MarkerComponent();
-            marker.Reset();
-            marker.astroId = planet.id;
-            var lat = args["latitude"];
-            var lon = args["longitude"];
-            if (lat != null && lon != null && !lat.IsNull && !lon.IsNull)
-            {
-                var altitude = args["altitude"] != null ? args["altitude"].AsDouble(0) : 0.0;
-                marker.pos = GameToolFormat.PositionFromLatLon(planet, lat.AsDouble(0), lon.AsDouble(0), altitude);
-            }
-            else
-            {
-                // 兼容旧调用；新工具链应优先用经纬度。
-                var position = args["position"];
-                if (position == null || !position.IsObject) throw Fail("需要 latitude+longitude，或兼容的 position{x,y,z}");
-                marker.pos = new Vector3(
-                    (float)position["x"].AsDouble(0),
-                    (float)position["y"].AsDouble(0),
-                    (float)position["z"].AsDouble(0));
-            }
-            marker.word = brief;
-            marker.name = text;
-            marker.icon = args["icon"].AsInt(0);
-            marker.color = 0;
-            SetMarkerVisual(marker, 12.5f, 1.5f);
-            marker.visibility = EMarkerVisibility.LocalPlanet;
-            marker.detailLevel = EMarkerDetailLevel.BriefInfo;
-
-            var gid = data.galacticDigital.AddMarkerComponent(marker);
-            if (gid <= 0) throw Fail("新增标记失败（可能已达到上限）");
-            WriteActionStack.Push("删除刚新增的标记", () =>
-            {
-                var digital = GameMain.data?.galacticDigital;
-                if (digital != null) digital.RemoveMarkerComponent(gid);
-            });
-            var note = brief == text.Trim() ? string.Empty : "（地图简述显示前两字，完整名称保存在标记详情）";
-            return Ok($"已在 {planet.displayName} 新建标记「{text}」{note}");
-        }
-    }
-
     internal sealed class OpenPanelTool : WriteToolBase
     {
         public override string Name => "game_open_panel";
@@ -432,6 +356,95 @@ namespace IcarusII.Game.Tools
             });
             var queueNote = history.TechInQueue(proto.ID) ? "，已在研究队列" : "";
             return Ok($"研究目标已切换为 {proto.name}（#{proto.ID}）{queueNote}");
+        }
+    }
+
+    /// <summary>
+    /// D1：把背包里的物品丢到当前行星地面。
+    ///
+    /// 用游戏自己的 `TakeItemFromPlayer(..., fromPackage:true, ...)` + `ThrowTrash(..., life:0)`：
+    /// 前者会从背包尾部精确扣除并带回增产点数，后者生成可拾取的 Trash（`expire&lt;0` 永不过期）。
+    /// **不压撤销栈**：真正撤销需要把地面上的 Trash 对象再移除，而 `ThrowTrash` 不返回 id；
+    /// 设计确认卡已明确“需手动拾回”，避免复制物品。
+    /// </summary>
+    internal sealed class DropItemTool : WriteToolBase
+    {
+        public override string Name => "game_drop_item";
+
+        /// <summary>一次最多 500：游戏 `AddTrash` 内部也按 500 堆上限循环。</summary>
+        private const int MaxDrop = 500;
+
+        protected override GameToolJobResult Execute(JsonValue args)
+        {
+            if (!GameRefs.IsInGame || GameMain.mainPlayer == null)
+                throw Fail("当前不在游戏内");
+            if (GameMain.localPlanet == null)
+                throw Fail("需要在行星表面才能丢弃物品");
+
+            var player = GameMain.mainPlayer;
+            if (player.sailing)
+                throw Fail("飞行中不能丢弃物品，请先落地");
+            if (player.package == null)
+                throw Fail("背包尚未就绪");
+
+            var proto = ResolveItem(args);
+            if (proto == null) throw Fail("找不到该物品");
+            if (proto.ID == ItemProto.kSoilPileId)
+                throw Fail("土壤不能丢弃；请用沙盒/建造相关操作处理");
+
+            var requested = args["count"].AsInt(0);
+            if (requested <= 0) requested = 1;
+            if (requested > MaxDrop)
+                throw Fail("一次最多丢弃 " + MaxDrop.ToString(CultureInfo.InvariantCulture) + " 个");
+
+            var available = player.package.GetItemCount(proto.ID);
+            if (available <= 0)
+                throw Fail("背包里没有 " + proto.name);
+
+            var count = Math.Min(requested, available);
+            var itemId = proto.ID;
+            var itemInc = 0;
+            player.TakeItemFromPlayer(ref itemId, ref count, out itemInc, true, null);
+            if (itemId <= 0 || count <= 0)
+                throw Fail("从背包取物失败（可能物品已被其他操作移走）");
+
+            player.ThrowTrash(itemId, count, itemInc, 0, 0);
+
+            var extra = JsonValue.NewObject();
+            extra.Set("itemId", itemId);
+            extra.Set("itemName", proto.name);
+            extra.Set("count", count);
+            extra.Set("requested", requested);
+            extra.Set("undoable", false);
+            extra.Set("undoNote", "已丢到地面，需手动拾回；不进入撤销栈");
+            return Ok("已丢弃 " + proto.name + " ×" + count.ToString(CultureInfo.InvariantCulture)
+                + "（可在附近拾回；不进入撤销栈）", extra);
+        }
+
+        private static ItemProto ResolveItem(JsonValue args)
+        {
+            int itemId = args["itemId"].AsInt(0);
+            var wanted = args["itemId"].AsString(null);
+            if (string.IsNullOrWhiteSpace(wanted)) wanted = args["itemName"].AsString(null);
+
+            if (itemId > 0)
+            {
+                var byId = LDB.items != null ? LDB.items.Select(itemId) : null;
+                if (byId != null) return byId;
+            }
+
+            if (string.IsNullOrWhiteSpace(wanted) || LDB.items == null || LDB.items.dataArray == null)
+                return null;
+
+            var text = wanted.Trim();
+            foreach (var proto in LDB.items.dataArray)
+            {
+                if (proto == null) continue;
+                if (string.Equals(proto.name, text, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(proto.ID.ToString(CultureInfo.InvariantCulture), text, StringComparison.Ordinal))
+                    return proto;
+            }
+            return null;
         }
     }
 

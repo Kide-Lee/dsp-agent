@@ -219,13 +219,14 @@ namespace IcarusII.Common.Transport
         /// 把对话串绑定到某个存档（协议附录 A.6）。
         /// saveKey 为 null 表示"当前没有存档"，即解绑（不销毁线程）。
         /// </summary>
-        public string SendSaveBind(string saveKey, string saveName = null, JsonValue blueprintTiers = null)
+        public string SendSaveBind(string saveKey, string saveName = null,
+            JsonValue blueprintTiers = null, bool? sandbox = null)
         {
             if (_state != ConnectionState.Ready) return null;
 
             var env = Protocol.Protocol.Envelope(
                 Protocol.Protocol.SaveBind,
-                Protocol.Protocol.BuildSaveBind(saveKey, saveName, blueprintTiers),
+                Protocol.Protocol.BuildSaveBind(saveKey, saveName, blueprintTiers, sandbox),
                 NextId(), null);
 
             _sendQueue.Enqueue(env);

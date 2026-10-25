@@ -77,6 +77,9 @@ namespace IcarusII.Common.Protocol
         /// <summary>sidecar → mod：蓝图卡片（附录 A.9，仅 UI）。</summary>
         public const string BlueprintCard = "blueprint_card";
 
+        /// <summary>sidecar → mod：实体链接卡片（建筑/星球；仅 UI）。</summary>
+        public const string LinkCard = "link_card";
+
         /// <summary>mod → sidecar：回存回答完成时的游戏时间（附录 A.10）。</summary>
         public const string ReplyTime = "reply.time";
 
@@ -124,20 +127,74 @@ namespace IcarusII.Common.Protocol
         /// <summary>mod 支持写操作（附录 B.1.5）：确认令牌 + 写工具。</summary>
         public const string CapabilityGameWrite = "game.write.v1";
 
+        /// <summary>mod 支持沙盒门禁：save.bind 上报 sandbox，并拒绝沙盒专属工具。</summary>
+        public const string CapabilityGameSandbox = "game.sandbox.v1";
+
+        /// <summary>mod 支持丢弃物品（game_drop_item）。新工具用独立能力串，避免老 mod 被注册。</summary>
+        public const string CapabilityGameDrop = "game.drop.v1";
+
+        /// <summary>mod 支持生产建筑写操作（改配方/批量改配方）。</summary>
+        public const string CapabilityGameBuild = "game.build.v1";
+
+        /// <summary>mod 支持存储建筑写操作（过滤器/容量上限）。</summary>
+        public const string CapabilityGameStorage = "game.storage.v1";
+
+        /// <summary>mod 支持方位指示（tether）。</summary>
+        public const string CapabilityGameTether = "game.tether.v1";
+
+        /// <summary>mod 支持受控写脚本（run_script 脚本级确认 + 租约）。</summary>
+        public const string CapabilityScriptWrite = "script.write.v1";
+
         /// <summary>sidecar → mod：请求玩家确认一次写操作。</summary>
         public const string ConfirmRequest = "confirm_request";
 
         /// <summary>mod → sidecar：玩家确认结果。</summary>
         public const string ConfirmResult = "confirm_result";
 
+        /// <summary>sidecar → mod：脚本执行结束，释放脚本写租约。</summary>
+        public const string ConfirmRelease = "confirm_release";
+
         public const string ToolFocusCamera = "game_focus_camera";
-        public const string ToolPlaceMarker = "game_place_marker";
         public const string ToolOpenPanel = "game_open_panel";
         public const string ToolSetResearch = "game_set_research";
         public const string ToolUndoLastWrite = "game_undo_last_write";
+        public const string ToolDropItem = "game_drop_item";
+        public const string ToolSetRecipe = "game_set_recipe";
+        public const string ToolSetAssemblerBatch = "game_set_assembler_batch";
+        public const string ToolStorageSetFilter = "game_storage_set_filter";
+        public const string ToolStorageSetLimit = "game_storage_set_limit";
+        public const string ToolStorageMove = "game_storage_move";
+        public const string ToolStorageDeposit = "game_storage_deposit";
+        public const string ToolStorageWithdraw = "game_storage_withdraw";
+        public const string ToolFeedInput = "game_feed_input";
+        public const string ToolTetherAdd = "game_tether_add";
+        public const string ToolTetherClear = "game_tether_clear";
+        public const string ToolTetherList = "game_tether_list";
+        public const string ToolTakeOutput = "game_take_output";
+        public const string ToolDismantle = "game_dismantle";
+
+        /// <summary>沙盒专属工具名（尚未实现；先用于门禁/测试）。</summary>
+        public const string ToolSpawnItem = "game_spawn_item";
+        public const string ToolTeleport = "game_teleport";
+
+        /// <summary>工具是否只能在游戏沙盒工具启用时调用。</summary>
+        public static bool IsSandboxOnlyTool(string name)
+        {
+            return string.Equals(name, ToolSpawnItem, StringComparison.Ordinal)
+                || string.Equals(name, ToolTeleport, StringComparison.Ordinal);
+        }
+
+        /// <summary>当前沙盒状态是否允许调用该工具（读工具与普通写工具始终允许）。</summary>
+        public static bool SandboxAllows(string toolName, bool sandboxEnabled)
+        {
+            return sandboxEnabled || !IsSandboxOnlyTool(toolName);
+        }
 
         /// <summary>确认请求默认有效期（设计 §9.3）。</summary>
         public const int ConfirmTimeoutMs = 60000;
+
+        /// <summary>脚本写租约有效期；覆盖脚本最大运行时间并留出释放余量。</summary>
+        public const int ScriptLeaseMs = 300000;
 
         /// <summary>
         /// 交互工具名：sidecar 通过 tool_call 要求 mod 弹出选择题。
@@ -168,6 +225,7 @@ namespace IcarusII.Common.Protocol
         /// <summary>M4l：prompt.requiredTool 指定的工具本轮没有被调用。</summary>
         public const string CodeToolRequired = "tool_required";
         public const string CodeConfirmationRequired = "confirmation_required";
+        public const string CodeSandboxRequired = "sandbox_required";
         public const string CodeConfirmationInvalid = "confirmation_invalid";
         public const string CodeConfirmationExpired = "confirmation_expired";
         public const string CodeConfirmationDenied = "confirmation_denied";
@@ -275,12 +333,14 @@ namespace IcarusII.Common.Protocol
         /// 必须**显式写出 null**，因为 sidecar 要靠"字段存在且为 null"
         /// 区分"解绑"与"没提这件事"。
         /// </summary>
-        public static JsonValue BuildSaveBind(string saveKey, string saveName, JsonValue blueprintTiers = null)
+        public static JsonValue BuildSaveBind(string saveKey, string saveName,
+            JsonValue blueprintTiers = null, bool? sandbox = null)
         {
             var p = JsonValue.NewObject();
             p.Set("saveKey", saveKey == null ? JsonValue.Null : JsonValue.Of(saveKey));
             if (!string.IsNullOrEmpty(saveName)) p.Set("saveName", saveName);
             if (blueprintTiers != null && !blueprintTiers.IsNull) p.Set("blueprintTiers", blueprintTiers);
+            if (sandbox.HasValue) p.Set("sandbox", sandbox.Value);
             return p;
         }
 
@@ -651,6 +711,40 @@ namespace IcarusII.Common.Protocol
         }
     }
 
+    /// <summary>`link_card` 的解析结果：只描述实体，不携带图标资源。</summary>
+    public sealed class LinkCardInfo
+    {
+        public string Kind { get; private set; }
+        public int PlanetId { get; private set; }
+        public int BuildingId { get; private set; }
+        public int VeinId { get; private set; }
+        public string Name { get; private set; }
+        public string Subtitle { get; private set; }
+        public string Description { get; private set; }
+        public string IconLabel { get; private set; }
+
+        public static LinkCardInfo Parse(JsonValue payload)
+        {
+            if (payload == null || payload.IsNull) return null;
+            var r = new LinkCardInfo
+            {
+                Kind = payload["kind"].AsString(null),
+                PlanetId = payload["planetId"].AsInt(0),
+                BuildingId = payload["buildingId"].AsInt(0),
+                VeinId = payload["veinId"].AsInt(0),
+                Name = payload["name"].AsString(null),
+                Subtitle = payload["subtitle"].AsString(null),
+                Description = payload["description"].AsString(null),
+                IconLabel = payload["iconLabel"].AsString(null),
+            };
+            if (r.Kind != "planet" && r.Kind != "building" && r.Kind != "vein") return null;
+            if (r.PlanetId <= 0) return null;
+            if (r.Kind == "building" && r.BuildingId <= 0) return null;
+            if (r.Kind == "vein" && r.VeinId <= 0) return null;
+            return r;
+        }
+    }
+
     public sealed class HistoryMessageInfo
     {
         public string Role { get; set; }
@@ -670,6 +764,8 @@ namespace IcarusII.Common.Protocol
         public int EstimatedTokensAfter { get; set; }
         /// <summary>该回答产出的蓝图卡片（附录 A.6/A.9，可选）。</summary>
         public List<BlueprintCardInfo> Cards { get; set; } = new List<BlueprintCardInfo>();
+        /// <summary>该回答产出的实体链接卡片（可选）。</summary>
+        public List<LinkCardInfo> LinkCards { get; set; } = new List<LinkCardInfo>();
         /// <summary>
         /// 该回答之前产生的思考/工具步骤，按发生顺序（附录 A.6，可选）。
         /// 老 sidecar 不带这个字段时为空列表。
@@ -727,6 +823,15 @@ namespace IcarusII.Common.Protocol
                             var card = BlueprintCardInfo.Parse(cards[c]);
                             if (card != null && (!string.IsNullOrEmpty(card.FileName) || !string.IsNullOrEmpty(card.Path)))
                                 info.Cards.Add(card);
+                        }
+                    }
+                    var linkCards = item["linkCards"];
+                    if (linkCards != null && linkCards.Count > 0)
+                    {
+                        for (int c = 0; c < linkCards.Count; c++)
+                        {
+                            var card = LinkCardInfo.Parse(linkCards[c]);
+                            if (card != null) info.LinkCards.Add(card);
                         }
                     }
                     // 思考/工具步骤：老 sidecar 不发送，空数组即可。
@@ -1048,6 +1153,10 @@ namespace IcarusII.Common.Protocol
         public string Body { get; private set; }
         public int Risk { get; private set; }
         public int TimeoutMs { get; private set; }
+        /// <summary>脚本写租约允许的写调用次数；0 = 普通单次确认。</summary>
+        public int MaxWrites { get; private set; }
+        /// <summary>脚本确认时列出的写工具名；租约只允许这些工具。</summary>
+        public List<string> WriteNames { get; private set; } = new List<string>();
 
         public static ConfirmRequestInfo Parse(JsonValue payload)
         {
@@ -1061,7 +1170,7 @@ namespace IcarusII.Common.Protocol
             var timeout = payload["timeoutMs"].AsInt(Protocol.ConfirmTimeoutMs);
             if (timeout < 500) timeout = 500;
             if (timeout > Protocol.ConfirmTimeoutMs) timeout = Protocol.ConfirmTimeoutMs;
-            return new ConfirmRequestInfo
+            var request = new ConfirmRequestInfo
             {
                 RequestId = requestId,
                 CallId = callId,
@@ -1072,7 +1181,18 @@ namespace IcarusII.Common.Protocol
                 Body = payload["body"].AsString(string.Empty),
                 Risk = payload["risk"].AsInt(1),
                 TimeoutMs = timeout,
+                MaxWrites = Math.Max(0, Math.Min(10000, payload["maxWrites"].AsInt(0))),
             };
+            var writeNames = payload["writeNames"];
+            if (writeNames != null && writeNames.IsArray)
+            {
+                for (int i = 0; i < writeNames.Count; i++)
+                {
+                    var name = writeNames[i].AsString(null);
+                    if (!string.IsNullOrEmpty(name)) request.WriteNames.Add(name);
+                }
+            }
+            return request;
         }
     }
 

@@ -1,12 +1,13 @@
 /**
- * 只读脚本层（M4d）。
+ * 脚本层（M4d/M5）。
  *
- * 目标：把「取数 → 判断 → 循环 → 再取数」压成一次工具调用，省 token 也省延迟；
+ * 目标：把「取数 → 判断 → 循环 → 再取数/写」压成一次工具调用，省 token 也省延迟；
  * 同时保持与现有安全立场一致：
  *
  *  - 脚本跑在 QuickJS-WASM 里，与宿主零共享内存，只有注入的 `dsp` 对象；
  *  - `dsp.call` 走**同一个** GameToolHost / 同一份工具 schema，自动继承路由与超时；
- *  - 只能调用当前连接已注册的只读 `game_*` 工具（白名单来自 host.tools()）；
+ *  - 默认只读；脚本出现字面量写工具时，执行前统一确认一次，写调用凭 mod 脚本租约；
+ *  - 动态拼写写工具名无法通过预检，运行期没有租约会被拒绝；
  *  - 有调用次数、CPU 时间与返回大小三重预算；
  *  - 没有 fs / net / process / require：不是"把 node 关起来"，而是根本不存在。
  *
@@ -20,6 +21,7 @@
  *   调用次数上限 50，重放成本可接受。
  */
 
+import { createHash } from 'node:crypto';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import {
@@ -33,10 +35,10 @@ import { SCRIPT_TOOL_NAME, type GameToolHost } from './host.js';
 import { isWriteToolName } from './write.js';
 
 const MAX_CODE_CHARS = 8000;
-const DEFAULT_TIMEOUT_MS = 5000;
-const MAX_TIMEOUT_MS = 10000;
-const DEFAULT_MAX_CALLS = 30;
-const MAX_MAX_CALLS = 50;
+const DEFAULT_TIMEOUT_MS = 30000;
+const MAX_TIMEOUT_MS = 120000;
+const DEFAULT_MAX_CALLS = 100;
+const MAX_MAX_CALLS = 10000;
 const MAX_RESULT_CHARS = 6000;
 const MAX_LOGS = 40;
 
@@ -87,6 +89,24 @@ interface ScriptLimit {
   maxCalls: number;
 }
 
+interface WriteLease {
+  token: string;
+  scriptHash: string;
+  maxWrites: number;
+}
+
+/** 只扫描字面量 dsp.call("name")；动态调用在运行期由 writeLease 兜底。 */
+function detectWriteTools(code: string): string[] {
+  const found: string[] = [];
+  const re = /dsp\s*\.\s*call\s*\(\s*['"]([A-Za-z0-9_]+)['"]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(code)) !== null) {
+    const name = match[1] ?? '';
+    if (isWriteToolName(name) && !found.includes(name)) found.push(name);
+  }
+  return found;
+}
+
 /**
  * 跑一次脚本；遇到 `dsp.call` 就抛出挂起标记，宿主执行后把结果 memo 起来重放。
  *
@@ -96,10 +116,9 @@ async function runScript(
   host: GameToolHost,
   code: string,
   limits: ScriptLimit,
+  writeLease?: WriteLease,
 ): Promise<ToolReply> {
-  const allowed = new Set(
-    host.tools().map((tool) => tool.name).filter((name) => !isWriteToolName(name)),
-  );
+  const allowed = new Set(host.tools().map((tool) => tool.name));
   if (allowed.size === 0) {
     return fail('tool_unavailable', '当前没有可用的 game_* 工具（未进入存档或连接未就绪）');
   }
@@ -109,6 +128,7 @@ async function runScript(
   const deadline = startedAt + limits.timeoutMs;
   const memo: string[] = [];
   let executed = 0;
+  let executedWrites = 0;
 
   for (let attempt = 0; attempt <= limits.maxCalls; attempt += 1) {
     if (Date.now() > deadline) {
@@ -194,8 +214,31 @@ async function runScript(
             return fail('script_error', `脚本调用次数超过上限 ${limits.maxCalls}`);
           }
 
+          const isWrite = isWriteToolName(name);
+          const lease = isWrite ? writeLease : undefined;
+          if (isWrite && !lease) {
+            return fail(
+              'script_error',
+              `脚本包含未确认的写操作 ${name}。` +
+                '写工具必须在脚本里写成字面量 dsp.call("工具名", …)，由 run_script 在执行前统一确认。',
+            );
+          }
+          if (lease && executedWrites >= lease.maxWrites) {
+            return fail('script_error', `脚本写调用超过本次确认上限 ${lease.maxWrites}`);
+          }
+
           const remaining = Math.max(1, Math.min(8000, deadline - Date.now()));
-          const result = await host.call(name, args, { timeoutMs: remaining });
+          const result = await host.call(name, args, {
+            timeoutMs: remaining,
+            ...(lease
+              ? {
+                  risk: 2,
+                  confirmToken: lease.token,
+                  confirmArgsHash: lease.scriptHash,
+                }
+              : {}),
+          });
+          if (lease) executedWrites += 1;
           memo.push(JSON.stringify(result));
           executed += 1;
           continue;
@@ -279,15 +322,17 @@ export function createScriptTool(host: GameToolHost): ToolDefinition {
     name: SCRIPT_TOOL_NAME,
     label: '脚本',
     description:
-      '在沙箱里执行一段只读 JavaScript，用来批量取数、循环、条件判断与聚合。' +
-      '可用 `dsp.call(工具名, 参数)`（同步）调用当前已注册的 game_* 只读工具，返回 JSON 字符串；' +
+      '在沙箱里执行一段 JavaScript，用来批量取数、循环、条件判断、聚合，或在确认后批量执行写操作。' +
+      '可用 `dsp.call(工具名, 参数)`（同步）调用当前已注册的 game_* 工具，返回 JSON 字符串；' +
       '`console.log` 会被收集；脚本要 `return` 一个可 JSON 序列化的结果。' +
-      '没有 fs/net/process/require，不能写游戏状态。',
-    promptSnippet: '执行只读脚本，批量调用 game_* 工具并聚合结果',
+      '脚本包含写工具时，执行前会向玩家弹一次脚本级确认，确认后最多执行 10000 次写调用；' +
+      '没有 fs/net/process/require。',
+    promptSnippet: '执行脚本；批量取数，或在一次确认后批量写游戏状态',
     promptGuidelines: [
       'Use run_script 当需要对多个建筑/行星做批量查询、筛选、求和或条件判断时；单次查询仍直接用对应工具。',
       'dsp.call 是同步的，返回 JSON 字符串，需要 JSON.parse；脚本必须 return 一个可序列化的结果。',
-      '脚本只读：不能建造/拆除/改配方；调用次数与运行时间都有上限。',
+      '脚本里要写写操作时，必须使用字面量 dsp.call("写工具名", …)，执行前会弹一次脚本级确认；动态拼工具名的写调用会被拒绝。',
+      '写脚本一次最多 10000 次写调用；仍受 dsp.call 次数（默认 100，最大 10000）与运行时间（默认 30 秒，最大 120 秒）预算约束。',
       '不要用 try/catch 包住 dsp.call：它的挂起靠异常实现，被吞掉会导致结果错误；也不要用 Date.now/Math.random（重放会不一致）。',
     ],
     parameters: Type.Object({
@@ -296,10 +341,10 @@ export function createScriptTool(host: GameToolHost): ToolDefinition {
           '脚本正文。示例：const r = JSON.parse(dsp.call("game_get_power", {})); return {kw: r.data.demandKw};',
       }),
       timeoutMs: Type.Optional(
-        Type.Integer({ minimum: 100, maximum: MAX_TIMEOUT_MS, description: '运行上限，默认 5000ms' }),
+        Type.Integer({ minimum: 100, maximum: MAX_TIMEOUT_MS, description: '运行上限，默认 30000ms，最大 120000ms' }),
       ),
       maxCalls: Type.Optional(
-        Type.Integer({ minimum: 1, maximum: MAX_MAX_CALLS, description: '工具调用次数上限，默认 30' }),
+        Type.Integer({ minimum: 1, maximum: MAX_MAX_CALLS, description: '工具调用次数上限，默认 100，最大 10000' }),
       ),
     }),
     async execute(_toolCallId, params) {
@@ -316,11 +361,29 @@ export function createScriptTool(host: GameToolHost): ToolDefinition {
       const callsRaw = typeof args['maxCalls'] === 'number' ? args['maxCalls'] : DEFAULT_MAX_CALLS;
       const maxCalls = Math.max(1, Math.min(MAX_MAX_CALLS, Math.floor(callsRaw)));
 
+      const writes = detectWriteTools(code);
+      if (writes.length > 0 && !host.has('script.write.v1')) {
+        return fail(
+          'tool_unavailable',
+          '当前 mod 不支持受控写脚本；请升级 mod，或在聊天里直接调用写工具。',
+        );
+      }
+      const maxWrites = 10000;
+      let lease: WriteLease | null = null;
+      if (writes.length > 0) {
+        const scriptHash = createHash('sha256').update(code, 'utf8').digest('hex');
+        const approved = await host.confirmScript({ scriptHash, writeNames: writes, maxWrites });
+        if (!approved) return fail('confirmation_denied', '玩家拒绝了脚本中的写操作，脚本未执行');
+        lease = { token: approved.token, scriptHash: approved.scriptHash, maxWrites };
+      }
+
       try {
-        return await runScript(host, code, { timeoutMs, maxCalls });
+        return await runScript(host, code, { timeoutMs, maxCalls }, lease ?? undefined);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return fail('script_error', message);
+      } finally {
+        if (lease) host.releaseScript(lease.token);
       }
     },
   };

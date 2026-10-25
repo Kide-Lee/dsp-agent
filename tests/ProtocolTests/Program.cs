@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using IcarusII.Common.Json;
 using IcarusII.Common.Protocol;
+using IcarusII.Core;
 
 namespace IcarusII.Tests
 {
@@ -471,6 +472,85 @@ namespace IcarusII.Tests
             Check("解绑时 saveKey 为 null", unbind["saveKey"].IsNull);
             Check("解绑时不写 saveName", !unbind.Has("saveName"));
             Eq("解绑载荷字段数", 1, unbind.Count);
+
+            // ---- 沙盒门禁（M5+ 基础设施）----
+            Eq("error code sandbox_required", "sandbox_required", Protocol.CodeSandboxRequired);
+            var bindSandbox = Protocol.BuildSaveBind("save-s", "沙盒档", null, true);
+            Check("save.bind 写 sandbox=true", bindSandbox.Has("sandbox") && bindSandbox["sandbox"].AsBool());
+            var bindNoSandbox = Protocol.BuildSaveBind("save-s", "普通档", null, false);
+            Check("save.bind 写 sandbox=false", bindNoSandbox.Has("sandbox") && !bindNoSandbox["sandbox"].AsBool());
+            Check("save.bind 未给 sandbox 时省略", !bind.Has("sandbox"));
+            Check("game_spawn_item 是沙盒专属", Protocol.IsSandboxOnlyTool("game_spawn_item"));
+            Check("game_teleport 是沙盒专属", Protocol.IsSandboxOnlyTool("game_teleport"));
+            Check("game_get_overview 不是沙盒专属", !Protocol.IsSandboxOnlyTool("game_get_overview"));
+            Check("沙盒关闭拒绝 spawn", !Protocol.SandboxAllows("game_spawn_item", false));
+            Check("沙盒开启允许 spawn", Protocol.SandboxAllows("game_spawn_item", true));
+            Check("沙盒关闭仍允许普通读工具", Protocol.SandboxAllows("game_get_overview", false));
+
+            // ---- D1：丢弃工具（独立能力串）----
+            Eq("game.drop.v1 能力串", "game.drop.v1", Protocol.CapabilityGameDrop);
+            Eq("game_drop_item 工具名", "game_drop_item", Protocol.ToolDropItem);
+            Check("game_drop_item 不是沙盒专属", !Protocol.IsSandboxOnlyTool(Protocol.ToolDropItem));
+            Check("非沙盒仍允许 game_drop_item", Protocol.SandboxAllows(Protocol.ToolDropItem, false));
+
+            // ---- 生产建筑写工具：独立 game.build.v1 ----
+            Eq("game.build.v1 能力串", "game.build.v1", Protocol.CapabilityGameBuild);
+            Eq("game_set_recipe 工具名", "game_set_recipe", Protocol.ToolSetRecipe);
+            Eq("game_set_assembler_batch 工具名", "game_set_assembler_batch", Protocol.ToolSetAssemblerBatch);
+            Eq("script.write.v1 能力串", "script.write.v1", Protocol.CapabilityScriptWrite);
+            Eq("game.storage.v1 能力串", "game.storage.v1", Protocol.CapabilityGameStorage);
+            Eq("game_storage_set_filter 工具名", "game_storage_set_filter", Protocol.ToolStorageSetFilter);
+            Eq("game_storage_set_limit 工具名", "game_storage_set_limit", Protocol.ToolStorageSetLimit);
+            Eq("game_storage_move 工具名", "game_storage_move", Protocol.ToolStorageMove);
+            Eq("game_storage_deposit 工具名", "game_storage_deposit", Protocol.ToolStorageDeposit);
+            Eq("game_storage_withdraw 工具名", "game_storage_withdraw", Protocol.ToolStorageWithdraw);
+            Eq("game_feed_input 工具名", "game_feed_input", Protocol.ToolFeedInput);
+            Eq("game.tether.v1 能力串", "game.tether.v1", Protocol.CapabilityGameTether);
+            Eq("game_tether_add 工具名", "game_tether_add", Protocol.ToolTetherAdd);
+            Eq("game_tether_clear 工具名", "game_tether_clear", Protocol.ToolTetherClear);
+            Eq("game_tether_list 工具名", "game_tether_list", Protocol.ToolTetherList);
+            Eq("game_take_output 工具名", "game_take_output", Protocol.ToolTakeOutput);
+            Eq("game_dismantle 工具名", "game_dismantle", Protocol.ToolDismantle);
+
+            // ---- 受控写脚本：一次确认的脚本租约 ----
+            Eq("confirm_release 类型名", "confirm_release", Protocol.ConfirmRelease);
+            var scriptConfirm = ConfirmRequestInfo.Parse(JsonValue.Parse(
+                @"{
+                    ""requestId"": ""r1"", ""callId"": ""script"", ""tool"": ""run_script"",
+                    ""argsHash"": ""abc"", ""token"": ""tok"", ""title"": ""脚本写操作"",
+                    ""body"": ""最多 3 次"", ""risk"": 2, ""timeoutMs"": 60000, ""maxWrites"": 3,
+                    ""writeNames"": [""game_set_recipe"", ""game_set_assembler_batch""]
+                }"));
+            Check("脚本确认可解析", scriptConfirm != null);
+            Eq("脚本确认 maxWrites", 3, scriptConfirm.MaxWrites);
+            Eq("脚本确认 tool", "run_script", scriptConfirm.Tool);
+            Check("脚本确认写工具名", scriptConfirm.WriteNames.Contains("game_set_recipe"));
+            Check("脚本确认写工具数", scriptConfirm.WriteNames.Count == 2);
+
+            var leases = new ConfirmationService();
+            Check("脚本确认可注册", leases.TryRegister(scriptConfirm, out _));
+            Check("脚本确认可同意", leases.TryResolve("r1", true, out _));
+            var scriptWriteCall = ToolCallInfo.Parse(JsonValue.Parse(
+                @"{
+                    ""callId"": ""call_s1"", ""name"": ""game_set_recipe"",
+                    ""args"": { ""buildingId"": 1, ""recipeId"": 2 },
+                    ""confirmToken"": ""tok"", ""confirmArgsHash"": ""abc""
+                }"), "call_s1");
+            Check("脚本租约允许第一次写", leases.TryConsume(scriptWriteCall, out _));
+            var otherCall = ToolCallInfo.Parse(JsonValue.Parse(
+                @"{
+                    ""callId"": ""call_s2"", ""name"": ""game_set_research"",
+                    ""args"": { ""techId"": 1 },
+                    ""confirmToken"": ""tok"", ""confirmArgsHash"": ""abc""
+                }"), "call_s2");
+            Check("脚本租约拒绝未列出的写工具",
+                !leases.TryConsume(otherCall, out var leaseErr4) &&
+                leaseErr4 == Protocol.CodeConfirmationInvalid);
+            Check("脚本租约允许第二次写", leases.TryConsume(scriptWriteCall, out _));
+            Check("脚本租约允许第三次写", leases.TryConsume(scriptWriteCall, out _));
+            Check("脚本租约次数用尽",
+                !leases.TryConsume(scriptWriteCall, out var leaseErr3) &&
+                leaseErr3 == Protocol.CodeConfirmationExpired);
 
             // 名字可改，但键必须稳定：键里不允许出现存档名
             Check("saveKey 不含存档名", !bind["saveKey"].AsString().Contains("我的档"));

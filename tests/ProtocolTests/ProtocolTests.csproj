@@ -19,6 +19,8 @@
   -->
   <ItemGroup>
     <Compile Include="../../mod/src/Shared/**/*.cs" />
+    <!-- 确认/租约服务不依赖 UnityEngine，直接编进测试程序 -->
+    <Compile Include="../../mod/src/IcarusII/Core/ConfirmationService.cs" Link="ConfirmationService.cs" />
   </ItemGroup>
 
 </Project>

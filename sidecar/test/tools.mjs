@@ -14,7 +14,7 @@
 
 import { Session } from '../dist/session.js';
 import { GameToolHost } from '../dist/tools/host.js';
-import { toolNamesForCapabilities } from '../dist/tools/registry.js';
+import { createGameTools, toolNamesForCapabilities } from '../dist/tools/registry.js';
 import { createAskTool, UI_ASK_TOOL_NAME, UI_ASK_TOOL_NAME_ALIASES } from '../dist/tools/ask.js';
 
 let passed = 0;
@@ -138,6 +138,39 @@ async function run() {
     check('包含 kb_search / kb_get / kb_recipe_tree / kb_plan', ['kb_search', 'kb_get', 'kb_recipe_tree', 'kb_plan'].every((name) => tools.includes(name)));
     const catalog = ready?.payload?.toolCatalog ?? [];
     check('ready.toolCatalog 由 agent 提供', catalog.length === 1 && catalog[0].label === '存档概览', JSON.stringify(catalog));
+
+    {
+      const host = new GameToolHost();
+      host.setCapabilities(['game.read.v1', 'game.entity.v1', 'game.drop.v1', 'game.build.v1', 'game.storage.v1', 'game.tether.v1']);
+      const tools = createGameTools(host);
+      const entity = tools.find((tool) => tool.name === 'game_get_entity');
+      const planet = tools.find((tool) => tool.name === 'game_get_planet');
+      check('game_get_entity 暴露 fields', !!entity?.parameters?.properties?.fields);
+      check('game_get_entity 暴露 entityIds', !!entity?.parameters?.properties?.entityIds);
+      check('game_get_planet 暴露 veins', !!planet?.parameters?.properties?.veins);
+      check('game_get_planet 暴露 veinOffset/veinLimit',
+        !!planet?.parameters?.properties?.veinOffset && !!planet?.parameters?.properties?.veinLimit);
+      const drop = tools.find((tool) => tool.name === 'game_drop_item');
+      check('game_drop_item 受 game.drop.v1 注册', !!drop);
+      check('game_drop_item 参数含 itemId/count',
+        !!drop?.parameters?.properties?.itemId && !!drop?.parameters?.properties?.count);
+      const recipe = tools.find((tool) => tool.name === 'game_set_recipe');
+      const batch = tools.find((tool) => tool.name === 'game_set_assembler_batch');
+      check('game_set_recipe 受 game.build.v1 注册', !!recipe);
+      check('game_set_assembler_batch 受 game.build.v1 注册', !!batch);
+      check('批量工具暴露 selections', !!batch?.parameters?.properties?.selections);
+      check('存储过滤器工具存在', !!tools.find((tool) => tool.name === 'game_storage_set_filter'));
+      check('存储上限工具存在', !!tools.find((tool) => tool.name === 'game_storage_set_limit'));
+      check('取成品工具存在', !!tools.find((tool) => tool.name === 'game_take_output'));
+      check('移库工具存在', !!tools.find((tool) => tool.name === 'game_storage_move'));
+      check('存入工具存在', !!tools.find((tool) => tool.name === 'game_storage_deposit'));
+      check('取出工具存在', !!tools.find((tool) => tool.name === 'game_storage_withdraw'));
+      check('投料工具存在', !!tools.find((tool) => tool.name === 'game_feed_input'));
+      check('方位添加工具存在', !!tools.find((tool) => tool.name === 'game_tether_add'));
+      check('方位清除工具存在', !!tools.find((tool) => tool.name === 'game_tether_clear'));
+      check('方位列表工具存在', !!tools.find((tool) => tool.name === 'game_tether_list'));
+      check('拆除工具存在', !!tools.find((tool) => tool.name === 'game_dismantle'));
+    }
 
     const empty = makeSession();
     empty.session.handleFrame(Buffer.from(JSON.stringify(hello([]))), false);
@@ -486,6 +519,178 @@ async function run() {
     await waitFor(() => state.result !== null);
     check('拒绝后返回 confirmation_denied', state.result?.error?.code === 'confirmation_denied');
     check('拒绝后没有 tool_call', !socket.frames.some((f) => f.type === 'tool_call'));
+  }
+
+  console.log('── 12. 丢弃确认卡说明“需手动拾回” ──');
+  {
+    const { socket, session, state } = makeSession({
+      callOptions: {
+        name: 'game_drop_item',
+        args: { itemId: 1001, count: 3 },
+        risk: 2,
+        timeoutMs: 800,
+      },
+    });
+    session.handleFrame(Buffer.from(JSON.stringify(hello(['game.drop.v1']))), false);
+    session.handleFrame(
+      Buffer.from(JSON.stringify({ v: 1, id: 'm-120', type: 'prompt', payload: { text: '丢掉 3 个' } })),
+      false,
+    );
+
+    const confirm = await waitFor(() => socket.frames.some((f) => f.type === 'confirm_request')) &&
+      socket.frames.find((f) => f.type === 'confirm_request');
+    check('丢弃先发 confirm_request', !!confirm);
+    check('丢弃确认 title', confirm?.payload?.title === '丢弃物品？');
+    check('丢弃确认 body 含手动拾回', String(confirm?.payload?.body ?? '').includes('手动拾回'));
+    check('丢弃确认 body 含数量', String(confirm?.payload?.body ?? '').includes('3'));
+    check('丢弃确认 risk=2', confirm?.payload?.risk === 2);
+
+    session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-121',
+          type: 'confirm_result',
+          payload: { requestId: confirm?.payload?.requestId, decision: 'deny', token: confirm?.payload?.token },
+        }),
+      ),
+      false,
+    );
+    await waitFor(() => state.result !== null);
+    check('丢弃拒绝后不执行', state.result?.error?.code === 'confirmation_denied');
+    check('丢弃拒绝后没有 tool_call', !socket.frames.some((f) => f.type === 'tool_call'));
+  }
+
+  console.log('── 13. 批量改配方：一次确认、一次撤销 ──');
+  {
+    const { socket, session, state } = makeSession({
+      callOptions: {
+        name: 'game_set_assembler_batch',
+        args: { selections: [{ buildingId: 11, recipeId: 2 }, { buildingId: 12, recipeId: 2 }] },
+        risk: 2,
+        timeoutMs: 800,
+      },
+    });
+    session.handleFrame(Buffer.from(JSON.stringify(hello(['game.build.v1']))), false);
+    session.handleFrame(
+      Buffer.from(JSON.stringify({ v: 1, id: 'm-130', type: 'prompt', payload: { text: '这两台改成同一个配方' } })),
+      false,
+    );
+    const confirm = await waitFor(() => socket.frames.some((f) => f.type === 'confirm_request')) &&
+      socket.frames.find((f) => f.type === 'confirm_request');
+    check('批量改配方先发 confirm_request', !!confirm);
+    check('批量确认 title', confirm?.payload?.title === '批量更换配方？');
+    check('批量确认 body 含两台', String(confirm?.payload?.body ?? '').includes('2 台'));
+    check('批量确认 body 含建筑 id', String(confirm?.payload?.body ?? '').includes('#11'));
+    check('批量确认 risk=2', confirm?.payload?.risk === 2);
+
+    session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-131',
+          type: 'confirm_result',
+          payload: { requestId: confirm?.payload?.requestId, decision: 'allow', token: confirm?.payload?.token },
+        }),
+      ),
+      false,
+    );
+    const gotCall = await waitFor(() => socket.frames.some((f) => f.type === 'tool_call'));
+    check('批量确认后只发一次 tool_call', gotCall && socket.frames.filter((f) => f.type === 'tool_call').length === 1);
+    const call = socket.frames.find((f) => f.type === 'tool_call');
+    check('批量 tool_call 参数完整', JSON.stringify(call?.payload?.args ?? {}).includes('buildingId'));
+    session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-132',
+          type: 'tool_result',
+          replyTo: call?.payload?.callId,
+          payload: { callId: call?.payload?.callId, ok: true, data: { display: '批量完成' }, error: null, meta: {} },
+        }),
+      ),
+      false,
+    );
+    await waitFor(() => state.result !== null);
+    check('批量结果回传', state.result?.ok === true);
+  }
+
+
+  console.log('── 14. 脚本写租约：一次确认、可释放 ──');
+  {
+    const { socket, session } = makeSession();
+    session.handleFrame(Buffer.from(JSON.stringify(hello(['game.build.v1']))), false);
+    const pending = session.confirmScript({
+      scriptHash: 'script-hash-123',
+      writeNames: ['game_set_recipe'],
+      maxWrites: 5,
+    });
+    const confirm = await waitFor(() => socket.frames.some((f) => f.type === 'confirm_request')) &&
+      socket.frames.find((f) => f.type === 'confirm_request');
+    check('脚本确认 tool=run_script', confirm?.payload?.tool === 'run_script');
+    check('脚本确认 argsHash=脚本哈希', confirm?.payload?.argsHash === 'script-hash-123');
+    check('脚本确认 maxWrites=5', confirm?.payload?.maxWrites === 5);
+    check('脚本确认 title', confirm?.payload?.title === '脚本包含写操作？');
+    check('脚本确认 body 含写工具', String(confirm?.payload?.body ?? '').includes('game_set_recipe'));
+
+    session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-140',
+          type: 'confirm_result',
+          payload: { requestId: confirm?.payload?.requestId, decision: 'allow', token: confirm?.payload?.token },
+        }),
+      ),
+      false,
+    );
+    const lease = await pending;
+    check('脚本确认返回 token', typeof lease?.token === 'string' && lease.token.length > 20);
+    check('脚本确认返回哈希', lease?.scriptHash === 'script-hash-123');
+
+    session.releaseScript(lease.token);
+    const released = await waitFor(() => socket.frames.some((f) => f.type === 'confirm_release'));
+    check('释放脚本租约', released);
+    session.dispose('test');
+  }
+
+
+  console.log('── 15. 拆除确认：不可撤销警告 ──');
+  {
+    const { socket, session, state } = makeSession({
+      callOptions: {
+        name: 'game_dismantle',
+        args: { buildingIds: [11, 12] },
+        risk: 2,
+        timeoutMs: 800,
+      },
+    });
+    session.handleFrame(Buffer.from(JSON.stringify(hello(['game.build.v1']))), false);
+    session.handleFrame(
+      Buffer.from(JSON.stringify({ v: 1, id: 'm-150', type: 'prompt', payload: { text: '拆掉这两个' } })),
+      false,
+    );
+    const confirm = await waitFor(() => socket.frames.some((f) => f.type === 'confirm_request')) &&
+      socket.frames.find((f) => f.type === 'confirm_request');
+    check('拆除先发 confirm_request', !!confirm);
+    check('拆除确认 title', confirm?.payload?.title === '拆除建筑？');
+    check('拆除确认警告不可撤销', String(confirm?.payload?.body ?? '').includes('不可撤销'));
+    check('拆除确认 body 含建筑 id', String(confirm?.payload?.body ?? '').includes('#11'));
+    check('拆除确认 risk=2', confirm?.payload?.risk === 2);
+    session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-151',
+          type: 'confirm_result',
+          payload: { requestId: confirm?.payload?.requestId, decision: 'deny', token: confirm?.payload?.token },
+        }),
+      ),
+      false,
+    );
+    await waitFor(() => state.result !== null);
+    check('拆除拒绝后不执行', state.result?.error?.code === 'confirmation_denied');
+    check('拆除拒绝后没有 tool_call', !socket.frames.some((f) => f.type === 'tool_call'));
   }
 
   console.log();

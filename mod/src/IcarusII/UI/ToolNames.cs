@@ -72,9 +72,22 @@ namespace IcarusII.UI
                 case "ask_user":
                 case "ui_ask_user": return "向玩家提问";
                 case "game_focus_camera": return "移动视角";
-                case "game_place_marker": return "新建标记";
                 case "game_open_panel": return "打开面板";
                 case "game_set_research": return "切换研究";
+                case "game_drop_item": return "丢弃物品";
+                case "game_set_recipe": return "更换配方";
+                case "game_set_assembler_batch": return "批量配方";
+                case "game_storage_set_filter": return "存储过滤";
+                case "game_storage_set_limit": return "存储上限";
+                case "game_storage_move": return "移库";
+                case "game_storage_deposit": return "存入存储";
+                case "game_storage_withdraw": return "从存储取出";
+                case "game_feed_input": return "投料";
+                case "game_tether_add": return "方位指示";
+                case "game_tether_clear": return "清除方位";
+                case "game_tether_list": return "方位列表";
+                case "game_take_output": return "取成品";
+                case "game_dismantle": return "拆除建筑";
                 case "game_undo_last_write": return "撤销写操作";
                 default: return name;
             }

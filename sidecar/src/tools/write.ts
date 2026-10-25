@@ -12,6 +12,10 @@ import type { JsonObject, ToolResultPayload } from '../protocol.js';
 import type { GameToolHost } from './host.js';
 
 export const CAPABILITY_GAME_WRITE = 'game.write.v1';
+export const CAPABILITY_GAME_DROP = 'game.drop.v1';
+export const CAPABILITY_GAME_BUILD = 'game.build.v1';
+export const CAPABILITY_GAME_STORAGE = 'game.storage.v1';
+export const CAPABILITY_GAME_TETHER = 'game.tether.v1';
 
 export function isWriteToolName(name: string): boolean {
   return (WRITE_TOOL_NAMES as readonly string[]).includes(name);
@@ -19,9 +23,21 @@ export function isWriteToolName(name: string): boolean {
 
 export const WRITE_TOOL_NAMES = [
   'game_focus_camera',
-  'game_place_marker',
   'game_open_panel',
   'game_set_research',
+  'game_drop_item',
+  'game_set_recipe',
+  'game_set_assembler_batch',
+  'game_storage_set_filter',
+  'game_storage_set_limit',
+  'game_storage_move',
+  'game_storage_deposit',
+  'game_storage_withdraw',
+  'game_feed_input',
+  'game_tether_add',
+  'game_tether_clear',
+  'game_take_output',
+  'game_dismantle',
   'game_undo_last_write',
 ] as const;
 
@@ -104,33 +120,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       risk: 1,
     }),
     writeTool(host, {
-      name: 'game_place_marker',
-      label: '新建标记',
-      description:
-        '在当前行星或指定行星上新建一个地图标记。写操作：执行前玩家必须确认。' +
-        '用 latitude/longitude 指定位置（可从 game_get_entity 的 location 读取），text 是标记文字。',
-      promptSnippet: '在行星上新建标记（需要玩家确认）',
-      promptGuidelines: [
-        'Use game_place_marker 当玩家明确要求“在这里做个标记/标个点”时。',
-        '坐标必须来自游戏数据或玩家给出；不要凭截图猜坐标。优先使用 game_get_entity 返回的 location.latitude/longitude。',
-      ],
-      parameters: Type.Object({
-        planetId: Type.Optional(Type.Integer({ description: '行星 id；省略为当前行星' })),
-        latitude: Type.Optional(Type.Number({ description: '纬度（-90..90）' })),
-        longitude: Type.Optional(Type.Number({ description: '经度（-180..180）' })),
-        altitude: Type.Optional(Type.Number({ description: '海拔（米），默认 0' })),
-        position: Type.Optional(Type.Object({
-          x: Type.Number(),
-          y: Type.Number(),
-          z: Type.Number(),
-        }, { description: '旧版行星局部坐标，仅兼容用' })),
-        text: Type.String({ description: '标记完整文字；地图简述只显示前 2 个字，详情保存完整名称' }),
-        icon: Type.Optional(Type.Integer({ description: '标记图标 id，可选' })),
-      }),
-      timeoutMs: 10000,
-      risk: 1,
-    }),
-    writeTool(host, {
       name: 'game_open_panel',
       label: '打开面板',
       description:
@@ -170,6 +159,273 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       }),
       timeoutMs: 8000,
       risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_drop_item',
+      label: '丢弃物品',
+      description:
+        '把背包里的物品丢到当前行星地面。写操作，风险 2：执行前玩家必须确认。' +
+        '丢出的物品会变成可拾取的垃圾，需玩家手动拾回；不进入撤销栈。' +
+        'itemId 可以是物品 id 或名称；count 默认 1，一次最多 500。',
+      promptSnippet: '把背包物品丢到地面（高风险，需要确认；需手动拾回）',
+      promptGuidelines: [
+        'Use game_drop_item 只在玩家明确要求“丢掉/扔了”某个物品时。',
+        '调用前先用 game_get_player 确认背包里有该物品和数量；不要丢掉关键材料。',
+        '丢弃后不进入撤销栈，必须明确告诉玩家“需要手动拾回”。',
+        '如果玩家拒绝确认，不要再次调用。',
+      ],
+      parameters: Type.Object({
+        itemId: Type.Union([Type.Integer(), Type.String()], {
+          description: '物品 id 或名称',
+        }),
+        count: Type.Optional(
+          Type.Integer({ minimum: 1, maximum: 500, description: '丢弃数量，默认 1，最大 500' }),
+        ),
+      }),
+      timeoutMs: 8000,
+      risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_set_recipe',
+      label: '更换配方',
+      description:
+        '把一台生产建筑（制造台/熔炉/化工厂/研究站等）的配方改为指定配方。写操作，风险 2：' +
+        '执行前玩家必须确认。会先按游戏 UI 的“重置配方”把机器内原料/产物退回背包，再切换配方；' +
+        '撤销只恢复配方，不把退回背包的物品塞回机器。recipeId=0 表示清空配方。',
+      promptSnippet: '更换一台生产建筑的配方（高风险，需要确认）',
+      promptGuidelines: [
+        'Use game_set_recipe 当玩家明确要求改某一台建筑的配方时；先用 game_get_entity 确认它是生产建筑。',
+        'recipeId 先用 kb_search/kb_get 或 game_get_entity 的 recipeId 确认；不要编造。',
+        '会先退料；如果玩家不想让物品回背包，先说明。撤销只恢复配方。',
+      ],
+      parameters: Type.Object({
+        buildingId: Type.Integer({ description: '生产建筑 entityId' }),
+        recipeId: Type.Integer({ description: '配方 id；0 = 清空配方' }),
+      }),
+      timeoutMs: 10000,
+      risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_set_assembler_batch',
+      label: '批量配方',
+      description:
+        '一次修改多台生产建筑的配方（最多 20 台），只弹一次确认、只压一层撤销。写操作，风险 2：' +
+        '执行前玩家必须确认。每台都会先退回机器内原料/产物再切换；任何一台预检失败则整批不执行。',
+      promptSnippet: '批量更换生产建筑配方（一次确认，一次撤销）',
+      promptGuidelines: [
+        'Use game_set_assembler_batch 当玩家要求“这几台/这一排都改成同一个配方”时；先用 game_get_entities 拿到 id。',
+        '一次最多 20 台；超过时分批，不要一次塞太多。',
+        '返回 changed/skipped/items；如果某台不匹配，整批会失败并说明原因。',
+      ],
+      parameters: Type.Object({
+        selections: Type.Array(
+          Type.Object({
+            buildingId: Type.Integer({ description: '生产建筑 entityId' }),
+            recipeId: Type.Integer({ description: '配方 id；0 = 清空配方' }),
+          }),
+          { minItems: 1, maxItems: 20, description: '最多 20 台；同一 buildingId 不能重复' },
+        ),
+      }),
+      timeoutMs: 15000,
+      risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_storage_set_filter',
+      label: '存储过滤',
+      description:
+        '设置一台存储建筑（箱子/储液罐/物流站仓储）的物品过滤器；itemId=0 清除过滤器。写操作，风险 2：' +
+        '执行前玩家必须确认。已占用且物品不同的格子会跳过，不会替换物品。',
+      promptSnippet: '设置存储建筑过滤器（高风险，需要确认）',
+      promptGuidelines: [
+        'Use game_storage_set_filter 当玩家要求“这个箱子只放某物品/不要放某物品”时；先用 game_get_entity 确认 storage 段。',
+        'itemId 用 kb_search/kb_get 或已知物品 id；0 表示清除过滤器。',
+        '只支持普通箱子/储液罐/物流站仓储；燃料/弹药等专用存储不支持。',
+      ],
+      parameters: Type.Object({
+        buildingId: Type.Integer({ description: '存储建筑 entityId' }),
+        itemId: Type.Integer({ description: '物品 id；0 = 清除过滤器' }),
+      }),
+      timeoutMs: 10000,
+      risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_storage_set_limit',
+      label: '存储上限',
+      description:
+        '设置一台存储建筑的容量上限（允许使用的格数）。写操作，风险 2：执行前玩家必须确认。' +
+        'limit 是允许使用的格数（0..总格数），不是禁止格数。',
+      promptSnippet: '设置存储建筑容量上限（高风险，需要确认）',
+      promptGuidelines: [
+        'Use game_storage_set_limit 当玩家要求“这个箱子只用前 N 格”时；先用 game_get_entity 看 storage.slots。',
+        'limit 是允许格数，范围 0..slots。',
+        '只支持普通箱子/储液罐/物流站仓储。',
+      ],
+      parameters: Type.Object({
+        buildingId: Type.Integer({ description: '存储建筑 entityId' }),
+        limit: Type.Integer({ description: '允许使用的格数，0..总格数' }),
+      }),
+      timeoutMs: 10000,
+      risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_storage_move',
+      label: '移库',
+      description:
+        '把指定物品从一台存储建筑移动到另一台存储建筑。写操作，风险 2：执行前玩家必须确认。' +
+        '先预检目标容量/过滤器；目标放不下时整笔不执行。源不足时移动可用的部分并返回 remaining。',
+      promptSnippet: '在存储建筑之间移动物品（高风险，需要确认）',
+      promptGuidelines: [
+        'Use game_storage_move 当玩家要求“把这箱铜搬到那箱”时；先用 game_get_entity 确认两端 storage 段和距离。',
+        'sourceId/targetId 都是建筑 entityId；itemId 用已知 id；count 是请求数量。',
+        '目标空间不足会整笔失败；源不足只移动可用部分，remaining 表示没移动的数量。',
+      ],
+      parameters: Type.Object({
+        sourceId: Type.Integer({ description: '源存储建筑 entityId' }),
+        targetId: Type.Integer({ description: '目标存储建筑 entityId' }),
+        itemId: Type.Integer({ description: '物品 id' }),
+        count: Type.Integer({ description: '请求移动数量' }),
+      }),
+      timeoutMs: 15000,
+      risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_storage_deposit',
+      label: '存入存储',
+      description:
+        '把背包里的物品放进一台存储建筑（箱子/储液罐/物流站仓储）。写操作，风险 2：执行前玩家必须确认。' +
+        '存储满时只放入能放下的部分，剩余会退回背包。',
+      promptSnippet: '把背包物品存入存储（高风险，需要确认）',
+      promptGuidelines: [
+        'Use game_storage_deposit 当玩家要求“把这些东西放进箱子”时；先用 game_get_entity 确认 storage 段。',
+        'itemId/count 必填；存储满时返回 remaining，剩余仍在背包。',
+      ],
+      parameters: Type.Object({
+        buildingId: Type.Integer({ description: '存储建筑 entityId' }),
+        itemId: Type.Integer({ description: '物品 id' }),
+        count: Type.Integer({ description: '放入数量' }),
+      }),
+      timeoutMs: 10000,
+      risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_storage_withdraw',
+      label: '从存储取出',
+      description:
+        '把一台存储建筑里的物品取到背包。写操作，风险 2：执行前玩家必须确认。' +
+        '背包满时只取能放下的部分，剩余留在存储里。',
+      promptSnippet: '从存储取物品到背包（高风险，需要确认）',
+      promptGuidelines: [
+        'Use game_storage_withdraw 当玩家要求“从箱子里拿点东西”时；先用 game_get_entity 确认 storage 段。',
+        'itemId/count 必填；背包满时返回 remaining，剩余仍在存储。',
+      ],
+      parameters: Type.Object({
+        buildingId: Type.Integer({ description: '存储建筑 entityId' }),
+        itemId: Type.Integer({ description: '物品 id' }),
+        count: Type.Integer({ description: '取出数量' }),
+      }),
+      timeoutMs: 10000,
+      risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_feed_input',
+      label: '投料',
+      description:
+        '从背包把配方原料直接放进一台生产建筑的输入缓冲。写操作，风险 2：执行前玩家必须确认。' +
+        '这条路径不经过分拣器/传送带；只接受当前配方需要的物品，最多 500 个。',
+      promptSnippet: '把背包原料直接投进生产建筑（高风险，需要确认）',
+      promptGuidelines: [
+        'Use game_feed_input 当玩家要求“把背包里的原料塞进这台机器”时；先用 game_get_entity 确认 assembler.recipeId/inputs。',
+        'itemId 必须是当前配方 Items 里的输入；不要投成品或配方不需要的物品。',
+        '它会直接写 served/incServed，绕过分拣器/传送带；确认卡会说明。',
+      ],
+      parameters: Type.Object({
+        buildingId: Type.Integer({ description: '生产建筑 entityId' }),
+        itemId: Type.Integer({ description: '配方输入物品 id' }),
+        count: Type.Integer({ description: '投入数量，1..500' }),
+      }),
+      timeoutMs: 10000,
+      risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_take_output',
+      label: '取成品',
+      description:
+        '把一台生产建筑当前已产出的成品取到背包，保留配方。写操作，风险 2：执行前玩家必须确认。' +
+        '背包满时只取能放下的部分，并返回剩余数量。',
+      promptSnippet: '取出生产建筑成品（高风险，需要确认）',
+      promptGuidelines: [
+        'Use game_take_output 当玩家要求“把这几台机器的成品收了”时；先用 game_get_entity 确认 assembler 段。',
+        '只取 produced 成品，不会退原料；配方保留。',
+        '背包满时会返回 remaining，不要把 remaining 当成已取走。',
+      ],
+      parameters: Type.Object({
+        buildingId: Type.Integer({ description: '生产建筑 entityId' }),
+      }),
+      timeoutMs: 10000,
+      risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_dismantle',
+      label: '拆除建筑',
+      description:
+        '拆除一批建筑（最多 50 个），走游戏原生 DismantleFinally。写操作，风险 2：执行前玩家必须确认。' +
+        '拆除不可撤销；游戏会按正常规则退料/清理，但建筑本身不会恢复。',
+      promptSnippet: '批量拆除建筑（高风险、不可撤销）',
+      promptGuidelines: [
+        'Use game_dismantle 当玩家明确要求拆除建筑时；先用 game_get_entities 确认 id 和范围。',
+        '一次最多 50 个；确认卡会强调不可撤销。',
+        '不要用它拆除玩家基地的关键建筑，除非玩家明确指定。',
+      ],
+      parameters: Type.Object({
+        buildingIds: Type.Array(Type.Integer({ description: '建筑 entityId' }), {
+          minItems: 1,
+          maxItems: 50,
+          description: '最多 50 个；不能重复',
+        }),
+      }),
+      timeoutMs: 15000,
+      risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_tether_add',
+      label: '方位指示',
+      description:
+        '建立机甲到行星/建筑物方位指示，可同时建立多个（最多 20 个）。本星球的每个建筑各画一条 LineGizmo；' +
+        '跨行星时用原生 navigation.indicatorAstroId 指向其中一个目标行星（游戏一次只支持一个导航朝向），' +
+        '落到该行星后，该行星上的所有建筑都切换为自绘线。写操作，风险 1：执行前玩家必须确认。',
+      promptSnippet: '建立多个机甲→行星/建筑方位指示',
+      promptGuidelines: [
+        'Use game_tether_add 当玩家说“给这些建筑/星球都做个方位指示”时；先用 game_get_entities/game_get_planet 确认目标。',
+        'kind=planet 时用 planetId（缺省当前星球）；kind=building 时用 buildingId，可选 planetId；可以多次调用添加多个目标。',
+        '本星球建筑会同时显示多条线；跨行星原生导航一次只指一个目标行星，不要声称所有跨行星线都同时可见。',
+      ],
+      parameters: Type.Object({
+        kind: Type.String({ enum: ['planet', 'building'], description: 'planet 或 building' }),
+        planetId: Type.Optional(Type.Integer({ description: '行星 id，缺省当前星球' })),
+        buildingId: Type.Optional(Type.Integer({ description: 'kind=building 时必填' })),
+      }),
+      timeoutMs: 8000,
+      risk: 1,
+    }),
+    writeTool(host, {
+      name: 'game_tether_clear',
+      label: '清除方位',
+      description: '清除本 mod 建立的所有方位指示（导航朝向和建筑追踪线）。写操作，风险 1：执行前玩家必须确认。',
+      promptSnippet: '清除所有方位指示',
+      promptGuidelines: ['Use game_tether_clear 当玩家说“取消方位/清除连线”时；只清本 mod 建立的目标。'],
+      parameters: Type.Object({}),
+      timeoutMs: 8000,
+      risk: 1,
+    }),
+    writeTool(host, {
+      name: 'game_tether_list',
+      label: '方位列表',
+      description: '列出当前方位指示（行星/建筑及名称）。只读，不弹确认。',
+      promptSnippet: '查看当前方位指示',
+      promptGuidelines: ['Use game_tether_list 当玩家问“现在连了哪些目标”时。'],
+      parameters: Type.Object({}),
+      timeoutMs: 5000,
+      risk: 0,
     }),
     writeTool(host, {
       name: 'game_undo_last_write',

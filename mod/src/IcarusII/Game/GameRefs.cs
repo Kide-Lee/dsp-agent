@@ -131,6 +131,22 @@ namespace IcarusII.Game
             }
         }
 
+        /// <summary>
+        /// 当前**载入会话**是否启用了游戏沙盒工具（`GameMain.sandboxToolsEnabled`）。
+        ///
+        /// 不要读 `GameDesc.isSandboxMode`：那是"曾经用过沙盒工具"的粘性标记，
+        /// 而且 `GameHistoryData.AfterTick` 会把它置 true（存档永久失去成就）。
+        /// 本属性只读，任何情况下都不写这个开关。
+        /// </summary>
+        public static bool SandboxToolsEnabled
+        {
+            get
+            {
+                try { return GameMain.isRunning && GameMain.sandboxToolsEnabled; }
+                catch { return false; }
+            }
+        }
+
         /// <summary>玩家当前是否在某个文本输入框中输入（游戏自身的标记）。</summary>
         public static bool TextInputActive => VFInput.inputing;
 
