@@ -1094,8 +1094,10 @@ namespace IcarusII.UI
             // 正文区：优先新结构 output/scroll-view/{viewport/content}，
             // 再兼容旧结构（单块 Scroll/Viewport/Content 文本）。
             var scroll = FindComponent<ScrollRect>(panel,
+                "content-column/output/scroll-view",
                 "output/scroll-view", "Scroll", "scroll-view", "transcript");
             var content = FindNode(panel,
+                "content-column/output/scroll-view/viewport/content",
                 "output/scroll-view/viewport/content",
                 "Scroll/Viewport/Content", "Viewport/Content", "Content",
                 "transcript/Viewport/Content", "transcript/content", "content") as RectTransform;
@@ -1108,6 +1110,7 @@ namespace IcarusII.UI
             // 否则会误抓到 toolbar 里下拉框内部的 Main InputField（打字只进一个字符、
             // 焦点每帧被抢回下拉框，就是这条路径造成的）。
             var inputTf = FindNode(panel,
+                "content-column/input/editor/scroll-view/viewport/content/InputField/input",
                 "input/editor/scroll-view/viewport/content/InputField/input",
                 "editor/scroll-view/viewport/content/InputField/input",
                 "InputBar/Input", "input", "InputBar", "input-bar", "Input");
