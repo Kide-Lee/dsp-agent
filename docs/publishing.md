@@ -42,6 +42,10 @@ scripts/package.sh && (cd dist/pkg && zip -r ../../dist/IcarusII-<ver>-manual.zi
 
 ### Thunderstore（主站）
 
+> 当前页面：<https://thunderstore.io/c/dyson-sphere-program/p/from_dsp_bwiki/IcarusII/>。
+> 玩家安装以 **r2modman** 为主：`Online` 搜索 `IcarusII` 安装后，必须点
+> **Start modded** 启动；Thunderstore 页面 README 已按这个流程写。
+
 1. 注册/登录，Create Team（团队名会成为包前缀，例如 `YourName-IcarusII`）；
 2. Upload Package → 选 `dist/IcarusII-<ver>.zip`；
 3. 首次上传后页面 URL 形如 `https://thunderstore.io/c/dyson-sphere-program/p/<Team>/IcarusII/`，

@@ -146,7 +146,7 @@ AI 也可以直接用 `blueprint_fs` 查看、建子目录、写任意合法蓝�
 
 **蓝图卡片**：生成 / 下载 / 复制蓝图成功后，sidecar 会在本轮回答末尾追加一张卡片
 （协议附录 A.9），显示名称、产量、建筑数、占地、作者/版本与来源；
-点「查看详情」打开游戏蓝图浏览器并定位到该文件，点「粘贴铺设」直接进入粘贴预览。
+点「查看」打开游戏蓝图浏览器并定位到该文件，点「使用」直接进入粘贴预览。
 卡片是运行期按数据创建的，不需要改 prefab；sidecar 会持久化卡片记录，
 重进存档时随 `save.bound.history` 一起回放。
 
@@ -187,13 +187,29 @@ AI 也可以直接用 `blueprint_fs` 查看、建子目录、写任意合法蓝�
 | 项 | 说明 |
 | --- | --- |
 | 游戏 | Dyson Sphere Program（`0.10.30.3100` 验证通过） |
-| mod 加载器 | **BepInEx 5.4.17+（win_x64）**，需自行安装；5.4.23.5 亦验证通过 |
+| mod 加载器 | **BepInEx 5.4.17+（win_x64）**；用 r2modman 会自动安装，手动安装需自备；5.4.23.5 亦验证通过 |
 
 > 版本说明：Thunderstore 社区包是 **5.4.17**，本项目也按 5.4.17 编译（避免 BepInEx 打印
 > "plugin targets a wrong version"）。5.4.23.5 同样实测可用；它 changelog 里那条
 > `Fix for unity 2022.3.62f3` 只影响取不到 `Application.isBatchMode` 的构建，与本游戏无关。
 
-### 步骤
+### 玩家安装（推荐：r2modman）
+
+1. 安装 [r2modman](https://thunderstore.io/c/dyson-sphere-program/p/ebkr/r2modman/)，在游戏列表里选
+   **Dyson Sphere Program**，使用默认配置档即可。
+2. 进入 **Online**，搜索 `IcarusII`（作者 `from_dsp_bwiki`），安装；BepInEx 5.4.17
+   会作为依赖自动装好。
+3. 安装完成后点 **Start modded** 启动游戏。**不要从 Steam 直接启动**——r2modman 的配置档
+   不会生效，表现就是「装了没效果」。
+4. 进游戏按 `R`，窗口出现即安装成功。
+
+> r2modman 把 mod 和 BepInEx 放在自己的配置档目录，不会写进游戏根目录。
+> 更新也在 r2modman 里完成；不要手动往配置档里覆盖 DLL。
+
+### 手动安装（开发 / 无管理器）
+
+> 只有明确不用 r2modman，或需要自己管理游戏目录时才走这条路。手动安装和 r2modman
+> 配置档是两套目录，**不要混着装**。
 
 ```bash
 # 1) 安装 BepInEx 5.4.17（或 5.4.23.5）到游戏目录（解压即用）
@@ -208,6 +224,9 @@ AI 也可以直接用 `blueprint_fs` 查看、建子目录、写任意合法蓝�
 ```
 
 ### Linux / Proton（Steam Deck 同样适用）
+
+用 r2modman 时，**Start modded** 会处理 Proton 环境，不需要手动改 Steam 启动项；
+下面只针对手动安装 / 自行管理 BepInEx 的情况。
 
 Wine 默认会优先加载内置的 `winhttp.dll`，盖掉 BepInEx 的代理 DLL。
 `install.sh` 会自动向前缀注册表写入**按可执行文件的覆盖**，因此**不需要**改 Steam 启动项：
@@ -292,14 +311,15 @@ OpenRouter，也可以选「自定义」输入 ID；API 密钥旁的**「检测�
 | 全屏界面（星图、戴森球编辑器） | 不响应 |
 | 窗口已打开 | 不响应（只有 `Esc` 能关） |
 
-如果你仍觉得别扭，可以在 `BepInEx/config/icarus-ii.cfg` 里改成别的键
-（例如 `F8`，该键在 DSP 中未被占用）。
+如果你仍觉得别扭，可以在 r2modman 配置档里的 `BepInEx/config/icarus-ii.cfg`
+（手动安装则是游戏目录下的同名文件）里改成别的键（例如 `F8`，该键在 DSP 中未被占用）。
 
 ---
 
 ## 配置
 
-`BepInEx/config/icarus-ii.cfg`
+r2modman 配置档里的 `BepInEx/config/icarus-ii.cfg`；手动安装则是
+`<游戏目录>/BepInEx/config/icarus-ii.cfg`。
 
 ```ini
 [General]
@@ -356,10 +376,12 @@ MaxTranscriptLines = 500
 
 | 现象 | 处理 |
 | --- | --- |
-| 按 `R` 没反应 | 看 `BepInEx/LogOutput.log` 里有没有 `[热键]`/`聊天窗口已创建` |
-| 窗口显示"未连接" | 日志里搜 `[sidecar]`；确认 `icarus-ii-sidecar.exe` 在 `BepInEx/plugins/IcarusII/sidecar/` |
+| 从 Steam 启动没有 mod | 用 r2modman 的 **Start modded** 启动；r2modman 的配置档不会注入 Steam 直接启动 |
+| 按 `R` 没反应 | 看 r2modman 配置档（手动安装为游戏目录）里的 `BepInEx/LogOutput.log` 有没有 `[热键]`/`聊天窗口已创建` |
+| 窗口显示"未连接" | 日志里搜 `[sidecar]`；确认 `icarus-ii-sidecar.exe` 在配置档的 `BepInEx/plugins/IcarusII/sidecar/` |
+| 设置窗口里没有「模型」页 | mod 没加载；查日志里有没有 `Icarus II 0.4.0 已加载` |
 | 中文显示成方块 | 日志里看字体来源；`borrowed-from-game-ui` 正常，`builtin-arial(no-cjk)` 说明没借到游戏字体 |
-| BepInEx 完全没加载 | Proton 下多半是 `winhttp` 覆盖没生效，见上文 |
+| BepInEx 完全没加载 | 用 r2modman 时先确认是 `Start modded`；手动安装 + Proton 下多半是 `winhttp` 覆盖没生效 |
 | 建造时按 R 弹窗 | 检查 `HotkeyRequireNoBuildTool` 是否为 `true` |
 
 ---

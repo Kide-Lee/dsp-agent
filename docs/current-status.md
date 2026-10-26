@@ -98,3 +98,4 @@ M4 已收口，下一步从“继续验收”转为“发布与后续规划”�
 - 蓝图生成：[blueprint-planner.md](blueprint-planner.md)
 - 建筑字段：[entity-fields.md](entity-fields.md)
 - 发布：[publishing.md](publishing.md)
+- B站安装/上手视频稿：[bilibili-video-script.md](bilibili-video-script.md)
