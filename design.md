@@ -211,7 +211,7 @@ API Key 是外部服务凭证，mod 无从得知，**这一步不可自动化**�
 - `createAgentSession()` + `customTools` + `session.subscribe()` 三个 API 即可构成完整闭环。
 - 流式事件粒度恰好匹配聊天窗口需求：`message_update`（`text_delta` / `thinking_delta` / `toolcall_*`）、`tool_execution_start|update|end`、`agent_settled`。
 - `ModelRuntime` 直接满足"OpenAI 兼容 + Anthropic Messages"双协议要求：Anthropic 原生支持；OpenAI 兼容端点通过 `models.json` 的 `{"api": "openai-completions", "baseUrl": "..."}` 声明（已在 `docs/models.md` 核实，明确列出 Ollama / LM Studio / vLLM）。
-- `pi.on("tool_call", …)` **可阻塞**，配合 `ctx.ui.confirm()` 实现"写操作必须确认"，这是原生能力而非自研。
+- `pi.on("tool_call", …)` **可阻塞**，配合 `ctx.ui.confirm()` 实现"写操作默认必须确认"，这是原生能力而非自研；权限档位在该钩子与 mod 令牌层之上再收窄/放行。
 - `noTools: "builtin"` 可在保留自定义工具的同时关闭全部内置工具，正好满足安全要求。
 - `SessionManager` 提供 JSONL 会话树（持久化、分支、压缩），聊天历史不必自研。
 
@@ -249,7 +249,7 @@ API Key 是外部服务凭证，mod 无从得知，**这一步不可自动化**�
 | --- | --- |
 | 内置工具 | 全关（`noTools: "builtin"`） |
 | 网络工具 | 仅限 sidecar 侧的白名单 Wiki 抓取；不给模型通用 HTTP 工具 |
-| 写操作 | 必须确认 + 影响面预览 + 可撤销；**不做写前自动存档**（用户确认关闭） |
+| 写操作 | 默认（有限权限）必须确认 + 影响面预览 + 可撤销；玩家可显式切「只读」或「接管」；**不做写前自动存档**（用户确认关闭） |
 | API Key | 只存 sidecar 侧（复用 pi 的 `auth.json` 或环境变量）；mod 不接触 |
 | 存档数据外发 | 脱敏：默认不上传存档名/账号名（可配置开启） |
 
@@ -1579,7 +1579,7 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 | 编号 | 问题 | 选项 | 结论 |
 | --- | --- | --- | --- |
 | D1 | 第 9 条"摧毁背包物品"是否实现？ | A 不做；B 改"丢弃到地面"；C 仅沙盒 + 二次确认 + 不可撤销 | **B 丢弃**。实现用 `Player.TakeItemFromPlayer(..., true, ...)` 从背包取出，再 `Player.ThrowTrash(..., life=0)`；物品以可拾回的 trash 落地/漂浮。按 risk 2 实现；确认卡标注"可撤销（需手动拾回）"，不是一键撤销。这不属于 R7 的"无法撤销" |
-| D2 | 第 12 条"自动驾驶"与 §1.2"不做全自动代打"冲突 | A 改为"确认后的一次性长任务"；B 保持 §1.2 不做；C 独立扩展模块 | **B 暂不做**。§1.2 保持有效；不排期、不注册、不写实现承诺。未来重启需复议本条与 §1.2，并先补长任务协议 + 导航 spike |
+| D2 | 第 12 条"自动驾驶"与 §1.2"不做全自动代打"冲突 | A 改为"确认后的一次性长任务"；B 保持 §1.2 不做；C 独立扩展模块 | **B 暂不做**。长任务/自动驾驶仍不排期。2026-10-27 新增的「接管」权限只免除**单次写操作确认**，不是长任务自动驾驶：仍由玩家逐轮提问、模型逐步调用工具，且可随时切回只读/有限 |
 | D3 | 第 11 条"游戏目标"用原生还是 mod 侧 | A 原生 `TodoModule` + mod 侧有界触发器；B 注入 `GoalProto`；C 只在聊天窗做任务卡 | **B（2026-10-26 改）**。用户要求复用原生左侧 `UIGoalPanel`；注入 `GoalProto`/`GoalData`，触发器复用原生 `GoalDeterminator`；目标定义存 Global TodoModule JSON，读档重注入 |
 | D4 | 高频 risk 2 的确认方式 | A 批量工具，一次确认、一次撤销；B 会话级租约（需改 §9.3）；C 每次确认 | **A 批量工具**。补充：`game_get_entity` 是高频**读**工具（risk 0），不走确认，但要按读侧优化：字段裁剪、按实体/帧缓存、批量 id、结果上限（2026-10-24 已实现 fields/entityIds，缓存沿用 dispatcher 5s） |
 | D5 | 新增工具的能力串粒度 | A 每族一个新能力串 + `save_bind.sandbox`；B hello 里带工具清单；C 继续复用 `game.write.v1`/`game.read.v1` | **A**。新增工具按族拆能力串；不继续复用粗粒度能力串 |
