@@ -1310,6 +1310,9 @@ namespace IcarusII.UI
             {
                 if (string.IsNullOrEmpty(path)) continue;
                 var t = root.Find(path);
+                if (t == null && (path.StartsWith("input/", StringComparison.Ordinal) ||
+                                  path.StartsWith("output/", StringComparison.Ordinal)))
+                    t = root.Find("content-column/" + path);
                 if (t != null) return t;
             }
             return null;
@@ -4071,7 +4074,7 @@ namespace IcarusII.UI
             GameObject clone = null;
             try
             {
-                var bar = panel != null ? panel.Find("input/editor/tool-bar") as RectTransform : null;
+                var bar = panel != null ? FindNode(panel, "input/editor/tool-bar") as RectTransform : null;
                 if (bar == null || bar.Find("model-group") != null) return null;
 
                 var thinking = bar.Find("thinking-group") as RectTransform;
@@ -4226,7 +4229,7 @@ namespace IcarusII.UI
         {
             var group = combo != null ? combo.transform.parent as RectTransform : null;
             var thinking = panel != null
-                ? panel.Find("input/editor/tool-bar/thinking-group") as RectTransform
+                ? FindNode(panel, "input/editor/tool-bar/thinking-group") as RectTransform
                 : null;
             if (group == null || thinking == null || group.name != "model-group") return;
 
