@@ -31,6 +31,7 @@ import {
   buildHistoryDeletedPayload,
   buildMessagePayload,
   buildModelCatalogPayload,
+  buildProviderCatalogPayload,
   buildProviderTestPayload,
   buildReadyPayload,
   buildSaveBoundPayload,
@@ -64,6 +65,7 @@ import {
   type LinkCardPayload,
   type ContextCompactedPayload,
   type ModelCatalogResult,
+  type ProviderCatalogResult,
   type ProviderTestResult,
   type ToolCatalogEntry,
   type ToolResultPayload,
@@ -474,6 +476,9 @@ export class Session {
       case MessageType.ModelCatalog:
         this.handleModelCatalog(env);
         return;
+      case MessageType.ProviderCatalog:
+        this.handleProviderCatalog(env);
+        return;
       case MessageType.ProviderTest:
         this.handleProviderTest(env);
         return;
@@ -603,6 +608,56 @@ export class Session {
         payload,
       }),
     );
+  }
+
+  /**
+   * `provider.catalog`：只读 pi 内置目录的供应商列表，供设置页预设下拉框使用。
+   * 不联网、不需要 Key；失败时回空列表 + error，mod 会回退到内置短名单。
+   */
+  private handleProviderCatalog(env: import('./protocol.js').ParsedEnvelope): void {
+    if (this._state !== 'ready') {
+      this.logger.warn('握手未完成就收到 provider.catalog');
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+
+    const listProviders = this.options.agent.listProviders;
+    if (!listProviders) {
+      const payload = buildProviderCatalogPayload({
+        providers: [],
+        source: 'none',
+        error: '当前 agent 不支持供应商目录',
+      });
+      this.sendEnvelope(buildEnvelope({ type: MessageType.ProviderCatalog, replyTo: env.id || null, payload }));
+      return;
+    }
+
+    void listProviders
+      .call(this.options.agent)
+      .then((result: ProviderCatalogResult) => {
+        this.logger.info('列出供应商目录', {
+          source: result.source,
+          count: result.providers.length,
+        });
+        this.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.ProviderCatalog,
+            replyTo: env.id || null,
+            payload: buildProviderCatalogPayload(result),
+          }),
+        );
+      })
+      .catch((err: unknown) => {
+        const raw = err instanceof Error ? err.message : String(err);
+        const safe = redactSecrets(raw, []);
+        this.logger.error('列出供应商目录失败', { message: safe });
+        const payload = buildProviderCatalogPayload({
+          providers: [],
+          source: 'none',
+          error: safe,
+        });
+        this.sendEnvelope(buildEnvelope({ type: MessageType.ProviderCatalog, replyTo: env.id || null, payload }));
+      });
   }
 
   /**

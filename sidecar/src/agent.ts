@@ -72,6 +72,8 @@ import type {
   JsonObject,
   ModelCatalogEntry,
   ModelCatalogResult,
+  ProviderCatalogEntry,
+  ProviderCatalogResult,
   ProviderTestResult,
   BlueprintTiers,
   StatusState,
@@ -237,6 +239,11 @@ export interface AgentRunner {
     provider: string,
     options: { baseUrl: string | null; apiKey: string | null },
   ): Promise<ModelCatalogResult>;
+  /**
+   * 列出 pi 内置目录的全部供应商，供设置页预设下拉框使用。
+   * 只读本地目录：不联网、不需要 Key；失败时返回 `error`，不抛异常。
+   */
+  listProviders?(): Promise<ProviderCatalogResult>;
   /**
    * 检测某个供应商的 API Key/端点是否可用（M3）。只做轻量 `/models` 探测，
    * 不发聊天请求、不产生 token 费用；失败时返回 ok=false，不抛异常。
@@ -492,6 +499,17 @@ export class EchoAgent implements AgentRunner {
     return {
       provider,
       models: [{ id: this.info.model, name: this.info.model }],
+      source: 'catalog',
+      error: null,
+    };
+  }
+
+  async listProviders(): Promise<ProviderCatalogResult> {
+    return {
+      providers: [
+        { id: 'echo', name: 'Echo' },
+        { id: 'deepseek', name: 'DeepSeek' },
+      ],
       source: 'catalog',
       error: null,
     };
@@ -2105,9 +2123,41 @@ export class PiAgent implements AgentRunner {
     };
   }
 
+  /**
+   * 只读 pi 内置目录的供应商列表（不联网、不需要 Key）。
+   * 用空凭证 runtime，避免把用户已保存的 Key 带进这次只读查询。
+   */
+  async listProviders(): Promise<ProviderCatalogResult> {
+    let pi: PiSdk;
+    try {
+      pi = await this.loadSdk();
+    } catch (err) {
+      const message = redactSecrets(describeError(err), []);
+      return { providers: [], source: 'none', error: message };
+    }
+
+    try {
+      const runtime = await this.createRuntime(pi, null, null);
+      const seen = new Set<string>();
+      const providers: ProviderCatalogEntry[] = [];
+      for (const provider of runtime.getProviders()) {
+        const id = provider?.id;
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        providers.push({ id, name: provider.name || id });
+      }
+      this.logger.info('读取供应商目录', { count: providers.length });
+      return { providers, source: 'catalog', error: null };
+    } catch (err) {
+      const message = redactSecrets(describeError(err), []);
+      this.logger.warn('读取供应商目录失败', { message });
+      return { providers: [], source: 'none', error: message };
+    }
+  }
+
   private async catalogModels(pi: PiSdk, provider: string, apiKey: string | null): Promise<ModelCatalogEntry[]> {
     try {
-      const runtime = await this.createRuntime(pi, provider, apiKey ?? '');
+      const runtime = await this.createRuntime(pi, provider, apiKey);
       const seen = new Set<string>();
       const out: ModelCatalogEntry[] = [];
       for (const model of runtime.getModels(provider)) {
@@ -2122,14 +2172,26 @@ export class PiAgent implements AgentRunner {
     }
   }
 
-  /** 建一个只带单个供应商凭证的 pi runtime（不挂会话、不联网）。 */
-  private async createRuntime(pi: PiSdk, provider: string, apiKey: string): Promise<ModelRuntime> {
+  /**
+   * 建一个只带单个供应商凭证的 pi runtime（不挂会话、不联网）。
+   * `provider` / `apiKey` 为 null 时是空凭证 runtime，只用于读目录。
+   */
+  private async createRuntime(
+    pi: PiSdk,
+    provider: string | null,
+    apiKey: string | null,
+  ): Promise<ModelRuntime> {
     return pi.ModelRuntime.create({
       // 凭证只存在于内存里：不读也不写用户的 ~/.pi/agent/auth.json。
       credentials: {
         read: async (id: string) =>
-          id === provider ? { type: 'api_key' as const, key: apiKey } : undefined,
-        list: async () => [{ providerId: provider, type: 'api_key' as const }],
+          provider !== null && apiKey !== null && id === provider
+            ? { type: 'api_key' as const, key: apiKey }
+            : undefined,
+        list: async () =>
+          provider !== null && apiKey !== null
+            ? [{ providerId: provider, type: 'api_key' as const }]
+            : [],
         modify: async (
           id: string,
           fn: (current: { type: 'api_key'; key?: string } | undefined) => Promise<
@@ -2137,7 +2199,9 @@ export class PiAgent implements AgentRunner {
           >,
         ) => {
           const current =
-            id === provider ? ({ type: 'api_key', key: apiKey } as const) : undefined;
+            provider !== null && apiKey !== null && id === provider
+              ? ({ type: 'api_key', key: apiKey } as const)
+              : undefined;
           const next = await fn(current);
           return next ?? current;
         },

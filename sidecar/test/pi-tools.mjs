@@ -418,6 +418,26 @@ async function main() {
   const customBody = upstream.requests[mark]?.body ?? {};
   check('自定义供应商请求使用配置的模型 id', customBody.model === 'my-model', customBody.model);
 
+  // 预设供应商目录：从 pi 内置目录读取，不联网。
+  client.send({ v: 1, id: 'pc-pi', type: 'provider.catalog', payload: {} });
+  const providerCatalog = await client.waitFor(
+    (f) => f?.type === 'provider.catalog' && f.replyTo === 'pc-pi',
+    15000,
+    'provider.catalog(pi)',
+  );
+  const providers = Array.isArray(providerCatalog.payload?.providers)
+    ? providerCatalog.payload.providers
+    : [];
+  check('pi 供应商目录非空', providers.length > 20, `${providers.length}`);
+  for (const id of ['deepseek', 'openai', 'anthropic']) {
+    check(
+      `pi 供应商目录包含 ${id}`,
+      providers.some((p) => p?.id === id),
+      providers.map((p) => p?.id).join(','),
+    );
+  }
+  check('provider.catalog source=catalog', providerCatalog.payload?.source === 'catalog');
+
   // 模型目录：已知供应商走 pi 目录；显式 baseUrl 走 OpenAI 兼容 /models。
   client.send({ v: 1, id: 'cat-openai', type: 'model.catalog', payload: { provider: 'openai' } });
   const dsCatalog = await client.waitFor(

@@ -417,6 +417,26 @@ namespace IcarusII.Tests
             Eq("model.catalog 空列表", 0, catalogEmpty.Models.Count);
             Eq("model.catalog 错误信息", "端点没有返回模型列表", catalogEmpty.Error);
 
+            // ---- 预设供应商目录 ----
+            var providerCatalogReq = Protocol.BuildProviderCatalogRequest();
+            Check("provider.catalog 请求是空对象",
+                providerCatalogReq.IsObject && providerCatalogReq.Count == 0);
+
+            var providerCatalog = ProviderCatalogResult.Parse(JsonValue.Parse(
+                "{\"source\":\"catalog\",\"providers\":[" +
+                "{\"id\":\"amazon-bedrock\",\"name\":\"Amazon Bedrock\"}," +
+                "{\"id\":\"deepseek\"}]}"));
+            Eq("provider.catalog 供应商数", 2, providerCatalog.Providers.Count);
+            Eq("provider.catalog 保持目录顺序", "amazon-bedrock", providerCatalog.Providers[0].Id);
+            Eq("provider.catalog providers[0].name", "Amazon Bedrock", providerCatalog.Providers[0].Name);
+            Eq("provider.catalog providers[1].name 缺省用 id", "deepseek", providerCatalog.Providers[1].Name);
+            Check("provider.catalog error 为空", string.IsNullOrEmpty(providerCatalog.Error));
+
+            var providerCatalogEmpty = ProviderCatalogResult.Parse(JsonValue.Parse(
+                "{\"providers\":[],\"source\":\"none\",\"error\":\"当前 agent 不支持供应商目录\"}"));
+            Eq("provider.catalog 空列表", 0, providerCatalogEmpty.Providers.Count);
+            Eq("provider.catalog 错误信息", "当前 agent 不支持供应商目录", providerCatalogEmpty.Error);
+
             var testReq = Protocol.BuildProviderTestRequest(
                 "openai", "https://api.openai.com/v1", "sk-test");
             Eq("provider.test provider", "openai", testReq["provider"].AsString());

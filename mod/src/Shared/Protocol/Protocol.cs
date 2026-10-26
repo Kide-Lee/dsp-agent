@@ -37,6 +37,9 @@ namespace IcarusII.Common.Protocol
         /// <summary>mod → sidecar：拉取某供应商的可用模型目录（M3）。</summary>
         public const string ModelCatalog = "model.catalog";
 
+        /// <summary>mod → sidecar：列出 pi 内置目录的全部供应商（设置页预设下拉框）。</summary>
+        public const string ProviderCatalog = "provider.catalog";
+
         /// <summary>mod → sidecar：检测某供应商的 Key/端点是否可用（M3）。</summary>
         public const string ProviderTest = "provider.test";
 
@@ -300,6 +303,12 @@ namespace IcarusII.Common.Protocol
             if (!string.IsNullOrEmpty(baseUrl)) p.Set("baseUrl", baseUrl);
             if (!string.IsNullOrEmpty(apiKey)) p.Set("apiKey", apiKey);
             return p;
+        }
+
+        /// <summary>构造 provider.catalog 请求：只读 pi 目录，不带任何参数。</summary>
+        public static JsonValue BuildProviderCatalogRequest()
+        {
+            return JsonValue.NewObject();
         }
 
         /// <summary>构造 provider.test 请求。apiKey 只用于本次探测，sidecar 不回传。</summary>
@@ -963,6 +972,68 @@ namespace IcarusII.Common.Protocol
                 {
                     var model = ModelInfo.Parse(item);
                     if (model != null) result.Models.Add(model);
+                }
+            }
+            return result;
+        }
+    }
+
+    /// <summary>provider.catalog 里的一条供应商（只含展示所需的 id/name）。</summary>
+    public sealed class ProviderCatalogEntry
+    {
+        public string Id { get; private set; }
+        public string Name { get; private set; }
+
+        public static ProviderCatalogEntry Parse(JsonValue value)
+        {
+            if (value == null || !value.IsObject) return null;
+            var id = value["id"].AsString(null);
+            if (string.IsNullOrEmpty(id)) return null;
+            return new ProviderCatalogEntry
+            {
+                Id = id,
+                Name = value["name"].AsString(id),
+            };
+        }
+
+        public static ProviderCatalogEntry Create(string id, string name = null)
+        {
+            return new ProviderCatalogEntry
+            {
+                Id = id,
+                Name = string.IsNullOrEmpty(name) ? id : name,
+            };
+        }
+
+        public override string ToString() => string.IsNullOrEmpty(Name) ? Id : Name;
+    }
+
+    /// <summary>provider.catalog 的响应（pi 内置供应商目录，顺序即目录顺序）。</summary>
+    public sealed class ProviderCatalogResult
+    {
+        public List<ProviderCatalogEntry> Providers { get; private set; }
+        public string Source { get; private set; }
+        public string Error { get; private set; }
+
+        public ProviderCatalogResult()
+        {
+            Providers = new List<ProviderCatalogEntry>();
+        }
+
+        public static ProviderCatalogResult Parse(JsonValue value)
+        {
+            var result = new ProviderCatalogResult();
+            if (value == null || !value.IsObject) return result;
+            result.Source = value["source"].AsString(null);
+            result.Error = value["error"].AsString(null);
+
+            var providers = value["providers"];
+            if (providers != null && providers.IsArray)
+            {
+                foreach (var item in providers.Items)
+                {
+                    var entry = ProviderCatalogEntry.Parse(item);
+                    if (entry != null) result.Providers.Add(entry);
                 }
             }
             return result;

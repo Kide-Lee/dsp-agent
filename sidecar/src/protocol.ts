@@ -66,6 +66,8 @@ export const MessageType = {
   ReplyTime: 'reply.time',
   // M3：拉取供应商的可用模型目录 / 检测 Key
   ModelCatalog: 'model.catalog',
+  // 设置页预设供应商下拉框：pi 内置目录的全部供应商
+  ProviderCatalog: 'provider.catalog',
   ProviderTest: 'provider.test',
   // M2：只读游戏工具（协议附录 B）
   ToolCall: 'tool_call',
@@ -1147,6 +1149,19 @@ export function parseModelCatalogPayload(payload: JsonObject): ModelCatalogReque
   return { provider, baseUrl, apiKey };
 }
 
+/** `provider.catalog` 里的一条供应商（只含展示所需的 id/name）。 */
+export interface ProviderCatalogEntry {
+  id: string;
+  name: string;
+}
+
+/** `provider.catalog` 响应：pi 内置目录的全部供应商，顺序即目录顺序。 */
+export interface ProviderCatalogResult {
+  providers: ProviderCatalogEntry[];
+  source: 'catalog' | 'none';
+  error: string | null;
+}
+
 export interface ProviderTestRequest {
   provider: string;
   baseUrl: string | null;
@@ -1208,6 +1223,15 @@ export function buildModelCatalogPayload(result: ModelCatalogResult): JsonObject
   };
   if (result.error) payload['error'] = result.error;
   if (result.resolvedBaseUrl) payload['resolvedBaseUrl'] = result.resolvedBaseUrl;
+  return payload;
+}
+
+export function buildProviderCatalogPayload(result: ProviderCatalogResult): JsonObject {
+  const payload: JsonObject = {
+    providers: result.providers.map((provider) => ({ id: provider.id, name: provider.name })),
+    source: result.source,
+  };
+  if (result.error) payload['error'] = result.error;
   return payload;
 }
 

@@ -33,15 +33,17 @@ namespace IcarusII.UI
         private const string DefaultProvider = "deepseek";
         private const string DefaultModel = "deepseek-v4-flash";
 
-        private static readonly string[] PresetIds =
+        // provider.catalog 返回前（或老 sidecar 不支持时）的兜底短名单；
+        // 正常情况下会被 pi 目录的完整列表覆盖。
+        private static readonly string[] FallbackPresetIds =
         {
-            "deepseek", "openai", "anthropic", "google", "openrouter", "custom",
+            "deepseek", "openai", "anthropic", "google", "openrouter",
         };
-        private static readonly string[] PresetNames =
+        private static readonly string[] FallbackPresetNames =
         {
-            "DeepSeek", "OpenAI", "Anthropic", "Google Gemini", "OpenRouter", "自定义…",
+            "DeepSeek", "OpenAI", "Anthropic", "Google Gemini", "OpenRouter",
         };
-        private const int PresetCustomIndex = 5;
+        private static readonly List<ProviderCatalogEntry> _presetProviders = CreateFallbackPresets();
 
         // 原生文字/控件取值：label 18px、#FFFFFFC8（200/255）；
         // 输入框底 #0000006E（110/255）；ComboBox 文本 16px。
@@ -108,6 +110,12 @@ namespace IcarusII.UI
         private static Text _hint;
         private static UIComboBox _presetCombo;
         private static bool _suppressPresetEvent;
+        private static bool _presetLoadedFromCatalog;
+        private static volatile ProviderCatalogResult _providerCatalogResult;
+        private static volatile bool _providerCatalogPending;
+        private static string _providerCatalogRequestId;
+        private static float _providerCatalogRequestedAt;
+        private static float _providerCatalogRetryAt;
 
         // ---- Key 检测 ----
         private static Button _testKeyButton;
@@ -142,10 +150,21 @@ namespace IcarusII.UI
             // config.state 是在客户端接收线程上回调的；这里只置脏标记，
             // 真正的刷新留给主线程的 Watch()，避免跨线程碰 UnityEngine 对象。
             _client.ConfigChanged += _ => _refreshPending = true;
-            // model.catalog 的响应也在接收线程上；只解析并存结果，Watch() 主线程再落 UI。
+            // model.catalog / provider.catalog 的响应也在接收线程上；
+            // 只解析并存结果，Watch() 主线程再落 UI。
             _client.Received -= OnClientReceived;
             _client.Received += OnClientReceived;
+            // 重连后目录可能随 sidecar 升级变化：标记为未加载，下次打开设置页重拉。
+            _client.StateChanged -= OnClientStateChanged;
+            _client.StateChanged += OnClientStateChanged;
             _refreshPending = true;
+        }
+
+        private static void OnClientStateChanged(ConnectionState state, string detail)
+        {
+            if (state != ConnectionState.Ready || !_presetLoadedFromCatalog) return;
+            _presetLoadedFromCatalog = false;
+            _providerCatalogRetryAt = 0f;
         }
 
         private static int _watchTick;
@@ -164,6 +183,8 @@ namespace IcarusII.UI
             var window = uiRoot != null ? uiRoot.optionWindow : null;
             if (window == null || !window.gameObject.activeInHierarchy) return;
 
+            ConsumeProviderCatalog();
+            EnsureProviderCatalog();
             ConsumeCatalogResult();
             ConsumeTestKeyResult();
 
@@ -573,6 +594,7 @@ namespace IcarusII.UI
             presetLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 20f;
             var presetRow = AddRow(pane, "provider-preset-row", 28f, 0f);
             _presetCombo = CreatePresetCombo(window, presetRow);
+            EnsureProviderCatalog();
 
             var addRow = AddRow(pane, "add-provider-row", 28f, 0f);
             _addProviderField = AddInput(addRow, "供应商 ID", false, 26f, 0f);
@@ -630,9 +652,9 @@ namespace IcarusII.UI
                 combo.translated = true;
                 combo.Items.Clear();
                 combo.ItemsData.Clear();
-                for (var i = 0; i < PresetNames.Length; i++)
+                for (var i = 0; i < _presetProviders.Count; i++)
                 {
-                    combo.Items.Add(PresetNames[i]);
+                    combo.Items.Add(_presetProviders[i].Name);
                     combo.ItemsData.Add(i);
                 }
                 combo.UpdateItems();
@@ -671,20 +693,9 @@ namespace IcarusII.UI
         {
             if (_suppressPresetEvent || _presetCombo == null) return;
             var index = _presetCombo.itemIndex;
-            if (index < 0 || index >= PresetIds.Length) return;
+            if (index < 0 || index >= _presetProviders.Count) return;
 
-            if (index == PresetCustomIndex)
-            {
-                if (_addProviderField != null)
-                {
-                    _addProviderField.text = string.Empty;
-                    _addProviderField.ActivateInputField();
-                }
-                SetEditorHint("输入自定义供应商 ID 和 API 地址，然后点 + 添加", false);
-                return;
-            }
-
-            var id = PresetIds[index];
+            var id = _presetProviders[index].Id;
             if (_addProviderField != null) _addProviderField.text = id;
             var existing = _providers.Find((p) => p.Id == id);
             if (existing != null)
@@ -694,7 +705,7 @@ namespace IcarusII.UI
             }
             else
             {
-                SetEditorHint("已选择 " + PresetNames[index] + "；点 + 添加", false);
+                SetEditorHint("已选择 " + _presetProviders[index].Name + "；点 + 添加", false);
             }
         }
 
@@ -870,12 +881,117 @@ namespace IcarusII.UI
                 _catalogPending = false;
                 return;
             }
+            if (type == Protocol.ProviderCatalog)
+            {
+                if (string.IsNullOrEmpty(replyTo) || replyTo != _providerCatalogRequestId) return;
+                _providerCatalogResult = ProviderCatalogResult.Parse(payload);
+                _providerCatalogPending = false;
+                return;
+            }
             if (type == Protocol.ProviderTest)
             {
                 if (string.IsNullOrEmpty(replyTo) || replyTo != _testKeyRequestId) return;
                 _testKeyResult = ProviderTestResult.Parse(payload);
                 _testKeyPending = false;
             }
+        }
+
+        /// <summary>主线程（Watch）：拉一次 pi 内置目录的供应商列表（只读、不联网）。</summary>
+        private static void EnsureProviderCatalog()
+        {
+            if (_presetLoadedFromCatalog || _providerCatalogPending) return;
+            if (_client == null || _client.State != ConnectionState.Ready) return;
+            if (Time.realtimeSinceStartup < _providerCatalogRetryAt) return;
+
+            var requestId = _client.SendProviderCatalog();
+            if (string.IsNullOrEmpty(requestId))
+            {
+                _providerCatalogRetryAt = Time.realtimeSinceStartup + 5f;
+                return;
+            }
+            _providerCatalogRequestId = requestId;
+            _providerCatalogPending = true;
+            _providerCatalogRequestedAt = Time.realtimeSinceStartup;
+        }
+
+        /// <summary>主线程（Watch）：把后台拿到的供应商目录落到下拉框。</summary>
+        private static void ConsumeProviderCatalog()
+        {
+            if (_providerCatalogPending && Time.realtimeSinceStartup - _providerCatalogRequestedAt > 8f)
+            {
+                _providerCatalogPending = false;
+                _providerCatalogRetryAt = Time.realtimeSinceStartup + 20f;
+            }
+
+            var result = _providerCatalogResult;
+            if (result == null) return;
+            _providerCatalogResult = null;
+            _providerCatalogPending = false;
+
+            if (result.Providers.Count == 0)
+            {
+                // 老 sidecar / 读取失败：保留兜底短名单，过一会儿再试。
+                _providerCatalogRetryAt = Time.realtimeSinceStartup + 30f;
+                if (!string.IsNullOrEmpty(result.Error))
+                    Plugin.Log.LogWarning("[模型页] 读取预设供应商失败：" + result.Error);
+                return;
+            }
+
+            _presetProviders.Clear();
+            _presetProviders.AddRange(result.Providers);
+            _presetLoadedFromCatalog = true;
+            RebuildPresetCombo();
+            Plugin.Log.LogInfo("[模型页] 已从 pi 目录加载 " + _presetProviders.Count + " 个预设供应商。");
+        }
+
+        /// <summary>按当前目录重建下拉项；选中项按当前供应商对齐（找不到则留空）。</summary>
+        private static void RebuildPresetCombo()
+        {
+            if (_presetCombo == null) return;
+            _suppressPresetEvent = true;
+            try
+            {
+                _presetCombo.Items.Clear();
+                _presetCombo.ItemsData.Clear();
+                for (var i = 0; i < _presetProviders.Count; i++)
+                {
+                    _presetCombo.Items.Add(_presetProviders[i].Name);
+                    _presetCombo.ItemsData.Add(i);
+                }
+                _presetCombo.UpdateItems();
+                var draft = SelectedDraft;
+                _presetCombo.itemIndex = draft != null ? IndexOfPreset(draft.Id) : -1;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning("[模型页] 刷新预设供应商下拉框失败：" + ex.Message);
+            }
+            finally
+            {
+                _suppressPresetEvent = false;
+            }
+        }
+
+        private static int IndexOfPreset(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return -1;
+            for (var i = 0; i < _presetProviders.Count; i++)
+            {
+                if (string.Equals(_presetProviders[i].Id, id, StringComparison.Ordinal)) return i;
+            }
+            return -1;
+        }
+
+        private static List<ProviderCatalogEntry> CreateFallbackPresets()
+        {
+            var list = new List<ProviderCatalogEntry>();
+            for (var i = 0; i < FallbackPresetIds.Length; i++)
+            {
+                list.Add(ProviderCatalogEntry.Create(
+                    FallbackPresetIds[i],
+                    i < FallbackPresetNames.Length ? FallbackPresetNames[i] : null));
+            }
+            return list;
         }
 
         /// <summary>主线程（Watch）：把后台拿到的目录落到弹层。</summary>
@@ -1652,8 +1768,8 @@ namespace IcarusII.UI
 
             if (_presetCombo != null)
             {
-                var presetIndex = has ? Array.IndexOf(PresetIds, draft.Id) : 0;
-                if (presetIndex < 0) presetIndex = PresetCustomIndex;
+                // 目录里没有的自定义供应商留空，ID 由下方输入框自己维护。
+                var presetIndex = has ? IndexOfPreset(draft.Id) : -1;
                 _suppressPresetEvent = true;
                 try { _presetCombo.itemIndex = presetIndex; }
                 finally { _suppressPresetEvent = false; }

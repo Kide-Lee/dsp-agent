@@ -33,6 +33,26 @@ async function main() {
 
     client.send({
       v: 1,
+      id: 'pc-echo',
+      type: 'provider.catalog',
+      payload: {},
+    });
+    const providerReply = await client.waitFor(
+      (f) => f?.type === 'provider.catalog' && f.replyTo === 'pc-echo',
+      5000,
+      'provider.catalog(echo)',
+    );
+    const providers = Array.isArray(providerReply.payload?.providers)
+      ? providerReply.payload.providers
+      : [];
+    check('echo agent 返回 provider.catalog', providers.length === 2, JSON.stringify(providers));
+    check('provider.catalog 保持目录顺序', providers[0]?.id === 'echo', providers[0]?.id);
+    check('provider.catalog 带显示名', providers[0]?.name === 'Echo', providers[0]?.name);
+    check('provider.catalog source=catalog', providerReply.payload?.source === 'catalog');
+    check('provider.catalog 没有 error 字段', !('error' in (providerReply.payload ?? {})));
+
+    client.send({
+      v: 1,
       id: 'cat-bad',
       type: 'model.catalog',
       payload: {},

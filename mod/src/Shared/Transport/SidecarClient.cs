@@ -180,6 +180,24 @@ namespace IcarusII.Common.Transport
         }
 
         /// <summary>
+        /// 列出 pi 内置目录的全部供应商。响应是 `provider.catalog`，
+        /// 通过 <see cref="Received"/> 事件按 replyTo 关联。
+        /// </summary>
+        public string SendProviderCatalog()
+        {
+            if (_state != ConnectionState.Ready) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ProviderCatalog,
+                Protocol.Protocol.BuildProviderCatalogRequest(),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
+        /// <summary>
         /// 拉取某供应商的可用模型目录（M3）。apiKey 只用于本次探测；
         /// 响应是 `model.catalog`，通过 <see cref="Received"/> 事件按 replyTo 关联。
         /// </summary>

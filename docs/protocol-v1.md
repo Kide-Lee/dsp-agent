@@ -426,6 +426,33 @@ mod                                   sidecar
   地址写错时（OpenAI 兼容缺 `/v1`、Anthropic 多 `/v1`、Gemini 缺版本段）mod 会用它
   补全输入框，避免「检测通过、发消息 404」。
 
+#### `provider.catalog`（mod → sidecar → mod）
+
+设置页的「预设供应商」下拉框使用，列出 pi 内置目录里的全部供应商，**顺序与目录一致**。
+请求不带业务字段：
+
+```json
+{ "v": 1, "id": "m-15", "type": "provider.catalog", "payload": {} }
+```
+
+响应（`replyTo` = 请求 id）：
+
+```json
+{ "v": 1, "id": "s-15", "type": "provider.catalog", "replyTo": "m-15",
+  "payload": {
+    "source": "catalog",
+    "providers": [
+      { "id": "amazon-bedrock", "name": "Amazon Bedrock" },
+      { "id": "anthropic", "name": "Anthropic" },
+      { "id": "deepseek", "name": "DeepSeek" }
+    ]
+  } }
+```
+
+- 只读 pi 目录，不联网、不需要 Key、不落盘；`providers` 只含 `id` / `name`。
+- 失败时 `providers: []`，`payload.error` 是人类可读的错误。
+- 老 sidecar 不实现该消息：mod 必须忽略超时并回退到内置短名单，不能因此挡住自定义供应商输入。
+
 #### `provider.test`（mod → sidecar → mod）
 
 设置页的「检测」按钮使用，只做轻量的 `GET /models` 探测，不发聊天请求、不产生 token 费用。
