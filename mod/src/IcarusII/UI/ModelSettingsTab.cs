@@ -33,17 +33,7 @@ namespace IcarusII.UI
         private const string DefaultProvider = "deepseek";
         private const string DefaultModel = "deepseek-v4-flash";
 
-        // provider.catalog 返回前（或老 sidecar 不支持时）的兜底短名单；
-        // 正常情况下会被 pi 目录的完整列表覆盖。
-        private static readonly string[] FallbackPresetIds =
-        {
-            "deepseek", "openai", "anthropic", "google", "openrouter",
-        };
-        private static readonly string[] FallbackPresetNames =
-        {
-            "DeepSeek", "OpenAI", "Anthropic", "Google Gemini", "OpenRouter",
-        };
-        private static readonly List<ProviderCatalogEntry> _presetProviders = CreateFallbackPresets();
+        private static readonly List<ProviderCatalogEntry> _presetProviders = new List<ProviderCatalogEntry>();
 
         // 原生文字/控件取值：label 18px、#FFFFFFC8（200/255）；
         // 输入框底 #0000006E（110/255）；ComboBox 文本 16px。
@@ -110,12 +100,10 @@ namespace IcarusII.UI
         private static Text _hint;
         private static UIComboBox _presetCombo;
         private static bool _suppressPresetEvent;
-        private static bool _presetLoadedFromCatalog;
+        private static bool _providerCatalogLoaded;
         private static volatile ProviderCatalogResult _providerCatalogResult;
         private static volatile bool _providerCatalogPending;
         private static string _providerCatalogRequestId;
-        private static float _providerCatalogRequestedAt;
-        private static float _providerCatalogRetryAt;
 
         // ---- Key 检测 ----
         private static Button _testKeyButton;
@@ -154,17 +142,7 @@ namespace IcarusII.UI
             // 只解析并存结果，Watch() 主线程再落 UI。
             _client.Received -= OnClientReceived;
             _client.Received += OnClientReceived;
-            // 重连后目录可能随 sidecar 升级变化：标记为未加载，下次打开设置页重拉。
-            _client.StateChanged -= OnClientStateChanged;
-            _client.StateChanged += OnClientStateChanged;
             _refreshPending = true;
-        }
-
-        private static void OnClientStateChanged(ConnectionState state, string detail)
-        {
-            if (state != ConnectionState.Ready || !_presetLoadedFromCatalog) return;
-            _presetLoadedFromCatalog = false;
-            _providerCatalogRetryAt = 0f;
         }
 
         private static int _watchTick;
@@ -899,49 +877,26 @@ namespace IcarusII.UI
         /// <summary>主线程（Watch）：拉一次 pi 内置目录的供应商列表（只读、不联网）。</summary>
         private static void EnsureProviderCatalog()
         {
-            if (_presetLoadedFromCatalog || _providerCatalogPending) return;
+            if (_providerCatalogLoaded || _providerCatalogPending) return;
             if (_client == null || _client.State != ConnectionState.Ready) return;
-            if (Time.realtimeSinceStartup < _providerCatalogRetryAt) return;
 
             var requestId = _client.SendProviderCatalog();
-            if (string.IsNullOrEmpty(requestId))
-            {
-                _providerCatalogRetryAt = Time.realtimeSinceStartup + 5f;
-                return;
-            }
+            if (string.IsNullOrEmpty(requestId)) return;
             _providerCatalogRequestId = requestId;
             _providerCatalogPending = true;
-            _providerCatalogRequestedAt = Time.realtimeSinceStartup;
         }
 
         /// <summary>主线程（Watch）：把后台拿到的供应商目录落到下拉框。</summary>
         private static void ConsumeProviderCatalog()
         {
-            if (_providerCatalogPending && Time.realtimeSinceStartup - _providerCatalogRequestedAt > 8f)
-            {
-                _providerCatalogPending = false;
-                _providerCatalogRetryAt = Time.realtimeSinceStartup + 20f;
-            }
-
             var result = _providerCatalogResult;
             if (result == null) return;
             _providerCatalogResult = null;
             _providerCatalogPending = false;
-
-            if (result.Providers.Count == 0)
-            {
-                // 老 sidecar / 读取失败：保留兜底短名单，过一会儿再试。
-                _providerCatalogRetryAt = Time.realtimeSinceStartup + 30f;
-                if (!string.IsNullOrEmpty(result.Error))
-                    Plugin.Log.LogWarning("[模型页] 读取预设供应商失败：" + result.Error);
-                return;
-            }
-
+            _providerCatalogLoaded = true;
             _presetProviders.Clear();
             _presetProviders.AddRange(result.Providers);
-            _presetLoadedFromCatalog = true;
             RebuildPresetCombo();
-            Plugin.Log.LogInfo("[模型页] 已从 pi 目录加载 " + _presetProviders.Count + " 个预设供应商。");
         }
 
         /// <summary>按当前目录重建下拉项；选中项按当前供应商对齐（找不到则留空）。</summary>
@@ -980,18 +935,6 @@ namespace IcarusII.UI
                 if (string.Equals(_presetProviders[i].Id, id, StringComparison.Ordinal)) return i;
             }
             return -1;
-        }
-
-        private static List<ProviderCatalogEntry> CreateFallbackPresets()
-        {
-            var list = new List<ProviderCatalogEntry>();
-            for (var i = 0; i < FallbackPresetIds.Length; i++)
-            {
-                list.Add(ProviderCatalogEntry.Create(
-                    FallbackPresetIds[i],
-                    i < FallbackPresetNames.Length ? FallbackPresetNames[i] : null));
-            }
-            return list;
         }
 
         /// <summary>主线程（Watch）：把后台拿到的目录落到弹层。</summary>

@@ -286,8 +286,8 @@ WINEDLLOVERRIDES="winhttp=n,b" %command%
 **「获取可用模型」** 会从 pi 内置目录或供应商的 `/models` 端点拉取列表，
 在弹层里点「+ 添加」即可加入当前供应商（未知供应商需要先填 API 地址）。
 新增供应商时可用**预设下拉框**——列表由 `provider.catalog` 从 pi 内置目录自动拉取，
-顺序与目录一致；目录加载失败时回退到内置短名单。自定义供应商仍可直接在 ID 输入框填写；
-API 密钥旁的**「检测」**按钮会做一次 `GET /models` 轻量探测，直接显示 Key 是否可用和延迟。
+顺序与目录一致；自定义供应商仍可直接在 ID 输入框填写。API 密钥旁的**「检测」**
+按钮会做一次 `GET /models` 轻量探测，直接显示 Key 是否可用和延迟。
 
 「检测」和「获取可用模型」共用同一套端点规则：按供应商使用各自的鉴权头
 （OpenAI 兼容用 `Authorization: Bearer`，Anthropic 用 `x-api-key`，Gemini 用

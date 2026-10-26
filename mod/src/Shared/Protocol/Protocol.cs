@@ -996,15 +996,6 @@ namespace IcarusII.Common.Protocol
             };
         }
 
-        public static ProviderCatalogEntry Create(string id, string name = null)
-        {
-            return new ProviderCatalogEntry
-            {
-                Id = id,
-                Name = string.IsNullOrEmpty(name) ? id : name,
-            };
-        }
-
         public override string ToString() => string.IsNullOrEmpty(Name) ? Id : Name;
     }
 

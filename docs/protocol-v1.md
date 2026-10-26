@@ -450,8 +450,7 @@ mod                                   sidecar
 ```
 
 - 只读 pi 目录，不联网、不需要 Key、不落盘；`providers` 只含 `id` / `name`。
-- 失败时 `providers: []`，`payload.error` 是人类可读的错误。
-- 老 sidecar 不实现该消息：mod 必须忽略超时并回退到内置短名单，不能因此挡住自定义供应商输入。
+- 失败时 `providers: []`，`payload.error` 是人类可读的错误；mod 不维护备用名单。
 
 #### `provider.test`（mod → sidecar → mod）
 
