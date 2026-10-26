@@ -28,14 +28,19 @@ if (!fsTool) {
   console.error('缺少 blueprint_fs');
   process.exit(1);
 }
-const readonlyFsTool = createBlueprintTools(
+
+let confirmRequest = null;
+const denyFs = createBlueprintTools(
   undefined,
   undefined,
   undefined,
   undefined,
   workspace,
   undefined,
-  () => 'readonly',
+  async (request) => {
+    confirmRequest = request;
+    return false;
+  },
 ).find((tool) => tool.name === 'blueprint_fs');
 
 async function run(params) {
@@ -140,29 +145,21 @@ try {
     check('不能删除蓝图根', rootDelete.content[0].text.includes('[root_protected]'), rootDelete.content[0].text.slice(0, 100));
   }
 
-  console.log('\n── 5. 只读权限 ──');
+  console.log('\n── 5. 权限确认 ──');
   {
-    const ls = await readonlyFsTool.execute('ro-1', { op: 'ls', path: '/IcarusII' });
-    check('只读仍可 ls', !ls.content[0].text.startsWith('['), ls.content[0].text.slice(0, 100));
-
-    const write = await readonlyFsTool.execute('ro-2', {
+    const denied = await denyFs.execute('fs-deny', {
       op: 'write',
-      path: '/IcarusII/只读.txt',
+      path: '/IcarusII/denied.txt',
       content: validText,
     });
+    check('写蓝图前请求确认', confirmRequest?.tool === 'blueprint_fs', JSON.stringify(confirmRequest));
+    check('蓝图写确认 risk=1', confirmRequest?.risk === 1, String(confirmRequest?.risk));
     check(
-      '只读拒绝 write',
-      write.content[0].text.includes('[permission_denied]'),
-      write.content[0].text.slice(0, 100),
+      '拒绝后返回 confirmation_denied',
+      denied.content[0].text.includes('[confirmation_denied]'),
+      denied.content[0].text.slice(0, 100),
     );
-    check('只读 write 没有落盘', !existsSync(join(root, 'IcarusII/只读.txt')));
-
-    const mkdir = await readonlyFsTool.execute('ro-3', { op: 'mkdir', path: '/IcarusII/只读目录' });
-    check(
-      '只读拒绝 mkdir',
-      mkdir.content[0].text.includes('[permission_denied]'),
-      mkdir.content[0].text.slice(0, 100),
-    );
+    check('拒绝后不落盘', !existsSync(join(root, 'IcarusII/denied.txt')));
   }
 
   console.log('\n── 6. 卡片提取 ──');

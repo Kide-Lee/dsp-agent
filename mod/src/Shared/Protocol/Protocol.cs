@@ -182,12 +182,36 @@ namespace IcarusII.Common.Protocol
         public const string ToolTodoAdd = "game_todo_add";
         public const string ToolTodoRemove = "game_todo_remove";
         public const string ToolTakeOutput = "game_take_output";
-        /// <summary>只写蓝图文件、不改游戏状态的工具；只读权限同样拒绝。</summary>
         public const string ToolCopyBlueprint = "game_copy_blueprint";
 
-        /// <summary>sidecar 本地蓝图写工具；只读权限下从工具菜单隐藏。</summary>
+        /// <summary>
+        /// sidecar 本地「写文件」工具。它们不改变游戏状态，所以不需要 mod 令牌，
+        /// 但权限档位同样要求确认（只读必问、受限/接管对 risk 1 自动放行）。
+        /// </summary>
         public const string ToolBlueprintSave = "blueprint_save";
         public const string ToolBlueprintGenerate = "blueprint_generate";
+        public const string ToolBlueprintFs = "blueprint_fs";
+
+        public static readonly string[] LocalWriteToolNames =
+        {
+            ToolBlueprintSave,
+            ToolBlueprintGenerate,
+            ToolBlueprintFs,
+        };
+
+        public static bool IsLocalWriteTool(string toolName)
+        {
+            if (string.IsNullOrEmpty(toolName)) return false;
+            for (int i = 0; i < LocalWriteToolNames.Length; i++)
+                if (string.Equals(LocalWriteToolNames[i], toolName, StringComparison.Ordinal)) return true;
+            return false;
+        }
+
+        /// <summary>写操作（游戏状态或蓝图文件）；确认令牌只用于游戏状态写工具。</summary>
+        public static bool IsAnyWriteTool(string toolName)
+        {
+            return IsWriteTool(toolName) || IsLocalWriteTool(toolName);
+        }
 
         /// <summary>沙盒专属工具名（尚未实现；先用于门禁/测试）。</summary>
         public const string ToolSpawnItem = "game_spawn_item";
@@ -232,6 +256,8 @@ namespace IcarusII.Common.Protocol
             ToolTodoRemove,
             ToolTakeOutput,
             ToolUndoLastWrite,
+            // 只写蓝图文件，但属于游戏工具；risk 1，走同一确认/令牌链路。
+            ToolCopyBlueprint,
         };
 
         public static bool IsWriteTool(string toolName)
@@ -243,15 +269,20 @@ namespace IcarusII.Common.Protocol
         }
 
         /// <summary>
-        /// 只读权限下 mod 侧要拒绝的工具。sidecar 只读时本来就不会注册写工具，
-        /// 这里是第二道门：即使 sidecar 被替换/出错，mod 也不执行。
+        /// 当前权限档位是否对某个写操作直接放行、不弹确认。
+        ///
+        /// - readonly：所有写操作都要问；
+        /// - limited：只放行 risk 1（可逆、无存档副作用）的写操作；
+        /// - takeover：全部放行。
+        ///
+        /// 读操作（risk 0）本来就不走确认，返回 true 也不影响。
         /// </summary>
-        public static bool IsReadonlyBlockedTool(string toolName)
+        public static bool AutoApprovesWrite(string permission, int risk)
         {
-            return IsWriteTool(toolName)
-                || string.Equals(toolName, ToolCopyBlueprint, StringComparison.Ordinal)
-                || string.Equals(toolName, ToolBlueprintSave, StringComparison.Ordinal)
-                || string.Equals(toolName, ToolBlueprintGenerate, StringComparison.Ordinal);
+            if (risk <= 0) return true;
+            if (string.Equals(permission, PermissionTakeover, StringComparison.Ordinal)) return true;
+            if (string.Equals(permission, PermissionLimited, StringComparison.Ordinal)) return risk <= 1;
+            return false;
         }
 
         /// <summary>确认请求默认有效期（设计 §9.3）。</summary>
@@ -297,8 +328,6 @@ namespace IcarusII.Common.Protocol
         public const string CodeConfirmationExpired = "confirmation_expired";
         public const string CodeConfirmationDenied = "confirmation_denied";
 
-        /// <summary>只读权限：写操作/写蓝图被拒绝。</summary>
-        public const string CodePermissionDenied = "permission_denied";
 
         // status.state 取值
         public const string StateIdle = "idle";

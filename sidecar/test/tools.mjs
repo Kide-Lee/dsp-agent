@@ -177,37 +177,61 @@ async function run() {
     check('无 game 能力时仍声明 kb/wiki/blueprint/脚本', emptyTools.length === 12 && emptyTools.every((name) => name.startsWith('kb_') || name.startsWith('wiki_') || name.startsWith('blueprint_') || name === 'run_script'));
   }
 
-  console.log('── 1b. 只读权限：写工具不注册、调用被拒 ──');
+  console.log('── 1b. 权限不是能力：只读仍注册写工具，但写操作走确认 ──');
   {
     const caps = ['game.read.v1', 'game.build.v1'];
     const { socket, session, state } = makeSession({
       permission: 'readonly',
-      callOptions: { name: 'game_set_recipe', risk: 2, timeoutMs: 80 },
+      callOptions: { name: 'game_set_recipe', risk: 2, timeoutMs: 900 },
     });
     session.handleFrame(Buffer.from(JSON.stringify(hello(caps))), false);
     const ready = socket.frames.find((f) => f.type === 'ready');
     const tools = ready?.payload?.tools ?? [];
-    check('只读 ready.tools 不含写工具', !tools.includes('game_set_recipe'), JSON.stringify(tools));
+    check('只读 ready.tools 仍含写工具', tools.includes('game_set_recipe'), JSON.stringify(tools));
     check('只读 ready.tools 仍含读工具', tools.includes('game_get_overview'));
     check('只读 ready.config.permissionLevel', ready?.payload?.config?.permissionLevel === 'readonly');
-    check(
-      '只读仍保留 run_script（由脚本自身拒绝写）',
-      tools.includes('run_script'),
-      JSON.stringify(tools),
-    );
 
     session.handleFrame(
-      Buffer.from(JSON.stringify({ v: 1, id: 'm-1c', type: 'prompt', payload: { text: '改配方' } })),
+      Buffer.from(JSON.stringify({ v: 1, id: 'm-1b', type: 'prompt', payload: { text: '改配方' } })),
       false,
     );
-    const gotMessage = await waitFor(() => socket.frames.some((f) => f.type === 'message'), 1500);
-    check('只读写调用后 agent 不悬挂', gotMessage);
-    check(
-      '只读写调用返回 permission_denied',
-      state.result?.error?.code === 'permission_denied',
-      state.result?.error?.code,
+    const gotConfirm = await waitFor(() => socket.frames.some((f) => f.type === 'confirm_request'));
+    check('只读写操作先发 confirm_request', gotConfirm);
+    const confirm = socket.frames.find((f) => f.type === 'confirm_request');
+    check('确认请求工具名正确', confirm?.payload?.tool === 'game_set_recipe');
+    check('确认请求 risk=2', confirm?.payload?.risk === 2, confirm?.payload?.risk);
+    check('确认前没有 tool_call', !socket.frames.some((f) => f.type === 'tool_call'));
+
+    session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-1b-c',
+          type: 'confirm_result',
+          replyTo: confirm.id,
+          payload: { requestId: confirm.payload.requestId, decision: 'allow', token: confirm.payload.token },
+        }),
+      ),
+      false,
     );
-    check('只读没有向 mod 发 tool_call', !socket.frames.some((f) => f.type === 'tool_call'));
+    const gotCall = await waitFor(() => socket.frames.some((f) => f.type === 'tool_call'));
+    check('玩家同意后发出 tool_call', gotCall);
+    const call = socket.frames.find((f) => f.type === 'tool_call');
+    check('tool_call 携带确认令牌', typeof call?.payload?.confirmToken === 'string');
+    session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-1b-r',
+          type: 'tool_result',
+          replyTo: call.payload.callId,
+          payload: { ok: true, data: { display: 'ok' }, error: null, meta: {} },
+        }),
+      ),
+      false,
+    );
+    await waitFor(() => state.result !== null, 1500);
+    check('只读写操作按正常提交执行', state.result?.ok === true, JSON.stringify(state.result));
   }
 
   console.log('── 1c. prompt.requiredTool 透传给 agent ──');

@@ -136,7 +136,7 @@ export interface ConfigData {
   activeModel: string;
   /** 思考档位；`off` = 不请求思考（默认，控制成本）。 */
   thinkingLevel: ThinkingLevelName;
-  /** 权限档位；`limited` = 写操作逐次确认（默认）。 */
+  /** 权限档位；`limited`（受限）= risk 1 放行、risk 2 确认，默认。 */
   permissionLevel: PermissionLevel;
 }
 

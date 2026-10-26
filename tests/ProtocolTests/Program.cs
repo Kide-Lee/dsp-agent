@@ -340,12 +340,17 @@ namespace IcarusII.Tests
             // 权限档位（readonly / limited / takeover）
             Check("思考低档存在", Protocol.ThinkingLow == "low");
             Check("只读权限合法", Protocol.IsValidPermissionLevel(Protocol.PermissionReadonly));
-            Check("有限权限合法", Protocol.IsValidPermissionLevel(Protocol.PermissionLimited));
+            Check("受限权限合法", Protocol.IsValidPermissionLevel(Protocol.PermissionLimited));
             Check("接管权限合法", Protocol.IsValidPermissionLevel(Protocol.PermissionTakeover));
             Check("未知权限非法", !Protocol.IsValidPermissionLevel("allow_all"));
-            Check("写工具在只读下被拒绝", Protocol.IsReadonlyBlockedTool(Protocol.ToolSetRecipe));
-            Check("存蓝图在只读下被拒绝", Protocol.IsReadonlyBlockedTool(Protocol.ToolCopyBlueprint));
-            Check("读工具在只读下放行", !Protocol.IsReadonlyBlockedTool("game_get_overview"));
+            Check("只读：risk1 也要确认", !Protocol.AutoApprovesWrite(Protocol.PermissionReadonly, 1));
+            Check("只读：risk2 要确认", !Protocol.AutoApprovesWrite(Protocol.PermissionReadonly, 2));
+            Check("受限：risk1 直接放行", Protocol.AutoApprovesWrite(Protocol.PermissionLimited, 1));
+            Check("受限：risk2 仍要确认", !Protocol.AutoApprovesWrite(Protocol.PermissionLimited, 2));
+            Check("接管：risk1 直接放行", Protocol.AutoApprovesWrite(Protocol.PermissionTakeover, 1));
+            Check("接管：risk2 直接放行", Protocol.AutoApprovesWrite(Protocol.PermissionTakeover, 2));
+            Check("未知权限：保守地要求确认", !Protocol.AutoApprovesWrite("allow_all", 1));
+            Check("空权限：保守地要求确认", !Protocol.AutoApprovesWrite(null, 2));
 
             var cfgPerm = Protocol.BuildConfigSet(null, null, null, null, null, null, null, null, null,
                 Protocol.PermissionTakeover);

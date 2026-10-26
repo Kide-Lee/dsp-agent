@@ -385,7 +385,7 @@ namespace IcarusII.UI
 
         /// <summary>
         /// 输入栏右下角的「权限」下拉框（prefab 里挂在 permission-group/permission-level）。
-        /// 只读 / 有限 / 接管：决定 AI 调写工具时是否需要玩家确认。
+        /// 只读 / 受限 / 接管：决定 AI 调写工具时是否需要玩家确认。
         /// </summary>
         private UIComboBox _permissionCombo;
         private string _permissionLevel = Protocol.DefaultPermission;
@@ -1224,7 +1224,7 @@ namespace IcarusII.UI
 
             // 右下角「思考等级」下拉框：用游戏自己的 UIComboBox（prefab 里已放好节点）。
             WireThinkingLevelCombo(panel);
-            // 「权限」下拉框：只读 / 有限 / 接管，决定写操作是否弹确认。
+            // 「权限」下拉框：只读 / 受限 / 接管，决定写操作是否弹确认。
             WirePermissionLevelCombo(panel);
             WireModelCombo(panel);
 
@@ -3928,7 +3928,7 @@ namespace IcarusII.UI
         }
 
         /// <summary>
-        /// 接上 prefab 输入栏里的「权限」下拉框：只读 / 有限 / 接管。
+        /// 接上 prefab 输入栏里的「权限」下拉框：只读 / 受限 / 接管。
         /// 只改 Items，不动 prefab 的 RectTransform；老 bundle 没有该节点时只记日志。
         /// </summary>
         private void WirePermissionLevelCombo(RectTransform panel)
@@ -3989,7 +3989,6 @@ namespace IcarusII.UI
                 finally { _suppressPermissionEvent = false; }
             }
 
-            if (changed && _toolMenuOpen) RefreshToolMenu();
             if (changed && notify) PermissionLevelChanged?.Invoke(level);
         }
 
@@ -7294,8 +7293,6 @@ namespace IcarusII.UI
             for (int i = 0; i < _toolCatalog.Count; i++)
             {
                 var item = _toolCatalog[i];
-                if (_permissionLevel == Protocol.PermissionReadonly &&
-                    Protocol.IsReadonlyBlockedTool(item.Name)) continue;
                 if (string.Equals(item.Name, token, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(item.Label, token, StringComparison.OrdinalIgnoreCase))
                     return item.Name;
@@ -7393,9 +7390,6 @@ namespace IcarusII.UI
             for (int i = 0; i < _toolCatalog.Count; i++)
             {
                 var item = _toolCatalog[i];
-                // 只读权限下，工具目录可能还是切换前拿到的；这里再把写工具挡掉。
-                if (_permissionLevel == Protocol.PermissionReadonly &&
-                    Protocol.IsReadonlyBlockedTool(item.Name)) continue;
                 if (item.Matches(_toolFilter)) _toolVisible.Add(item);
             }
 

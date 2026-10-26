@@ -32,7 +32,7 @@ import {
 import QUICKJS_VARIANT_MODULE from '@jitl/quickjs-singlefile-cjs-release-sync';
 import type { JsonObject } from '../protocol.js';
 import { SCRIPT_TOOL_NAME, type GameToolHost } from './host.js';
-import { isWriteToolName } from './write.js';
+import { isWriteToolName, writeToolRisk } from './write.js';
 
 const MAX_CODE_CHARS = 8000;
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -425,12 +425,6 @@ export function createScriptTool(host: GameToolHost): ToolDefinition {
       const maxCalls = Math.max(1, Math.min(MAX_MAX_CALLS, Math.floor(callsRaw)));
 
       const writes = detectWriteTools(code);
-      if (writes.length > 0 && host.permissionLevel === 'readonly') {
-        return fail(
-          'permission_denied',
-          '当前权限为「只读」，包含写工具的脚本不能执行；请让玩家把「权限」改为「有限」或「接管」。',
-        );
-      }
       if (writes.length > 0 && !host.has('script.write.v1')) {
         return fail(
           'tool_unavailable',
@@ -438,10 +432,15 @@ export function createScriptTool(host: GameToolHost): ToolDefinition {
         );
       }
       const maxWrites = 10000;
+      // 脚本级确认的风险取脚本里写工具的最高 risk：mod 在「受限」权限下
+      // 只自动放行 risk 1，因此纯低风险脚本可以直接执行，risk 2 仍会弹确认。
+      const risk = writes.length > 0
+        ? (Math.max(...writes.map((name) => writeToolRisk(name))) as 1 | 2)
+        : 1;
       let lease: WriteLease | null = null;
       if (writes.length > 0) {
         const scriptHash = createHash('sha256').update(code, 'utf8').digest('hex');
-        const approved = await host.confirmScript({ scriptHash, writeNames: writes, maxWrites });
+        const approved = await host.confirmScript({ scriptHash, writeNames: writes, maxWrites, risk });
         if (!approved) return fail('confirmation_denied', '玩家拒绝了脚本中的写操作，脚本未执行');
         lease = {
           token: approved.token,

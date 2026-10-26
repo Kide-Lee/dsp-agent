@@ -13,10 +13,11 @@ import type { KnowledgeStore } from '../kb/store.js';
 import type { KnowledgeBase } from '../kb/knowledge.js';
 import type { PlanResult } from '../kb/types.js';
 import type { AliasResolver } from '../wiki/aliases.js';
-import type { BlueprintTiers, PermissionLevel } from '../protocol.js';
+import type { BlueprintTiers } from '../protocol.js';
 import { BlueprintPathError, BlueprintWorkspace } from './workspace.js';
 import { DysonSphereBlueprintsClient } from './site.js';
 import type { PlanBlueprintMeta } from './planner.js';
+import type { LocalWriteConfirmRequest } from '../tools/host.js';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -343,11 +344,15 @@ export function createBlueprintTools(
   getTiers?: () => BlueprintTiers | null,
   workspace?: BlueprintWorkspace,
   siteClient?: DysonSphereBlueprintsClient,
-  getPermission?: () => PermissionLevel,
+  confirmWrite?: (request: LocalWriteConfirmRequest) => Promise<boolean>,
 ): ToolDefinition[] {
   const ws = workspace ?? new BlueprintWorkspace();
   const site = siteClient ?? new DysonSphereBlueprintsClient();
-  const readonly = (): boolean => getPermission?.() === 'readonly';
+  // 本地蓝图写操作不消耗 mod 令牌，但权限档位要求确认时仍要问玩家。
+  const confirmFileWrite = async (tool: string, args: Record<string, unknown>, body: string): Promise<boolean> => {
+    if (!confirmWrite) return true;
+    return confirmWrite({ tool, args: args as never, risk: 1, title: '写入蓝图文件？', body });
+  };
   return [
     {
       name: 'blueprint_fs',
@@ -390,16 +395,16 @@ export function createBlueprintTools(
         const args = (params ?? {}) as Record<string, unknown>;
         const op = typeof args['op'] === 'string' ? args['op'] : '';
         const path = typeof args['path'] === 'string' ? args['path'] : undefined;
-        // 只读权限：保留 ls/cat/pwd/cd，拒绝任何会改动蓝图目录的操作。
-        if (readonly() && (op === 'mkdir' || op === 'write' || op === 'rm' || op === 'rmdir')) {
-          return reply(
-            {
-              error: '当前权限为「只读」，不能修改蓝图目录；请让玩家把「权限」改为「有限」或「接管」。',
-              op,
-            },
-            false,
-            'permission_denied',
+        const writeOp = op === 'mkdir' || op === 'write' || op === 'rm' || op === 'rmdir';
+        if (writeOp) {
+          const ok = await confirmFileWrite(
+            'blueprint_fs',
+            { op, path },
+            `操作：${op}\n路径：${path ?? '(默认目录)'}`,
           );
+          if (!ok) {
+            return reply({ error: '玩家拒绝了蓝图写操作' }, false, 'confirmation_denied');
+          }
         }
         try {
           if (op === 'pwd') {
@@ -748,18 +753,20 @@ export function createBlueprintTools(
         overwrite: Type.Optional(Type.Boolean({ description: '同名时覆盖，默认 false' })),
       }),
       async execute(_id, params) {
-        if (readonly()) {
-          return reply(
-            { error: '当前权限为「只读」，不能写入蓝图目录。' },
-            false,
-            'permission_denied',
-          );
-        }
         const args = (params ?? {}) as Record<string, unknown>;
         const path = typeof args['path'] === 'string' ? args['path'] : '';
         const url = typeof args['url'] === 'string' ? args['url'] : '';
         if (!path.trim() && !url.trim()) {
           return reply({ error: 'path 或 url 至少提供一个' }, false, 'bad_request');
+        }
+        {
+          const ok = await confirmFileWrite(
+            'blueprint_save',
+            { path, url, name: args['name'], dir: args['dir'] },
+            `保存蓝图到：${typeof args['dir'] === 'string' && args['dir'] ? args['dir'] : '/IcarusII'}\n` +
+              `来源：${url.trim() || path.trim()}`,
+          );
+          if (!ok) return reply({ error: '玩家拒绝了保存蓝图' }, false, 'confirmation_denied');
         }
 
         let fetched: { text?: string; error?: string; title?: string };
@@ -914,13 +921,6 @@ export function createBlueprintTools(
         description: Type.Optional(Type.String({ description: '蓝图介绍' })),
       }),
       async execute(_id, params) {
-        if (readonly()) {
-          return reply(
-            { error: '当前权限为「只读」，不能生成并保存蓝图。' },
-            false,
-            'permission_denied',
-          );
-        }
         const args = (params ?? {}) as Record<string, unknown>;
         const rawItem = typeof args['item'] === 'string' ? args['item'].trim() : '';
         const rate = typeof args['rate'] === 'number' ? args['rate'] : 0;
@@ -936,6 +936,16 @@ export function createBlueprintTools(
             false,
             'kb_unavailable',
           );
+        }
+        {
+          const dirLabel =
+            typeof args['dir'] === 'string' && args['dir'] ? args['dir'] : '/IcarusII';
+          const ok = await confirmFileWrite(
+            'blueprint_generate',
+            { item: rawItem, rate, dir: args['dir'], name: args['name'] },
+            `生成并保存蓝图：${rawItem} ${rate}/min\n保存目录：${dirLabel}`,
+          );
+          if (!ok) return reply({ error: '玩家拒绝了生成蓝图' }, false, 'confirmation_denied');
         }
 
         // 别名（蓝马达/绿马达/白糖…）先走 curated + wiki；精确名直接命中 KB。

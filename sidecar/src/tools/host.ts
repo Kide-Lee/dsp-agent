@@ -9,12 +9,7 @@
  */
 
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import {
-  DEFAULT_PERMISSION_LEVEL,
-  type JsonObject,
-  type PermissionLevel,
-  type ToolResultPayload,
-} from '../protocol.js';
+import type { JsonObject, ToolResultPayload } from '../protocol.js';
 import { isSandboxOnlyTool } from './sandbox.js';
 
 /** 脚本工具名（sidecar 本地执行）。 */
@@ -38,6 +33,8 @@ export interface ScriptConfirmRequest {
   scriptHash: string;
   writeNames: string[];
   maxWrites: number;
+  /** 脚本里写工具的最高 risk（1/2）；mod 据此决定是否按权限档位自动放行。 */
+  risk: 1 | 2;
 }
 
 export interface ScriptConfirmResult {
@@ -45,11 +42,25 @@ export interface ScriptConfirmResult {
   scriptHash: string;
 }
 
+/**
+ * 本地「写文件」工具的确认（blueprint_save / blueprint_generate / blueprint_fs）。
+ * 它们不消耗 mod 令牌；确认只用于证明玩家同意按当前权限档位写入。
+ */
+export interface LocalWriteConfirmRequest {
+  tool: string;
+  args: JsonObject;
+  risk: 1 | 2;
+  title: string;
+  body: string;
+}
+
 /** Session 实现它；工具宿主只依赖这个窄接口。 */
 export interface ToolTransport {
   callTool(name: string, args: JsonObject, options: ToolCallOptions): Promise<ToolResultPayload>;
   /** 脚本包含写操作时，向玩家确认整段脚本；null = 拒绝。 */
   confirmScript?(request: ScriptConfirmRequest): Promise<ScriptConfirmResult | null>;
+  /** 本地蓝图写操作：按当前权限档位确认；false = 拒绝。 */
+  confirmLocalWrite?(request: LocalWriteConfirmRequest): Promise<boolean>;
   /** 脚本结束/失败后释放租约。 */
   releaseScript?(token: string): void;
 }
@@ -70,8 +81,6 @@ export class GameToolHost {
   private cachedTools: ToolDefinition[] | null = null;
   /** 调试直调期间把 host 调用标记为 internal，mod 不显示普通工具卡。 */
   private debugMode = false;
-  /** 当前权限档位；只读时脚本/蓝图工具据此拒绝写操作。 */
-  private permission: PermissionLevel = DEFAULT_PERMISSION_LEVEL;
 
   /** 返回能力集合是否真的变了。 */
   setCapabilities(next: readonly string[]): boolean {
@@ -100,20 +109,15 @@ export class GameToolHost {
     return this.sandboxEnabled;
   }
 
-  /** 权限变化不一定改工具集（只读会过滤），但脚本/蓝图工具需要立即看到新值。 */
-  setPermission(next: PermissionLevel): boolean {
-    if (this.permission === next) return false;
-    this.permission = next;
-    return true;
-  }
-
-  get permissionLevel(): PermissionLevel {
-    return this.permission;
-  }
-
   async confirmScript(request: ScriptConfirmRequest): Promise<ScriptConfirmResult | null> {
     if (!this.transport?.confirmScript) return null;
     return this.transport.confirmScript(request);
+  }
+
+  /** 本地蓝图写确认；老 transport 没有该能力时放行（保持旧行为）。 */
+  async confirmLocalWrite(request: LocalWriteConfirmRequest): Promise<boolean> {
+    if (!this.transport?.confirmLocalWrite) return true;
+    return this.transport.confirmLocalWrite(request);
   }
 
   releaseScript(token: string): void {

@@ -112,7 +112,9 @@ namespace IcarusII.Core
                 return true;
             }
 
-            if (!Protocol.IsWriteTool(request.Tool))
+            // 本地蓝图写工具也走同一确认 UI；它们不在 tool_call 里消费令牌，
+            // 令牌只用于证明玩家同意，60 秒后自然过期。
+            if (!Protocol.IsAnyWriteTool(request.Tool))
                 return false;
 
             _allowed[request.Token] = new Allowed

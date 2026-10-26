@@ -42,7 +42,45 @@ export const WRITE_TOOL_NAMES = [
   'game_todo_remove',
   'game_take_output',
   'game_undo_last_write',
+  'game_copy_blueprint',
 ] as const;
+
+/**
+ * 写工具的 risk 分级（与各 spec 的 `risk` 一致）。
+ *
+ * 权限档位用它来判断脚本级确认的最高风险：
+ *   - risk 1：可逆、无存档副作用（镜头/标记/面板/方位/撤销）
+ *   - risk 2：改变存档状态
+ *
+ * 稳定导出给 `script.ts`；新增写工具时两边都要登记。
+ */
+const WRITE_TOOL_RISK: Record<string, 1 | 2> = {
+  game_focus_camera: 1,
+  game_place_marker: 1,
+  game_open_panel: 1,
+  game_set_research: 2,
+  game_drop_item: 2,
+  game_set_recipe: 2,
+  game_set_assembler_batch: 2,
+  game_storage_set_filter: 2,
+  game_storage_set_limit: 2,
+  game_storage_move: 2,
+  game_storage_deposit: 2,
+  game_storage_withdraw: 2,
+  game_feed_input: 2,
+  game_tether_add: 1,
+  game_tether_clear: 1,
+  game_todo_add: 2,
+  game_todo_remove: 2,
+  game_take_output: 2,
+  game_undo_last_write: 1,
+  game_copy_blueprint: 1,
+};
+
+/** 未知写工具按 risk 2 处理（更保守，仍会要求确认）。 */
+export function writeToolRisk(name: string): 1 | 2 {
+  return WRITE_TOOL_RISK[name] ?? 2;
+}
 
 type ToolArgs = JsonObject;
 

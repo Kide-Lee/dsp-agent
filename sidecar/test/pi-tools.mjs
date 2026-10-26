@@ -527,6 +527,23 @@ async function main() {
   upstream.mode = 'tool';
   upstream.toolName = 'blueprint_generate';
   upstream.toolArgs = { item: '电磁涡轮', rate: 20, author: '卡片测试' };
+  // 蓝图写操作现在会请求确认；测试里扮演「受限」权限下的 mod：自动 allow。
+  const answeredConfirms = new Set();
+  const autoConfirm = setInterval(() => {
+    for (const frame of client.frames) {
+      if (frame?.type !== 'confirm_request') continue;
+      const requestId = frame.payload?.requestId;
+      if (!requestId || answeredConfirms.has(requestId)) continue;
+      answeredConfirms.add(requestId);
+      client.send({
+        v: 1,
+        id: `auto-${requestId}`,
+        type: 'confirm_result',
+        replyTo: frame.id,
+        payload: { requestId, decision: 'allow', token: frame.payload.token },
+      });
+    }
+  }, 20);
   const cardMark = client.frames.length;
   client.send({ v: 1, id: 'm-card', type: 'prompt', payload: { text: '生成一张电磁涡轮蓝图' } });
   const cardFrame = await client.waitFor(
@@ -558,6 +575,7 @@ async function main() {
   );
   check('卡片排在 final message 之后', messageIdx >= 0 && messageIdx < cardIdx, `${messageIdx}/${cardIdx}`);
   check('卡片排在 idle 之前', idleIdx > cardIdx, `${cardIdx}/${idleIdx}`);
+  clearInterval(autoConfirm);
 
   // 重进存档：sidecar 把卡片记录挂回 save.bound.history 的 assistant 消息。
   client.send({

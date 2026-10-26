@@ -699,20 +699,8 @@ namespace IcarusII
                 return;
             }
 
-            // 只读权限的 mod 侧：sidecar 被替换/出错时也不执行写操作。
-            // 放在令牌校验之前，避免只读模式下还去消费/等待确认。
-            if (_config != null &&
-                string.Equals(_config.PermissionLevel, Protocol.PermissionReadonly, StringComparison.Ordinal) &&
-                (call.Risk > 0 || Protocol.IsReadonlyBlockedTool(call.Name)))
-            {
-                _client?.SendToolResult(call.CallId, false, JsonValue.Null,
-                    Protocol.CodePermissionDenied, Strings.Get("permission.readonly.denied"), JsonValue.NewObject());
-                _chat?.SetStatus(Strings.Get("status.ready"), WarnColor);
-                return;
-            }
-
             // 写操作双重门禁的 mod 侧：没有侧车确认产生的一次性令牌，绝不执行。
-            // 「接管」权限下 OnConfirmRequest 会自动同意并回传令牌，这里仍然照常校验。
+            // 权限档位只决定「确认页是否自动同意」，不绕过令牌校验。
             if ((call.Risk > 0 || IsWriteToolName(call.Name)) &&
                 !_confirmation.TryConsume(call, out var confirmError))
             {
@@ -801,32 +789,27 @@ namespace IcarusII
                 return;
             }
             // 权限档位在 mod 侧生效：
-            //   只读  → 不发 UI，直接拒绝（sidecar 正常不会走到这里）；
-            //   接管  → 不弹确认，自动同意并回传令牌；令牌校验仍然保留。
-            if (_config != null &&
-                string.Equals(_config.PermissionLevel, Protocol.PermissionReadonly, StringComparison.Ordinal))
-            {
-                SendConfirmResult(request, false);
-                Log.LogWarning($"[confirm] 只读权限，拒绝写操作 {request.Tool} callId={request.CallId}");
-                return;
-            }
-            if (_config != null &&
-                string.Equals(_config.PermissionLevel, Protocol.PermissionTakeover, StringComparison.Ordinal))
+            //   只读  → 所有写操作都要玩家确认；
+            //   受限  → 只自动放行 risk 1（低风险、可逆），risk 2 仍弹确认；
+            //   接管  → 全部自动同意。
+            // 自动同意也走 TryRegister/TryResolve，一次性令牌与工具白名单照常校验。
+            var permission = _config != null ? _config.PermissionLevel : Protocol.DefaultPermission;
+            if (Protocol.AutoApprovesWrite(permission, request.Risk))
             {
                 if (!_confirmation.TryRegister(request, out var autoError))
                 {
                     SendConfirmResult(request, false);
-                    Log.LogWarning($"[confirm] 接管权限下无法登记确认请求：{autoError}");
+                    Log.LogWarning($"[confirm] 自动放行时无法登记确认请求：{autoError}");
                     return;
                 }
                 if (!_confirmation.TryResolve(request.RequestId, true, out var autoResolved))
                 {
                     SendConfirmResult(request, false);
-                    Log.LogWarning($"[confirm] 接管权限下确认请求不合法 tool={request.Tool}");
+                    Log.LogWarning($"[confirm] 自动放行的确认请求不合法 tool={request.Tool}");
                     return;
                 }
                 SendConfirmResult(autoResolved, true);
-                Log.LogInfo($"[confirm] 接管权限：自动同意 {request.Tool} callId={request.CallId}");
+                Log.LogInfo($"[confirm] 权限 {permission}：自动同意 {request.Tool} risk={request.Risk} callId={request.CallId}");
                 return;
             }
 

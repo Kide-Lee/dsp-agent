@@ -8,13 +8,7 @@
 
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import {
-  DEFAULT_PERMISSION_LEVEL,
-  type JsonObject,
-  type PermissionLevel,
-  type ToolResultPayload,
-} from '../protocol.js';
-import { isReadonlyBlockedTool } from '../permissions.js';
+import type { JsonObject, ToolResultPayload } from '../protocol.js';
 import { GameToolHost, registerGameToolsFactory, SCRIPT_TOOL_NAME } from './host.js';
 import { WIKI_TOOL_NAMES } from '../wiki/tools.js';
 import { BLUEPRINT_TOOL_NAMES } from '../blueprint/tools.js';
@@ -506,7 +500,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       promptSnippet: '把一批建筑存成蓝图文件',
       promptGuidelines: [
         'Use game_copy_blueprint 当玩家说“把这片产线存成蓝图”时；id 来自 game_analyze_area / game_get_entities。',
-        '一次最多 500 个；工具只保存文件，不建造、不粘贴，也不需要确认令牌。',
+        '一次最多 500 个；工具只保存文件，不建造、不粘贴；权限档位会决定是否弹确认。',
         '保存后告诉玩家文件名与位置；重名会自动加 (2)/(3)。',
       ],
       parameters: Type.Object({
@@ -518,6 +512,8 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         ),
       }),
       timeoutMs: 20000,
+      // 只写蓝图文件、不改游戏状态；risk 1：只读权限下仍需确认。
+      risk: 1,
     }),
     gameTool(host, {
       name: 'game_analyze_area',
@@ -590,14 +586,8 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
 
 registerGameToolsFactory(createGameTools);
 
-/**
- * `ready.payload.tools` 用：按能力返回本次连接实际可用的工具名。
- * 只读权限下过滤掉写工具和「只写蓝图」工具，与 `PiAgent.buildToolDefinitions` 保持一致。
- */
-export function toolNamesForCapabilities(
-  capabilities: readonly string[],
-  permission: PermissionLevel = DEFAULT_PERMISSION_LEVEL,
-): string[] {
+/** `ready.payload.tools` 用：按能力返回本次连接实际可用的工具名。 */
+export function toolNamesForCapabilities(capabilities: readonly string[]): string[] {
   // kb_* 是 sidecar 本地工具，不依赖 mod 能力；始终列出，未建立时返回 kb_unavailable。
   const game = Object.entries(TOOL_CAPABILITY)
     .filter(([, capability]) => capabilities.includes(capability))
@@ -605,13 +595,5 @@ export function toolNamesForCapabilities(
   // 交互问答依赖 mod 的 choose UI；老 mod 不会声明该能力。
   const ask = capabilities.includes(CAPABILITY_UI_ASK) ? [UI_ASK_TOOL_NAME] : [];
   // 脚本工具是 sidecar 本地能力，始终注册（没有 game 工具时执行会明确报错）。
-  const names = [
-    ...ask,
-    ...game,
-    ...KB_TOOL_NAMES,
-    ...WIKI_TOOL_NAMES,
-    ...BLUEPRINT_TOOL_NAMES,
-    SCRIPT_TOOL_NAME,
-  ];
-  return permission === 'readonly' ? names.filter((name) => !isReadonlyBlockedTool(name)) : names;
+  return [...ask, ...game, ...KB_TOOL_NAMES, ...WIKI_TOOL_NAMES, ...BLUEPRINT_TOOL_NAMES, SCRIPT_TOOL_NAME];
 }

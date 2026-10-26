@@ -242,7 +242,6 @@
 | `confirmation_invalid` | 令牌无效/已使用/参数不匹配（M4） |
 | `confirmation_expired` | 确认令牌已过期（M4） |
 | `confirmation_denied` | 玩家拒绝确认，未执行（M4） |
-| `permission_denied` | 当前权限为「只读」，写操作被拒绝 |
 | `sandbox_required` | 当前载入未启用游戏沙盒工具，沙盒专属工具被拒绝（M5+） |
 | `internal` | 未分类内部错误 |
 
@@ -317,14 +316,19 @@ mod                                   sidecar
   DeepSeek `thinkingLevelMap`：Flash 映射 `low` / `high` / `max`；Pro 只映射
   `high` / `max`（`low` 会被 pi clamp）。`off` 表示**不请求思考**，默认 `high`（开启）。
   非法取值 ⇒ `error{code:"bad_request"}`，不落盘。
-- `permissionLevel` 取值 `readonly | limited | takeover`，默认 `limited`：
-  - `readonly`：只读。sidecar 不注册写工具，`tool_call` 侧也会拒绝写操作
-    （`error.code = permission_denied`）；`blueprint_fs` 的 mkdir/write/rm/rmdir
-    与含写工具的 `run_script` 同样拒绝。
-  - `limited`：有限。写工具先走 A.12 的 `confirm_request`，玩家同意后带一次性
-    token 执行。
-  - `takeover`：接管。sidecar 仍走 `confirm_request` 与 token 校验，但 mod 在
-    该档位下**不弹确认页、自动回传 allow**；脚本写租约同样自动同意。
+- `permissionLevel` 取值 `readonly | limited | takeover`，默认 `limited`。
+  它只决定**写操作是否需要玩家确认**，不改变工具是否注册，也不改变一次性 token：
+  - `readonly`（只读）：所有写操作（risk 1 与 risk 2）都先走 A.12 的
+    `confirm_request`，玩家同意后才执行。
+  - `limited`（受限）：risk 1（可逆、无存档副作用：镜头/标记/面板/方位/撤销）
+    直接放行；risk 2（改变存档状态）仍走 `confirm_request`。
+  - `takeover`（接管）：所有写操作直接放行，不再弹确认页。
+  后两种档位下 sidecar 仍会发 `confirm_request` 以取得一次性 token，mod 按档位
+  自动回传 `allow`；token 的一次性/绑定校验不放松。`run_script` 的脚本级确认
+  使用脚本里写工具的最高 risk，因此纯 risk 1 脚本在「受限」下也可直接执行。
+  本地蓝图写工具（`blueprint_save` / `blueprint_generate` / `blueprint_fs` 的
+  `mkdir`/`write`/`rm`/`rmdir`）以及 `game_copy_blueprint` 也按 risk 1 参与同一
+  审批；其中本地蓝图工具不消耗 mod 令牌，确认只代表玩家同意写文件。
   权限只能由玩家在聊天窗/配置文件里修改，模型无法通过工具提权。
   非法取值 ⇒ `error{code:"bad_request"}`，不落盘。
 - 改档位会让 sidecar 丢弃当前 pi session，在**下一次** prompt 生效；
@@ -951,10 +955,12 @@ pi 的自动压缩完成后，sidecar 把摘要作为一条**只给 UI** 的记�
 
 ### A.12 `confirm_request` / `confirm_result` — 写操作确认（M4）
 
-默认（`limited` 权限）下，写操作必须先经过玩家确认。sidecar 生成 32 字节随机 token（16 进制），把
+写操作默认需要玩家确认；权限档位（见 A.1）决定哪些写操作可以直接放行。
+sidecar 生成 32 字节随机 token（16 进制），把
 `requestId/callId/tool/argsHash/token/title/body/risk/timeoutMs` 发给 mod；玩家点
 **同意** 后 mod 原样回传 token，sidecar 才把 token 放进 `tool_call.confirmToken`
 发给 mod 执行。普通 token 60 秒有效、单次使用，并绑定 `callId + tool + argsHash`。
+需要自动放行的档位也走同一条消息，只是 mod 不弹页、直接回传 `allow`。
 
 > **v1 边界**：mod 不持有原始 args，无法重算 `argsHash`；该字段只能发现 sidecar
 > 两条消息自相矛盾，不能阻止被替换的 sidecar 在玩家确认后替换参数。真正的安全边界是
@@ -962,14 +968,21 @@ pi 的自动压缩完成后，sidecar 把摘要作为一条**只给 UI** 的记�
 
 **权限档位对确认流程的影响**（`permissionLevel`，见 A.1）：
 
-| 档位 | sidecar | mod |
-| --- | --- | --- |
-| `readonly` | 不注册写工具；写 `tool_call` 直接 `permission_denied` | 拒绝写 `tool_call`；收到 `confirm_request` 也直接 deny |
-| `limited` | 正常发 `confirm_request` | 弹确认页，玩家决定 |
-| `takeover` | 仍发 `confirm_request`（保留 token 通道） | **不弹页**，自动 `allow` 并回传 token |
+| 档位 | write tool 的 risk | sidecar | mod |
+| --- | --- | --- | --- |
+| `readonly` | 1 / 2 | 正常发 `confirm_request` | 弹确认页，玩家决定 |
+| `limited` | 1 | 正常发 `confirm_request` | **不弹页**，自动 `allow` 并回传 token |
+| `limited` | 2 | 正常发 `confirm_request` | 弹确认页，玩家决定 |
+| `takeover` | 1 / 2 | 正常发 `confirm_request` | **不弹页**，自动 `allow` 并回传 token |
 
-`takeover` 是玩家在聊天窗里显式选择的模式；token 仍然由 mod 签发/校验，
-一次性和绑定关系不放松。只读/接管只影响插件运行期，不会改写会话历史或游戏存档。
+`limited` 自动放行的判据是 `confirm_request.risk <= 1`。`run_script` 的脚本级
+确认把 `risk` 设为脚本里写工具的最高 risk，因此只含低风险写工具的脚本在
+`limited` 下也会自动放行；含 risk 2 的脚本仍会弹一次确认。
+`blueprint_save` / `blueprint_generate` / `blueprint_fs` 的写操作也复用
+`confirm_request`（risk 1），但 mod 签发的 token 不会进入 `tool_call`，只用于记录
+玩家同意。
+token 仍然由 mod 签发/校验，一次性和绑定关系不放松。权限档位只影响插件运行期，
+不会改写会话历史或游戏存档。
 
 `run_script` 的写模式使用**脚本写租约**：`tool` 为 `run_script`，`argsHash` 是脚本
 SHA-256，并可带 `maxWrites`（1–10000）与 `writeNames`（脚本里出现的写工具名）。

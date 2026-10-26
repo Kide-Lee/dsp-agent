@@ -18,7 +18,7 @@ const ok = (name) => { passed++; console.log(`  ok   ${name}`); };
 const fail = (name, detail) => { failed++; console.log(`  FAIL ${name}${detail ? `：${detail}` : ''}`); };
 const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
 
-function makeHost({ approve = true, permission = 'limited' } = {}) {
+function makeHost({ approve = true } = {}) {
   const calls = [];
   const confirms = [];
   const releases = [];
@@ -27,11 +27,11 @@ function makeHost({ approve = true, permission = 'limited' } = {}) {
     confirms,
     releases,
     host: {
-      permissionLevel: permission,
       has: (capability) => capability === 'script.write.v1',
       tools: () => [
         { name: 'game_get_power' },
         { name: 'game_get_entities' },
+        { name: 'game_focus_camera' },
         { name: 'game_set_recipe' },
       ],
       confirmScript: async (request) => {
@@ -118,12 +118,21 @@ console.log('\n── 3. 白名单、写确认与预算 ──');
 }
 
 {
-  const readonly = makeHost({ permission: 'readonly' });
-  const readonlyTool = createScriptTool(readonly.host);
-  const out = await run(readonlyTool, `dsp.call('game_set_recipe', { buildingId: 1, recipeId: 2 });`);
-  check('只读权限下写脚本被拒绝', out.text.includes('[permission_denied]'), out.text.slice(0, 160));
-  check('只读时没有请求脚本确认', readonly.confirms.length === 0);
-  check('只读时没有执行写工具', readonly.calls.length === 0);
+  const lowRisk = makeHost();
+  const lowRiskTool = createScriptTool(lowRisk.host);
+  const out = await run(lowRiskTool, `dsp.call('game_focus_camera', { target: 'planet:1' }); return 1;`);
+  check('纯低风险写脚本确认 risk=1', lowRisk.confirms[0]?.risk === 1, String(lowRisk.confirms[0]?.risk));
+  check('纯低风险写脚本仍执行', JSON.parse(out.text).ok === true, out.text.slice(0, 160));
+}
+
+{
+  const mixed = makeHost();
+  const mixedTool = createScriptTool(mixed.host);
+  await run(
+    mixedTool,
+    `dsp.call('game_focus_camera', { target: 'planet:1' }); dsp.call('game_set_recipe', { buildingId: 1, recipeId: 2 });`,
+  );
+  check('混合写脚本确认取最高 risk=2', mixed.confirms[0]?.risk === 2, String(mixed.confirms[0]?.risk));
 }
 
 {

@@ -120,8 +120,6 @@ export type ErrorCode =
   | 'confirmation_invalid'
   | 'confirmation_expired'
   | 'confirmation_denied'
-  // 权限档位拒绝（只读）
-  | 'permission_denied'
   // M5：沙盒门禁
   | 'sandbox_required';
 
@@ -908,13 +906,15 @@ export function isThinkingLevel(value: unknown): value is ThinkingLevelName {
 }
 
 /**
- * 权限档位：AI 调用工具时是否需要玩家同意。
+ * 权限档位：AI 调用写工具时是否需要玩家同意。
  *
- * - `readonly`：只读。写工具不注册、也不执行；文件/脚本里的写操作同样拒绝。
- * - `limited`：有限（默认）。写工具执行前由 mod 弹确认，玩家同意后带一次性令牌执行。
- * - `takeover`：接管。写工具不再逐次确认；mod 仍校验令牌，但在该档位下自动同意。
+ * - `readonly`：只读。所有写操作（risk 1/2）都要先请求玩家确认。
+ * - `limited`：受限（默认）。risk 1（可逆、无存档副作用）直接放行；
+ *   risk 2（改变存档状态）仍需确认。
+ * - `takeover`：接管。所有写操作直接放行，不再请求确认。
  *
- * 权限只能由玩家在聊天窗/配置文件里改，模型无法通过工具修改。
+ * 三种档位都保留 confirm_request + 一次性 token：需要自动放行时由 mod 回传 allow，
+ * 不是绕过 token。权限只能由玩家在聊天窗/配置文件里改，模型无法通过工具修改。
  */
 export const PERMISSION_LEVELS = ['readonly', 'limited', 'takeover'] as const;
 export type PermissionLevel = (typeof PERMISSION_LEVELS)[number];
@@ -1327,7 +1327,7 @@ export function buildConfigStatePayload(view: ConfigView): JsonObject {
     provider: view.provider,
     model: view.model,
     thinkingLevel: view.thinkingLevel,
-    // 老测试夹具没有该字段时按默认「有限」处理。
+    // 老测试夹具没有该字段时按默认「受限」处理。
     permissionLevel: view.permissionLevel ?? DEFAULT_PERMISSION_LEVEL,
     message: view.message,
     providers: providers.map((provider) => ({

@@ -45,7 +45,10 @@ namespace IcarusII.Config
         public string ThinkingLevel { get; private set; }
 
         /// <summary>
-        /// 权限档位：readonly（只读）/ limited（有限，写操作逐次确认）/ takeover（接管）。
+        /// 权限档位：
+        /// readonly（只读，所有写操作都要确认）/
+        /// limited（受限，risk 1 低风险写操作直接放行，risk 2 仍需确认）/
+        /// takeover（接管，全部写操作直接放行）。
         /// sidecar 的 config.json 是权威来源；这里是本地兜底，断线时也能记住玩家的选择。
         /// </summary>
         public string PermissionLevel { get; private set; }
@@ -178,8 +181,10 @@ namespace IcarusII.Config
 
             _permissionLevelEntry = cfg.Bind("Agent", "PermissionLevel", "limited",
                 "权限档位：readonly | limited | takeover。\n" +
-                "readonly = 只读，AI 不能调用写工具；limited = 每次写操作都要玩家确认；\n" +
-                "takeover = 接管，AI 直接执行写操作、不再逐次确认。\n" +
+                "readonly = 只读，所有写操作都要玩家确认；\n" +
+                "limited = 受限，低风险写操作（镜头/标记/面板/方位/撤销，risk 1）直接放行，\n" +
+                "          改变存档的写操作（risk 2）仍需确认；\n" +
+                "takeover = 接管，所有写操作直接执行、不再询问。\n" +
                 "游戏里也可以用聊天窗右下角的「权限」下拉框切换（会同步到 sidecar）。");
             var rawPermission = _permissionLevelEntry.Value;
             PermissionLevel = IsValidPermissionLevel(rawPermission)

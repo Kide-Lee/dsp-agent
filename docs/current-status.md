@@ -11,7 +11,7 @@
 | M1 sidecar + pi + DeepSeek | 已完成并实机跑通 |
 | M2 六个只读工具 / 工具卡 / 会话 | 已完成 |
 | M2.5 思考档位 / 折叠思考块与工具块 | 已完成；聊天窗档位调整为四档：关闭 / 低 / 高 / 极限 |
-| 权限档位（只读 / 有限 / 接管） | 已实现：聊天窗「权限」下拉框 + 协议 `permissionLevel`；只读隐藏并拒绝写工具，有限逐次确认，接管自动同意但保留一次性令牌；待实机验收 |
+| 权限档位（只读 / 受限 / 接管） | 默认「受限」。已实现聊天窗「权限」下拉框 + 协议 `permissionLevel`；只读=所有写操作确认，受限=risk 1 直接放行、risk 2 确认，接管=全部自动放行；一次性令牌始终校验；待实机验收 |
 | M2.6 多供应商 / 多模型 | 已完成 |
 | M2.7 提问索引 / 删除上下文 | 已完成 |
 | M3 游戏知识库 + `kb_*` + `kb_plan` | 已完成并通过验收 |
@@ -54,8 +54,8 @@
 ## 2. 本地验证结果
 
 - `scripts/build-mod.sh`：0 warning / 0 error。
-- `dotnet run --project tests/ProtocolTests`：通过（新增 permissionLevel / 只读工具表断言）。
-- `cd sidecar && npm test`：退出码 0（新增 config 权限往返、只读工具过滤与 permission_denied、脚本/蓝图只读拒绝）。
+- `dotnet run --project tests/ProtocolTests`：通过（新增 permissionLevel / AutoApprovesWrite 断言）。
+- `cd sidecar && npm test`：退出码 0（新增 config 权限往返、确认流程不隐藏写工具、脚本级确认按最高 risk 计算、本地蓝图写入确认）。
 - UI AssetBundle 与 `mod/unity/Prefab/ChatWindow.prefab`、`button-agent.prefab`（含图标）快照已同步；
   prefab 已含 `permission-group/permission-level` 与四档思考下拉框。
 - `scripts/package.sh` 成功；Steam 安装目录通过 SHA-256 校验更新。
@@ -76,8 +76,8 @@
   单张混带总线最多 3 条蓝带，高产量会拆成多张。
 - `game_analyze_area` 的范围仍是行星局部 XZ 平面上的球形切分，靠近极点时与游戏网格
   有偏差；输出坐标已改用经纬度。
-- `run_script` 默认只读；含字面量写工具的脚本会先弹一次脚本级确认（「接管」权限下自动同意），执行期凭 mod 脚本租约最多写 10000 次；动态拼写工具名会被拒绝。
-- 「接管」权限下写操作不再逐次弹确认，是一次性令牌 + 工具白名单仍然生效、但没有人工复核；
+- `run_script` 默认只读；含字面量写工具的脚本按最高 risk 走脚本级确认（只读下必弹，受限下纯 risk 1 可自动放行，接管下自动同意），执行期凭 mod 脚本租约最多写 10000 次；动态拼写工具名会被拒绝。
+- 「接管」/「受限」会自动放行部分写操作；一次性令牌 + 工具白名单仍然生效，但被放行的操作没有人工复核。
   只在玩家明确选择时使用，切换后聊天窗会给出提示。
 - 上下文压缩后的历史回合删除仍受 pi 会话 entry 类型限制，见
   [context-compression.md](context-compression.md)。

@@ -83,8 +83,12 @@ import {
   type ToolDebugResultPayload,
   type ToolResultPayload,
 } from './protocol.js';
-import { isReadonlyBlockedTool } from './permissions.js';
-import type { GameToolHost, ScriptConfirmRequest, ScriptConfirmResult } from './tools/host.js';
+import type {
+  GameToolHost,
+  LocalWriteConfirmRequest,
+  ScriptConfirmRequest,
+  ScriptConfirmResult,
+} from './tools/host.js';
 import { createKbTools } from './kb/tools.js';
 import type { BlueprintCardPayload, ContextCompactedPayload, LinkCardPayload, ToolActivityPayload } from './protocol.js';
 import {
@@ -160,6 +164,8 @@ export interface AgentEmitter {
   ): Promise<ToolResultPayload>;
   /** run_script 包含写操作时的脚本级确认；null = 玩家拒绝。 */
   confirmScript?(request: ScriptConfirmRequest): Promise<ScriptConfirmResult | null>;
+  /** 本地蓝图写操作确认；false = 玩家拒绝。 */
+  confirmLocalWrite?(request: LocalWriteConfirmRequest): Promise<boolean>;
   /** 脚本结束/失败后释放写租约。 */
   releaseScript?(token: string): void;
   /** 本地工具（kb_* / run_script）的 UI 事件；协议附录 A.8。 */
@@ -1094,8 +1100,6 @@ export class PiAgent implements AgentRunner {
 
   onConfigChanged(): void {
     const data = this.store.get();
-    // 权限决定工具集（只读会过滤写工具），必须在重建前同步给工具宿主。
-    this.host.setPermission(data.permissionLevel ?? DEFAULT_PERMISSION_LEVEL);
 
     // 正在跑回合时不要拆会话：否则流式输出会被拦腰截断。
     // 记下来，等这一轮结束后再重建。
@@ -1659,8 +1663,6 @@ export class PiAgent implements AgentRunner {
     requiredTool: string | null,
   ): Promise<void> {
     const data = this.store.get();
-    // 每轮开始前同步权限：配置变化可能发生在上一轮结束之后。
-    this.host.setPermission(data.permissionLevel ?? DEFAULT_PERMISSION_LEVEL);
 
     if (!data.apiKey) {
       // 未配置：不建会话、不联网（协议附录 A.3 的 config_required）。
@@ -2243,19 +2245,22 @@ export class PiAgent implements AgentRunner {
     const forced = this.currentForcedToolPrompt();
     if (forced) parts.push(forced);
 
-    const permission = this.host.permissionLevel;
+    const permission = this.store.get().permissionLevel ?? DEFAULT_PERMISSION_LEVEL;
     if (permission === 'readonly') {
       parts.push(
-        '当前权限为「只读」：写工具不会出现在工具列表中，任何会改变游戏状态或写蓝图文件的操作都不要尝试。' +
-          '玩家要求执行写操作时，请让玩家把聊天窗右下角的「权限」改为「有限」或「接管」。',
+        '当前权限为「只读」：所有写操作执行前都会请求玩家确认。读工具可以直接用；' +
+          '玩家拒绝时不要重试，改成询问意图。',
       );
     } else if (permission === 'takeover') {
       parts.push(
-        '当前权限为「接管」：写工具会直接执行，不再逐次弹确认。' +
+        '当前权限为「接管」：所有写操作直接执行，不再请求确认。' +
           '执行前仍要确认目标、范围和参数明确；有歧义时先用 ask_user 问清楚，不要猜。',
       );
     } else {
-      parts.push('当前权限为「有限」：写工具执行前会弹确认页，玩家拒绝时不要重复尝试。');
+      parts.push(
+        '当前权限为「受限」：镜头/标记/面板/方位/撤销等低风险写操作直接执行；' +
+          '改变存档状态的写操作（改配方、研究、存储、投料等）仍会请求玩家确认。',
+      );
     }
 
     if (this.host.has(CAPABILITY_GAME_SANDBOX)) {
@@ -2274,7 +2279,7 @@ export class PiAgent implements AgentRunner {
    * ensureSession 与 ready.payload.toolCatalog 共用，避免两处工具集漂移。
    */
   private buildToolDefinitions(): ToolDefinition[] {
-    const definitions = [
+    return [
       ...this.host.tools(),
       ...(this.host.has(CAPABILITY_UI_ASK) ? [createAskTool(this.host)] : []),
       ...(this.kb ? createKbTools(this.kb) : []),
@@ -2286,21 +2291,15 @@ export class PiAgent implements AgentRunner {
         () => this.blueprintTiers,
         this.blueprintWorkspace,
         undefined,
-        () => this.host.permissionLevel,
+        (request) => this.host.confirmLocalWrite(request),
       ),
       createScriptTool(this.host),
     ];
-    // 只读权限：写工具与「只写蓝图文件」的工具不注册，模型看不到也调不到。
-    if (this.host.permissionLevel === 'readonly') {
-      return definitions.filter((tool) => !isReadonlyBlockedTool(tool.name));
-    }
-    return definitions;
   }
 
   /** M4l：ready.payload.toolCatalog；只暴露显示需要的短字段。 */
   toolCatalog(capabilities: readonly string[]): ToolCatalogEntry[] {
     this.host.setCapabilities(capabilities);
-    this.host.setPermission(this.store.get().permissionLevel ?? DEFAULT_PERMISSION_LEVEL);
     return this.buildToolDefinitions().map((tool) => ({
       name: tool.name,
       label: tool.label || tool.name,
