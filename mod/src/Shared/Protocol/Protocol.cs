@@ -185,6 +185,10 @@ namespace IcarusII.Common.Protocol
         /// <summary>只写蓝图文件、不改游戏状态的工具；只读权限同样拒绝。</summary>
         public const string ToolCopyBlueprint = "game_copy_blueprint";
 
+        /// <summary>sidecar 本地蓝图写工具；只读权限下从工具菜单隐藏。</summary>
+        public const string ToolBlueprintSave = "blueprint_save";
+        public const string ToolBlueprintGenerate = "blueprint_generate";
+
         /// <summary>沙盒专属工具名（尚未实现；先用于门禁/测试）。</summary>
         public const string ToolSpawnItem = "game_spawn_item";
         public const string ToolTeleport = "game_teleport";
@@ -245,7 +249,9 @@ namespace IcarusII.Common.Protocol
         public static bool IsReadonlyBlockedTool(string toolName)
         {
             return IsWriteTool(toolName)
-                || string.Equals(toolName, ToolCopyBlueprint, StringComparison.Ordinal);
+                || string.Equals(toolName, ToolCopyBlueprint, StringComparison.Ordinal)
+                || string.Equals(toolName, ToolBlueprintSave, StringComparison.Ordinal)
+                || string.Equals(toolName, ToolBlueprintGenerate, StringComparison.Ordinal);
         }
 
         /// <summary>确认请求默认有效期（设计 §9.3）。</summary>
