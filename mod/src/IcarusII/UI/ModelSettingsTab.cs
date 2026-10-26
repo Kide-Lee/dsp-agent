@@ -33,6 +33,11 @@ namespace IcarusII.UI
         private const string DefaultProvider = "deepseek";
         private const string DefaultModel = "deepseek-v4-flash";
 
+        // 预设下拉框的第一项永远是「自定义…」：目录没拉到、目录里没有玩家要的供应商，
+        // 都还有一条明确的出口（手填 ID / API 地址）。它的 ItemsData 用 -1 区分目录项。
+        private const string CustomPresetLabel = "自定义…";
+        private const int CustomPresetData = -1;
+
         private static readonly List<ProviderCatalogEntry> _presetProviders = new List<ProviderCatalogEntry>();
 
         // 原生文字/控件取值：label 18px、#FFFFFFC8（200/255）；
@@ -628,15 +633,9 @@ namespace IcarusII.UI
                 le.flexibleWidth = 1f;
 
                 combo.translated = true;
-                combo.Items.Clear();
-                combo.ItemsData.Clear();
-                for (var i = 0; i < _presetProviders.Count; i++)
-                {
-                    combo.Items.Add(_presetProviders[i].Name);
-                    combo.ItemsData.Add(i);
-                }
+                FillPresetCombo(combo);
                 combo.UpdateItems();
-                combo.itemIndex = 0;
+                combo.itemIndex = 0;   // 「自定义…」；随后 RefreshEditor 会按当前供应商对齐
                 combo.onItemIndexChange.AddListener(OnPresetChanged);
 
                 if (_font != null)
@@ -667,13 +666,42 @@ namespace IcarusII.UI
             }
         }
 
+        /// <summary>重建下拉项：「自定义…」固定第一，其余按 pi 目录顺序。</summary>
+        private static void FillPresetCombo(UIComboBox combo)
+        {
+            if (combo == null) return;
+
+            combo.Items.Clear();
+            combo.ItemsData.Clear();
+            combo.Items.Add(CustomPresetLabel);
+            combo.ItemsData.Add(CustomPresetData);
+            for (var i = 0; i < _presetProviders.Count; i++)
+            {
+                combo.Items.Add(_presetProviders[i].Name);
+                combo.ItemsData.Add(i);
+            }
+        }
+
         private static void OnPresetChanged()
         {
             if (_suppressPresetEvent || _presetCombo == null) return;
             var index = _presetCombo.itemIndex;
-            if (index < 0 || index >= _presetProviders.Count) return;
+            if (index < 0 || index >= _presetCombo.Items.Count) return;
 
-            var id = _presetProviders[index].Id;
+            var data = index < _presetCombo.ItemsData.Count ? _presetCombo.ItemsData[index] : CustomPresetData;
+            if (data == CustomPresetData || data < 0 || data >= _presetProviders.Count)
+            {
+                // 自定义：清掉目录带出来的 ID，把焦点交给下面的输入框等玩家自己填。
+                if (_addProviderField != null)
+                {
+                    _addProviderField.text = string.Empty;
+                    _addProviderField.ActivateInputField();
+                }
+                SetEditorHint("自定义供应商：填供应商 ID 和 API 地址后点 + 添加", false);
+                return;
+            }
+
+            var id = _presetProviders[data].Id;
             if (_addProviderField != null) _addProviderField.text = id;
             var existing = _providers.Find((p) => p.Id == id);
             if (existing != null)
@@ -683,7 +711,7 @@ namespace IcarusII.UI
             }
             else
             {
-                SetEditorHint("已选择 " + _presetProviders[index].Name + "；点 + 添加", false);
+                SetEditorHint("已选择 " + _presetProviders[data].Name + "；点 + 添加", false);
             }
         }
 
@@ -899,23 +927,17 @@ namespace IcarusII.UI
             RebuildPresetCombo();
         }
 
-        /// <summary>按当前目录重建下拉项；选中项按当前供应商对齐（找不到则留空）。</summary>
+        /// <summary>按当前目录重建下拉项；选中项按当前供应商对齐（目录里没有则停在「自定义…」）。</summary>
         private static void RebuildPresetCombo()
         {
             if (_presetCombo == null) return;
             _suppressPresetEvent = true;
             try
             {
-                _presetCombo.Items.Clear();
-                _presetCombo.ItemsData.Clear();
-                for (var i = 0; i < _presetProviders.Count; i++)
-                {
-                    _presetCombo.Items.Add(_presetProviders[i].Name);
-                    _presetCombo.ItemsData.Add(i);
-                }
+                FillPresetCombo(_presetCombo);
                 _presetCombo.UpdateItems();
                 var draft = SelectedDraft;
-                _presetCombo.itemIndex = draft != null ? IndexOfPreset(draft.Id) : -1;
+                _presetCombo.itemIndex = PresetComboIndex(draft != null ? draft.Id : null);
             }
             catch (Exception ex)
             {
@@ -925,6 +947,13 @@ namespace IcarusII.UI
             {
                 _suppressPresetEvent = false;
             }
+        }
+
+        /// <summary>供应商 id → 下拉框下标（目录项整体后移一位；未知 / 空 = 0「自定义…」）。</summary>
+        private static int PresetComboIndex(string id)
+        {
+            var presetIndex = IndexOfPreset(id);
+            return presetIndex >= 0 ? presetIndex + 1 : 0;
         }
 
         private static int IndexOfPreset(string id)
@@ -1711,10 +1740,9 @@ namespace IcarusII.UI
 
             if (_presetCombo != null)
             {
-                // 目录里没有的自定义供应商留空，ID 由下方输入框自己维护。
-                var presetIndex = has ? IndexOfPreset(draft.Id) : -1;
+                // 目录里没有的自定义供应商停在「自定义…」，ID 由下方输入框自己维护。
                 _suppressPresetEvent = true;
-                try { _presetCombo.itemIndex = presetIndex; }
+                try { _presetCombo.itemIndex = has ? PresetComboIndex(draft.Id) : 0; }
                 finally { _suppressPresetEvent = false; }
             }
 
