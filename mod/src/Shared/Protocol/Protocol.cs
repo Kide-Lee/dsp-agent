@@ -182,6 +182,8 @@ namespace IcarusII.Common.Protocol
         public const string ToolTodoAdd = "game_todo_add";
         public const string ToolTodoRemove = "game_todo_remove";
         public const string ToolTakeOutput = "game_take_output";
+        /// <summary>只写蓝图文件、不改游戏状态的工具；只读权限同样拒绝。</summary>
+        public const string ToolCopyBlueprint = "game_copy_blueprint";
 
         /// <summary>沙盒专属工具名（尚未实现；先用于门禁/测试）。</summary>
         public const string ToolSpawnItem = "game_spawn_item";
@@ -236,6 +238,16 @@ namespace IcarusII.Common.Protocol
             return false;
         }
 
+        /// <summary>
+        /// 只读权限下 mod 侧要拒绝的工具。sidecar 只读时本来就不会注册写工具，
+        /// 这里是第二道门：即使 sidecar 被替换/出错，mod 也不执行。
+        /// </summary>
+        public static bool IsReadonlyBlockedTool(string toolName)
+        {
+            return IsWriteTool(toolName)
+                || string.Equals(toolName, ToolCopyBlueprint, StringComparison.Ordinal);
+        }
+
         /// <summary>确认请求默认有效期（设计 §9.3）。</summary>
         public const int ConfirmTimeoutMs = 60000;
 
@@ -279,6 +291,9 @@ namespace IcarusII.Common.Protocol
         public const string CodeConfirmationExpired = "confirmation_expired";
         public const string CodeConfirmationDenied = "confirmation_denied";
 
+        /// <summary>只读权限：写操作/写蓝图被拒绝。</summary>
+        public const string CodePermissionDenied = "permission_denied";
+
         // status.state 取值
         public const string StateIdle = "idle";
         public const string StateThinking = "thinking";
@@ -287,10 +302,25 @@ namespace IcarusII.Common.Protocol
         public const string StateCompacting = "compacting";
         public const string StateAborting = "aborting";
 
-        // 思考档位（与 pi 的 ThinkingLevel 一致；DeepSeek 只映射 high/max）
+        // 思考档位（与 pi 的 ThinkingLevel 一致）。聊天窗暴露四档：
+        // off / low / high / max；DeepSeek Flash 映射 low/high/max，Pro 映射 high/max。
         public const string ThinkingOff = "off";
+        public const string ThinkingLow = "low";
         public const string ThinkingHigh = "high";
         public const string ThinkingMax = "max";
+
+        // 权限档位：AI 调工具时是否需要玩家同意。
+        public const string PermissionReadonly = "readonly";
+        public const string PermissionLimited = "limited";
+        public const string PermissionTakeover = "takeover";
+        public const string DefaultPermission = PermissionLimited;
+
+        public static bool IsValidPermissionLevel(string level)
+        {
+            return string.Equals(level, PermissionReadonly, StringComparison.Ordinal)
+                || string.Equals(level, PermissionLimited, StringComparison.Ordinal)
+                || string.Equals(level, PermissionTakeover, StringComparison.Ordinal);
+        }
 
         /// <summary>服务端 sidecar 的默认端口。</summary>
         public const int DefaultPort = 8765;
@@ -368,7 +398,8 @@ namespace IcarusII.Common.Protocol
         public static JsonValue BuildConfigSet(string provider, string model, string apiKey,
             string baseUrl, string thinkingLevel = null,
             JsonValue providerConfig = null, JsonValue removeProviders = null,
-            string activeProvider = null, string activeModel = null)
+            string activeProvider = null, string activeModel = null,
+            string permissionLevel = null)
         {
             var p = JsonValue.NewObject();
             if (!string.IsNullOrEmpty(provider)) p.Set("provider", provider);
@@ -380,6 +411,7 @@ namespace IcarusII.Common.Protocol
             if (removeProviders != null && !removeProviders.IsNull) p.Set("removeProviders", removeProviders);
             if (!string.IsNullOrEmpty(activeProvider)) p.Set("activeProvider", activeProvider);
             if (!string.IsNullOrEmpty(activeModel)) p.Set("activeModel", activeModel);
+            if (!string.IsNullOrEmpty(permissionLevel)) p.Set("permissionLevel", permissionLevel);
             return p;
         }
 
@@ -1127,6 +1159,12 @@ namespace IcarusII.Common.Protocol
         /// </summary>
         public string ThinkingLevel { get; private set; }
 
+        /// <summary>
+        /// 权限档位（readonly / limited / takeover，可选）。老服务端不返回时保持 null，
+        /// 调用方回退到本地配置（默认 limited）。
+        /// </summary>
+        public string PermissionLevel { get; private set; }
+
         public string Message { get; private set; }
 
         public ConfigState()
@@ -1167,6 +1205,7 @@ namespace IcarusII.Common.Protocol
             result.Provider = payload["provider"].AsString(null);
             result.Model = payload["model"].AsString(null);
             result.ThinkingLevel = payload["thinkingLevel"].AsString(null);
+            result.PermissionLevel = payload["permissionLevel"].AsString(null);
             result.Message = payload["message"].AsString(null);
 
             var providers = payload["providers"];

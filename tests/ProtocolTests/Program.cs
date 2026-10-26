@@ -337,6 +337,27 @@ namespace IcarusII.Tests
                 "{\"state\":\"ready\",\"model\":\"deepseek-v4-pro\",\"thinkingLevel\":\"max\"}"));
             Eq("config.state.thinkingLevel", "max", csThink.ThinkingLevel);
 
+            // 权限档位（readonly / limited / takeover）
+            Check("思考低档存在", Protocol.ThinkingLow == "low");
+            Check("只读权限合法", Protocol.IsValidPermissionLevel(Protocol.PermissionReadonly));
+            Check("有限权限合法", Protocol.IsValidPermissionLevel(Protocol.PermissionLimited));
+            Check("接管权限合法", Protocol.IsValidPermissionLevel(Protocol.PermissionTakeover));
+            Check("未知权限非法", !Protocol.IsValidPermissionLevel("allow_all"));
+            Check("写工具在只读下被拒绝", Protocol.IsReadonlyBlockedTool(Protocol.ToolSetRecipe));
+            Check("存蓝图在只读下被拒绝", Protocol.IsReadonlyBlockedTool(Protocol.ToolCopyBlueprint));
+            Check("读工具在只读下放行", !Protocol.IsReadonlyBlockedTool("game_get_overview"));
+
+            var cfgPerm = Protocol.BuildConfigSet(null, null, null, null, null, null, null, null, null,
+                Protocol.PermissionTakeover);
+            Eq("config.set permissionLevel", "takeover", cfgPerm["permissionLevel"].AsString());
+            var cfgNoPerm = Protocol.BuildConfigSet(null, null, null, null);
+            Check("config.set 未给出 permissionLevel 不写入", !cfgNoPerm.Has("permissionLevel"));
+
+            Check("缺 permissionLevel 时为 null", cs.PermissionLevel == null);
+            var csPerm = ConfigState.Parse(JsonValue.Parse(
+                "{\"state\":\"ready\",\"model\":\"deepseek-v4-pro\",\"permissionLevel\":\"readonly\"}"));
+            Eq("config.state.permissionLevel", "readonly", csPerm.PermissionLevel);
+
             var bad = ConfigState.Parse(JsonValue.Parse("{\"state\":\"invalid_key\"}"));
             Check("invalid_key 需要重新录入", bad.NeedsKey);
 

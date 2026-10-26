@@ -13,7 +13,7 @@ import type { KnowledgeStore } from '../kb/store.js';
 import type { KnowledgeBase } from '../kb/knowledge.js';
 import type { PlanResult } from '../kb/types.js';
 import type { AliasResolver } from '../wiki/aliases.js';
-import type { BlueprintTiers } from '../protocol.js';
+import type { BlueprintTiers, PermissionLevel } from '../protocol.js';
 import { BlueprintPathError, BlueprintWorkspace } from './workspace.js';
 import { DysonSphereBlueprintsClient } from './site.js';
 import type { PlanBlueprintMeta } from './planner.js';
@@ -343,9 +343,11 @@ export function createBlueprintTools(
   getTiers?: () => BlueprintTiers | null,
   workspace?: BlueprintWorkspace,
   siteClient?: DysonSphereBlueprintsClient,
+  getPermission?: () => PermissionLevel,
 ): ToolDefinition[] {
   const ws = workspace ?? new BlueprintWorkspace();
   const site = siteClient ?? new DysonSphereBlueprintsClient();
+  const readonly = (): boolean => getPermission?.() === 'readonly';
   return [
     {
       name: 'blueprint_fs',
@@ -388,6 +390,17 @@ export function createBlueprintTools(
         const args = (params ?? {}) as Record<string, unknown>;
         const op = typeof args['op'] === 'string' ? args['op'] : '';
         const path = typeof args['path'] === 'string' ? args['path'] : undefined;
+        // 只读权限：保留 ls/cat/pwd/cd，拒绝任何会改动蓝图目录的操作。
+        if (readonly() && (op === 'mkdir' || op === 'write' || op === 'rm' || op === 'rmdir')) {
+          return reply(
+            {
+              error: '当前权限为「只读」，不能修改蓝图目录；请让玩家把「权限」改为「有限」或「接管」。',
+              op,
+            },
+            false,
+            'permission_denied',
+          );
+        }
         try {
           if (op === 'pwd') {
             return reply({ root: ws.root, cwd: ws.currentDir, defaultDir: ws.defaultDir }, true);
@@ -735,6 +748,13 @@ export function createBlueprintTools(
         overwrite: Type.Optional(Type.Boolean({ description: '同名时覆盖，默认 false' })),
       }),
       async execute(_id, params) {
+        if (readonly()) {
+          return reply(
+            { error: '当前权限为「只读」，不能写入蓝图目录。' },
+            false,
+            'permission_denied',
+          );
+        }
         const args = (params ?? {}) as Record<string, unknown>;
         const path = typeof args['path'] === 'string' ? args['path'] : '';
         const url = typeof args['url'] === 'string' ? args['url'] : '';
@@ -894,6 +914,13 @@ export function createBlueprintTools(
         description: Type.Optional(Type.String({ description: '蓝图介绍' })),
       }),
       async execute(_id, params) {
+        if (readonly()) {
+          return reply(
+            { error: '当前权限为「只读」，不能生成并保存蓝图。' },
+            false,
+            'permission_denied',
+          );
+        }
         const args = (params ?? {}) as Record<string, unknown>;
         const rawItem = typeof args['item'] === 'string' ? args['item'].trim() : '';
         const rate = typeof args['rate'] === 'number' ? args['rate'] : 0;

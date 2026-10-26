@@ -74,6 +74,9 @@ namespace IcarusII
         /// <summary>思考档位在本地改过、但还没成功发给 sidecar（下次 ready 时补发）。</summary>
         private bool _thinkingLevelDirty;
 
+        /// <summary>权限档位在本地改过、但还没成功发给 sidecar（下次 ready 时补发）。</summary>
+        private bool _permissionLevelDirty;
+
         /// <summary>最近一个已渲染终稿的 promptId，用于对重复的 message{final} 去重。</summary>
         private string _lastFinalReplyTo;
         /// <summary>请求 id → 用户提问原文；final 到达时用来回存该回答的游戏时间。</summary>
@@ -142,6 +145,7 @@ namespace IcarusII
                 _chat = new ChatWindow();
                 _chat.Submitted += OnUserSubmitted;
                 _chat.ThinkingLevelChanged += OnThinkingLevelChanged;
+                _chat.PermissionLevelChanged += OnPermissionLevelChanged;
                 _chat.ModelSelectionChanged += OnModelSelectionChanged;
                 _chat.TurnDeleted += OnTurnDeleted;
                 _chat.CompactionUndoRequested += OnCompactionUndoRequested;
@@ -695,7 +699,20 @@ namespace IcarusII
                 return;
             }
 
+            // 只读权限的 mod 侧：sidecar 被替换/出错时也不执行写操作。
+            // 放在令牌校验之前，避免只读模式下还去消费/等待确认。
+            if (_config != null &&
+                string.Equals(_config.PermissionLevel, Protocol.PermissionReadonly, StringComparison.Ordinal) &&
+                (call.Risk > 0 || Protocol.IsReadonlyBlockedTool(call.Name)))
+            {
+                _client?.SendToolResult(call.CallId, false, JsonValue.Null,
+                    Protocol.CodePermissionDenied, Strings.Get("permission.readonly.denied"), JsonValue.NewObject());
+                _chat?.SetStatus(Strings.Get("status.ready"), WarnColor);
+                return;
+            }
+
             // 写操作双重门禁的 mod 侧：没有侧车确认产生的一次性令牌，绝不执行。
+            // 「接管」权限下 OnConfirmRequest 会自动同意并回传令牌，这里仍然照常校验。
             if ((call.Risk > 0 || IsWriteToolName(call.Name)) &&
                 !_confirmation.TryConsume(call, out var confirmError))
             {
@@ -783,6 +800,36 @@ namespace IcarusII
                 Log.LogWarning("[confirm] confirm_request 载荷无效");
                 return;
             }
+            // 权限档位在 mod 侧生效：
+            //   只读  → 不发 UI，直接拒绝（sidecar 正常不会走到这里）；
+            //   接管  → 不弹确认，自动同意并回传令牌；令牌校验仍然保留。
+            if (_config != null &&
+                string.Equals(_config.PermissionLevel, Protocol.PermissionReadonly, StringComparison.Ordinal))
+            {
+                SendConfirmResult(request, false);
+                Log.LogWarning($"[confirm] 只读权限，拒绝写操作 {request.Tool} callId={request.CallId}");
+                return;
+            }
+            if (_config != null &&
+                string.Equals(_config.PermissionLevel, Protocol.PermissionTakeover, StringComparison.Ordinal))
+            {
+                if (!_confirmation.TryRegister(request, out var autoError))
+                {
+                    SendConfirmResult(request, false);
+                    Log.LogWarning($"[confirm] 接管权限下无法登记确认请求：{autoError}");
+                    return;
+                }
+                if (!_confirmation.TryResolve(request.RequestId, true, out var autoResolved))
+                {
+                    SendConfirmResult(request, false);
+                    Log.LogWarning($"[confirm] 接管权限下确认请求不合法 tool={request.Tool}");
+                    return;
+                }
+                SendConfirmResult(autoResolved, true);
+                Log.LogInfo($"[confirm] 接管权限：自动同意 {request.Tool} callId={request.CallId}");
+                return;
+            }
+
             EnsureUi();
             if (!_uiInitialized || _chat == null || !_chat.Created)
             {
@@ -1202,6 +1249,36 @@ namespace IcarusII
         }
 
         /// <summary>
+        /// 玩家在聊天窗里换了权限档位。本地 cfg 先落盘（断线也能记住），
+        /// 再尽力发给 sidecar；tool_call / confirm_request 的门禁都读本地值。
+        /// </summary>
+        private void OnPermissionLevelChanged(string level)
+        {
+            if (!Protocol.IsValidPermissionLevel(level)) return;
+
+            _config?.SetPermissionLevel(level);
+
+            // 让玩家明确知道当前档位的行为差异（接管尤其重要）。
+            var key = level == Protocol.PermissionReadonly
+                ? "permission.changed.readonly"
+                : level == Protocol.PermissionTakeover
+                    ? "permission.changed.takeover"
+                    : "permission.changed.limited";
+            _chat?.AppendSystem(Strings.Get(key));
+
+            if (_client == null || _client.State != ConnectionState.Ready)
+            {
+                _permissionLevelDirty = true;
+                Log.LogInfo($"[配置] 权限 → {level}（连接未就绪，稍后补发）");
+                return;
+            }
+
+            var id = _client.SendConfigSet(permissionLevel: level);
+            _permissionLevelDirty = id == null;
+            Log.LogInfo($"[配置] 权限 → {level}（config.set {(id != null ? "已发送" : "发送失败")}）");
+        }
+
+        /// <summary>
         /// 玩家在聊天窗里换了模型。模型列表由 sidecar 的 config.json 持久化，
         /// 这里直接发 `config.set{activeProvider,activeModel}`；下一轮 prompt 生效。
         /// </summary>
@@ -1261,6 +1338,24 @@ namespace IcarusII
             }
             if (_thinkingLevelDirty) _chat.ApplyThinkingLevel(_config.ThinkingLevel);
             else if (!string.IsNullOrEmpty(config.ThinkingLevel)) _chat.ApplyThinkingLevel(config.ThinkingLevel);
+
+            // 权限档位：与思考档位相同的「本地 dirty 优先，否则跟随 sidecar」。
+            if (config.State == P.ConfigReady && _permissionLevelDirty && _client != null)
+            {
+                var id = _client.SendConfigSet(permissionLevel: _config.PermissionLevel);
+                _permissionLevelDirty = id == null;
+            }
+            if (_permissionLevelDirty)
+            {
+                _chat.ApplyPermissionLevel(_config.PermissionLevel);
+            }
+            else if (!string.IsNullOrEmpty(config.PermissionLevel) &&
+                     Protocol.IsValidPermissionLevel(config.PermissionLevel))
+            {
+                // sidecar 是权威来源；同时回写本地 cfg，断线/重启后仍保持一致。
+                _config?.SetPermissionLevel(config.PermissionLevel);
+                _chat.ApplyPermissionLevel(config.PermissionLevel);
+            }
 
             // 模型列表/当前模型：sidecar 的 config.state 是权威来源。
             _chat.ApplyModels(config);

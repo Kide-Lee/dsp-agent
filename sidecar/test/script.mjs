@@ -18,7 +18,7 @@ const ok = (name) => { passed++; console.log(`  ok   ${name}`); };
 const fail = (name, detail) => { failed++; console.log(`  FAIL ${name}${detail ? `：${detail}` : ''}`); };
 const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
 
-function makeHost({ approve = true } = {}) {
+function makeHost({ approve = true, permission = 'limited' } = {}) {
   const calls = [];
   const confirms = [];
   const releases = [];
@@ -27,6 +27,7 @@ function makeHost({ approve = true } = {}) {
     confirms,
     releases,
     host: {
+      permissionLevel: permission,
       has: (capability) => capability === 'script.write.v1',
       tools: () => [
         { name: 'game_get_power' },
@@ -114,6 +115,15 @@ console.log('\n── 3. 白名单、写确认与预算 ──');
   const out = await run(deniedTool, `dsp.call('game_set_recipe', { buildingId: 1, recipeId: 2 });`);
   check('写脚本未确认被拒绝', out.text.includes('[confirmation_denied]'), out.text.slice(0, 160));
   check('拒绝时没有执行写工具', denied.calls.length === 0);
+}
+
+{
+  const readonly = makeHost({ permission: 'readonly' });
+  const readonlyTool = createScriptTool(readonly.host);
+  const out = await run(readonlyTool, `dsp.call('game_set_recipe', { buildingId: 1, recipeId: 2 });`);
+  check('只读权限下写脚本被拒绝', out.text.includes('[permission_denied]'), out.text.slice(0, 160));
+  check('只读时没有请求脚本确认', readonly.confirms.length === 0);
+  check('只读时没有执行写工具', readonly.calls.length === 0);
 }
 
 {

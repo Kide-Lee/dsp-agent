@@ -94,6 +94,30 @@ try {
     check('thinkingLevel 落盘', JSON.parse(readFileSync(configPath, 'utf8')).thinkingLevel === 'high');
     check('重新加载后 thinkingLevel 仍在', fresh().view().thinkingLevel === 'high');
     check('thinkingLevel: off 可写', store.update({ thinkingLevel: 'off' }).thinkingLevel === 'off');
+    check('thinkingLevel: low 可写', store.update({ thinkingLevel: 'low' }).thinkingLevel === 'low');
+  }
+
+  // 3b2) 权限档位：默认 limited、往返读写
+  {
+    const store = fresh();
+    check(
+      '默认 permissionLevel = limited',
+      store.view().permissionLevel === 'limited',
+      store.view().permissionLevel,
+    );
+    check(
+      'permissionLevel 写入视图',
+      store.update({ permissionLevel: 'takeover' }).permissionLevel === 'takeover',
+    );
+    check(
+      'permissionLevel 落盘',
+      JSON.parse(readFileSync(configPath, 'utf8')).permissionLevel === 'takeover',
+    );
+    check('重新加载后 permissionLevel 仍在', fresh().view().permissionLevel === 'takeover');
+    check(
+      'permissionLevel: readonly 可写',
+      store.update({ permissionLevel: 'readonly' }).permissionLevel === 'readonly',
+    );
   }
 
   // 3c) 多供应商 / 多模型
@@ -271,7 +295,7 @@ try {
     );
     check(
       '落盘文件不含多余字段',
-      Object.keys(onDisk).sort().join(',') === 'active,providers,thinkingLevel',
+      Object.keys(onDisk).sort().join(',') === 'active,permissionLevel,providers,thinkingLevel',
       Object.keys(onDisk).join(','),
     );
     check(

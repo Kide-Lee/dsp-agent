@@ -15,7 +15,8 @@
  *       }
  *     },
  *     "active": { "provider": "deepseek", "model": "deepseek-v4-flash" },
- *     "thinkingLevel": "high"
+ *     "thinkingLevel": "high",
+ *     "permissionLevel": "limited"
  *   }
  *
  * 兼容旧格式（单条 provider/model/apiKey/baseUrl）：读盘时自动迁移成一条
@@ -34,13 +35,16 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'n
 import { dirname } from 'node:path';
 import { errorFields, type Logger, log as rootLog } from './log.js';
 import {
+  DEFAULT_PERMISSION_LEVEL,
   DEFAULT_THINKING_LEVEL,
+  isPermissionLevel,
   isThinkingLevel,
   type ConfigStateValue,
   type ConfigUpdatePayload,
   type ConfigView,
   type ModelEntry,
   type ModelInputModality,
+  type PermissionLevel,
   type ProviderPatch,
   type ProviderView,
   type ThinkingLevelName,
@@ -132,6 +136,8 @@ export interface ConfigData {
   activeModel: string;
   /** 思考档位；`off` = 不请求思考（默认，控制成本）。 */
   thinkingLevel: ThinkingLevelName;
+  /** 权限档位；`limited` = 写操作逐次确认（默认）。 */
+  permissionLevel: PermissionLevel;
 }
 
 /**
@@ -276,6 +282,7 @@ export class ConfigStore {
       activeProvider: provider,
       activeModel: model,
       thinkingLevel: DEFAULT_THINKING_LEVEL,
+      permissionLevel: DEFAULT_PERMISSION_LEVEL,
     };
     this.load();
     this.ensureActive();
@@ -380,6 +387,9 @@ export class ConfigStore {
     const thinkingLevel = parsed['thinkingLevel'];
     if (isThinkingLevel(thinkingLevel)) this.data.thinkingLevel = thinkingLevel;
 
+    const permissionLevel = parsed['permissionLevel'];
+    if (isPermissionLevel(permissionLevel)) this.data.permissionLevel = permissionLevel;
+
     this.ensureActive();
 
     this.logger.debug('已加载 config.json', {
@@ -389,6 +399,7 @@ export class ConfigStore {
       providers: Object.keys(this.data.providers),
       apiKey: maskSecret(this.active()?.apiKey),
       thinkingLevel: this.data.thinkingLevel,
+      permissionLevel: this.data.permissionLevel,
     });
   }
 
@@ -440,6 +451,7 @@ export class ConfigStore {
       apiKey: provider.apiKey,
       baseUrl: provider.baseUrl,
       thinkingLevel: this.data.thinkingLevel,
+      permissionLevel: this.data.permissionLevel,
       providers: cloneProviders(this.data.providers),
       activeProvider: this.data.activeProvider,
       activeModel: this.data.activeModel,
@@ -547,6 +559,9 @@ export class ConfigStore {
     if (patch.thinkingLevel !== undefined) {
       this.data.thinkingLevel = patch.thinkingLevel;
     }
+    if (patch.permissionLevel !== undefined) {
+      this.data.permissionLevel = patch.permissionLevel;
+    }
 
     // 6) 切到新供应商后，若原模型不属于它，自动选它的第一个模型。
     const providerNow = this.active();
@@ -580,6 +595,7 @@ export class ConfigStore {
       apiKey: maskSecret(this.active()?.apiKey),
       baseUrl: this.active()?.baseUrl ?? null,
       thinkingLevel: this.data.thinkingLevel,
+      permissionLevel: this.data.permissionLevel,
       path: this.path,
     });
 
@@ -624,6 +640,7 @@ export class ConfigStore {
       provider: this.data.activeProvider,
       model: this.data.activeModel,
       thinkingLevel: this.data.thinkingLevel,
+      permissionLevel: this.data.permissionLevel,
       providers,
       active: { provider: this.data.activeProvider, model: this.data.activeModel },
     };
@@ -652,6 +669,7 @@ export class ConfigStore {
       apiKey: maskSecret(this.active()?.apiKey),
       baseUrl: this.active()?.baseUrl ?? null,
       thinkingLevel: this.data.thinkingLevel,
+      permissionLevel: this.data.permissionLevel,
     };
   }
 
@@ -663,6 +681,7 @@ export class ConfigStore {
       providers: this.data.providers,
       active: { provider: this.data.activeProvider, model: this.data.activeModel },
       thinkingLevel: this.data.thinkingLevel,
+      permissionLevel: this.data.permissionLevel,
     };
     writeFileSync(tmp, `${JSON.stringify(onDisk, null, 2)}\n`, {
       encoding: 'utf8',

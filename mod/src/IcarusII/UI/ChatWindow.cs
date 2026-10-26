@@ -384,6 +384,14 @@ namespace IcarusII.UI
         private bool _suppressThinkingLevelEvent;
 
         /// <summary>
+        /// 输入栏右下角的「权限」下拉框（prefab 里挂在 permission-group/permission-level）。
+        /// 只读 / 有限 / 接管：决定 AI 调写工具时是否需要玩家确认。
+        /// </summary>
+        private UIComboBox _permissionCombo;
+        private string _permissionLevel = Protocol.DefaultPermission;
+        private bool _suppressPermissionEvent;
+
+        /// <summary>
         /// 输入栏里的「模型」下拉框（prefab 里挂在 model-group/model-level）。
         /// 选项是 sidecar 的 providers × models 扁平化结果。
         /// </summary>
@@ -821,6 +829,8 @@ namespace IcarusII.UI
             _thinkingText.Length = 0;
             _thinkingCombo = null;
             _suppressThinkingLevelEvent = false;
+            _permissionCombo = null;
+            _suppressPermissionEvent = false;
             _stream.Length = 0;
             _streamItem = -1;
             _lastStreamRenderLength = -1;
@@ -876,6 +886,9 @@ namespace IcarusII.UI
             _thinkingLevel = PluginConfig.IsValidThinkingLevel(config.ThinkingLevel)
                 ? config.ThinkingLevel.ToLowerInvariant()
                 : Protocol.ThinkingHigh;
+            _permissionLevel = PluginConfig.IsValidPermissionLevel(config.PermissionLevel)
+                ? config.PermissionLevel.ToLowerInvariant()
+                : Protocol.DefaultPermission;
             // 正文字体：两条构建路径（prefab / 代码兜底）都要有，Text 留空会 NRE
             _bodyFont = font;
 
@@ -1211,6 +1224,8 @@ namespace IcarusII.UI
 
             // 右下角「思考等级」下拉框：用游戏自己的 UIComboBox（prefab 里已放好节点）。
             WireThinkingLevelCombo(panel);
+            // 「权限」下拉框：只读 / 有限 / 接管，决定写操作是否弹确认。
+            WirePermissionLevelCombo(panel);
             WireModelCombo(panel);
 
             // ── 从原生窗口抄来时缺的两处运行期初始化（不改你的 prefab）──
@@ -1775,6 +1790,7 @@ namespace IcarusII.UI
                 // 需要"开窗即打字"的玩家可在配置里打开 AutoFocusInput。
                 if (_autoFocusInput && !AskShowing) FocusInput();
                 EnsureThinkingComboText();
+                EnsurePermissionComboText();
                 EnsureModelComboText();
                 RebuildBottomLayout();
                 // 刚 SetActive(true)，布局还没重建：直接贴底只能按旧高度算，
@@ -3028,9 +3044,24 @@ namespace IcarusII.UI
             }
         }
 
+        // ---------------------------------------------------------------- 权限
+
+        /// <summary>当前权限档位（readonly / limited / takeover）。</summary>
+        public string PermissionLevel => _permissionLevel;
+
+        /// <summary>玩家在聊天窗下拉框里切换了权限档位。参数是协议里的档位名。</summary>
+        public event Action<string> PermissionLevelChanged;
+
+        /// <summary>用 sidecar 的 config.state 同步下拉框（不触发事件，避免回声）。</summary>
+        public void ApplyPermissionLevel(string level)
+        {
+            if (!PluginConfig.IsValidPermissionLevel(level)) return;
+            SetPermissionLevel(level, notify: false);
+        }
+
         // ---------------------------------------------------------------- 思考块
 
-        /// <summary>当前思考档位（off / high / max…）。</summary>
+        /// <summary>当前思考档位（off / low / high / max）。</summary>
         public string ThinkingLevel => _thinkingLevel;
 
         /// <summary>玩家在聊天窗下拉框里切换了思考档位。参数是协议里的档位名。</summary>
@@ -3783,11 +3814,12 @@ namespace IcarusII.UI
             return sb.ToString();
         }
 
-        // ---------------------------------------------------------------- 思考等级下拉框
+        // ---------------------------------------------------------------- 思考等级 / 权限下拉框
 
         /// <summary>
         /// 接上 prefab 右下角的「思考等级」下拉框（游戏自己的 UIComboBox）。
-        /// 只暴露模型真正支持的档位：DeepSeek 的 thinkingLevelMap 只映射 high/max。
+        /// 玩家可见四档：关闭 / 低 / 高 / 极限。DeepSeek Flash 映射 low/high/max，
+        /// Pro 只映射 high/max（low 会被 pi clamp）。
         /// </summary>
         private void WireThinkingLevelCombo(RectTransform panel)
         {
@@ -3810,26 +3842,17 @@ namespace IcarusII.UI
             combo.ItemsData.Clear();
             combo.Items.Add(Strings.Get("thinking.level.off"));
             combo.ItemsData.Add(0);
-            combo.Items.Add(Strings.Get("thinking.level.high"));
+            combo.Items.Add(Strings.Get("thinking.level.low"));
             combo.ItemsData.Add(1);
-            combo.Items.Add(Strings.Get("thinking.level.max"));
+            combo.Items.Add(Strings.Get("thinking.level.high"));
             combo.ItemsData.Add(2);
+            combo.Items.Add(Strings.Get("thinking.level.max"));
+            combo.ItemsData.Add(3);
             combo.UpdateItems();
 
             SetThinkingLevel(_thinkingLevel, notify: false);
             combo.onItemIndexChange.AddListener(OnThinkingLevelComboChanged);
-
-            // 下拉列表方向：prefab 里默认朝下（会伸出窗口底部）。运行期统一改成朝上，
-            // 位置/尺寸仍由 UIComboBox.SetState 负责。
-            var comboRt = combo.transform as RectTransform;
-            var dropDown = combo.transform.Find("Dropdown List ScrollBox") as RectTransform;
-            if (dropDown != null)
-            {
-                dropDown.anchorMin = new Vector2(0f, 0f);
-                dropDown.anchorMax = new Vector2(0f, 0f);
-                dropDown.pivot = new Vector2(0f, 0f);
-                dropDown.anchoredPosition = new Vector2(0f, comboRt != null ? comboRt.sizeDelta.y : 24f);
-            }
+            FlipComboDropdownUp(combo);
 
             Plugin.Log.LogInfo($"[UI] 已接上「思考等级」下拉框（当前 {_thinkingLevel}）。");
         }
@@ -3866,9 +3889,10 @@ namespace IcarusII.UI
             switch ((level ?? string.Empty).ToLowerInvariant())
             {
                 case Protocol.ThinkingOff: return 0;
-                case Protocol.ThinkingMax: return 2;
-                // minimal/low/medium/xhigh 在 DeepSeek 上都会被 clamp 到 high。
-                default: return 1;
+                case Protocol.ThinkingLow: return 1;
+                case Protocol.ThinkingMax: return 3;
+                // minimal/medium/xhigh 只可能来自老配置文件：按 high 显示。
+                default: return 2;
             }
         }
 
@@ -3877,8 +3901,9 @@ namespace IcarusII.UI
             switch (index)
             {
                 case 0: return Protocol.ThinkingOff;
-                case 1: return Protocol.ThinkingHigh;
-                case 2: return Protocol.ThinkingMax;
+                case 1: return Protocol.ThinkingLow;
+                case 2: return Protocol.ThinkingHigh;
+                case 3: return Protocol.ThinkingMax;
                 default: return null;
             }
         }
@@ -3900,6 +3925,123 @@ namespace IcarusII.UI
             _suppressThinkingLevelEvent = true;
             try { _thinkingCombo.itemIndex = index; }
             finally { _suppressThinkingLevelEvent = false; }
+        }
+
+        /// <summary>
+        /// 接上 prefab 输入栏里的「权限」下拉框：只读 / 有限 / 接管。
+        /// 只改 Items，不动 prefab 的 RectTransform；老 bundle 没有该节点时只记日志。
+        /// </summary>
+        private void WirePermissionLevelCombo(RectTransform panel)
+        {
+            var comboNode = FindNode(panel,
+                "input/editor/tool-bar/permission-group/permission-level",
+                "tool-bar/permission-group/permission-level",
+                "permission-group/permission-level",
+                "input/editor/tool-bar/permission-level",
+                "tool-bar/permission-level", "permission-level");
+            var combo = comboNode != null ? comboNode.GetComponent<UIComboBox>() : null;
+            if (combo == null)
+            {
+                Plugin.Log.LogInfo("[UI] prefab 里没有「权限」下拉框，权限只能用配置文件切换。");
+                return;
+            }
+
+            _permissionCombo = combo;
+            combo.translated = true;
+            combo.Items.Clear();
+            combo.ItemsData.Clear();
+            combo.Items.Add(Strings.Get("permission.level.readonly"));
+            combo.ItemsData.Add(0);
+            combo.Items.Add(Strings.Get("permission.level.limited"));
+            combo.ItemsData.Add(1);
+            combo.Items.Add(Strings.Get("permission.level.takeover"));
+            combo.ItemsData.Add(2);
+            combo.UpdateItems();
+
+            SetPermissionLevel(_permissionLevel, notify: false);
+            combo.onItemIndexChange.AddListener(OnPermissionLevelComboChanged);
+            FlipComboDropdownUp(combo);
+
+            Plugin.Log.LogInfo($"[UI] 已接上「权限」下拉框（当前 {_permissionLevel}）。");
+        }
+
+        private void OnPermissionLevelComboChanged()
+        {
+            if (_suppressPermissionEvent || _permissionCombo == null) return;
+
+            var level = IndexToPermissionLevel(_permissionCombo.itemIndex);
+            if (string.IsNullOrEmpty(level) || level == _permissionLevel) return;
+            SetPermissionLevel(level, notify: true);
+        }
+
+        private void SetPermissionLevel(string level, bool notify)
+        {
+            if (!PluginConfig.IsValidPermissionLevel(level)) return;
+
+            level = level.ToLowerInvariant();
+            var changed = !string.Equals(level, _permissionLevel, StringComparison.Ordinal);
+            _permissionLevel = level;
+
+            if (_permissionCombo != null)
+            {
+                _suppressPermissionEvent = true;
+                try { _permissionCombo.itemIndex = PermissionLevelToIndex(level); }
+                finally { _suppressPermissionEvent = false; }
+            }
+
+            if (changed && _toolMenuOpen) RefreshToolMenu();
+            if (changed && notify) PermissionLevelChanged?.Invoke(level);
+        }
+
+        private static int PermissionLevelToIndex(string level)
+        {
+            switch ((level ?? string.Empty).ToLowerInvariant())
+            {
+                case Protocol.PermissionReadonly: return 0;
+                case Protocol.PermissionTakeover: return 2;
+                default: return 1;
+            }
+        }
+
+        private static string IndexToPermissionLevel(int index)
+        {
+            switch (index)
+            {
+                case 0: return Protocol.PermissionReadonly;
+                case 1: return Protocol.PermissionLimited;
+                case 2: return Protocol.PermissionTakeover;
+                default: return null;
+            }
+        }
+
+        private void EnsurePermissionComboText()
+        {
+            if (_permissionCombo == null) return;
+
+            var index = PermissionLevelToIndex(_permissionLevel);
+            if (_permissionCombo.itemIndex == index
+                && !string.IsNullOrEmpty(_permissionCombo.m_Input != null ? _permissionCombo.m_Input.text : null))
+                return;
+
+            _suppressPermissionEvent = true;
+            try { _permissionCombo.itemIndex = index; }
+            finally { _suppressPermissionEvent = false; }
+        }
+
+        /// <summary>
+        /// 下拉列表方向：prefab 里默认朝下（会伸出窗口底部）。运行期统一改成朝上，
+        /// 位置/尺寸仍由 UIComboBox.SetState 负责。
+        /// </summary>
+        private static void FlipComboDropdownUp(UIComboBox combo)
+        {
+            if (combo == null) return;
+            var comboRt = combo.transform as RectTransform;
+            var dropDown = combo.transform.Find("Dropdown List ScrollBox") as RectTransform;
+            if (dropDown == null) return;
+            dropDown.anchorMin = new Vector2(0f, 0f);
+            dropDown.anchorMax = new Vector2(0f, 0f);
+            dropDown.pivot = new Vector2(0f, 0f);
+            dropDown.anchoredPosition = new Vector2(0f, comboRt != null ? comboRt.sizeDelta.y : 24f);
         }
 
         // ---------------------------------------------------------------- 模型选择
@@ -7152,6 +7294,8 @@ namespace IcarusII.UI
             for (int i = 0; i < _toolCatalog.Count; i++)
             {
                 var item = _toolCatalog[i];
+                if (_permissionLevel == Protocol.PermissionReadonly &&
+                    Protocol.IsReadonlyBlockedTool(item.Name)) continue;
                 if (string.Equals(item.Name, token, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(item.Label, token, StringComparison.OrdinalIgnoreCase))
                     return item.Name;
@@ -7249,6 +7393,9 @@ namespace IcarusII.UI
             for (int i = 0; i < _toolCatalog.Count; i++)
             {
                 var item = _toolCatalog[i];
+                // 只读权限下，工具目录可能还是切换前拿到的；这里再把写工具挡掉。
+                if (_permissionLevel == Protocol.PermissionReadonly &&
+                    Protocol.IsReadonlyBlockedTool(item.Name)) continue;
                 if (item.Matches(_toolFilter)) _toolVisible.Add(item);
             }
 

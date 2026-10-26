@@ -44,11 +44,9 @@ class FakeSocket {
   }
 }
 
-function makeConfig() {
-  return {
-    view: () => ({ state: 'ready', provider: 'test', model: 'test', message: null }),
-    update: () => ({ state: 'ready', provider: 'test', model: 'test', message: null }),
-  };
+function makeConfig(permissionLevel = 'limited') {
+  const view = () => ({ state: 'ready', provider: 'test', model: 'test', permissionLevel, message: null });
+  return { view, update: view };
 }
 
 function hello(capabilities = ['game.read.v1']) {
@@ -111,7 +109,7 @@ function makeAgent(host, callOptions = {}, opts = {}) {
   return { agent, state };
 }
 
-function makeSession({ callOptions, activity } = {}) {
+function makeSession({ callOptions, activity, permission = 'limited' } = {}) {
   const socket = new FakeSocket();
   const host = new GameToolHost();
   const { agent, state } = makeAgent(host, callOptions, { activity });
@@ -119,7 +117,7 @@ function makeSession({ callOptions, activity } = {}) {
     token: 'test-token',
     serverVersion: 'test',
     agent,
-    config: makeConfig(),
+    config: makeConfig(permission),
     tools: toolNamesForCapabilities,
   });
   return { socket, host, session, state };
@@ -179,7 +177,40 @@ async function run() {
     check('无 game 能力时仍声明 kb/wiki/blueprint/脚本', emptyTools.length === 12 && emptyTools.every((name) => name.startsWith('kb_') || name.startsWith('wiki_') || name.startsWith('blueprint_') || name === 'run_script'));
   }
 
-  console.log('── 1b. prompt.requiredTool 透传给 agent ──');
+  console.log('── 1b. 只读权限：写工具不注册、调用被拒 ──');
+  {
+    const caps = ['game.read.v1', 'game.build.v1'];
+    const { socket, session, state } = makeSession({
+      permission: 'readonly',
+      callOptions: { name: 'game_set_recipe', risk: 2, timeoutMs: 80 },
+    });
+    session.handleFrame(Buffer.from(JSON.stringify(hello(caps))), false);
+    const ready = socket.frames.find((f) => f.type === 'ready');
+    const tools = ready?.payload?.tools ?? [];
+    check('只读 ready.tools 不含写工具', !tools.includes('game_set_recipe'), JSON.stringify(tools));
+    check('只读 ready.tools 仍含读工具', tools.includes('game_get_overview'));
+    check('只读 ready.config.permissionLevel', ready?.payload?.config?.permissionLevel === 'readonly');
+    check(
+      '只读仍保留 run_script（由脚本自身拒绝写）',
+      tools.includes('run_script'),
+      JSON.stringify(tools),
+    );
+
+    session.handleFrame(
+      Buffer.from(JSON.stringify({ v: 1, id: 'm-1c', type: 'prompt', payload: { text: '改配方' } })),
+      false,
+    );
+    const gotMessage = await waitFor(() => socket.frames.some((f) => f.type === 'message'), 1500);
+    check('只读写调用后 agent 不悬挂', gotMessage);
+    check(
+      '只读写调用返回 permission_denied',
+      state.result?.error?.code === 'permission_denied',
+      state.result?.error?.code,
+    );
+    check('只读没有向 mod 发 tool_call', !socket.frames.some((f) => f.type === 'tool_call'));
+  }
+
+  console.log('── 1c. prompt.requiredTool 透传给 agent ──');
   {
     const { session, state } = makeSession({ callOptions: { timeoutMs: 80 } });
     session.handleFrame(Buffer.from(JSON.stringify(hello())), false);

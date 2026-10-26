@@ -9,7 +9,12 @@
  */
 
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { JsonObject, ToolResultPayload } from '../protocol.js';
+import {
+  DEFAULT_PERMISSION_LEVEL,
+  type JsonObject,
+  type PermissionLevel,
+  type ToolResultPayload,
+} from '../protocol.js';
 import { isSandboxOnlyTool } from './sandbox.js';
 
 /** 脚本工具名（sidecar 本地执行）。 */
@@ -65,6 +70,8 @@ export class GameToolHost {
   private cachedTools: ToolDefinition[] | null = null;
   /** 调试直调期间把 host 调用标记为 internal，mod 不显示普通工具卡。 */
   private debugMode = false;
+  /** 当前权限档位；只读时脚本/蓝图工具据此拒绝写操作。 */
+  private permission: PermissionLevel = DEFAULT_PERMISSION_LEVEL;
 
   /** 返回能力集合是否真的变了。 */
   setCapabilities(next: readonly string[]): boolean {
@@ -91,6 +98,17 @@ export class GameToolHost {
 
   get sandbox(): boolean {
     return this.sandboxEnabled;
+  }
+
+  /** 权限变化不一定改工具集（只读会过滤），但脚本/蓝图工具需要立即看到新值。 */
+  setPermission(next: PermissionLevel): boolean {
+    if (this.permission === next) return false;
+    this.permission = next;
+    return true;
+  }
+
+  get permissionLevel(): PermissionLevel {
+    return this.permission;
   }
 
   async confirmScript(request: ScriptConfirmRequest): Promise<ScriptConfirmResult | null> {

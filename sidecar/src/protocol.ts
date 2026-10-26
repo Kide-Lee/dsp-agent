@@ -120,6 +120,8 @@ export type ErrorCode =
   | 'confirmation_invalid'
   | 'confirmation_expired'
   | 'confirmation_denied'
+  // 权限档位拒绝（只读）
+  | 'permission_denied'
   // M5：沙盒门禁
   | 'sandbox_required';
 
@@ -893,8 +895,9 @@ export function buildBlueprintCardPayload(args: BlueprintCardPayload): JsonObjec
 /**
  * 思考档位，取值与 pi 的 `ThinkingLevel` 完全一致。
  *
- * DeepSeek 的 `thinkingLevelMap` 只映射 `high` / `max`，其它档位会被 pi
- * clamp 到这两个之一；`off` 表示完全不请求思考。
+ * DeepSeek 的 `thinkingLevelMap`：Flash 映射 `low` / `high` / `max`；
+ * Pro 只映射 `high` / `max`（`low` 会被 pi clamp）。`off` 表示完全不请求思考。
+ * 聊天窗实际只暴露 `off | low | high | max` 四档，其余取值仅为兼容老配置保留。
  */
 export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ThinkingLevelName = (typeof THINKING_LEVELS)[number];
@@ -902,6 +905,23 @@ export const DEFAULT_THINKING_LEVEL: ThinkingLevelName = 'high';
 
 export function isThinkingLevel(value: unknown): value is ThinkingLevelName {
   return typeof value === 'string' && (THINKING_LEVELS as readonly string[]).includes(value);
+}
+
+/**
+ * 权限档位：AI 调用工具时是否需要玩家同意。
+ *
+ * - `readonly`：只读。写工具不注册、也不执行；文件/脚本里的写操作同样拒绝。
+ * - `limited`：有限（默认）。写工具执行前由 mod 弹确认，玩家同意后带一次性令牌执行。
+ * - `takeover`：接管。写工具不再逐次确认；mod 仍校验令牌，但在该档位下自动同意。
+ *
+ * 权限只能由玩家在聊天窗/配置文件里改，模型无法通过工具修改。
+ */
+export const PERMISSION_LEVELS = ['readonly', 'limited', 'takeover'] as const;
+export type PermissionLevel = (typeof PERMISSION_LEVELS)[number];
+export const DEFAULT_PERMISSION_LEVEL: PermissionLevel = 'limited';
+
+export function isPermissionLevel(value: unknown): value is PermissionLevel {
+  return typeof value === 'string' && (PERMISSION_LEVELS as readonly string[]).includes(value);
 }
 
 /** `config.state.payload.state` / `ready.payload.config.state` 的取值（附录 A.1）。 */
@@ -942,6 +962,8 @@ export interface ConfigView {
   model: string;
   /** 思考档位；只影响下一次 prompt。 */
   thinkingLevel: ThinkingLevelName;
+  /** 权限档位；决定写工具是否需要玩家确认。 */
+  permissionLevel: PermissionLevel;
   message: string | null;
   /** 多供应商配置；老服务端不返回时 mod 回退到 provider/model 单条。 */
   providers: ProviderView[];
@@ -973,6 +995,8 @@ export interface ConfigUpdatePayload {
   baseUrl?: string | null;
   /** 思考档位；必须是 {@link THINKING_LEVELS} 之一。 */
   thinkingLevel?: ThinkingLevelName;
+  /** 权限档位；必须是 {@link PERMISSION_LEVELS} 之一。 */
+  permissionLevel?: PermissionLevel;
   /** 键 = provider id，值 = 该供应商的增量。 */
   providerConfig?: Record<string, ProviderPatch>;
   /** 要删除的 provider id。 */
@@ -1070,6 +1094,13 @@ export function parseConfigSetPayload(payload: JsonObject): ConfigUpdatePayload 
   if (thinkingLevel !== undefined && thinkingLevel !== null) {
     if (!isThinkingLevel(thinkingLevel)) return null;
     out.thinkingLevel = thinkingLevel;
+  }
+
+  // 权限档位：只接受三个固定值，模型无法借此提权。
+  const permissionLevel = payload['permissionLevel'];
+  if (permissionLevel !== undefined && permissionLevel !== null) {
+    if (!isPermissionLevel(permissionLevel)) return null;
+    out.permissionLevel = permissionLevel;
   }
 
   // ---- 多供应商（M3）----
@@ -1296,6 +1327,8 @@ export function buildConfigStatePayload(view: ConfigView): JsonObject {
     provider: view.provider,
     model: view.model,
     thinkingLevel: view.thinkingLevel,
+    // 老测试夹具没有该字段时按默认「有限」处理。
+    permissionLevel: view.permissionLevel ?? DEFAULT_PERMISSION_LEVEL,
     message: view.message,
     providers: providers.map((provider) => ({
       id: provider.id,

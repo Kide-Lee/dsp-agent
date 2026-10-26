@@ -12,6 +12,8 @@ namespace IcarusII.Core
     /// 且 callId/tool/argsHash 与确认时一致；令牌 60 秒过期、只能消费一次。
     ///
     /// 这层校验在 mod 内，sidecar 即使被替换/绕过也无法执行**未经玩家确认**的写操作。
+    /// 例外是玩家显式选择的「接管」权限：确认请求会被 Plugin 自动同意，但 token
+    /// 仍然照常签发/校验；玩家改为「只读」时 mod 直接拒绝写调用。
     /// 注意：argsHash 由 sidecar 提供，mod 不持有原始 args、无法重算，
     /// 因此它只能发现 sidecar 两条消息自相矛盾，不能阻止替换后的 sidecar 换参数。
     /// 真正的边界是“玩家确认 + 一次性 token + 工具名白名单”。

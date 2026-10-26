@@ -44,12 +44,30 @@ namespace IcarusII.Config
         /// </summary>
         public string ThinkingLevel { get; private set; }
 
+        /// <summary>
+        /// 权限档位：readonly（只读）/ limited（有限，写操作逐次确认）/ takeover（接管）。
+        /// sidecar 的 config.json 是权威来源；这里是本地兜底，断线时也能记住玩家的选择。
+        /// </summary>
+        public string PermissionLevel { get; private set; }
+
         private readonly ConfigFile _cfg;
         private readonly ConfigEntry<string> _thinkingLevelEntry;
+        private readonly ConfigEntry<string> _permissionLevelEntry;
 
-        /// <summary>pi 的 ThinkingLevel 取值（DeepSeek 只映射 high/max，其余由 pi clamp）。</summary>
+        /// <summary>pi 的 ThinkingLevel 取值（DeepSeek Flash 映射 low/high/max）。</summary>
         private static readonly string[] ThinkingLevels =
             { "off", "minimal", "low", "medium", "high", "xhigh", "max" };
+
+        private static readonly string[] PermissionLevels =
+            { "readonly", "limited", "takeover" };
+
+        public static bool IsValidPermissionLevel(string level)
+        {
+            if (string.IsNullOrEmpty(level)) return false;
+            foreach (var candidate in PermissionLevels)
+                if (string.Equals(candidate, level, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
 
         public static bool IsValidThinkingLevel(string level)
         {
@@ -64,7 +82,9 @@ namespace IcarusII.Config
         {
             if (!IsValidThinkingLevel(level)) return;
             level = level.ToLowerInvariant();
+            var changed = !string.Equals(level, ThinkingLevel, StringComparison.Ordinal);
             ThinkingLevel = level;
+            if (!changed) return;
             try
             {
                 if (_thinkingLevelEntry != null) _thinkingLevelEntry.Value = level;
@@ -73,6 +93,25 @@ namespace IcarusII.Config
             catch (Exception ex)
             {
                 Plugin.Log?.LogWarning($"保存思考档位失败：{ex.Message}");
+            }
+        }
+
+        /// <summary>更新权限档位并写回 icarus-ii.cfg；同值不重复落盘。</summary>
+        public void SetPermissionLevel(string level)
+        {
+            if (!IsValidPermissionLevel(level)) return;
+            level = level.ToLowerInvariant();
+            var changed = !string.Equals(level, PermissionLevel, StringComparison.Ordinal);
+            PermissionLevel = level;
+            if (!changed) return;
+            try
+            {
+                if (_permissionLevelEntry != null) _permissionLevelEntry.Value = level;
+                _cfg?.Save();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log?.LogWarning($"保存权限档位失败：{ex.Message}");
             }
         }
 
@@ -130,11 +169,22 @@ namespace IcarusII.Config
                 "false = 需按 Enter 或点击窗口后开始输入；R 可随时开关窗口（默认）。").Value;
 
             _thinkingLevelEntry = cfg.Bind("Agent", "ThinkingLevel", "high",
-                "思考档位：off | minimal | low | medium | high | xhigh | max。\n" +
-                "DeepSeek 只映射 high / max，其余档位会被 pi clamp；off = 不请求思考；默认 high（开启）。\n" +
+                "思考档位：off | low | high | max（聊天窗只暴露这四档）。\n" +
+                "DeepSeek Flash 映射 low / high / max；Pro 只映射 high / max，low 会被 pi clamp；\n" +
+                "off = 不请求思考；默认 high（开启）。\n" +
                 "游戏里也可以用聊天窗右下角的「思考」下拉框切换（会同步到 sidecar）。");
             var rawLevel = _thinkingLevelEntry.Value;
             ThinkingLevel = IsValidThinkingLevel(rawLevel) ? rawLevel.ToLowerInvariant() : "high";
+
+            _permissionLevelEntry = cfg.Bind("Agent", "PermissionLevel", "limited",
+                "权限档位：readonly | limited | takeover。\n" +
+                "readonly = 只读，AI 不能调用写工具；limited = 每次写操作都要玩家确认；\n" +
+                "takeover = 接管，AI 直接执行写操作、不再逐次确认。\n" +
+                "游戏里也可以用聊天窗右下角的「权限」下拉框切换（会同步到 sidecar）。");
+            var rawPermission = _permissionLevelEntry.Value;
+            PermissionLevel = IsValidPermissionLevel(rawPermission)
+                ? rawPermission.ToLowerInvariant()
+                : "limited";
         }
 
         /// <summary>把配置里的字符串解析成 KeyCode；失败时回退并交由调用方记录。</summary>

@@ -242,6 +242,7 @@
 | `confirmation_invalid` | 令牌无效/已使用/参数不匹配（M4） |
 | `confirmation_expired` | 确认令牌已过期（M4） |
 | `confirmation_denied` | 玩家拒绝确认，未执行（M4） |
+| `permission_denied` | 当前权限为「只读」，写操作被拒绝 |
 | `sandbox_required` | 当前载入未启用游戏沙盒工具，沙盒专属工具被拒绝（M5+） |
 | `internal` | 未分类内部错误 |
 
@@ -303,7 +304,8 @@ mod                                   sidecar
     "model": "deepseek-v4-flash",
     "apiKey": "sk-...",
     "baseUrl": null,
-    "thinkingLevel": "high"
+    "thinkingLevel": "high",
+    "permissionLevel": "limited"
   }
 }
 ```
@@ -311,8 +313,19 @@ mod                                   sidecar
 - 所有字段**均可选**，只更新给出的字段；未给出的保持不变。
 - `apiKey` 只在此方向传输一次；sidecar 持久化后**永不回传**。
 - `thinkingLevel` 取值 `off | minimal | low | medium | high | xhigh | max`，与 pi 的
-  `ThinkingLevel` 一致。DeepSeek 的 `thinkingLevelMap` 只映射 `high` / `max`，
-  其余档位由 pi clamp；`off` 表示**不请求思考**，默认 `high`（开启）。
+  `ThinkingLevel` 一致。聊天窗只暴露 `off | low | high | max` 四档。
+  DeepSeek `thinkingLevelMap`：Flash 映射 `low` / `high` / `max`；Pro 只映射
+  `high` / `max`（`low` 会被 pi clamp）。`off` 表示**不请求思考**，默认 `high`（开启）。
+  非法取值 ⇒ `error{code:"bad_request"}`，不落盘。
+- `permissionLevel` 取值 `readonly | limited | takeover`，默认 `limited`：
+  - `readonly`：只读。sidecar 不注册写工具，`tool_call` 侧也会拒绝写操作
+    （`error.code = permission_denied`）；`blueprint_fs` 的 mkdir/write/rm/rmdir
+    与含写工具的 `run_script` 同样拒绝。
+  - `limited`：有限。写工具先走 A.12 的 `confirm_request`，玩家同意后带一次性
+    token 执行。
+  - `takeover`：接管。sidecar 仍走 `confirm_request` 与 token 校验，但 mod 在
+    该档位下**不弹确认页、自动回传 allow**；脚本写租约同样自动同意。
+  权限只能由玩家在聊天窗/配置文件里修改，模型无法通过工具提权。
   非法取值 ⇒ `error{code:"bad_request"}`，不落盘。
 - 改档位会让 sidecar 丢弃当前 pi session，在**下一次** prompt 生效；
   会话文件仍在，历史不会丢。
@@ -357,6 +370,7 @@ mod                                   sidecar
     "provider": "deepseek",
     "model": "deepseek-v4-flash",
     "thinkingLevel": "high",
+    "permissionLevel": "limited",
     "message": null,
     "providers": [
       {
@@ -386,7 +400,8 @@ mod                                   sidecar
 | `unreachable` | 无法连通上游 | 提示网络问题；自定义地址可在设置页修改 |
 
 **`config.state` 的任何字段都不得包含 `apiKey`。**
-`thinkingLevel` 是新增字段；老服务端不返回时 mod 应保持本地配置值。
+`thinkingLevel` / `permissionLevel` 是新增字段；老服务端不返回时 mod 应保持本地配置值
+（权限默认 `limited`）。
 `providers` / `active` 是 M2.6 新增字段；老服务端不返回时 mod 回退到
 `provider` + `model`，并把它合成一条供应商显示。
 
@@ -534,11 +549,12 @@ mod                                   sidecar
 以下几条都是**读类型定义看不出来、只有实跑才会暴露**的行为，写在这里避免重复踩：
 
 1. **默认档位必须显式写 `high`。** pi 的 `thinkingLevel` 默认是 `medium`，
-   而 DeepSeek 的 `thinkingLevelMap` 把 `minimal`/`low`/`medium` 全设为 `null`，
+   而 DeepSeek Pro 的 `thinkingLevelMap` 把 `minimal`/`low`/`medium` 设为 `null`，
    clamp 逻辑会**向后找**到 `high` —— 于是"什么都没配"反而变成
    `thinking:{type:"enabled"}` + `reasoning_effort:"high"`，既变慢又变贵。
    M1 起 sidecar 默认显式传 `thinkingLevel: "high"`（默认开启思考）；
-   玩家可在聊天窗右下角的「思考」下拉框里选 `off` 关闭或 `max` 提高（见 A.1）。
+   玩家可在聊天窗右下角的「思考」下拉框里选 `off` 关闭、`low` 降档或 `max` 提高（见 A.1）。
+   Flash 映射 `low` / `high` / `max`；Pro 只有 `high` / `max`，选 `low` 会被 clamp。
 
 2. **凭证注入不能走 `ModelRuntime.create({ apiKey })`** —— 该选项不存在。
    带 `apiKey` 的类型是 `ModelRuntimeAuthOverrides`，只被 `getAuth()` 接受；
@@ -935,7 +951,7 @@ pi 的自动压缩完成后，sidecar 把摘要作为一条**只给 UI** 的记�
 
 ### A.12 `confirm_request` / `confirm_result` — 写操作确认（M4）
 
-写操作必须先经过玩家确认。sidecar 生成 32 字节随机 token（16 进制），把
+默认（`limited` 权限）下，写操作必须先经过玩家确认。sidecar 生成 32 字节随机 token（16 进制），把
 `requestId/callId/tool/argsHash/token/title/body/risk/timeoutMs` 发给 mod；玩家点
 **同意** 后 mod 原样回传 token，sidecar 才把 token 放进 `tool_call.confirmToken`
 发给 mod 执行。普通 token 60 秒有效、单次使用，并绑定 `callId + tool + argsHash`。
@@ -943,6 +959,17 @@ pi 的自动压缩完成后，sidecar 把摘要作为一条**只给 UI** 的记�
 > **v1 边界**：mod 不持有原始 args，无法重算 `argsHash`；该字段只能发现 sidecar
 > 两条消息自相矛盾，不能阻止被替换的 sidecar 在玩家确认后替换参数。真正的安全边界是
 > “玩家确认 + 一次性 token + 工具名白名单”；确认卡文案必须如实描述影响面。
+
+**权限档位对确认流程的影响**（`permissionLevel`，见 A.1）：
+
+| 档位 | sidecar | mod |
+| --- | --- | --- |
+| `readonly` | 不注册写工具；写 `tool_call` 直接 `permission_denied` | 拒绝写 `tool_call`；收到 `confirm_request` 也直接 deny |
+| `limited` | 正常发 `confirm_request` | 弹确认页，玩家决定 |
+| `takeover` | 仍发 `confirm_request`（保留 token 通道） | **不弹页**，自动 `allow` 并回传 token |
+
+`takeover` 是玩家在聊天窗里显式选择的模式；token 仍然由 mod 签发/校验，
+一次性和绑定关系不放松。只读/接管只影响插件运行期，不会改写会话历史或游戏存档。
 
 `run_script` 的写模式使用**脚本写租约**：`tool` 为 `run_script`，`argsHash` 是脚本
 SHA-256，并可带 `maxWrites`（1–10000）与 `writeNames`（脚本里出现的写工具名）。

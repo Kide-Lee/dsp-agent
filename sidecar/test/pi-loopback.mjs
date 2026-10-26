@@ -427,11 +427,15 @@ async function main() {
     check('messages[0].role === "system"', systemMessage?.role === 'system', systemMessage?.role);
     const systemText = messageText(systemMessage);
     check('system message 非空', systemText.length > 0, `${systemText.length} 字符`);
+    // 人格之后允许追加本轮的动态段（权限档位/强制工具/沙盒状态），
+    // 但人格本身必须逐字保留在开头，不能被 pi 的默认 prompt 混入。
     check(
-      'system message 就是代码里的游戏内助手人格（逐字相等）',
-      systemText === ICARUS_II_SYSTEM_PROMPT,
-      `收到 ${systemText.length} 字符 / 期望 ${ICARUS_II_SYSTEM_PROMPT.length} 字符`,
+      'system message 以代码里的游戏内助手人格开头',
+      systemText === ICARUS_II_SYSTEM_PROMPT ||
+        systemText.startsWith(`${ICARUS_II_SYSTEM_PROMPT}\n\n`),
+      `收到 ${systemText.length} 字符 / 人格 ${ICARUS_II_SYSTEM_PROMPT.length} 字符`,
     );
+    check('system message 含当前权限说明', systemText.includes('当前权限为'));
     check(
       `system message 含人格标识串「${PERSONA_MARKER}」`,
       systemText.includes(PERSONA_MARKER) && systemText.includes(ICARUS_II_PERSONA_NAME),

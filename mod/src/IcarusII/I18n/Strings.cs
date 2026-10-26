@@ -77,8 +77,17 @@ namespace IcarusII.I18n
             ["thinking.title"] = "思考",
             ["thinking.title.streaming"] = "思考中…",
             ["thinking.level.off"] = "关闭",
+            ["thinking.level.low"] = "低",
             ["thinking.level.high"] = "高",
-            ["thinking.level.max"] = "最高",
+            ["thinking.level.max"] = "极限",
+            // 权限档位（AI 调工具时是否需要玩家同意）
+            ["permission.level.readonly"] = "只读",
+            ["permission.level.limited"] = "有限",
+            ["permission.level.takeover"] = "接管",
+            ["permission.readonly.denied"] = "当前权限是「只读」，写操作已被拒绝。",
+            ["permission.changed.readonly"] = "权限：只读。AI 只能查看，不能修改游戏状态。",
+            ["permission.changed.limited"] = "权限：有限。AI 每次写操作都会请求你的确认。",
+            ["permission.changed.takeover"] = "权限：接管。AI 会直接执行写操作，不再逐次询问。",
             // loading 分组头：思考/工具运行中 → 已完成
             ["loading.running"] = "终端运行中…",
             ["loading.done"] = "已完成",

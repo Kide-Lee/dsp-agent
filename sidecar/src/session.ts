@@ -71,7 +71,9 @@ import {
   type ToolResultPayload,
   type ConfirmRequestPayload,
   type ConfirmResultPayload,
+  type PermissionLevel,
 } from './protocol.js';
+import { isReadonlyBlockedTool } from './permissions.js';
 import { UI_ASK_TOOL_NAME, UI_ASK_TOOL_NAME_ALIASES, UI_ASK_TIMEOUT_MS } from './tools/ask.js';
 import type { AgentEmitter, AgentRunner } from './agent.js';
 import type { ScriptConfirmRequest, ScriptConfirmResult } from './tools/host.js';
@@ -100,8 +102,10 @@ export interface SessionOptions {
   config: ConfigStore;
   /** 知识库编排（多连接共享）。 */
   knowledge?: KnowledgeManager;
-  /** 本次连接注册的工具名；可按 hello 能力动态计算。 */
-  tools: readonly string[] | ((capabilities: readonly string[]) => readonly string[]);
+  /** 本次连接注册的工具名；可按 hello 能力 + 当前权限动态计算。 */
+  tools:
+    | readonly string[]
+    | ((capabilities: readonly string[], permission: PermissionLevel) => readonly string[]);
   /** M4m：是否允许 `tool_debug` 调试直调（默认 false）。 */
   debugTools?: boolean;
   helloTimeoutMs?: number;
@@ -546,9 +550,10 @@ export class Session {
       this.logger.warn('同步 mod 能力失败', errorFields(err));
     }
 
+    const permission = this.options.config.view().permissionLevel;
     const toolNames =
       typeof this.options.tools === 'function'
-        ? this.options.tools(payload.capabilities)
+        ? this.options.tools(payload.capabilities, permission)
         : this.options.tools;
 
     // M4l：工具目录是可选字段；agent 没实现时老 mod 继续用 tools 名 + 本地短名。
@@ -1188,6 +1193,16 @@ export class Session {
     const callId = `call_${(this.toolSeq += 1)}`;
     const risk = options.risk ?? 0;
 
+    // 只读权限的 sidecar 侧门禁：即使工具被注册出来，写操作也不发往 mod。
+    // 不信任工具层的过滤，真正的执行边界在这里和 mod 的 ConfirmationService。
+    const permission = this.options.config.view().permissionLevel;
+    if (permission === 'readonly' && (risk > 0 || isReadonlyBlockedTool(name))) {
+      return toolFailure(
+        'permission_denied',
+        '当前权限为「只读」，写操作已被拒绝；请让玩家把聊天窗右下角的「权限」改为「有限」或「接管」。',
+      );
+    }
+
     let token: string | undefined = options.confirmToken;
     let argsHash: string | undefined = options.confirmArgsHash;
     if (!token && risk > 0 && options.internal !== true) {
@@ -1252,6 +1267,9 @@ export class Session {
    * token 绑定脚本哈希；mod 只接受该 token + 同一哈希的写 tool_call。
    */
   private async confirmScript(request: ScriptConfirmRequest): Promise<ScriptConfirmResult | null> {
+    // 只读权限下不创建脚本写租约；script 工具本身也会先拒绝。
+    if (this.options.config.view().permissionLevel === 'readonly') return null;
+
     const writeNames = request.writeNames.slice(0, 12);
     const more = request.writeNames.length > writeNames.length ? '…' : '';
     const approved = await this.requestConfirmation(

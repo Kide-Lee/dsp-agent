@@ -425,6 +425,12 @@ export function createScriptTool(host: GameToolHost): ToolDefinition {
       const maxCalls = Math.max(1, Math.min(MAX_MAX_CALLS, Math.floor(callsRaw)));
 
       const writes = detectWriteTools(code);
+      if (writes.length > 0 && host.permissionLevel === 'readonly') {
+        return fail(
+          'permission_denied',
+          '当前权限为「只读」，包含写工具的脚本不能执行；请让玩家把「权限」改为「有限」或「接管」。',
+        );
+      }
       if (writes.length > 0 && !host.has('script.write.v1')) {
         return fail(
           'tool_unavailable',

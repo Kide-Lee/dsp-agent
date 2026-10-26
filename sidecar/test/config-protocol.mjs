@@ -152,6 +152,31 @@ async function piWithoutKey() {
     );
     check('thinkingLevel 非法 ⇒ bad_request', badLevel?.payload?.code === 'bad_request', badLevel?.payload?.code);
 
+    // 6c2) 权限档位：合法值回显 + 非法值 bad_request
+    client.send({ v: 1, id: 'm-6p', type: 'config.set', payload: { permissionLevel: 'takeover' } });
+    const statePerm = await client.waitFor(
+      (f) => f && f.type === 'config.state' && f.replyTo === 'm-6p',
+      3000,
+      'config.state#permission',
+    );
+    check(
+      'permissionLevel 回显',
+      statePerm?.payload?.permissionLevel === 'takeover',
+      statePerm?.payload?.permissionLevel,
+    );
+
+    client.send({ v: 1, id: 'm-6q', type: 'config.set', payload: { permissionLevel: 'allow_all' } });
+    const badPermission = await client.waitFor(
+      (f) => f && f.type === 'error' && f.replyTo === 'm-6q',
+      3000,
+      'error#permissionLevel',
+    );
+    check(
+      'permissionLevel 非法 ⇒ bad_request',
+      badPermission?.payload?.code === 'bad_request',
+      badPermission?.payload?.code,
+    );
+
     // 6d) 多供应商：新增 openai、切 active、state 回显
     const OPENAI_KEY = 'sk-openai-fake-1234567890';
     client.send({

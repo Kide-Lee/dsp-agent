@@ -28,6 +28,15 @@ if (!fsTool) {
   console.error('缺少 blueprint_fs');
   process.exit(1);
 }
+const readonlyFsTool = createBlueprintTools(
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  workspace,
+  undefined,
+  () => 'readonly',
+).find((tool) => tool.name === 'blueprint_fs');
 
 async function run(params) {
   const result = await fsTool.execute('fs-1', params);
@@ -131,7 +140,32 @@ try {
     check('不能删除蓝图根', rootDelete.content[0].text.includes('[root_protected]'), rootDelete.content[0].text.slice(0, 100));
   }
 
-  console.log('\n── 5. 卡片提取 ──');
+  console.log('\n── 5. 只读权限 ──');
+  {
+    const ls = await readonlyFsTool.execute('ro-1', { op: 'ls', path: '/IcarusII' });
+    check('只读仍可 ls', !ls.content[0].text.startsWith('['), ls.content[0].text.slice(0, 100));
+
+    const write = await readonlyFsTool.execute('ro-2', {
+      op: 'write',
+      path: '/IcarusII/只读.txt',
+      content: validText,
+    });
+    check(
+      '只读拒绝 write',
+      write.content[0].text.includes('[permission_denied]'),
+      write.content[0].text.slice(0, 100),
+    );
+    check('只读 write 没有落盘', !existsSync(join(root, 'IcarusII/只读.txt')));
+
+    const mkdir = await readonlyFsTool.execute('ro-3', { op: 'mkdir', path: '/IcarusII/只读目录' });
+    check(
+      '只读拒绝 mkdir',
+      mkdir.content[0].text.includes('[permission_denied]'),
+      mkdir.content[0].text.slice(0, 100),
+    );
+  }
+
+  console.log('\n── 6. 卡片提取 ──');
   {
     const result = await run({ op: 'write', path: '/IcarusII/卡片.txt', content: validText });
     const card = extractBlueprintCard('blueprint_fs', result);

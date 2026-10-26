@@ -164,14 +164,15 @@ namespace IcarusII.Common.Transport
         public string SendConfigSet(string provider = null, string model = null,
             string apiKey = null, string baseUrl = null, string thinkingLevel = null,
             JsonValue providerConfig = null, JsonValue removeProviders = null,
-            string activeProvider = null, string activeModel = null)
+            string activeProvider = null, string activeModel = null,
+            string permissionLevel = null)
         {
             if (_state != ConnectionState.Ready) return null;
 
             var env = Protocol.Protocol.Envelope(
                 Protocol.Protocol.ConfigSet,
                 Protocol.Protocol.BuildConfigSet(provider, model, apiKey, baseUrl, thinkingLevel,
-                    providerConfig, removeProviders, activeProvider, activeModel),
+                    providerConfig, removeProviders, activeProvider, activeModel, permissionLevel),
                 NextId(), null);
 
             _sendQueue.Enqueue(env);
