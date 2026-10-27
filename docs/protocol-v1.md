@@ -59,7 +59,7 @@
 
 `capabilities` 里的未知项必须被忽略。除工具域外，当前还有：
 
-- `ui.richtext.v2`：mod 的输出渲染支持 Markdown + 小型 HTML 子集（`color/size/tint/box/sqrt/sup/sub/i/a/icon`）。sidecar 可据此选用新版格式提示词；没有该能力时继续用旧的“只用游戏标签”提示。
+- `ui.richtext.v2`：mod 的输出渲染支持 Markdown + 小型 HTML 子集（`color/size/tint/box/sqrt/sup/sub/i/a/icon`）。sidecar 现在固定使用 Markdown 格式提示词（不再按该能力切换 legacy 文本）；能力串保留用于描述 mod 的渲染能力。
 - `ui.ask.v1`：mod 支持 `ask_user` 交互问答（玩家在游戏窗口里选择/输入答案）。sidecar 据此注册问答工具；老 mod 不会看到该工具。
 - `game.write.v1`：mod 支持写操作确认与一次性令牌；sidecar 据此注册 `game_place_marker` / `game_open_panel` / `game_set_research` / `game_undo_last_write`。老 mod 不会看到这些工具。
 - `game.sandbox.v1`：mod 支持沙盒门禁：会在 `save.bind.sandbox` 上报本次载入是否启用游戏沙盒工具，

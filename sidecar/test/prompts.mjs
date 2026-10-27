@@ -16,7 +16,6 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import {
   ICARUS_II_PERSONA_NAME,
-  ICARUS_II_RICH_TEXT_PROMPT,
   ICARUS_II_SYSTEM_PROMPT,
 } from '../dist/persona.js';
 import {
@@ -73,18 +72,15 @@ console.log('\n── 人格内容 ──');
   check('人格长度在预算内（≤ 3000 字符）', text.length <= 3000, `${text.length} 字符`);
 }
 
-console.log('\n── legacy / rich 两个变体 ──');
+console.log('\n── 单一提示词格式 ──');
 {
-  const legacy = ICARUS_II_SYSTEM_PROMPT;
-  const rich = ICARUS_II_RICH_TEXT_PROMPT;
-  check('legacy 用游戏富文本', legacy.includes('不要输出 Markdown'));
-  check('rich 用标准 Markdown', rich.includes('标准 Markdown'));
-  check('legacy 不含 Markdown 格式说明', !legacy.includes('标准 Markdown'));
-  check('rich 不含 legacy 的告警标题', !rich.includes('否则玩家看到的是一堆符号'));
+  const text = ICARUS_II_SYSTEM_PROMPT;
+  check('使用标准 Markdown 格式段', text.includes('标准 Markdown'));
+  check('不含 legacy 的“只用游戏富文本”告警', !text.includes('否则玩家看到的是一堆符号'));
+  check('不再要求“不要输出 Markdown”', !text.includes('不要输出 Markdown'));
   for (const section of ['读取游戏状态', '知识库', '能力边界']) {
-    check(`两版都含「${section}」段`, legacy.includes(section) && rich.includes(section));
+    check(`含「${section}」段`, text.includes(section));
   }
-  check('两版都不是同一份文本', legacy !== rich);
 }
 
 console.log('\n── 工具规则语言 ──');

@@ -48,14 +48,11 @@ import {
 } from './config.js';
 import {
   ICARUS_II_PERSONA_NAME,
-  ICARUS_II_RICH_TEXT_PROMPT,
   ICARUS_II_SYSTEM_PROMPT,
 } from './persona.js';
 import { renderCapabilitySection, renderToolRules, toolsSignature } from './prompt/sections.js';
 import { loadPromptOverride, type PromptOverride } from './prompt/override.js';
 
-/** mod 在 hello.capabilities 里声明：输出支持 Markdown + 小型 HTML 子集。 */
-const CAPABILITY_RICH_TEXT_V2 = 'ui.richtext.v2';
 import { errorFields, type Logger, type LogFields, log as rootLog } from './log.js';
 import {
   canonicalBaseForChat,
@@ -818,12 +815,11 @@ type LoaderReloadOptions = Parameters<ResourceLoader['reload']>[0];
  */
 function createPersonaSystemPromptExtension(
   getExtraPrompt: () => string | null,
-  getBasePrompt: () => string,
+  persona: string,
 ): ExtensionFactory {
   return (api) => {
     api.on('before_agent_start', () => {
       const extra = getExtraPrompt();
-      const persona = getBasePrompt();
       return {
         systemPrompt: extra ? `${persona}\n\n${extra}` : persona,
       };
@@ -917,9 +913,9 @@ function createPersonaResourceLoader(
   pi: PiSdk,
   options: { cwd: string; agentDir: string },
   getExtraPrompt: () => string | null,
-  getBasePrompt: () => string,
+  persona: string,
 ): ResourceLoader {
-  const getPrompt = () => getBasePrompt();
+  const getPrompt = () => persona;
   const base = new pi.DefaultResourceLoader({
     cwd: options.cwd,
     agentDir: options.agentDir,
@@ -929,13 +925,13 @@ function createPersonaResourceLoader(
     noThemes: true,
     noContextFiles: true,
     // 替换（不是追加）pi 的 system prompt；override 是双保险。
-    systemPrompt: getPrompt(),
+    systemPrompt: persona,
     systemPromptOverride: getPrompt,
     appendSystemPromptOverride: () => [],
     agentsFilesOverride: () => ({ agentsFiles: [] }),
-    extensionFactories: [createPersonaSystemPromptExtension(getExtraPrompt, getBasePrompt)],
+    extensionFactories: [createPersonaSystemPromptExtension(getExtraPrompt, persona)],
   });
-  return new PersonaResourceLoader(base, getPrompt());
+  return new PersonaResourceLoader(base, persona);
 }
 
 /**
@@ -1064,6 +1060,8 @@ export class PiAgent implements AgentRunner {
   private readonly loadSdk: () => Promise<PiSdk>;
   /** 非 null 时整份替换内置人格（--system-prompt-file）。 */
   private readonly promptOverride: PromptOverride | null;
+  /** 本次会话实际使用的人格文本（覆盖优先，否则内置常量）。 */
+  private readonly systemPromptText: string;
 
   private session: AgentSession | null = null;
   private runtime: ModelRuntime | null = null;
@@ -1104,6 +1102,7 @@ export class PiAgent implements AgentRunner {
     this.promptOverride = options.systemPromptFile
       ? loadPromptOverride(options.systemPromptFile)
       : null;
+    this.systemPromptText = this.promptOverride?.text ?? ICARUS_II_SYSTEM_PROMPT;
     if (this.promptOverride) {
       // 覆盖是“启动即生效、运行期不变”的调试口子：把路径和哈希打进日志，
       // bug report 才能对上到底用了哪份提示词。
@@ -2258,14 +2257,6 @@ export class PiAgent implements AgentRunner {
     return forcedToolInstruction(run.requiredTool);
   }
 
-  /** 人格本体：外部覆盖优先，其次按本次会话是否支持富文本选内置版本。 */
-  private systemPromptBase(): string {
-    if (this.promptOverride) return this.promptOverride.text;
-    return this.host.has(CAPABILITY_RICH_TEXT_V2)
-      ? ICARUS_II_RICH_TEXT_PROMPT
-      : ICARUS_II_SYSTEM_PROMPT;
-  }
-
   /**
    * “本会话注册了哪些工具 + 每个工具的使用规则”。
    *
@@ -2595,7 +2586,7 @@ export class PiAgent implements AgentRunner {
         agentDir: this.agentDir,
       },
       () => this.currentExtraPrompt(),
-      () => this.systemPromptBase(),
+      this.systemPromptText,
     );
     // pi 只有在「自己创建 loader」时才自动 reload；外部传入的 loader 必须我们自己 reload，
     // 否则 getExtensions() 还是空的（内联人格扩展就不会被注册）。
@@ -2630,7 +2621,7 @@ export class PiAgent implements AgentRunner {
 
     // 保险：确认 pi 真的用上了我们的人格（没生效就明确记一条 warn，别静默退化）。
     const effectivePrompt = created.session.systemPrompt ?? '';
-    const expectedPrompt = this.systemPromptBase();
+    const expectedPrompt = this.systemPromptText;
     if (!effectivePrompt.startsWith(expectedPrompt)) {
       this.logger.warn('pi 没有采用自定义 system prompt，助手人格可能未生效', {
         personaName: ICARUS_II_PERSONA_NAME,

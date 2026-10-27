@@ -11,18 +11,15 @@
  * 因此 `agent.ts` 会把 pi 的默认 prompt **整个替换**（不是追加）成游戏内助手人格，
  * 并用 `before_agent_start` 扩展钩子把 pi 无条件追加的 cwd 尾巴也去掉。
  *
- * 文本源在 `sidecar/prompts/`：
- *   - `system.zh.md`          人格主体，含 `{{NAME}}` / `{{FORMAT}}` 占位符
- *   - `format.legacy.zh.md`   老 mod 的游戏富文本格式段
- *   - `format.rich.zh.md`     支持 ui.richtext.v2 的 Markdown 格式段
+ * 文本源：`sidecar/prompts/system.zh.md`（唯一手写源）。
+ * `scripts/gen-prompts.mjs` 在 build/typecheck 时把它编译成
+ * `src/prompts.generated.ts`（纯字符串常量），这里再导出，保持 import 路径稳定。
  *
- * `scripts/gen-prompts.mjs` 在 build/typecheck 时把它们编译成
- * `src/prompts.generated.ts`（纯字符串常量），这里只做转导出，保持 import 路径稳定。
+ * 为什么只有一份提示词：mod 已统一支持 `ui.richtext.v2`，不再为老 mod 保留
+ * “只用游戏标签”的 legacy 版本；也没有 `{{FORMAT}}` / `{{NAME}}` 占位符。
  *
  * 为什么不运行时读 markdown：sidecar 用 esbuild 打成单文件、再塞进 Node SEA，
  * 运行期资源要额外分发；编译成常量则跟二进制一起走，行为可复现，测试也能做快照。
- * 为什么不再用 indexOf 切割拼装：切不到标记时旧实现会静默回退整份文本，
- * 改动措辞就可能让新 mod 收到老格式；现在占位符缺失会让构建直接失败。
  *
  * 改动约束（改之前先读一遍）：
  *   - 只讲游戏；绝不提工作目录/文件/命令/代码库/编辑文件/执行 shell。
@@ -33,8 +30,8 @@
  *   - 简洁，不要长篇报告。
  *   - 文本里不能出现 pi 默认 prompt 的特征串（见 test/prompts.mjs、test/pi-loopback.mjs 的禁词断言）。
  */
-export {
-  ICARUS_II_PERSONA_NAME,
-  ICARUS_II_RICH_TEXT_PROMPT,
-  ICARUS_II_SYSTEM_PROMPT,
-} from './prompts.generated.js';
+
+/** 助手身份标识（mod 名）。测试会断言生成的提示词里含这个串。 */
+export const ICARUS_II_PERSONA_NAME = '伊卡洛斯·贰';
+
+export { ICARUS_II_SYSTEM_PROMPT } from './prompts.generated.js';
