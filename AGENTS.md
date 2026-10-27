@@ -288,13 +288,18 @@ scripts/package.sh
 2. 在 Unity 打开 `dsp-game/Assets/IcarusII/ChatWindow.prefab`，或恢复 `mod/unity/Prefab/` 快照后编辑。
 3. 优先只改目标节点；不要把整窗重新生成。
 4. 需要固定结构时，改 `mod/unity/Editor/IcarusIIPrefabLayoutFix.cs` / `IcarusIIChatIndexBuilder.cs`，保持幂等。
-5. 运行 `scripts/build-ui-bundle.sh`。
-6. 确认 `mod/unity/Prefab/ChatWindow.prefab` 已更新。
-7. 打包并更新 Steam，进游戏验收。
+5. 构建前先备份 `dsp-game/Assets/IcarusII/ChatWindow.prefab`；运行 `scripts/build-ui-bundle.sh`。
+6. 构建后 dump 对比 `tool-bar` 的 `send-button` / `permission-group` / `thinking-group` / `model-group` 位置；确认无漂移后，才把 prefab 回存到 `mod/unity/Prefab/` 并提交。
+7. 确认 `mod/unity/Prefab/ChatWindow.prefab` 已更新。
+8. 打包并更新 Steam，进游戏验收。
 
 ### 6.2 近期踩过的坑
 
 - **PrefabStage.AutoSave 与批处理同时写 prefab** 会让 AssetDatabase 丢 import，出现 `Prefab not found`。不要在 Unity 打开 prefab 时跑批处理；不要手动删正在运行编辑器的 `UnityLockfile`。
+- **输入工具栏位置被编辑器/构建器悄悄改坏（已发生两次）**：prefab 是二进制，`git diff` 只显示 `Bin`，看不出布局变化。打开 prefab、跑 `IcarusIIBundleBuilder` 或编辑器自动保存，都可能改掉 `tool-bar` 分组的 `anchoredPosition`；`model-group` 一旦从 `-340` 跑到 `-3`，就会压住发送/权限/思考，整条工具栏看起来都乱了。
+  - 已验收的右锚点位置：`send-button -20`、`permission-group -100`、`thinking-group -220`、`model-group -340`（间距 20/30/20）。
+  - 任何 prefab/构建操作前后都用 `IcarusIIDumpPrefab` dump 并对比这四项；不要靠 `git diff` 判断二进制 prefab。
+  - 发现漂移时，先恢复 `mod/unity/Prefab/ChatWindow.prefab` 快照再重打 bundle；不要把漂移后的 `dsp-game` prefab 回存/提交，也不要在运行期代码里补位置。
 - Unity batch 在 sandbox 下没有 `/dev/dri` 会 graphics 初始化失败，需要 GPU/full access。
 - 只改 DLL 不会更新 prefab；只重打 bundle 不会更新 DLL。按改动类型分别更新。
 - 图标/文字材质是游戏定制资源；需要柔化时优先复用原生 `widget-text-default-icon-set` / `GameTextStyle`，不要随意改全局材质。
@@ -329,6 +334,7 @@ scripts/package.sh
 - [ ] `cd sidecar && npm test` 通过（改了 sidecar/协议/KB 时必跑）。
 - [ ] `dotnet run --project tests/ProtocolTests` 通过（改了协议/传输时必跑）。
 - [ ] 改了 prefab/UI：`scripts/build-ui-bundle.sh` 成功，快照已更新。
+- [ ] 构建 UI 前后 dump 对比 `tool-bar` 的 `send-button` / `permission-group` / `thinking-group` / `model-group`；`dsp-game` 工作副本与 `mod/unity/Prefab` 快照一致，没有编辑器造成的工具栏漂移。
 - [ ] 改了 UI 静态布局：没有新增运行期永久布局补丁；值在 prefab/构建器里。
 - [ ] `scripts/package.sh` 成功。
 - [ ] `.dsh/skills/update-steam-mod/scripts/update-steam-mod.sh` 已部署到 Steam，并通过 SHA-256 校验。
