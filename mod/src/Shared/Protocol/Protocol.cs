@@ -75,6 +75,9 @@ namespace IcarusII.Common.Protocol
         /// <summary>sidecar → mod：会话已删除，带回新的活动会话与列表。</summary>
         public const string ConversationDeleted = "conversation.deleted";
 
+        /// <summary>sidecar → mod：会话标题已由模型总结更新（只更新索引标题）。</summary>
+        public const string ConversationUpdated = "conversation.updated";
+
         // ---- M4e 增量：删除对话回合（协议附录 A.7）----
 
         /// <summary>mod → sidecar：删除一个问答回合。</summary>
@@ -531,6 +534,15 @@ namespace IcarusII.Common.Protocol
         {
             var p = JsonValue.NewObject();
             if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
+            return p;
+        }
+
+        /// <summary>构造 conversation.updated 载荷（附录 A.13）：只更新标题。</summary>
+        public static JsonValue BuildConversationUpdated(string conversationId, string title)
+        {
+            var p = JsonValue.NewObject();
+            if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
+            if (!string.IsNullOrEmpty(title)) p.Set("title", title);
             return p;
         }
 
@@ -1101,14 +1113,15 @@ namespace IcarusII.Common.Protocol
     }
 
     /// <summary>
-    /// conversation.created / switched / deleted 的解析结果（附录 A.13）。
-    /// 三种回执共用同一个结构；没有的字段保持默认值。
+    /// conversation.created / switched / deleted / updated 的解析结果（附录 A.13）。
+    /// 各回执共用同一个结构；没有的字段保持默认值。
     /// </summary>
     public sealed class ConversationEventInfo
     {
         public string SaveKey { get; private set; }
         public string ConversationId { get; private set; }
         public string ActiveConversationId { get; private set; }
+        public string Title { get; private set; }
         public string Error { get; private set; }
         public bool Ok { get; private set; }
         public bool Existed { get; private set; }
@@ -1124,6 +1137,7 @@ namespace IcarusII.Common.Protocol
             r.SaveKey = payload["saveKey"].AsString(null);
             r.ConversationId = payload["conversationId"].AsString(null);
             r.ActiveConversationId = payload["activeConversationId"].AsString(null);
+            r.Title = payload["title"].AsString(null);
             r.Error = payload["error"].AsString(null);
             r.Ok = payload["ok"].AsBool(true);
             r.Existed = payload["existed"].AsBool(false);

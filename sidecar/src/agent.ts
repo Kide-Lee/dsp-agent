@@ -178,6 +178,8 @@ export interface AgentEmitter {
   linkCard?(payload: LinkCardPayload): void;
   /** 上下文压缩完成；协议附录 A.11。只给 UI，不进入模型上下文。 */
   compacted?(payload: ContextCompactedPayload): void;
+  /** A.13：模型总结出会话标题；只更新左侧索引/标题栏，不重放历史。 */
+  conversationUpdated?(payload: { conversationId: string; title: string }): void;
 }
 
 export interface AgentRunner {
@@ -460,6 +462,16 @@ const HISTORY_MAX_STEPS = 60;
 /** A.13：save.bound 里最多带多少个会话 / 每个会话多少条提问索引。 */
 const MAX_CONVERSATIONS = 50;
 const MAX_CONVERSATION_RECORDS = 40;
+/** 模型总结标题的输入预算与输出长度（字符）。 */
+const CONVERSATION_TITLE_INPUT_MAX = 2000;
+const CONVERSATION_TITLE_MAX_CHARS = 24;
+const CONVERSATION_TITLE_SYSTEM_PROMPT = [
+  '你为《戴森球计划》的 AI 助手会话生成一个短标题。',
+  '根据玩家的提问和助手的回答，概括这次对话的主题或任务；不要照抄提问。',
+  '只输出一行纯文本标题，不要引号、Markdown、编号、解释或控制字符。',
+  '使用玩家提问的语言；中文 6-14 个字，英文 2-6 个词。',
+  '如果内容太少，也给一个简短概括，例如“新手开局咨询”。',
+].join('\n');
 const HISTORY_THINKING_MAX = 4000;
 const HISTORY_TOOL_ARGS_MAX = 600;
 const HISTORY_TOOL_SUMMARY_MAX = 160;
@@ -469,6 +481,47 @@ const HISTORY_STEPS_BUDGET = 2 * 1024 * 1024;
 
 function clipHistoryText(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/**
+ * 清理模型输出的标题：只取第一行，去掉标题前缀/引号/Markdown 强调/结尾标点，
+ * 并限制长度。与 DSH 的 session-title 归一化思路一致，但不引入其整套服务。
+ */
+export function normalizeConversationTitle(raw: string): string {
+  const line = String(raw ?? '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((item) => item.trim())
+    .find((item) => item.length > 0) ?? '';
+  let title = line;
+  // 允许模型套一层 Markdown/引号再写“标题：…”，剥两轮。
+  for (let i = 0; i < 2; i += 1) {
+    title = title
+      .replace(/^(?:标题|会话标题|title)\s*[:：]\s*/i, '')
+      .replace(/^[*_`"'“”‘’]+|[*_`"'“”‘’]+$/g, '')
+      .trim();
+  }
+  title = title
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[。.!！?？；;，,、]+$/g, '')
+    .trim();
+  const chars = Array.from(title);
+  if (chars.length > CONVERSATION_TITLE_MAX_CHARS)
+    title = chars.slice(0, CONVERSATION_TITLE_MAX_CHARS).join('');
+  return title;
+}
+
+/** 标题模型只看到这次问答的裁剪版，避免长回答把请求撑大。 */
+function conversationTitleInput(userText: string, assistantText: string): string {
+  const clip = (value: string) => {
+    const text = (value ?? '').trim();
+    return text.length > CONVERSATION_TITLE_INPUT_MAX
+      ? `${text.slice(0, CONVERSATION_TITLE_INPUT_MAX)}…`
+      : text;
+  };
+  return JSON.stringify({ user: clip(userText), assistant: clip(assistantText) });
 }
 
 function toolArgsText(args: unknown): string | undefined {
@@ -1109,6 +1162,8 @@ export class PiAgent implements AgentRunner {
   private activeConversationDraft = false;
   /** A.13：activeConversationId 是针对哪个 saveKey 初始化的。 */
   private conversationSaveKey: string | null = null;
+  /** A.13：正在异步生成标题的会话，避免重复调用模型。 */
+  private readonly titlePending = new Set<string>();
   /** 当前载入是否启用游戏沙盒工具（由 save.bind 上报）。 */
   private sandboxEnabled = false;
   /** mod 在 save.bind 里被动上报的蓝图档位；模型不需要调用查询工具。 */
@@ -1318,6 +1373,111 @@ export class PiAgent implements AgentRunner {
     const first = (info.firstMessage ?? '').replace(/\s+/g, ' ').trim();
     if (first.length === 0) return '新会话';
     return first.length <= 24 ? first : `${first.slice(0, 24)}…`;
+  }
+
+  /**
+   * 异步生成会话标题。只在第一次成功问答后调用；不 await，避免给主回答增加延迟。
+   * 失败静默退回“第一条提问截断”，不影响聊天。
+   */
+  private scheduleConversationTitle(
+    saveKey: string,
+    conversationId: string,
+    userText: string,
+    assistantText: string,
+    runtime: ModelRuntime,
+    model: Model<Api>,
+    emit: AgentEmitter,
+  ): void {
+    if (this.titlePending.has(conversationId)) return;
+    this.titlePending.add(conversationId);
+    void this.generateConversationTitle(
+      saveKey,
+      conversationId,
+      userText,
+      assistantText,
+      runtime,
+      model,
+      emit,
+    )
+      .catch((err) => {
+        this.logger.warn('生成会话标题失败，保留第一条提问作为标题', {
+          conversationId,
+          ...errorFields(err),
+        });
+      })
+      .finally(() => {
+        this.titlePending.delete(conversationId);
+      });
+  }
+
+  private async generateConversationTitle(
+    saveKey: string,
+    conversationId: string,
+    userText: string,
+    assistantText: string,
+    runtime: ModelRuntime,
+    model: Model<Api>,
+    emit: AgentEmitter,
+  ): Promise<void> {
+    const response = await runtime.complete(
+      model,
+      {
+        systemPrompt: CONVERSATION_TITLE_SYSTEM_PROMPT,
+        messages: [{
+          role: 'user',
+          content: conversationTitleInput(userText, assistantText),
+          timestamp: Date.now(),
+        }],
+      },
+      { maxTokens: 64, temperature: 0.3 },
+    );
+    if (response.stopReason !== 'stop') return;
+    let raw = '';
+    for (const block of response.content) {
+      if (block.type === 'text') raw += block.text;
+    }
+    const title = normalizeConversationTitle(raw);
+    if (title.length === 0) return;
+
+    const persisted = await this.persistConversationTitle(saveKey, conversationId, title);
+    if (!persisted) return;
+    this.logger.info('会话标题已生成', { conversationId, title });
+    if (this.saveKey === saveKey && emit.isActive()) {
+      emit.conversationUpdated?.({ conversationId, title });
+    }
+  }
+
+  /** 优先走活着的 session（保证 leaf 一致）；已切走则直接打开目标文件追加 session_info。 */
+  private async persistConversationTitle(
+    saveKey: string,
+    conversationId: string,
+    title: string,
+  ): Promise<boolean> {
+    const live = this.session;
+    if (live && live.sessionId === conversationId) {
+      try {
+        live.setSessionName(title);
+        return true;
+      } catch (err) {
+        this.logger.debug('活会话写入标题失败，改走文件', {
+          conversationId,
+          ...errorFields(err),
+        });
+      }
+    }
+
+    try {
+      const pi = await this.loadSdk();
+      const sessionDir = this.conversationSessionDir(saveKey);
+      const file = pi.SessionManager.findById(this.dataDir, conversationId, sessionDir);
+      if (!file) return false;
+      const manager = pi.SessionManager.open(file, sessionDir, this.dataDir);
+      manager.appendSessionInfo(title);
+      return true;
+    } catch (err) {
+      this.logger.warn('写入会话标题失败', { conversationId, ...errorFields(err) });
+      return false;
+    }
   }
 
   private conversationSessionDir(saveKey: string): string {
@@ -2272,6 +2432,32 @@ export class PiAgent implements AgentRunner {
     }
 
     emit.status('idle');
+
+    // 标题生成放在 idle 之后异步执行：不阻塞主回答，也不改变模型上下文。
+    // 只尝试新会话的前两次成功问答；已有 session_info.name 的会话不再自动覆盖。
+    const titleRuntime = this.runtime;
+    const titleModel = session.model;
+    const hadTitle = (session.sessionName ?? '').trim().length > 0;
+    const userTurns = session.messages.filter((message) => message.role === 'user').length;
+    if (
+      !failed &&
+      run.text.trim().length > 0 &&
+      run.saveKey &&
+      titleRuntime &&
+      titleModel &&
+      !hadTitle &&
+      userTurns <= 2
+    ) {
+      this.scheduleConversationTitle(
+        run.saveKey,
+        session.sessionId,
+        run.userText,
+        run.text,
+        titleRuntime,
+        titleModel,
+        emit,
+      );
+    }
   }
 
   // ---------------------------------------------------------------- pi 生命周期

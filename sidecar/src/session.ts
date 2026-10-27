@@ -46,6 +46,7 @@ import {
   buildConversationCreatedPayload,
   buildConversationDeletedPayload,
   buildConversationSwitchedPayload,
+  buildConversationUpdatedPayload,
   parseConversationTargetPayload,
   parseConfirmResultPayload,
   errorRetryable,
@@ -1770,6 +1771,15 @@ export class Session {
           buildEnvelope({
             type: MessageType.ContextCompacted,
             payload: buildContextCompactedPayload(payload),
+          }),
+        );
+      },
+
+      conversationUpdated(payload: { conversationId: string; title: string }) {
+        session.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.ConversationUpdated,
+            payload: buildConversationUpdatedPayload(payload),
           }),
         );
       },

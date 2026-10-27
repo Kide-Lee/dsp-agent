@@ -695,6 +695,7 @@ namespace IcarusII.Tests
             Eq("conversation.switched 类型名", "conversation.switched", Protocol.ConversationSwitched);
             Eq("conversation.delete 类型名", "conversation.delete", Protocol.ConversationDelete);
             Eq("conversation.deleted 类型名", "conversation.deleted", Protocol.ConversationDeleted);
+            Eq("conversation.updated 类型名", "conversation.updated", Protocol.ConversationUpdated);
             Eq("conversation.create 空载荷", 0, Protocol.BuildConversationCreate().Count);
             Eq("conversation.switch payload", "conv-a",
                 Protocol.BuildConversationTarget("conv-a")["conversationId"].AsString());
@@ -720,6 +721,14 @@ namespace IcarusII.Tests
             Eq("conversation.switched id", "conv-a", switched.ConversationId);
             Eq("conversation.switched conversation", "量子芯片", switched.Conversation.Title);
             Eq("conversation.switched history", 1, switched.History.Count);
+
+            var updated = ConversationEventInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"3f2a\",\"conversationId\":\"conv-a\",\"title\":\"量子芯片产线规划\"}"));
+            Eq("conversation.updated id", "conv-a", updated.ConversationId);
+            Eq("conversation.updated title", "量子芯片产线规划", updated.Title);
+            var updatedPayload = Protocol.BuildConversationUpdated("conv-a", "量子芯片产线规划");
+            Eq("conversation.updated builder id", "conv-a", updatedPayload["conversationId"].AsString());
+            Eq("conversation.updated builder title", "量子芯片产线规划", updatedPayload["title"].AsString());
 
             var deletedInfo = ConversationEventInfo.Parse(JsonValue.Parse(
                 "{\"saveKey\":\"3f2a\",\"conversationId\":\"conv-a\",\"ok\":true,\"error\":null," +

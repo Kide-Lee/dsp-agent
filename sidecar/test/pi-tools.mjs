@@ -12,7 +12,7 @@
  */
 
 import { createServer } from 'node:http';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -97,6 +97,21 @@ class ToolFixture {
       created: 1,
       model: MODEL,
     };
+
+    // A.13：标题生成是辅助请求，返回一个固定标题，避免被当成主 agent 的工具轮。
+    if (JSON.stringify(body ?? {}).includes('生成一个短标题')) {
+      res.write(`data: ${JSON.stringify({
+        ...base,
+        choices: [{ index: 0, delta: { role: 'assistant', content: '量子芯片产线规划' }, finish_reason: null }],
+      })}\n\n`);
+      res.write(`data: ${JSON.stringify({
+        ...base,
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
 
     if (this.mode === 'tool' && !hasToolResult) {
       res.write(`data: ${JSON.stringify({
@@ -186,6 +201,9 @@ const watchdog = setTimeout(() => {
 async function main() {
   assertBuilt();
   upstream = await new ToolFixture().start();
+  // A.13 标题生成是主回答之外的辅助请求；测试只关心主 agent 请求。
+  const isTitleRequest = (request) => String(request?.raw ?? '').includes('生成一个短标题');
+  const mainRequests = () => upstream.requests.filter((request) => !isTitleRequest(request));
   dataDir = mkdtempSync(join(tmpdir(), 'icarus-ii-pi-tools-'));
   blueprintDir = mkdtempSync(join(tmpdir(), 'icarus-ii-pi-tools-bp-'));
   // 本用例会真的跑 blueprint_generate；把落盘目录指到临时目录，避免污染玩家蓝图。
@@ -287,7 +305,18 @@ async function main() {
     .join('');
   check('最终回答包含第二轮文本', text.includes('概览读取完成'), text);
 
-  const firstBody = upstream.requests[0]?.body ?? {};
+  const titleFrame = await client.waitFor(
+    (f) => f?.type === 'conversation.updated',
+    5000,
+    'conversation.updated',
+  );
+  check('模型总结会话标题', titleFrame.payload?.title === '量子芯片产线规划', titleFrame.payload?.title);
+  const titleDir = join(dataDir, 'sessions', 'saveA');
+  const titleFile = readdirSync(titleDir).find((name) => name.endsWith('.jsonl'));
+  const titleJsonl = titleFile ? readFileSync(join(titleDir, titleFile), 'utf8') : '';
+  check('标题写入 session_info', titleJsonl.includes('"session_info"') && titleJsonl.includes('量子芯片产线规划'));
+
+  const firstBody = mainRequests()[0]?.body ?? {};
   const toolNames = (firstBody.tools ?? []).map((t) => t?.function?.name);
   check('上游请求里包含 game_get_overview', toolNames.includes('game_get_overview'), JSON.stringify(toolNames));
   check('上游请求里包含 game_get_production', toolNames.includes('game_get_production'));
@@ -312,10 +341,10 @@ async function main() {
   check('规则段落含已注册工具的规则', systemText.includes('只在玩家明确要求“丢掉/扔了”某个物品时使用。'));
   check('规则段落已中文化', !/\bUse (?:game|kb|wiki|blueprint|run_script|ask_user)/.test(systemText));
 
-  const secondBody = upstream.requests[1]?.body ?? {};
+  const secondBody = mainRequests()[1]?.body ?? {};
   const hasToolMessage = (secondBody.messages ?? []).some((m) => m?.role === 'tool');
   check('第二轮请求携带 tool 结果', hasToolMessage);
-  check('上游总共收到两轮请求', upstream.requests.length >= 2, String(upstream.requests.length));
+  check('上游总共收到两轮请求', mainRequests().length >= 2, String(mainRequests().length));
 
   // 换到存档 B：必须换会话，第二轮请求里不能带上存档 A 的回答。
   upstream.mode = 'text';
@@ -341,7 +370,7 @@ async function main() {
   );
   check('存档 B 的 prompt 得到回答', true);
 
-  const bodyB = upstream.requests[2]?.body ?? {};
+  const bodyB = mainRequests()[2]?.body ?? {};
   const bodyBText = JSON.stringify(bodyB.messages ?? []);
   check('存档 B 的请求不携带存档 A 的历史', !bodyBText.includes('概览读取完成'));
   check('存档 A 的会话目录已创建', existsSync(join(dataDir, 'sessions', 'saveA')));
@@ -366,10 +395,10 @@ async function main() {
   );
   check('thinkingLevel=max 回显', thinkState.payload?.thinkingLevel === 'max', thinkState.payload?.thinkingLevel);
 
-  let mark = upstream.requests.length;
+  let mark = mainRequests().length;
   client.send({ v: 1, id: 'm-max', type: 'prompt', payload: { text: '这次请思考一下' } });
-  await client.waitUntil(() => upstream.requests.length > mark, 15000, 'upstream(thinking=max)');
-  const maxBody = upstream.requests[mark]?.body ?? {};
+  await client.waitUntil(() => mainRequests().length > mark, 15000, 'upstream(thinking=max)');
+  const maxBody = mainRequests()[mark]?.body ?? {};
   check(
     'thinkingLevel=max ⇒ 上游 thinking.type = enabled',
     maxBody.thinking?.type === 'enabled',
@@ -383,10 +412,10 @@ async function main() {
     'config.state(thinking=off)',
   );
 
-  mark = upstream.requests.length;
+  mark = mainRequests().length;
   client.send({ v: 1, id: 'm-off', type: 'prompt', payload: { text: '这次不用思考' } });
-  await client.waitUntil(() => upstream.requests.length > mark, 15000, 'upstream(thinking=off)');
-  const offBody = upstream.requests[mark]?.body ?? {};
+  await client.waitUntil(() => mainRequests().length > mark, 15000, 'upstream(thinking=off)');
+  const offBody = mainRequests()[mark]?.body ?? {};
   check(
     'thinkingLevel=off ⇒ 上游 thinking.type = disabled',
     offBody.thinking?.type === 'disabled',
@@ -416,18 +445,18 @@ async function main() {
     'config.state(custom)',
   );
 
-  mark = upstream.requests.length;
+  mark = mainRequests().length;
   client.send({ v: 1, id: 'm-custom', type: 'prompt', payload: { text: '自定义模型' } });
   await client.waitUntil(
     () =>
-      upstream.requests.length > mark ||
+      mainRequests().length > mark ||
       client.frames.some((f) => f?.type === 'error' && f.replyTo === 'm-custom'),
     15000,
     'upstream(custom)',
   );
   const customError = client.frames.find((f) => f?.type === 'error' && f.replyTo === 'm-custom');
   if (customError) console.log('custom error:', JSON.stringify(customError));
-  const customBody = upstream.requests[mark]?.body ?? {};
+  const customBody = mainRequests()[mark]?.body ?? {};
   check('自定义供应商请求使用配置的模型 id', customBody.model === 'my-model', customBody.model);
 
   // 预设供应商目录：从 pi 内置目录读取，不联网。
@@ -641,7 +670,7 @@ async function main() {
 
   // 强制工具回归：确认 pi 的请求体里真的带上了 game_drop_item。
   upstream.mode = 'text';
-  const dropMark = upstream.requests.length;
+  const dropMark = mainRequests().length;
   client.send({
     v: 1,
     id: 'drop-forced',
@@ -653,7 +682,7 @@ async function main() {
     15000,
     'error(drop forced)',
   );
-  const dropBody = upstream.requests[dropMark]?.body ?? {};
+  const dropBody = mainRequests()[dropMark]?.body ?? {};
   const dropTools = (dropBody.tools ?? []).map((t) => t?.function?.name);
   check('强制 drop 请求体包含 game_drop_item', dropTools.includes('game_drop_item'), JSON.stringify(dropTools));
 

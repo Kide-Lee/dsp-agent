@@ -1065,8 +1065,10 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 - 新建但还没有发过消息的会话没有 session 文件（pi 只在第一条 user/assistant 消息时落盘）。
   sidecar 在内存里把它作为空会话保留，并在同一存档的 `save.bound.conversations`
   里用 `id + title="新会话" + records=[]` 表示；它仍然可以通过 `active.json` 恢复。
-- 会话标题由 sidecar 生成：优先 `session_info.name`，否则取第一条用户消息并截断；
-  没有消息时用“新会话”。不额外调用 LLM。
+- 会话标题由 sidecar 生成：第一条问答完成后异步调用一次模型，把这次对话的主题
+  总结成一行短标题，写入 pi 的 `session_info.name`；生成失败时退回第一条用户消息
+  截断，保证可用。标题生成不阻塞主回答，也不进入主模型上下文。
+- 如果会话已经有 `session_info.name`（模型总结或用户重命名），不再自动生成。
 - 会话按 `updatedAt` 降序排列（最近活动的在前）。
 
 #### `save.bound` 新增字段（sidecar → mod，均可选）
@@ -1153,6 +1155,23 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 - 会话不存在时返回 `error{code:"conversation_not_found"}`。
 - 切换成功后，下一次 `prompt` 的 `conversationId` 必须是该 id；sidecar 会用它
   校验/路由（见下）。
+
+#### `conversation.updated`（sidecar → mod，可选）
+
+当模型异步总结出会话标题、并写入 `session_info.name` 后，sidecar 主动推送：
+
+```jsonc
+{
+  "v": 1, "id": "s-83", "type": "conversation.updated",
+  "payload": { "saveKey": "3f2a91c4d8e05b17",
+               "conversationId": "conv_7c1e…",
+               "title": "量子芯片产线规划" }
+}
+```
+
+- mod 只更新左侧该会话的标题和右侧标题栏，不重放历史、不切换活动会话。
+- 老 mod 忽略该消息；标题仍会在下一次 `save.bound` / `conversation.switch` 时更新。
+- 标题生成只针对新会话的前两次成功问答（第一次失败时允许再试一次）；失败保留第一条提问的截断标题。
 
 #### `conversation.delete`（mod → sidecar）
 

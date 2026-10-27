@@ -11,7 +11,8 @@ import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Session } from '../dist/session.js';
-import { PiAgent } from '../dist/agent.js';
+import { PiAgent, normalizeConversationTitle } from '../dist/agent.js';
+import { MessageType, buildConversationUpdatedPayload } from '../dist/protocol.js';
 
 let passed = 0;
 let failed = 0;
@@ -227,6 +228,19 @@ console.log('── 2. PiAgent 会话文件 ──');
     rmSync(dataDir, { recursive: true, force: true });
   }
 }
+
+// ---------------------------------------------------------------- 3. 模型标题
+console.log('── 3. 模型标题归一化 ──');
+check('conversation.updated 类型名', MessageType.ConversationUpdated === 'conversation.updated');
+const updatedPayload = buildConversationUpdatedPayload({ conversationId: 'conv-a', title: '量子芯片产线规划' });
+check('conversation.updated payload', updatedPayload.conversationId === 'conv-a' && updatedPayload.title === '量子芯片产线规划');
+check('去掉 Markdown 强调', normalizeConversationTitle('**量子芯片产线**') === '量子芯片产线');
+check('去掉标题前缀和结尾标点', normalizeConversationTitle('标题：量子芯片产线规划。') === '量子芯片产线规划');
+check('去掉引号', normalizeConversationTitle('“帮我看下蓝图”') === '帮我看下蓝图');
+check('去掉 Markdown 包裹的前缀', normalizeConversationTitle('**标题：量子芯片产线**') === '量子芯片产线');
+check('只取第一行', normalizeConversationTitle('量子芯片产线\n这是解释') === '量子芯片产线');
+check('空输出为空', normalizeConversationTitle('   ') === '');
+check('超长截断', Array.from(normalizeConversationTitle('一'.repeat(80))).length === 24);
 
 console.log();
 if (failed === 0) {

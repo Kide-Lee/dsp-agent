@@ -453,6 +453,10 @@ namespace IcarusII
                     OnConversationDeleted(ConversationEventInfo.Parse(payload));
                     break;
 
+                case Protocol.ConversationUpdated:
+                    OnConversationUpdated(ConversationEventInfo.Parse(payload));
+                    break;
+
                 case Protocol.ToolActivity:
                 {
                     // 本地工具（kb_* / run_script）原本在聊天窗里完全不可见，
@@ -1625,6 +1629,17 @@ namespace IcarusII
             _chat.FinishConversationReplay();
             Log.LogInfo($"[存档] 回放历史：{replayed} 条，失败 {failed} 条");
             return failed == 0;
+        }
+
+        private void OnConversationUpdated(ConversationEventInfo info)
+        {
+            if (info == null || string.IsNullOrEmpty(info.ConversationId) ||
+                string.IsNullOrEmpty(info.Title)) return;
+            Post(() =>
+            {
+                if (_chat == null) return;
+                _chat.UpdateConversationTitle(info.ConversationId, info.Title);
+            });
         }
 
         private void OnConversationCreated(ConversationEventInfo info)

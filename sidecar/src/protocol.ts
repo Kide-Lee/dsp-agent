@@ -55,6 +55,8 @@ export const MessageType = {
   ConversationSwitched: 'conversation.switched',
   ConversationDelete: 'conversation.delete',
   ConversationDeleted: 'conversation.deleted',
+  // A.13：标题由模型异步总结后更新（不重建正文）
+  ConversationUpdated: 'conversation.updated',
   // M4e：删除一个问答回合（附录 A.7）
   HistoryDelete: 'history.delete',
   HistoryDeleted: 'history.deleted',
@@ -755,6 +757,19 @@ export function buildConversationCreatedPayload(args: {
     saveKey: args.saveKey,
     conversation: args.conversation,
     history: args.history ?? [],
+  };
+}
+
+/** A.13：会话标题被模型总结/重命名后推送；mod 只更新左侧标题，不重放历史。 */
+export function buildConversationUpdatedPayload(args: {
+  conversationId: string;
+  title: string;
+  saveKey?: string | null;
+}): JsonObject {
+  return {
+    ...(args.saveKey ? { saveKey: args.saveKey } : {}),
+    conversationId: args.conversationId,
+    title: args.title,
   };
 }
 

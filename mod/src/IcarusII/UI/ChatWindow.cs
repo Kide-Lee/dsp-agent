@@ -5425,6 +5425,26 @@ namespace IcarusII.UI
             RebuildConversationIndex();
         }
 
+        /// <summary>模型总结标题到达：只改左侧该会话的标题，不重放正文、不重建索引。</summary>
+        public void UpdateConversationTitle(string conversationId, string title)
+        {
+            if (string.IsNullOrEmpty(conversationId) || string.IsNullOrEmpty(title)) return;
+            var view = FindConversationView(conversationId);
+            if (view != null)
+            {
+                if (view.Info.Title == title) return;
+                view.Info.SetTitle(title);
+                UpdateConversationHeader(view);
+            }
+            else
+            {
+                var conversation = FindConversation(conversationId);
+                if (conversation == null || conversation.Title == title) return;
+                conversation.SetTitle(title);
+            }
+            if (conversationId == _activeConversationId) RefreshConversationTitle();
+        }
+
         public void SetActiveConversation(string conversationId)
         {
             _activeConversationId = conversationId;
