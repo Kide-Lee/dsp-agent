@@ -614,7 +614,7 @@ namespace IcarusII.Tests
 
             var wrongTool = ConfirmRequestInfo.Parse(JsonValue.Parse(
                 @"{
-                    ""requestId"": ""r3"", ""callId"": ""call"", ""tool"": ""game_focus_camera"",
+                    ""requestId"": ""r3"", ""callId"": ""call"", ""tool"": ""game_open_panel"",
                     ""argsHash"": ""abc"", ""token"": ""tok3"", ""title"": ""x"",
                     ""body"": ""x"", ""risk"": 2, ""timeoutMs"": 60000, ""maxWrites"": 3,
                     ""writeNames"": [""game_set_recipe""]

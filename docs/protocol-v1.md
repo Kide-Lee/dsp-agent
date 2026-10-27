@@ -61,7 +61,7 @@
 
 - `ui.richtext.v2`：mod 的输出渲染支持 Markdown + 小型 HTML 子集（`color/size/tint/box/sqrt/sup/sub/i/a/icon`）。sidecar 可据此选用新版格式提示词；没有该能力时继续用旧的“只用游戏标签”提示。
 - `ui.ask.v1`：mod 支持 `ask_user` 交互问答（玩家在游戏窗口里选择/输入答案）。sidecar 据此注册问答工具；老 mod 不会看到该工具。
-- `game.write.v1`：mod 支持写操作确认与一次性令牌；sidecar 据此注册 `game_focus_camera` / `game_place_marker` / `game_open_panel` / `game_set_research` / `game_undo_last_write`。老 mod 不会看到这些工具。
+- `game.write.v1`：mod 支持写操作确认与一次性令牌；sidecar 据此注册 `game_place_marker` / `game_open_panel` / `game_set_research` / `game_undo_last_write`。老 mod 不会看到这些工具。
 - `game.sandbox.v1`：mod 支持沙盒门禁：会在 `save.bind.sandbox` 上报本次载入是否启用游戏沙盒工具，
   并在 mod 侧拒绝沙盒专属工具。sidecar 据此在非沙盒时隐藏/拒绝沙盒专属工具；老 mod 不声明时
   一律按“非沙盒”处理。当前预留的沙盒专属名为 `game_spawn_item` / `game_teleport`（尚未实现）。
@@ -1251,7 +1251,6 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 
 | 工具 | risk | 参数 | 说明 |
 | --- | --- | --- | --- |
-| `game_focus_camera` | 1 | `target`（行星/星系/建筑 id） | 移动视角；确认后执行 |
 | `game_place_marker` | 1 | `planetId?`, `latitude`, `longitude`, `altitude?`, `text`, `icon?` | 新建标记；确认后执行；可撤销 |
 | `game_open_panel` | 1 | `panel`（inventory/tech/starmap/marker/mecha/replicator/statistics/blueprint） | 打开面板；确认后执行 |
 | `game_set_research` | 2 | `techId`（id 或名称） | 切换研究目标；确认后执行 |
@@ -1274,8 +1273,9 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | `game_take_output` | 2 | `buildingId` | 取生产建筑成品；保留配方；背包满返回剩余；不进入撤销栈 |
 | `game_undo_last_write` | 1 | 无 | 撤销最近一次可撤销写操作；最近一次不可撤销时返回错误 |
 
-- `game_focus_camera` / `game_place_marker` / `game_open_panel` / `game_set_research` / `game_undo_last_write` 需要 `game.write.v1`；`game_drop_item` 需要 `game.drop.v1`；`game_set_recipe` / `game_set_assembler_batch` / `game_take_output` / `game_feed_input` 需要 `game.build.v1`；存储五件套需要 `game.storage.v1`；方位三件套需要 `game.tether.v1`；目标四件套需要 `game.todo.v1`。
+- `game_place_marker` / `game_open_panel` / `game_set_research` / `game_undo_last_write` 需要 `game.write.v1`；`game_drop_item` 需要 `game.drop.v1`；`game_set_recipe` / `game_set_assembler_batch` / `game_take_output` / `game_feed_input` 需要 `game.build.v1`；存储五件套需要 `game.storage.v1`；方位三件套需要 `game.tether.v1`；目标四件套需要 `game.todo.v1`。
 - risk 1/2 的工具都会先走 A.12；拒绝确认时 mod 不执行、无任何副作用。
+- 视角聚焦不再作为 AI 工具提供：建筑/星球/矿脉卡片由玩家点击聚焦（`GameLinkFocus`），AI 不替玩家移动镜头。
 - 写操作只保留一层撤销；`game_set_assembler_batch` 整批算一层。换档/断线清空撤销栈。
 - `game_drop_item`、`game_take_output`、`game_tether_add/clear` 不进入撤销栈：
   它们会把栈顶标记为“不可撤销”，随后 `game_undo_last_write` 返回明确错误，不会去撤销更早的无关操作。

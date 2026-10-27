@@ -116,7 +116,6 @@ namespace IcarusII.Game.Tools
             Register(new TraceLineTool());
             Register(new PlanetsTool());
             Register(new LogisticsTool());
-            Register(new FocusCameraTool());
             Register(new PlaceMarkerTool());
             Register(new OpenPanelTool());
             Register(new SetResearchTool());

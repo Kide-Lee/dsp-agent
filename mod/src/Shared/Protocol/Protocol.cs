@@ -160,7 +160,6 @@ namespace IcarusII.Common.Protocol
         /// <summary>sidecar → mod：脚本执行结束，释放脚本写租约。</summary>
         public const string ConfirmRelease = "confirm_release";
 
-        public const string ToolFocusCamera = "game_focus_camera";
         public const string ToolPlaceMarker = "game_place_marker";
         public const string ToolOpenPanel = "game_open_panel";
         public const string ToolSetResearch = "game_set_research";
@@ -237,7 +236,6 @@ namespace IcarusII.Common.Protocol
         /// </summary>
         public static readonly string[] WriteToolNames =
         {
-            ToolFocusCamera,
             ToolPlaceMarker,
             ToolOpenPanel,
             ToolSetResearch,

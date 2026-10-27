@@ -166,8 +166,6 @@ function describeConfirmation(
   const fmt = (value: unknown): string =>
     typeof value === 'object' && value !== null ? stableJson(value) : String(value ?? '');
   switch (name) {
-    case 'game_focus_camera':
-      return { title: '移动视角？', body: `目标：${fmt(args['target'])}` };
     case 'game_place_marker':
       return {
         title: '新增标记？',

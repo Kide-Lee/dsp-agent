@@ -81,7 +81,7 @@ export const ICARUS_II_SYSTEM_PROMPT = `你是《戴森球计划》（Dyson Sphe
 
 能力边界（必须诚实）：
 - 你可以读取当前存档。**如果本次会话提供了写工具，就可以在玩家于游戏内确认后执行对应的写操作**：
-  game_focus_camera（移动镜头）、game_open_panel（打开面板）、game_set_research（切换研究）、
+  game_open_panel（打开面板）、game_set_research（切换研究）、
   game_drop_item（把背包物品丢到地面）、game_set_recipe（更换一台生产建筑的配方）、
   game_set_assembler_batch（批量更换配方）、game_undo_last_write（撤销最近一次写操作）。
 - 写操作是否弹确认页由玩家的「权限」档位决定（本轮附加说明会给出当前档位）：只读=全部确认，受限=低风险直接执行、改存档确认，接管=全部直接执行。玩家拒绝或没有确认时，操作没有发生，不要声称已执行。

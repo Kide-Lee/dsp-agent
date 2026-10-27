@@ -28,9 +28,9 @@ DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）�
 >   Wiki/蓝图仓库、蓝图卡片，以及按知识库真实配方生成的**完整产线蓝图**。
 > - M4 写操作已实现并通过实机验收：复用 `choose` 的确认页（`question/explain` + 红拒绝/蓝同意）、
 >   sidecar 确认钩子 + mod 一次性令牌（绑定 callId/tool/argsHash，60s 单次），
->   以及 `game_focus_camera` / `game_open_panel` / `game_set_research`
+>   以及 `game_open_panel` / `game_set_research`
 >   + `game_undo_last_write`。确认页崩溃、原生按钮动效、`explain` 垂直居中、建筑经纬度输出、
->   行星视图聚焦和研究切换判定已修复。
+>   卡片点击聚焦和研究切换判定已修复。
 >   当前状态与后续计划见 [docs/current-status.md](docs/current-status.md)。
 > - M3 已实现并随 M4 实机验收：**游戏本体知识库**——运行时从 LDB / Locale / Wiki 导出物品、配方、科技、
 >   建筑、提示、教程、里程碑、指引与术语；`kb_search` / `kb_get` / `kb_recipe_tree` / `kb_plan`
@@ -113,7 +113,6 @@ DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）�
 
 | 工具 | 说明 |
 | --- | --- |
-| `game_focus_camera` | 聚焦行星/星系/建筑；目标支持 `planet:` / `star:` / `entity:` 前缀 |
 | `game_place_marker` | 在行星上新建标记；可撤销 |
 | `game_open_panel` | 打开背包/科技树/星图/标记/机甲/复制器/统计/蓝图面板 |
 | `game_set_research` | 切换当前研究目标；只允许前置科技已满足的科技 |

@@ -23,7 +23,6 @@ export function isWriteToolName(name: string): boolean {
 }
 
 export const WRITE_TOOL_NAMES = [
-  'game_focus_camera',
   'game_place_marker',
   'game_open_panel',
   'game_set_research',
@@ -49,13 +48,12 @@ export const WRITE_TOOL_NAMES = [
  * 写工具的 risk 分级（与各 spec 的 `risk` 一致）。
  *
  * 权限档位用它来判断脚本级确认的最高风险：
- *   - risk 1：可逆、无存档副作用（镜头/标记/面板/方位/撤销）
+ *   - risk 1：可逆、无存档副作用（标记/面板/方位/撤销）
  *   - risk 2：改变存档状态
  *
  * 稳定导出给 `script.ts`；新增写工具时两边都要登记。
  */
 const WRITE_TOOL_RISK: Record<string, 1 | 2> = {
-  game_focus_camera: 1,
   game_place_marker: 1,
   game_open_panel: 1,
   game_set_research: 2,
@@ -139,27 +137,6 @@ function writeTool(
 
 export function createWriteTools(host: GameToolHost): ToolDefinition[] {
   return [
-    writeTool(host, {
-      name: 'game_focus_camera',
-      label: '移动视角',
-      description:
-        '把镜头移动到指定行星/星系或建筑。写操作：执行前玩家必须在游戏里确认。' +
-        '当前行星/建筑会先进入行星视图再聚焦，镜头不会进入星球内部；' +
-        '玩家退出行星视图后注视自动结束。target 优先使用 planet:/star:/entity: 前缀。',
-      promptSnippet: '移动镜头到指定目标（需要玩家确认）',
-      promptGuidelines: [
-        'Use game_focus_camera 当玩家明确要求“带我去看/镜头移到”某个星球或建筑时。目标优先写 planet:<id> / star:<id> / entity:<id>，不要只传裸数字。',
-        '不要为了自己看图而调用；需要截图时用 game_capture_view。',
-        '执行前 sidecar 会弹确认，玩家拒绝时不要重复尝试。',
-      ],
-      parameters: Type.Object({
-        target: Type.Union([Type.String(), Type.Integer()], {
-          description: '目标：planet:102 / star:1 / entity:34；纯数字会按行星→当前建筑→星系推断',
-        }),
-      }),
-      timeoutMs: 10000,
-      risk: 1,
-    }),
     writeTool(host, {
       name: 'game_place_marker',
       label: '新建标记',

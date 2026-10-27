@@ -31,7 +31,7 @@ function makeHost({ approve = true } = {}) {
       tools: () => [
         { name: 'game_get_power' },
         { name: 'game_get_entities' },
-        { name: 'game_focus_camera' },
+        { name: 'game_place_marker' },
         { name: 'game_set_recipe' },
       ],
       confirmScript: async (request) => {
@@ -120,7 +120,7 @@ console.log('\n── 3. 白名单、写确认与预算 ──');
 {
   const lowRisk = makeHost();
   const lowRiskTool = createScriptTool(lowRisk.host);
-  const out = await run(lowRiskTool, `dsp.call('game_focus_camera', { target: 'planet:1' }); return 1;`);
+  const out = await run(lowRiskTool, `dsp.call('game_place_marker', { text: 'A' }); return 1;`);
   check('纯低风险写脚本确认 risk=1', lowRisk.confirms[0]?.risk === 1, String(lowRisk.confirms[0]?.risk));
   check('纯低风险写脚本仍执行', JSON.parse(out.text).ok === true, out.text.slice(0, 160));
 }
@@ -130,7 +130,7 @@ console.log('\n── 3. 白名单、写确认与预算 ──');
   const mixedTool = createScriptTool(mixed.host);
   await run(
     mixedTool,
-    `dsp.call('game_focus_camera', { target: 'planet:1' }); dsp.call('game_set_recipe', { buildingId: 1, recipeId: 2 });`,
+    `dsp.call('game_place_marker', { text: 'A' }); dsp.call('game_set_recipe', { buildingId: 1, recipeId: 2 });`,
   );
   check('混合写脚本确认取最高 risk=2', mixed.confirms[0]?.risk === 2, String(mixed.confirms[0]?.risk));
 }

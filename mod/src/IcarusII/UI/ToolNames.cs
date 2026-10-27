@@ -71,7 +71,6 @@ namespace IcarusII.UI
                 case "wiki_page": return "百科页面";
                 case "ask_user":
                 case "ui_ask_user": return "向玩家提问";
-                case "game_focus_camera": return "移动视角";
                 case "game_place_marker": return "新建标记";
                 case "game_open_panel": return "打开面板";
                 case "game_set_research": return "切换研究";

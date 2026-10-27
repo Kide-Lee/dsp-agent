@@ -62,7 +62,6 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_get_planets: CAPABILITY_GAME_ENTITY,
   game_get_logistics: CAPABILITY_GAME_ENTITY,
   game_trace_line: CAPABILITY_GAME_ENTITY,
-  game_focus_camera: CAPABILITY_GAME_WRITE,
   game_place_marker: CAPABILITY_GAME_WRITE,
   game_open_panel: CAPABILITY_GAME_WRITE,
   game_set_research: CAPABILITY_GAME_WRITE,

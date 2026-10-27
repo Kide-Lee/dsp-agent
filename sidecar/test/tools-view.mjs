@@ -100,6 +100,10 @@ function testToolGating() {
   check('game.view.v1 ⇒ 截图', view.includes('game_capture_view'));
   check('game.view.v1 不含 game.read 工具', !view.includes('game_get_power'));
 
+  const write = toolNamesForCapabilities(['game.write.v1']);
+  check('game.write.v1 ⇒ 标记工具', write.includes('game_place_marker'));
+  check('game.write.v1 不再含聚焦工具', !write.includes('game_focus_camera'));
+
   const drop = toolNamesForCapabilities(['game.drop.v1']);
   check('game.drop.v1 ⇒ 丢弃工具', drop.includes('game_drop_item'));
   const writeOnly = toolNamesForCapabilities(['game.write.v1']);

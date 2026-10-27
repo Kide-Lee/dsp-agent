@@ -609,7 +609,7 @@ AgentRoot (RectTransform, 默认 inactive)
 | 级别 | 含义 | 例子 | 默认策略 |
 | --- | --- | --- | --- |
 | L0 | 纯读 | `game.get_*` | 自动执行 |
-| L1 | 可逆、无存档副作用 | 移动视角、打标记、打开某面板 | 自动执行，但在聊天流中记录一条"已执行"卡片 |
+| L1 | 可逆、无存档副作用 | 打标记、打开某面板 | 自动执行，但在聊天流中记录一条"已执行"卡片 |
 | L2 | 改变存档状态 | 设置配方、改物流航线、粘贴蓝图、切换研究 | **必须玩家确认**；必须提供撤销或明确标注不可撤销 |
 
 **门禁实现（双重 + 玩家权限档位）**：
@@ -1080,7 +1080,6 @@ function gameTool<T>(spec: {
 
 | 工具 | risk | 参数 | 影响面说明（确认卡中展示） |
 | --- | --- | --- | --- |
-| `game.focus_camera` | 1 | `target`（行星/星系/建筑 id） | 视角移动 |
 | `game.open_panel` | 1 | `panel`（inventory/tech/starmap/…） | 打开游戏面板 |
 | `game.set_research` | 2 | `techId` | 切换研究目标（可能浪费已投入） |
 | `game.drop_item` | 2 | `itemId`, `count?` | 丢弃背包物品到地面；需手动拾回，不进入撤销栈 |
@@ -1101,7 +1100,11 @@ function gameTool<T>(spec: {
 | `game.tether_clear` | 1 | 无 | 清除方位指示 |
 | `game.tether_list` | 0 | 无 | 列出方位指示 |
 
-> 当前实现 `focus_camera` / `open_panel` / `set_research` / `drop_item` / `set_recipe` / `set_assembler_batch` / 撤销；其余按里程碑推进（§15）。写工具集是风险最高的部分，必须逐个设计撤销语义。
+> 当前实现 `open_panel` / `set_research` / `drop_item` / `set_recipe` / `set_assembler_batch` / 撤销；其余按里程碑推进（§15）。写工具集是风险最高的部分，必须逐个设计撤销语义。
+>
+> **视角聚焦不提供 AI 工具**：建筑/星球/矿脉卡片由玩家点击聚焦（`GameLinkFocus`，复用游戏原生
+> `MoveToViewTargetTwoStep` / 星图 `SetViewTarget`），AI 不替玩家移动镜头；需要“看”时用
+> `game_capture_view` 拍一张，不改变玩家视角。
 >
 > §20 的候选工具尚未实现，**不注册**。新增写工具必须使用新的能力串（如 `game.build.v1` / `game.storage.v1`），不能继续挂在 `game.write.v1` 下，否则老 mod 会被注册它并不存在的工具（§20.5）。
 
@@ -1329,7 +1332,7 @@ icarus-ii/
 | **M4h 能取蓝图** | `blueprint_search` / `blueprint_info` / `blueprint_save`：社区蓝图仓库检索、格式体检、直接保存 | 带作者/仓库/许可署名；路径清洗；同名不覆盖 |
 | **M4i 能看卡片** | 协议 A.9 `blueprint_card` + 聊天窗数据驱动卡片 + 历史回放 | 生成/下载/复制后出现卡片；重进存档可回放；删除回合一起消失 |
 | **M4j 能出蓝图** | `blueprint_generate`：KB `kb_plan` 的真实机器数 → dsp-calc 布局 → 写入蓝图目录；`from` 起点、rows 拆阶段、超高产量拆多张、save.bind 被动档位 | 60/min 电磁涡轮 29 台机器/7 阶段；300/min→3 张、600/min→5 张 |
-| **M4 能动手** | 确认 UI + 令牌门禁 + `focus_camera`/`open_panel`/`set_research` + 撤销 | 拒绝确认时无任何副作用（重点测试） |
+| **M4 能动手** | 确认 UI + 令牌门禁 + `open_panel`/`set_research` + 撤销 | 拒绝确认时无任何副作用（重点测试） |
 | **M5 写工具/实体链接** | 受控写脚本、丢弃/配方/存储/投料/取成品、tether、实体链接卡、沙盒门禁、读侧优化；打包流水线与 i18n 作为发布收尾 | 离线测试通过；实机逐项验收见 §20.3 |
 | **M6 扩展**（可选） | 更多 L2 工具（物流/蓝图）、`DshAcpRuntime`、Web 配置页 | — |
 | **M7 候选**（D1–D5 已拍板） | §20 剩余的合成器队列/仪表盘等；自动驾驶暂不做 | 见 §20.2、§20.3 |
