@@ -84,8 +84,8 @@
   注入后立即补跑判断器的 `DetermineOnPatch` / `DetermineOnLoad`，不受原生
   `GoalLogic.CheckLogic` 的显示条件影响。玩家把“目标建议”选成“自由探索”
   (`EGoalLevel.Off`) 时原生面板仍不会展示目标；`game_todo_add` / `game_todo_list`
-  会返回 `goalLevel`、`goalPanelOff`，并在关闭时附带 `notice`，由模型提醒玩家
-  打开目标设置，改为“关键节点”或“事无巨细”。
+  会返回 `goalPanelOff=true`，由模型提醒玩家打开目标设置，改为“关键节点”或
+  “事无巨细”。
 
 ### 4.2 `ready` — sidecar → mod
 
@@ -1259,8 +1259,8 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | `game_tether_clear` | 1 | 无 | 清除本 mod 建立的所有方位指示 |
 | `game_tether_list` | 0 | 无 | 列出当前方位指示 |
 | `game_todo_templates` | 0 | 无 | 列出原生 GoalProto 模板与判断器 |
-| `game_todo_list` | 0 | 无 | 列出 AI 创建的目标、进度与阶段；返回 `goalLevel`/`goalPanelOff` |
-| `game_todo_add` | 2 | `group?`, `goals[]`（`templateId`, `title?`, `params?`, `itemId?`, `count?`） | 注入原生目标；确认后执行；补跑 GoalDeterminator；返回 `goalPanelOff`/`notice` |
+| `game_todo_list` | 0 | 无 | 列出 AI 创建的目标、进度与阶段；自由探索时带 `goalPanelOff` |
+| `game_todo_add` | 2 | `group?`, `goals[]`（`templateId`, `title?`, `params?`, `itemId?`, `count?`） | 注入原生目标；确认后执行；补跑 GoalDeterminator；自由探索时带 `goalPanelOff` |
 | `game_todo_remove` | 2 | `groupId?`, `goalId?` | 隐藏/删除 AI 创建的目标；确认后执行 |
 | `game_take_output` | 2 | `buildingId` | 取生产建筑成品；保留配方；背包满返回剩余；不进入撤销栈 |
 | `game_undo_last_write` | 1 | 无 | 撤销最近一次可撤销写操作；最近一次不可撤销时返回错误 |

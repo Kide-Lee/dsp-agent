@@ -532,19 +532,14 @@ namespace IcarusII.Game.Tools
         }
 
         /// <summary>
-        /// 玩家把“目标建议”选成“自由探索”(EGoalLevel.Off) 时，原生 UIGoalPanel 只会
-        /// 折叠成一个小圆点，不会展示任何目标。工具把状态带回给模型，由模型提醒玩家
-        /// 打开目标显示，而不是去强行修改玩家的偏好。
+        /// 玩家把“目标建议”选成“自由探索”(EGoalLevel.Off) 时，原生 UIGoalPanel 不会
+        /// 展示任何目标。只在关闭时返回一个标记，由模型提醒玩家打开目标显示。
         /// </summary>
         private static void AppendGoalPanelState(JsonValue data)
         {
             var desc = GameMain.data != null ? GameMain.data.gameDesc : null;
-            var level = desc != null ? desc.goalLevel : EGoalLevel.None;
-            bool off = level == EGoalLevel.Off;
-            data.Set("goalLevel", level.ToString());
-            data.Set("goalPanelOff", off);
-            if (off)
-                data.Set("notice", "玩家当前选择“自由探索”（目标建议关闭），游戏左侧“游戏目标”面板不会显示目标；请提醒玩家打开目标面板的设置，把“目标建议”改为“关键节点”或“事无巨细”。");
+            if (desc != null && desc.goalLevel == EGoalLevel.Off)
+                data.Set("goalPanelOff", true);
         }
 
         private static void HideGoal(int id)
