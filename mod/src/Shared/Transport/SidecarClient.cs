@@ -256,6 +256,51 @@ namespace IcarusII.Common.Transport
         /// <summary>
         /// 请求删除一个问答回合（协议附录 A.7）。返回 envelope id；连接未就绪时返回 null。
         /// </summary>
+        /// <summary>A.13：新建空会话并设为活动会话。</summary>
+        public string SendConversationCreate()
+        {
+            if (_state != ConnectionState.Ready) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ConversationCreate,
+                Protocol.Protocol.BuildConversationCreate(),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
+        /// <summary>A.13：切换活动会话。</summary>
+        public string SendConversationSwitch(string conversationId)
+        {
+            if (_state != ConnectionState.Ready || string.IsNullOrEmpty(conversationId)) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ConversationSwitch,
+                Protocol.Protocol.BuildConversationTarget(conversationId),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
+        /// <summary>A.13：删除会话。</summary>
+        public string SendConversationDelete(string conversationId)
+        {
+            if (_state != ConnectionState.Ready || string.IsNullOrEmpty(conversationId)) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ConversationDelete,
+                Protocol.Protocol.BuildConversationTarget(conversationId),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
         public string SendHistoryDelete(string saveKey, string text, long timestampMs)
         {
             if (_state != ConnectionState.Ready || string.IsNullOrEmpty(text)) return null;

@@ -48,6 +48,13 @@ export const MessageType = {
   Error: 'error',
   ConfigState: 'config.state',
   SaveBound: 'save.bound',
+  // A.13：一个存档多个会话
+  ConversationCreate: 'conversation.create',
+  ConversationCreated: 'conversation.created',
+  ConversationSwitch: 'conversation.switch',
+  ConversationSwitched: 'conversation.switched',
+  ConversationDelete: 'conversation.delete',
+  ConversationDeleted: 'conversation.deleted',
   // M4e：删除一个问答回合（附录 A.7）
   HistoryDelete: 'history.delete',
   HistoryDeleted: 'history.deleted',
@@ -103,6 +110,7 @@ export type ErrorCode =
   | 'upstream_error'
   | 'rate_limited'
   | 'config_required'
+  | 'save_required'
   // M2：工具链路
   | 'tool_not_found'
   | 'tool_unavailable'
@@ -121,7 +129,10 @@ export type ErrorCode =
   | 'confirmation_expired'
   | 'confirmation_denied'
   // M5：沙盒门禁
-  | 'sandbox_required';
+  | 'sandbox_required'
+  // A.13：多会话
+  | 'conversation_not_found'
+  | 'conversation_mismatch';
 
 export type StatusState =
   | 'idle'
@@ -690,6 +701,10 @@ export function buildSaveBoundPayload(args: {
   existed: boolean;
   messageCount: number;
   history?: readonly HistoryMessage[];
+  /** A.13：当前活动会话 id；老 sidecar 没有该字段。 */
+  activeConversationId?: string | null;
+  /** A.13：该存档的会话列表；老 sidecar 没有该字段。 */
+  conversations?: readonly ConversationInfo[];
 }): JsonObject {
   return {
     saveKey: args.saveKey,
@@ -698,6 +713,89 @@ export function buildSaveBoundPayload(args: {
     messageCount: args.messageCount,
     // 只带最近若干条；mod 只用于回放，不进入模型上下文。
     history: args.history ?? [],
+    ...(args.activeConversationId ? { activeConversationId: args.activeConversationId } : {}),
+    ...(args.conversations ? { conversations: args.conversations } : {}),
+  };
+}
+
+// ---------------------------------------------------------------- 多会话（附录 A.13）
+
+export interface ConversationRecord {
+  text: string;
+  timestamp: number;
+  gameTime?: string;
+}
+
+export interface ConversationInfo {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  recordCount: number;
+  records: ConversationRecord[];
+}
+
+export interface ConversationTargetPayload {
+  conversationId: string;
+}
+
+/** 解析 conversation.switch / conversation.delete 的目标。 */
+export function parseConversationTargetPayload(payload: JsonObject): ConversationTargetPayload | null {
+  const value = payload['conversationId'];
+  if (typeof value !== 'string' || value.trim().length === 0) return null;
+  return { conversationId: value.trim() };
+}
+
+export function buildConversationCreatedPayload(args: {
+  saveKey: string | null;
+  conversation: ConversationInfo;
+  history?: readonly HistoryMessage[];
+}): JsonObject {
+  return {
+    saveKey: args.saveKey,
+    conversation: args.conversation,
+    history: args.history ?? [],
+  };
+}
+
+export function buildConversationSwitchedPayload(args: {
+  saveKey: string | null;
+  conversation: ConversationInfo;
+  existed: boolean;
+  messageCount: number;
+  history?: readonly HistoryMessage[];
+}): JsonObject {
+  return {
+    saveKey: args.saveKey,
+    conversationId: args.conversation.id,
+    conversation: args.conversation,
+    existed: args.existed,
+    messageCount: args.messageCount,
+    history: args.history ?? [],
+  };
+}
+
+export function buildConversationDeletedPayload(args: {
+  saveKey: string | null;
+  conversationId: string;
+  ok: boolean;
+  error?: string | null;
+  activeConversationId?: string | null;
+  conversation?: ConversationInfo | null;
+  messageCount?: number;
+  history?: readonly HistoryMessage[];
+  conversations?: readonly ConversationInfo[];
+}): JsonObject {
+  return {
+    saveKey: args.saveKey,
+    conversationId: args.conversationId,
+    ok: args.ok,
+    error: args.error ?? null,
+    ...(args.activeConversationId ? { activeConversationId: args.activeConversationId } : {}),
+    ...(args.conversation ? { conversation: args.conversation } : {}),
+    ...(args.messageCount !== undefined ? { messageCount: args.messageCount } : {}),
+    history: args.history ?? [],
+    ...(args.conversations ? { conversations: args.conversations } : {}),
   };
 }
 

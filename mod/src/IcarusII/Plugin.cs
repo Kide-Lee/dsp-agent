@@ -150,6 +150,9 @@ namespace IcarusII
                 _chat.TurnDeleted += OnTurnDeleted;
                 _chat.CompactionUndoRequested += OnCompactionUndoRequested;
                 _chat.RegenerateRequested += OnRegenerateRequested;
+                _chat.ConversationCreateRequested += OnConversationCreateRequested;
+                _chat.ConversationSwitchRequested += OnConversationSwitchRequested;
+                _chat.ConversationDeleteRequested += OnConversationDeleteRequested;
                 _chat.BlueprintCardActionRequested += OnBlueprintCardAction;
                 _chat.AskCompleted += OnAskCompleted;
                 _chat.AskCancelled += OnAskCancelled;
@@ -438,6 +441,18 @@ namespace IcarusII
                     OnSaveBound(SaveBoundInfo.Parse(payload));
                     break;
 
+                case Protocol.ConversationCreated:
+                    OnConversationCreated(ConversationEventInfo.Parse(payload));
+                    break;
+
+                case Protocol.ConversationSwitched:
+                    OnConversationSwitched(ConversationEventInfo.Parse(payload));
+                    break;
+
+                case Protocol.ConversationDeleted:
+                    OnConversationDeleted(ConversationEventInfo.Parse(payload));
+                    break;
+
                 case Protocol.ToolActivity:
                 {
                     // 本地工具（kb_* / run_script）原本在聊天窗里完全不可见，
@@ -489,7 +504,7 @@ namespace IcarusII
 
                         _streaming = false;
                         var regenerateId = _client != null
-                            ? _client.SendPrompt(regenerateText, null, _chat.GetRequiredTool(regenerateText))
+                            ? _client.SendPrompt(regenerateText, _chat.ActiveConversationId, _chat.GetRequiredTool(regenerateText))
                             : null;
                         if (regenerateId == null)
                         {
@@ -1407,7 +1422,11 @@ namespace IcarusII
                 _internalCalls.Clear();
                 // 对话串也必须跟着换档：否则新存档里还挂着旧档的消息，
                 // 即使 sidecar 已经换了会话，看起来仍然不是“新对话”。
-                if (_chat != null && _chat.Created) _chat.ClearTranscript();
+                if (_chat != null && _chat.Created)
+                {
+                    _chat.ClearConversations();
+                    _chat.ClearTranscript();
+                }
                 Log.LogInfo($"[存档] 当前存档变化：{key ?? "(无，主菜单)"}");
             }
             else if (sandbox != _sandboxValue)
@@ -1455,92 +1474,264 @@ namespace IcarusII
                 {
                     _historyReplayedFor = null;
                     _sandboxNoticeFor = null;
+                    _chat.ClearConversations();
+                    _chat.ClearTranscript();
                     _chat.AppendSystem(Strings.Get("save.unbound"));
                     return;
                 }
 
                 var name = string.IsNullOrEmpty(info.SaveName) ? info.SaveKey : info.SaveName;
-
-                // 进入存档后把该存档上一次的对话贴回聊天窗。
-                // 同一个存档重连时只贴一次；正在流式输出时不打断当前回合。
+                var conversations = BuildConversations(info);
+                var activeId = !string.IsNullOrEmpty(info.ActiveConversationId)
+                    ? info.ActiveConversationId
+                    : (conversations.Count > 0 ? conversations[0].Id : null);
+                var replayKey = ReplayKey(info.SaveKey, activeId);
                 var replay = info.History != null && info.History.Count > 0
-                             && info.SaveKey != _historyReplayedFor && !_streaming;
-                if (replay) _chat.ClearTranscript();
-
-                if (!info.Existed) _chat.AppendSystem(Strings.Get("save.new", name));
-                else if (info.MessageCount > 0)
-                    _chat.AppendSystem(Strings.Get("save.bound", name, info.MessageCount));
-                else
-                    _chat.AppendSystem(Strings.Get("save.bound.nocount", name));
-
-                // 沙盒工具会关闭该存档的成就，玩家必须知道 AI 当前拿到了这部分权限。
-                if (GameRefs.SandboxToolsEnabled && info.SaveKey != _sandboxNoticeFor)
-                {
-                    _chat.AppendSystem(Strings.Get("save.sandbox"));
-                    _sandboxNoticeFor = info.SaveKey;
-                }
+                             && replayKey != _historyReplayedFor && !_streaming;
 
                 if (replay)
                 {
-                    // 逐条回放：单条（或某张蓝图卡片）失败只丢那一条，
-                    // 不能让整个回调抛异常——否则后面的历史全都不会出现。
-                    var replayed = 0;
-                    var failed = 0;
-                    foreach (var message in info.History)
+                    _chat.ClearTranscript();
+                    _chat.ApplyConversations(conversations, activeId);
+
+                    if (!info.Existed) _chat.AppendSystem(Strings.Get("save.new", name));
+                    else if (info.MessageCount > 0)
+                        _chat.AppendSystem(Strings.Get("save.bound", name, info.MessageCount));
+                    else
+                        _chat.AppendSystem(Strings.Get("save.bound.nocount", name));
+
+                    // 沙盒工具会关闭该存档的成就，玩家必须知道 AI 当前拿到了这部分权限。
+                    if (GameRefs.SandboxToolsEnabled && info.SaveKey != _sandboxNoticeFor)
                     {
-                        if (message == null || string.IsNullOrEmpty(message.Text)) continue;
-                        try
-                        {
-                            if (message.Kind == "compaction")
-                            {
-                                // 压缩记录：插一条特殊对话串，并把之前的历史标灰（A.11）。
-                                _chat.AppendCompaction(message);
-                            }
-                            else if (message.Role == "user")
-                            {
-                                _chat.AppendUser(message.Text, message.Timestamp, message.GameTime);
-                            }
-                            else
-                            {
-                                // 回答连同它之前的思考/工具步骤一起还原（协议 A.6 steps）。
-                                _chat.AppendHistoryReply(message);
-                                // 蓝图卡片跟在该回答后面，与实时收到的顺序一致。
-                                if (message.Cards != null)
-                                {
-                                    foreach (var card in message.Cards)
-                                    {
-                                        if (card != null && string.IsNullOrEmpty(card.CreatedAt) && message.Timestamp > 0)
-                                        {
-                                            card.CreatedAt = DateTimeOffset
-                                                .FromUnixTimeMilliseconds(message.Timestamp)
-                                                .LocalDateTime.ToString("yyyy-MM-dd");
-                                        }
-                                        _chat.AppendBlueprintCard(card);
-                                    }
-                                }
-                                if (message.LinkCards != null)
-                                {
-                                    foreach (var link in message.LinkCards)
-                                        if (link != null) _chat.AppendLinkCard(link);
-                                }
-                            }
-                            replayed++;
-                        }
-                        catch (Exception ex)
-                        {
-                            failed++;
-                            Log.LogWarning($"[存档] 回放历史消息失败（{message.Role}）：{ex.Message}");
-                        }
+                        _chat.AppendSystem(Strings.Get("save.sandbox"));
+                        _sandboxNoticeFor = info.SaveKey;
                     }
 
-                    // 回放成功才记下“这个存档贴过了”。整段失败时下次 save.bound 会重试，
-                    // 而不是让玩家进存档后永远看到空聊天窗。
-                    if (failed == 0) _historyReplayedFor = info.SaveKey;
-                    Log.LogInfo($"[存档] 回放历史：{replayed} 条，失败 {failed} 条（存档 {info.SaveKey}）");
+                    if (ReplayHistory(info.History)) _historyReplayedFor = replayKey;
+                }
+                else
+                {
+                    // 重连/重复绑定：只刷新会话列表，不重复贴历史。
+                    // 但如果 sidecar 的活动会话变了（例如上次退出前切过），窗口里的旧正文
+                    // 已经不属于当前会话，必须清掉。
+                    if (!string.IsNullOrEmpty(activeId) && activeId != _chat.ActiveConversationId)
+                        _chat.ClearTranscript();
+                    _chat.ApplyConversations(conversations, activeId);
+                    if (!info.Existed) _chat.AppendSystem(Strings.Get("save.new", name));
                 }
 
                 _chat.SetStatus(Strings.Get("status.ready"), OkColor);
             });
+        }
+
+        /// <summary>
+        /// 老 sidecar 没有 conversations 字段时，用 history 构造一个兼容会话，
+        /// 保证左侧索引仍按新的分组 UI 显示（而不是整块空掉）。
+        /// </summary>
+        private static List<ConversationInfo> BuildConversations(SaveBoundInfo info)
+        {
+            if (info.Conversations.Count > 0) return info.Conversations;
+            var conversation = ConversationInfo.Create("legacy", "当前会话");
+            if (info.History != null)
+            {
+                foreach (var message in info.History)
+                {
+                    if (message == null || message.Role != "user" || string.IsNullOrEmpty(message.Text))
+                        continue;
+                    conversation.AddRecord(ConversationRecordInfo.Create(
+                        message.Text, message.Timestamp, message.GameTime));
+                }
+            }
+            if (conversation.RecordCount > 0)
+                conversation.SetTitle(ShortConversationTitle(conversation.Records[0].Text));
+            var list = new List<ConversationInfo>();
+            list.Add(conversation);
+            return list;
+        }
+
+        private static string ShortConversationTitle(string text)
+        {
+            var value = (text ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (value.Length == 0) return "新会话";
+            return value.Length <= 18 ? value : value.Substring(0, 18) + "…";
+        }
+
+        private static string ReplayKey(string saveKey, string conversationId)
+        {
+            return (saveKey ?? string.Empty) + "|" + (conversationId ?? string.Empty);
+        }
+
+        /// <summary>回放某会话历史；返回 false 表示有消息失败（下次 save.bound 会重试）。</summary>
+        private bool ReplayHistory(List<HistoryMessageInfo> history)
+        {
+            if (_chat == null) return true;
+            if (history == null || history.Count == 0)
+            {
+                _chat.FinishConversationReplay();
+                return true;
+            }
+
+            // 逐条回放：单条（或某张蓝图卡片）失败只丢那一条，
+            // 不能让整个回调抛异常——否则后面的历史全都不会出现。
+            var replayed = 0;
+            var failed = 0;
+            foreach (var message in history)
+            {
+                if (message == null || string.IsNullOrEmpty(message.Text)) continue;
+                try
+                {
+                    if (message.Kind == "compaction")
+                    {
+                        // 压缩记录：插一条特殊对话串，并把之前的历史标灰（A.11）。
+                        _chat.AppendCompaction(message);
+                    }
+                    else if (message.Role == "user")
+                    {
+                        _chat.AppendHistoryUser(message.Text, message.Timestamp, message.GameTime);
+                    }
+                    else
+                    {
+                        // 回答连同它之前的思考/工具步骤一起还原（协议 A.6 steps）。
+                        _chat.AppendHistoryReply(message);
+                        // 蓝图卡片跟在该回答后面，与实时收到的顺序一致。
+                        if (message.Cards != null)
+                        {
+                            foreach (var card in message.Cards)
+                            {
+                                if (card != null && string.IsNullOrEmpty(card.CreatedAt) && message.Timestamp > 0)
+                                {
+                                    card.CreatedAt = DateTimeOffset
+                                        .FromUnixTimeMilliseconds(message.Timestamp)
+                                        .LocalDateTime.ToString("yyyy-MM-dd");
+                                }
+                                _chat.AppendBlueprintCard(card);
+                            }
+                        }
+                        if (message.LinkCards != null)
+                        {
+                            foreach (var link in message.LinkCards)
+                                if (link != null) _chat.AppendLinkCard(link);
+                        }
+                    }
+                    replayed++;
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    Log.LogWarning($"[存档] 回放历史消息失败（{message.Role}）：{ex.Message}");
+                }
+            }
+
+            _chat.FinishConversationReplay();
+            Log.LogInfo($"[存档] 回放历史：{replayed} 条，失败 {failed} 条");
+            return failed == 0;
+        }
+
+        private void OnConversationCreated(ConversationEventInfo info)
+        {
+            if (info == null || info.Conversation == null) return;
+            Post(() =>
+            {
+                if (_chat == null) return;
+                _chat.ClearTranscript();
+                _chat.UpsertConversation(info.Conversation, true);
+                _chat.FinishConversationReplay();
+                _historyReplayedFor = ReplayKey(info.SaveKey ?? _saveKey, info.Conversation.Id);
+                if (!info.Ok)
+                    _chat.AppendSystem(Strings.Get("chat.conversation.failed", info.Error ?? "unknown"));
+                else
+                    _chat.AppendSystem(Strings.Get("chat.conversation.created"));
+                _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+            });
+        }
+
+        private void OnConversationSwitched(ConversationEventInfo info)
+        {
+            if (info == null || info.Conversation == null) return;
+            Post(() =>
+            {
+                if (_chat == null) return;
+                if (!info.Ok)
+                {
+                    _chat.AppendSystem(Strings.Get("chat.conversation.failed", info.Error ?? "unknown"));
+                    _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+                    return;
+                }
+                _chat.ClearTranscript();
+                _chat.UpsertConversation(info.Conversation, true);
+                ReplayHistory(info.History);
+                _historyReplayedFor = ReplayKey(info.SaveKey ?? _saveKey, info.Conversation.Id);
+                _chat.AppendSystem(Strings.Get("chat.conversation.switched", info.Conversation.Title));
+                _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+            });
+        }
+
+        private void OnConversationDeleted(ConversationEventInfo info)
+        {
+            if (info == null) return;
+            Post(() =>
+            {
+                if (_chat == null) return;
+                if (!info.Ok)
+                {
+                    _chat.AppendSystem(Strings.Get("chat.conversation.failed", info.Error ?? "unknown"));
+                    _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+                    return;
+                }
+                var activeChanged = info.ActiveConversationId != _chat.ActiveConversationId;
+                if (activeChanged)
+                {
+                    _chat.ClearTranscript();
+                    _chat.ApplyConversations(info.Conversations, info.ActiveConversationId);
+                    ReplayHistory(info.History);
+                    _historyReplayedFor = ReplayKey(info.SaveKey ?? _saveKey, info.ActiveConversationId);
+                }
+                else
+                {
+                    // 删的是别的会话：只更新左侧列表，不打断当前正文。
+                    _chat.ApplyConversations(info.Conversations, info.ActiveConversationId);
+                }
+                _chat.AppendSystem(Strings.Get("chat.conversation.deleted"));
+                _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+            });
+        }
+
+        private void OnConversationCreateRequested()
+        {
+            if (_chat == null || _client == null || _client.State != ConnectionState.Ready) return;
+            if (_streaming)
+            {
+                _chat.AppendSystem(Strings.Get("chat.conversation.busy"));
+                return;
+            }
+            if (_client.SendConversationCreate() == null)
+                _chat.AppendSystem(Strings.Get("chat.conversation.failed", "连接未就绪"));
+        }
+
+        private void OnConversationSwitchRequested(string conversationId)
+        {
+            if (_chat == null || _client == null || _client.State != ConnectionState.Ready) return;
+            if (string.IsNullOrEmpty(conversationId)) return;
+            if (_streaming)
+            {
+                _chat.AppendSystem(Strings.Get("chat.conversation.busy"));
+                return;
+            }
+            if (_client.SendConversationSwitch(conversationId) == null)
+                _chat.AppendSystem(Strings.Get("chat.conversation.failed", "连接未就绪"));
+        }
+
+        private void OnConversationDeleteRequested(string conversationId)
+        {
+            if (_chat == null || _client == null || _client.State != ConnectionState.Ready) return;
+            if (string.IsNullOrEmpty(conversationId)) return;
+            if (_streaming)
+            {
+                _chat.AppendSystem(Strings.Get("chat.conversation.busy"));
+                return;
+            }
+            if (_client.SendConversationDelete(conversationId) == null)
+                _chat.AppendSystem(Strings.Get("chat.conversation.failed", "连接未就绪"));
         }
 
         /// <summary>
@@ -1962,7 +2153,7 @@ namespace IcarusII
 
             _streaming = false;
             var requiredTool = _chat.GetRequiredTool(text);
-            var id = _client.SendPrompt(text, null, requiredTool);
+            var id = _client.SendPrompt(text, _chat.ActiveConversationId, requiredTool);
             if (id == null)
             {
                 _chat.AppendSystem("发送失败（连接状态已变化）。");

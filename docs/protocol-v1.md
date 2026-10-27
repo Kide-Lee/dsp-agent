@@ -1049,6 +1049,159 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 
 ---
 
+### A.13 一个存档多个会话（conversation.*）
+
+**需求**：同一个存档可以有多个互相独立的对话串；聊天窗左侧按会话分组显示
+“会话标题 → 该会话里的用户提问”。切换会话时，模型上下文和聊天窗历史都切到
+该会话，不能把两个会话的消息混在一起。
+
+#### 存储
+
+- 每个会话仍然是 pi 的一个 session 文件，放在原来的存档目录
+  `%APPDATA%/icarus-ii/sessions/<saveKey>/` 下；会话的 pi session id 就是
+  `conversationId`。
+- 活动会话记录在 `sessions/<saveKey>/active.json`：`{"activeConversationId":"…"}`。
+  该文件不是 pi session，`SessionManager.list` 会忽略它。
+- 新建但还没有发过消息的会话没有 session 文件（pi 只在第一条 user/assistant 消息时落盘）。
+  sidecar 在内存里把它作为空会话保留，并在同一存档的 `save.bound.conversations`
+  里用 `id + title="新会话" + records=[]` 表示；它仍然可以通过 `active.json` 恢复。
+- 会话标题由 sidecar 生成：优先 `session_info.name`，否则取第一条用户消息并截断；
+  没有消息时用“新会话”。不额外调用 LLM。
+- 会话按 `updatedAt` 降序排列（最近活动的在前）。
+
+#### `save.bound` 新增字段（sidecar → mod，均可选）
+
+```jsonc
+{
+  "saveKey": "3f2a91c4d8e05b17",
+  "saveName": "我的档",
+  "existed": true,
+  "messageCount": 2,
+  "activeConversationId": "conv_7c1e…",
+  "conversations": [
+    {
+      "id": "conv_7c1e…",
+      "title": "量子芯片产线规划",
+      "createdAt": 1760000000000,
+      "updatedAt": 1760000100000,
+      "recordCount": 12,
+      "records": [
+        { "text": "帮我规划一条量子芯片产线", "timestamp": 1760000000000,
+          "gameTime": "08:42:00" }
+      ]
+    }
+  ],
+  "history": [ /* 当前活动会话的历史，字段同 A.6 */ ]
+}
+```
+
+- `conversations` 里的 `records` 只包含**用户提问**，用于聊天窗左侧分组索引；
+  每项 `text` / `timestamp` / 可选 `gameTime` 与 `history` 的 user 消息一致。
+- sidecar 对会话数、每个会话的记录数做上限（建议 50 个会话、每个最多 40 条用户提问），
+  超出时只返回最近的部分；`recordCount` 是实际返回的 `records` 条数，UI 用它显示“# 条”。
+- 老 mod 忽略新字段，仍按 A.6 的单会话 `history` 回放；新 mod 在缺少
+  `conversations` 时把 `history` 包装成一个临时会话，保持向后兼容。
+
+#### `conversation.create`（mod → sidecar）
+
+```jsonc
+{ "v": 1, "id": "m-80", "type": "conversation.create", "payload": {} }
+```
+
+新建一个空会话并设为活动会话。返回：
+
+```jsonc
+{
+  "v": 1, "id": "s-80", "type": "conversation.created", "replyTo": "m-80",
+  "payload": {
+    "saveKey": "3f2a91c4d8e05b17",
+    "conversation": { "id": "conv_9a…", "title": "新会话",
+                      "createdAt": 1760000200000, "updatedAt": 1760000200000,
+                      "recordCount": 0, "records": [] },
+    "history": []
+  }
+}
+```
+
+- 如果当前正在回答，返回 `error{code:"busy"}`，不改变活动会话。
+- 如果当前活动会话本来就是空的（没有记录），sidecar 可以复用它的 id，
+  避免不断产生新的空会话；UI 仍会收到一个 `conversation.created`。
+
+#### `conversation.switch`（mod → sidecar）
+
+```jsonc
+{ "v": 1, "id": "m-81", "type": "conversation.switch",
+  "payload": { "conversationId": "conv_7c1e…" } }
+```
+
+返回：
+
+```jsonc
+{
+  "v": 1, "id": "s-81", "type": "conversation.switched", "replyTo": "m-81",
+  "payload": {
+    "saveKey": "3f2a91c4d8e05b17",
+    "conversationId": "conv_7c1e…",
+    "conversation": { /* 同 conversation.create.conversation */ },
+    "existed": true,
+    "messageCount": 2,
+    "history": [ /* 该会话历史，字段同 A.6 */ ]
+  }
+}
+```
+
+- 会话不存在时返回 `error{code:"conversation_not_found"}`。
+- 切换成功后，下一次 `prompt` 的 `conversationId` 必须是该 id；sidecar 会用它
+  校验/路由（见下）。
+
+#### `conversation.delete`（mod → sidecar）
+
+```jsonc
+{ "v": 1, "id": "m-82", "type": "conversation.delete",
+  "payload": { "conversationId": "conv_7c1e…" } }
+```
+
+返回：
+
+```jsonc
+{
+  "v": 1, "id": "s-82", "type": "conversation.deleted", "replyTo": "m-82",
+  "payload": {
+    "saveKey": "3f2a91c4d8e05b17",
+    "conversationId": "conv_7c1e…",
+    "ok": true,
+    "error": null,
+    "activeConversationId": "conv_9a…",
+    "conversation": { /* 删除后的活动会话 */ },
+    "messageCount": 0,
+    "history": [],
+    "conversations": [ /* 删除后的完整会话列表，字段同 A.6 */ ]
+  }
+}
+```
+
+- 删除是永久的：sidecar 删除该会话的 session 文件，以及与该会话关联的
+  卡片/游戏时间记录；失败时 `ok=false`，`error` 为
+  `busy` / `no_save` / `conversation_not_found` / `io_error` 之一。
+- 如果删除的是活动会话，sidecar 选择 `updatedAt` 最新的剩余会话；
+  没有剩余会话时新建一个空会话。返回的 `history` 是新的活动会话历史。
+- 如果删除的是非活动会话，活动会话与 `history` 保持不变。
+
+#### `prompt.conversationId`
+
+- `prompt` 的 `conversationId` 是可选字段（§4.4）；新 mod 会始终带上当前活动会话 id。
+- 如果带上的 id 与 sidecar 当前活动会话不一致，sidecar 返回
+  `error{code:"conversation_mismatch"}`，不执行本轮提问；mod 应先 `conversation.switch`。
+- 老 mod 不带该字段时继续使用当前活动会话，行为与 v1 旧版一致。
+
+#### 兼容性
+
+- 所有这些消息和字段都是可选的；老 sidecar 不认识 `conversation.*`，会按
+  `RESERVED_TYPES`/未知类型忽略；老 mod 不发这些消息，仍按单会话工作。
+- `save.bound.conversations` 缺失时，新 mod 用 `history` 构造一个“当前会话”，
+  只显示一个分组；不会因为连到老 sidecar 而失去索引。
+- 会话文件、卡片记录和 `active.json` 都只落在 sidecar 数据目录内，不写入游戏目录。
+
 ## 附录 B：只读游戏工具（M2）与知识库工具（M3）
 
 M2 新增 `game.read.v1` 能力。mod 在 `hello.capabilities` 中声明该能力后，

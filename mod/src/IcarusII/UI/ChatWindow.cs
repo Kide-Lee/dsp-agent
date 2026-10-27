@@ -222,6 +222,25 @@ namespace IcarusII.UI
             public int EstimatedTokensAfter;
         }
 
+        /// <summary>A.13：左侧索引里的一个会话分组。</summary>
+        private sealed class ConversationView
+        {
+            public string Id;
+            public ConversationInfo Info;
+            public GameObject Go;
+            public RectTransform Header;
+            public RectTransform Records;
+            public Text Title;
+            public Text Count;
+            public Text Chevron;
+            public GameObject ActiveBar;
+            public GameObject ExpandMore;
+            public Text ExpandMoreText;
+            public bool Expanded;
+            public int Visible;
+            public readonly List<GameObject> Rows = new List<GameObject>();
+        }
+
         private readonly List<Line> _lines = new List<Line>();
         private readonly List<Item> _items = new List<Item>();
 
@@ -573,13 +592,25 @@ namespace IcarusII.UI
         private RectTransform _replyTemplate;
         private bool _tetherHooked;
 
-        // ---- chat-index：左侧提问索引 ----
+        // ---- chat-index：左侧会话分组索引（A.13） ----
         private RectTransform _chatIndex;
         private RectTransform _chatIndexContent;
-        private RectTransform _chatIndexTemplate;
+        private RectTransform _conversationTemplate;
+        private RectTransform _recordTemplate;
+        private RectTransform _expandMoreTemplate;
         private ScrollRect _chatIndexScroll;
-        private Text _chatIndexTitle;
         private Text _chatIndexEmpty;
+        private Button _newConversationButton;
+        private readonly List<ConversationInfo> _conversations = new List<ConversationInfo>();
+        private readonly List<ConversationView> _conversationViews = new List<ConversationView>();
+        private readonly Dictionary<string, bool> _conversationExpanded =
+            new Dictionary<string, bool>(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> _conversationVisible =
+            new Dictionary<string, int>(StringComparer.Ordinal);
+        private string _activeConversationId;
+        private string _pendingFocusConversationId;
+        private string _pendingFocusText;
+        private long _pendingFocusTimestamp;
         private readonly List<TurnEntry> _turns = new List<TurnEntry>();
         private int _nextTurnId;
         private int _currentTurnId;
@@ -840,10 +871,20 @@ namespace IcarusII.UI
             _replyTemplate = null;
             _chatIndex = null;
             _chatIndexContent = null;
-            _chatIndexTemplate = null;
+            _conversationTemplate = null;
+            _recordTemplate = null;
+            _expandMoreTemplate = null;
             _chatIndexScroll = null;
-            _chatIndexTitle = null;
             _chatIndexEmpty = null;
+            _newConversationButton = null;
+            _activeConversationId = null;
+            _pendingFocusConversationId = null;
+            _pendingFocusText = null;
+            _pendingFocusTimestamp = 0;
+            _conversations.Clear();
+            _conversationViews.Clear();
+            _conversationExpanded.Clear();
+            _conversationVisible.Clear();
             _turns.Clear();
             _nextTurnId = 0;
             _currentTurnId = 0;
@@ -1608,7 +1649,6 @@ namespace IcarusII.UI
                 AssignIconMapping(item.Label, generalIcons);
             }
             if (_statusText != null) _statusText.color = _textDim;
-            if (_chatIndexTitle != null) _chatIndexTitle.color = _accent;
             if (_chatIndexEmpty != null) _chatIndexEmpty.color = _textDim;
             RefreshIndexSelection();
 
@@ -1959,6 +1999,15 @@ namespace IcarusII.UI
         /// </summary>
         public event Action<string, long> TurnDeleted;
 
+        /// <summary>玩家点了左侧“+ 新会话”。</summary>
+        public event Action ConversationCreateRequested;
+
+        /// <summary>玩家点了另一个会话里的记录：请求切换会话（A.13）。</summary>
+        public event Action<string> ConversationSwitchRequested;
+
+        /// <summary>玩家点了会话标题右侧的删除按钮（A.13）。</summary>
+        public event Action<string> ConversationDeleteRequested;
+
         /// <summary>
         /// 玩家点了压缩记录行的删除：请求 sidecar 撤销最近一次压缩（协议 A.11）。
         /// 参数是 compaction entry id；空字符串表示撤销最近一次。
@@ -1977,6 +2026,17 @@ namespace IcarusII.UI
         /// <param name="gameTime">历史回放的游戏时间（HH:mm:ss）；空则用当前游戏时间。</param>
         public void AppendUser(string text, long timestampMs = 0, string gameTime = null)
         {
+            AppendUserInternal(text, timestampMs, gameTime, addIndexRecord: true);
+        }
+
+        /// <summary>历史回放：记录行已经由 sidecar 的 conversations 列表提供，不再重复追加。</summary>
+        public void AppendHistoryUser(string text, long timestampMs = 0, string gameTime = null)
+        {
+            AppendUserInternal(text, timestampMs, gameTime, addIndexRecord: false);
+        }
+
+        private void AppendUserInternal(string text, long timestampMs, string gameTime, bool addIndexRecord)
+        {
             if (text == null) return;
 
             // 新提问属于新回合：上一轮若还在流式思考，先把它收尾，
@@ -1986,7 +2046,7 @@ namespace IcarusII.UI
             _currentTurnId = ++_nextTurnId;
             _awaitingResponse = true;
             AddMessage(LineKind.User, text, gameTime);
-            AddTurn(_currentTurnId, text, timestampMs);
+            AddTurn(_currentTurnId, text, timestampMs, addIndexRecord: addIndexRecord);
         }
 
         /// <summary>追加一行系统提示（灰色）。</summary>
@@ -2044,7 +2104,8 @@ namespace IcarusII.UI
                 isCompaction: true,
                 compactionId: compactionId,
                 tokensBefore: tokensBefore,
-                estimatedTokensAfter: estimatedTokensAfter);
+                estimatedTokensAfter: estimatedTokensAfter,
+                addIndexRecord: false);
             AddMessage(LineKind.Assistant, summary, null);
 
             // 压缩发生在“新问题刚发出、回答还没开始”时：记录应排在问题之前，
@@ -2129,7 +2190,6 @@ namespace IcarusII.UI
             {
                 _turns[i].Compacted = latest >= 0 && i < latest;
             }
-            if (_chatIndexContent != null) RebuildIndexRows();
         }
 
         private static string CompactionClock(long timestampMs)
@@ -4753,7 +4813,7 @@ namespace IcarusII.UI
             _nextTurnId = 0;
             _focusedTurnId = 0;
             _awaitingResponse = false;
-            ClearIndexRows();
+            ClearConversationGroups();
             RefreshIndexEmpty();
             _dirty = true;
         }
@@ -5196,25 +5256,47 @@ namespace IcarusII.UI
             var viewport = scrollRt != null ? scrollRt.Find("viewport") as RectTransform : null;
             _chatIndexScroll = scrollRt != null ? scrollRt.GetComponent<ScrollRect>() : null;
             _chatIndexContent = viewport != null ? viewport.Find("content") as RectTransform : null;
-            _chatIndexTemplate = _chatIndexContent != null
-                ? _chatIndexContent.Find("turn-row-template") as RectTransform
-                : null;
+            if (_chatIndexContent != null)
+            {
+                _conversationTemplate = _chatIndexContent.Find("conversation-group-template") as RectTransform;
+                _recordTemplate = _conversationTemplate != null
+                    ? _conversationTemplate.Find("records/record-row-template") as RectTransform
+                    : null;
+                _expandMoreTemplate = _conversationTemplate != null
+                    ? _conversationTemplate.Find("records/expand-more-template") as RectTransform
+                    : null;
+            }
             var emptyRt = _chatIndex.Find("chat-index-empty") as RectTransform;
             _chatIndexEmpty = emptyRt != null ? emptyRt.GetComponent<Text>() : null;
-            _chatIndexTitle = null;
+            _newConversationButton = _chatIndex
+                .Find("chat-index-topbar/new-conversation")?.GetComponent<Button>();
 
-            if (_chatIndexScroll == null || _chatIndexContent == null || _chatIndexTemplate == null)
+            if (_chatIndexScroll == null || _chatIndexContent == null ||
+                _conversationTemplate == null || _recordTemplate == null || _expandMoreTemplate == null)
             {
                 Plugin.Log.LogWarning(
-                    "[UI] prefab 的 chat-index 结构不完整：需要 scroll/viewport/content/turn-row-template");
+                    "[UI] prefab 的 chat-index 结构不完整：需要 conversation-group-template/record-row-template/expand-more-template");
                 return;
             }
 
-            _chatIndexTemplate.gameObject.SetActive(false);
+            _conversationTemplate.gameObject.SetActive(false);
+            _recordTemplate.gameObject.SetActive(false);
+            _expandMoreTemplate.gameObject.SetActive(false);
+
+            if (_newConversationButton != null)
+            {
+                _newConversationButton.onClick.RemoveAllListeners();
+                _newConversationButton.onClick.AddListener(OnNewConversationClicked);
+            }
+            else
+            {
+                Plugin.Log.LogWarning("[UI] prefab 缺少 chat-index-topbar/new-conversation，新建会话不可用");
+            }
+
             if (_hostCanvas != null)
                 SetLayerRecursively(_chatIndex, _hostCanvas.gameObject.layer);
 
-            RebuildIndexRows();
+            RebuildConversationIndex();
         }
 
         private void AddTurn(
@@ -5224,7 +5306,8 @@ namespace IcarusII.UI
             bool isCompaction = false,
             string compactionId = null,
             int tokensBefore = 0,
-            int estimatedTokensAfter = 0)
+            int estimatedTokensAfter = 0,
+            bool addIndexRecord = true)
         {
             var userGo = _lines.Count > 0 ? _lines[_lines.Count - 1].Go : null;
             var entry = new TurnEntry
@@ -5239,7 +5322,7 @@ namespace IcarusII.UI
                 EstimatedTokensAfter = estimatedTokensAfter,
             };
             _turns.Add(entry);
-            if (_chatIndexContent != null) CreateIndexRow(entry);
+            if (addIndexRecord && !isCompaction) AddActiveConversationRecord(entry.Text, timestampMs);
             if (isCompaction) RefreshCompactionStates();
             else RefreshIndexEmpty();
         }
@@ -5254,117 +5337,458 @@ namespace IcarusII.UI
             }
         }
 
-        private void RebuildIndexRows()
+        /// <summary>实时提问：把用户消息追加到活动会话的索引，并在第一条消息时更新标题。</summary>
+        private void AddActiveConversationRecord(string text, long timestampMs)
         {
-            if (_chatIndexContent == null) return;
-            ClearIndexRows();
-            foreach (var entry in _turns) CreateIndexRow(entry);
+            if (string.IsNullOrEmpty(text)) return;
+            var conversation = FindConversation(_activeConversationId);
+            if (conversation == null)
+            {
+                // 老 sidecar 没有 conversations：用当前对话构造一个兼容分组。
+                conversation = ConversationInfo.Create("legacy", "当前会话");
+                _conversations.Add(conversation);
+                _activeConversationId = conversation.Id;
+            }
+            var record = ConversationRecordInfo.Create(
+                text,
+                timestampMs > 0 ? timestampMs : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            conversation.AddRecord(record);
+            if (conversation.RecordCount == 1)
+                conversation.SetTitle(ConversationTitle(text));
+            conversation.MarkUpdated(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            // 正在聊的会话保持展开，并移到列表最前（与 sidecar 的 updatedAt 排序一致）。
+            _conversationExpanded[conversation.Id] = true;
+            if (!_conversationVisible.TryGetValue(conversation.Id, out var visible) || visible < 5)
+                _conversationVisible[conversation.Id] = 5;
+            _conversations.Remove(conversation);
+            _conversations.Insert(0, conversation);
+            RebuildConversationIndex();
+        }
+
+        private static string ConversationTitle(string text)
+        {
+            var value = (text ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (value.Length == 0) return "新会话";
+            return value.Length <= 18 ? value : value.Substring(0, 18) + "…";
+        }
+
+        private ConversationInfo FindConversation(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return null;
+            foreach (var conversation in _conversations)
+                if (conversation != null && conversation.Id == id) return conversation;
+            return null;
+        }
+
+        public string ActiveConversationId => _activeConversationId;
+
+        /// <summary>用 sidecar 返回的会话列表整体替换左侧索引（save.bind / 删除会话后）。</summary>
+        public void ApplyConversations(List<ConversationInfo> conversations, string activeId)
+        {
+            _conversations.Clear();
+            if (conversations != null)
+                foreach (var conversation in conversations)
+                    if (conversation != null) _conversations.Add(conversation);
+            _activeConversationId = activeId;
+            if (string.IsNullOrEmpty(_activeConversationId) && _conversations.Count > 0)
+                _activeConversationId = _conversations[0].Id;
+            RememberActiveConversation();
+            RebuildConversationIndex();
+        }
+
+        /// <summary>新建或更新一个会话分组（conversation.created / switched）。</summary>
+        public void UpsertConversation(ConversationInfo conversation, bool makeActive)
+        {
+            if (conversation == null || string.IsNullOrEmpty(conversation.Id)) return;
+            var index = -1;
+            for (int i = 0; i < _conversations.Count; i++)
+            {
+                if (_conversations[i] != null && _conversations[i].Id == conversation.Id)
+                {
+                    index = i;
+                    break;
+                }
+            }
+            if (index >= 0) _conversations[index] = conversation;
+            else _conversations.Insert(0, conversation);
+            if (makeActive) _activeConversationId = conversation.Id;
+            RememberActiveConversation();
+            RebuildConversationIndex();
+        }
+
+        public void SetActiveConversation(string conversationId)
+        {
+            _activeConversationId = conversationId;
+            RememberActiveConversation();
+            RebuildConversationIndex();
+        }
+
+        /// <summary>回放结束后把 TurnEntry 和左侧记录行重新挂上，并处理待定位的记录。</summary>
+        public void FinishConversationReplay()
+        {
+            LinkTurnsToConversationRows();
             RefreshIndexSelection();
+            TryFocusPendingConversationRecord();
+        }
+
+        public void ClearConversations()
+        {
+            _conversations.Clear();
+            _activeConversationId = null;
+            _conversationViews.Clear();
+            ClearConversationGroups();
             RefreshIndexEmpty();
         }
 
-        private void CreateIndexRow(TurnEntry entry)
+        private void RememberActiveConversation()
         {
-            if (entry == null || _chatIndexContent == null || entry.Row != null) return;
-            if (_chatIndexTemplate == null)
-            {
-                Plugin.Log.LogWarning("[UI] prefab 缺少 turn-row-template，索引行无法创建");
-                return;
-            }
-            CreateIndexRowFromTemplate(entry);
+            if (string.IsNullOrEmpty(_activeConversationId)) return;
+            _conversationExpanded[_activeConversationId] = true;
+            if (!_conversationVisible.TryGetValue(_activeConversationId, out var visible) || visible < 5)
+                _conversationVisible[_activeConversationId] = 5;
         }
 
-        /// <summary>克隆 prefab 里的 turn-row-template；链接/删除按钮都在 prefab 里定义。</summary>
-        private void CreateIndexRowFromTemplate(TurnEntry entry)
+        private void RebuildConversationIndex()
         {
-            var go = UnityEngine.Object.Instantiate(_chatIndexTemplate.gameObject, _chatIndexContent, false);
-            go.name = "turn-" + entry.Id;
+            if (_chatIndexContent == null || _conversationTemplate == null) return;
+            CaptureConversationState();
+            ClearConversationGroups();
+            if (_conversations.Count == 0)
+            {
+                RefreshIndexEmpty();
+                return;
+            }
+            foreach (var conversation in _conversations)
+            {
+                if (conversation != null) CreateConversationGroup(conversation);
+            }
+            RefreshIndexEmpty();
+            LinkTurnsToConversationRows();
+            RefreshIndexSelection();
+        }
+
+        private void CaptureConversationState()
+        {
+            foreach (var view in _conversationViews)
+            {
+                if (view == null || string.IsNullOrEmpty(view.Id)) continue;
+                _conversationExpanded[view.Id] = view.Expanded;
+                _conversationVisible[view.Id] = view.Visible;
+            }
+        }
+
+        private void ClearConversationGroups()
+        {
+            foreach (var view in _conversationViews)
+            {
+                if (view == null || view.Go == null) continue;
+                view.Go.SetActive(false);
+                UnityEngine.Object.Destroy(view.Go);
+            }
+            _conversationViews.Clear();
+            if (_chatIndexContent == null) return;
+            for (int i = _chatIndexContent.childCount - 1; i >= 0; i--)
+            {
+                var child = _chatIndexContent.GetChild(i);
+                if (child == _conversationTemplate || child.name == "turn-row-template") continue;
+                child.gameObject.SetActive(false);
+                UnityEngine.Object.Destroy(child.gameObject);
+            }
+            foreach (var entry in _turns)
+            {
+                entry.Row = null;
+                entry.Link = null;
+                entry.Hover = null;
+            }
+        }
+
+        private void CreateConversationGroup(ConversationInfo info)
+        {
+            var go = UnityEngine.Object.Instantiate(_conversationTemplate.gameObject, _chatIndexContent, false);
+            go.name = "conversation-" + SafeNodeName(info.Id);
             go.SetActive(true);
 
-            var linkTf = go.transform.Find("link");
-            var label = linkTf != null ? linkTf.Find("label")?.GetComponent<Text>() : null;
-            if (label == null && linkTf != null) label = linkTf.GetComponent<Text>();
-            var delTf = go.transform.Find("delete");
-
-            if (label == null || delTf == null || linkTf == null)
+            var header = go.transform.Find("header") as RectTransform;
+            var records = go.transform.Find("records") as RectTransform;
+            if (header == null || records == null)
             {
-                Plugin.Log.LogWarning("[UI] prefab 的 turn-row-template 结构不完整");
+                Plugin.Log.LogWarning("[UI] conversation-group-template 缺少 header/records");
                 UnityEngine.Object.Destroy(go);
                 return;
             }
 
-            // 链接/删除都不用子级 Button：任何子级 Selectable 都会吃掉 pointerEnter/Exit，
-            // 导致行级 hover 卡住。点击统一交给行上的 ChatIndexRowHover，按点击位置区分。
-            var linkButton = linkTf.GetComponent<Button>();
-            if (linkButton != null)
+            var view = new ConversationView
             {
-                linkButton.enabled = false;
-                UnityEngine.Object.Destroy(linkButton);
+                Id = info.Id,
+                Info = info,
+                Go = go,
+                Header = header,
+                Records = records,
+                Title = header.Find("title-mask/title")?.GetComponent<Text>(),
+                Count = header.Find("count")?.GetComponent<Text>(),
+                Chevron = header.Find("chevron")?.GetComponent<Text>(),
+                ActiveBar = header.Find("active-bar")?.gameObject,
+            };
+            view.Expanded = _conversationExpanded.TryGetValue(info.Id, out var expanded)
+                ? expanded
+                : info.Id == _activeConversationId;
+            view.Visible = _conversationVisible.TryGetValue(info.Id, out var visible)
+                ? visible
+                : 5;
+            _conversationViews.Add(view);
+
+            var headerButton = header.GetComponent<Button>();
+            if (headerButton != null)
+            {
+                headerButton.onClick.RemoveAllListeners();
+                headerButton.onClick.AddListener(() => ToggleConversation(info.Id));
             }
 
-            var linkWidth = linkTf is RectTransform linkRect && linkRect.rect.width > 20f
-                ? linkRect.rect.width - 12f
-                : 176f;
-            label.text = IndexLabel(entry.Text, linkWidth);
-            label.supportRichText = false;
-            label.horizontalOverflow = HorizontalWrapMode.Overflow;
-            label.verticalOverflow = VerticalWrapMode.Truncate;
-            label.wideCharSpacing = 1f;
-            label.raycastTarget = false;
-            // 已被压缩覆盖的回合：灰色、禁止删除；压缩记录本身保持正常色。
-            if (entry.Compacted) label.color = _textDim;
-
-            var hover = go.GetComponent<ChatIndexRowHover>();
-            if (hover == null) hover = go.AddComponent<ChatIndexRowHover>();
-            hover.DeleteButton = delTf.gameObject;
-            hover.HoverBackground = go.GetComponent<Graphic>();
-            hover.AllowDelete = !entry.Compacted;
-            int linkId = entry.Id;
-            int delId = entry.Id;
-            hover.Clicked += () => FocusTurn(linkId);
-
-            // 删除区域的 hover 颜色、提示、点击都由 prefab 上的原生 Button + UIButton 处理。
-            var nativeDelete = delTf.GetComponent<UIButton>();
-            if (nativeDelete != null)
+            var delete = header.Find("delete");
+            var deleteButton = delete != null ? delete.GetComponent<Button>() : null;
+            if (deleteButton != null)
             {
-                nativeDelete.onClick += _ => DeleteTurn(delId);
-                var tips = nativeDelete.tips;
-                tips.tipTitle = entry.IsCompaction
-                    ? Strings.Get("chat.index.undo.compaction.tip")
-                    : Strings.Get("chat.index.delete.tip");
-                // 提示 prefab 来自游戏运行时配置；不要把外部 prefab 引用序列化进 bundle，
-                // 否则 bundle 载入时可能变成 null。
-                tips.simpleGeneralTipPrefab = Configs.builtin != null
-                    ? Configs.builtin.uiDashboardSimpleTipPrefab
-                    : null;
-                nativeDelete.tips = tips;
+                deleteButton.onClick.RemoveAllListeners();
+                deleteButton.onClick.AddListener(() => OnDeleteConversationClicked(info.Id));
             }
-            else
-            {
-                Plugin.Log.LogWarning("[UI] prefab 的 delete 缺少原生 UIButton，删除按钮不可用");
-            }
-            entry.Row = go;
-            entry.Link = label;
-            entry.Hover = hover;
 
-            // 只有鼠标进入该行时才显示删除按钮；已压缩行永不显示。
-            delTf.gameObject.SetActive(false);
-            hover.SetSelected(entry.Id == _focusedTurnId);
-
-            if (_hostCanvas != null)
-                SetLayerRecursively(go.transform, _hostCanvas.gameObject.layer);
-            RefreshIndexEmpty();
+            BuildConversationRecords(view);
+            UpdateConversationHeader(view);
+            if (_hostCanvas != null) SetLayerRecursively(go.transform, _hostCanvas.gameObject.layer);
         }
 
-        private static ColorBlock IndexButtonColors()
+        private void UpdateConversationHeader(ConversationView view)
         {
-            var colors = ColorBlock.defaultColorBlock;
-            colors.normalColor = Color.white;
-            colors.highlightedColor = new Color(0.75f, 0.92f, 1f, 1f);
-            colors.pressedColor = new Color(0.6f, 0.8f, 0.9f, 1f);
-            colors.selectedColor = Color.white;
-            colors.fadeDuration = 0.08f;
-            return colors;
+            if (view == null) return;
+            if (view.Title != null)
+                view.Title.text = string.IsNullOrEmpty(view.Info.Title) ? "新会话" : view.Info.Title;
+            if (view.Count != null) view.Count.text = view.Info.RecordCount + " 条";
+            if (view.Chevron != null) view.Chevron.text = view.Expanded ? "▾" : "▸";
+            if (view.ActiveBar != null) view.ActiveBar.SetActive(view.Id == _activeConversationId);
+            if (view.Records != null) view.Records.gameObject.SetActive(view.Expanded);
+
+            var headerImage = view.Header != null ? view.Header.GetComponent<Image>() : null;
+            if (headerImage != null)
+            {
+                bool active = view.Id == _activeConversationId;
+                if (active)
+                    headerImage.color = new Color(0.353f, 0.749f, 1f, view.Expanded ? 0.12f : 0.08f);
+                else
+                    headerImage.color = view.Expanded
+                        ? new Color(0.353f, 0.749f, 1f, 0.06f)
+                        : Color.clear;
+            }
+        }
+
+        private void BuildConversationRecords(ConversationView view)
+        {
+            if (view == null || view.Records == null) return;
+            for (int i = view.Records.childCount - 1; i >= 0; i--)
+            {
+                var child = view.Records.GetChild(i);
+                if (child == _recordTemplate || child == _expandMoreTemplate) continue;
+                child.gameObject.SetActive(false);
+                UnityEngine.Object.Destroy(child.gameObject);
+            }
+            view.Rows.Clear();
+            view.ExpandMore = null;
+            view.ExpandMoreText = null;
+
+            int count = view.Info != null ? view.Info.Records.Count : 0;
+            int visible = Mathf.Clamp(view.Visible <= 0 ? 5 : view.Visible, 5, Mathf.Max(5, count));
+            if (count < 5) visible = count;
+            view.Visible = visible;
+
+            for (int i = 0; i < visible; i++)
+            {
+                var record = view.Info.Records[i];
+                var row = UnityEngine.Object.Instantiate(_recordTemplate.gameObject, view.Records, false);
+                row.name = "record-" + (i + 1);
+                row.SetActive(true);
+                var label = row.transform.Find("link/label")?.GetComponent<Text>();
+                if (label != null)
+                {
+                    label.text = IndexLabel(record.Text, 210f);
+                    label.color = _accent;
+                }
+                var hover = row.GetComponent<ChatIndexRowHover>();
+                if (hover == null) hover = row.AddComponent<ChatIndexRowHover>();
+                hover.DeleteButton = null;
+                hover.AllowDelete = false;
+                hover.HoverBackground = row.GetComponent<Graphic>();
+                var captured = record;
+                hover.Clicked += () => OnConversationRecordClicked(view.Id, captured);
+                view.Rows.Add(row);
+            }
+
+            if (visible < count)
+            {
+                var more = UnityEngine.Object.Instantiate(_expandMoreTemplate.gameObject, view.Records, false);
+                more.name = "expand-more";
+                more.SetActive(true);
+                var moreText = more.transform.Find("label")?.GetComponent<Text>();
+                if (moreText != null)
+                    moreText.text = "展开其余 " + (count - visible) + " 条记录";
+                var moreButton = more.GetComponent<Button>();
+                if (moreButton != null)
+                {
+                    moreButton.onClick.RemoveAllListeners();
+                    moreButton.onClick.AddListener(() => ExpandConversation(view.Id));
+                }
+                view.ExpandMore = more;
+                view.ExpandMoreText = moreText;
+            }
+
+            view.Records.gameObject.SetActive(view.Expanded);
+        }
+
+        private void ToggleConversation(string conversationId)
+        {
+            var view = FindConversationView(conversationId);
+            if (view == null) return;
+            view.Expanded = !view.Expanded;
+            _conversationExpanded[view.Id] = view.Expanded;
+            if (view.Expanded && view.Visible <= 0) view.Visible = 5;
+            BuildConversationRecords(view);
+            UpdateConversationHeader(view);
+            LinkTurnsToConversationRows();
+            RefreshIndexSelection();
+        }
+
+        private void ExpandConversation(string conversationId)
+        {
+            var view = FindConversationView(conversationId);
+            if (view == null) return;
+            int count = view.Info != null ? view.Info.Records.Count : 0;
+            view.Visible = Mathf.Min(view.Visible + 5, count);
+            _conversationVisible[view.Id] = view.Visible;
+            BuildConversationRecords(view);
+            UpdateConversationHeader(view);
+            LinkTurnsToConversationRows();
+            RefreshIndexSelection();
+        }
+
+        private ConversationView FindConversationView(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return null;
+            foreach (var view in _conversationViews)
+                if (view != null && view.Id == id) return view;
+            return null;
+        }
+
+        private void OnNewConversationClicked()
+        {
+            try
+            {
+                ConversationCreateRequested?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[索引] 请求新建会话失败：{ex.Message}");
+            }
+        }
+
+        private void OnDeleteConversationClicked(string conversationId)
+        {
+            try
+            {
+                ConversationDeleteRequested?.Invoke(conversationId);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[索引] 请求删除会话失败：{ex.Message}");
+            }
+        }
+
+        private void OnConversationRecordClicked(string conversationId, ConversationRecordInfo record)
+        {
+            if (record == null) return;
+            if (conversationId != _activeConversationId)
+            {
+                _pendingFocusConversationId = conversationId;
+                _pendingFocusText = record.Text;
+                _pendingFocusTimestamp = record.Timestamp;
+                try
+                {
+                    ConversationSwitchRequested?.Invoke(conversationId);
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogWarning($"[索引] 请求切换会话失败：{ex.Message}");
+                }
+                return;
+            }
+            FocusConversationRecord(record);
+        }
+
+        private void FocusConversationRecord(ConversationRecordInfo record)
+        {
+            if (record == null || string.IsNullOrEmpty(record.Text)) return;
+            for (int i = _turns.Count - 1; i >= 0; i--)
+            {
+                var turn = _turns[i];
+                if (turn.IsCompaction || turn.Text != record.Text) continue;
+                if (record.Timestamp > 0 && turn.Timestamp > 0 && turn.Timestamp != record.Timestamp) continue;
+                FocusTurn(turn.Id);
+                return;
+            }
+        }
+
+        private void TryFocusPendingConversationRecord()
+        {
+            if (string.IsNullOrEmpty(_pendingFocusConversationId) ||
+                _pendingFocusConversationId != _activeConversationId)
+                return;
+            var record = ConversationRecordInfo.Create(_pendingFocusText, _pendingFocusTimestamp);
+            _pendingFocusConversationId = null;
+            _pendingFocusText = null;
+            _pendingFocusTimestamp = 0;
+            FocusConversationRecord(record);
+        }
+
+        private void LinkTurnsToConversationRows()
+        {
+            foreach (var entry in _turns)
+            {
+                entry.Row = null;
+                entry.Link = null;
+                entry.Hover = null;
+            }
+            var view = FindConversationView(_activeConversationId);
+            if (view == null || view.Info == null) return;
+
+            var used = new bool[view.Rows.Count];
+            foreach (var entry in _turns)
+            {
+                if (entry.IsCompaction) continue;
+                for (int i = 0; i < view.Rows.Count; i++)
+                {
+                    if (used[i]) continue;
+                    if (i >= view.Info.Records.Count) break;
+                    var record = view.Info.Records[i];
+                    if (record == null || record.Text != entry.Text) continue;
+                    if (entry.Timestamp > 0 && record.Timestamp > 0 && entry.Timestamp != record.Timestamp)
+                        continue;
+                    used[i] = true;
+                    var row = view.Rows[i];
+                    entry.Row = row;
+                    entry.Link = row.transform.Find("link/label")?.GetComponent<Text>();
+                    entry.Hover = row.GetComponent<ChatIndexRowHover>();
+                    break;
+                }
+            }
+        }
+
+        private static string SafeNodeName(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return "default";
+            var chars = value.ToCharArray();
+            for (int i = 0; i < chars.Length; i++)
+            {
+                char c = chars[i];
+                if (!char.IsLetterOrDigit(c) && c != '_' && c != '-') chars[i] = '_';
+            }
+            return new string(chars);
         }
 
         private string IndexLabel(string text, float maxWidth)
@@ -5379,6 +5803,15 @@ namespace IcarusII.UI
             while (s.Length > 0 && EstimateTextWidth(s + "…", fontSize) > maxWidth)
                 s = s.Substring(0, s.Length - 1);
             return s + "…";
+        }
+
+        private void RemoveActiveConversationRecord(string text, long timestampMs)
+        {
+            var conversation = FindConversation(_activeConversationId);
+            if (conversation == null) return;
+            if (!conversation.RemoveRecord(text, timestampMs)) return;
+            if (conversation.RecordCount == 0) conversation.SetTitle("新会话");
+            conversation.MarkUpdated(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         }
 
         private void FocusTurn(int turnId)
@@ -5454,14 +5887,13 @@ namespace IcarusII.UI
             }
 
             RemoveTurnVisuals(turnId);
-            if (entry.Row != null) UnityEngine.Object.Destroy(entry.Row);
             _turns.Remove(entry);
+            RemoveActiveConversationRecord(entry.Text, entry.Timestamp);
             if (_focusedTurnId == turnId) _focusedTurnId = 0;
             if (_currentTurnId == turnId)
                 _currentTurnId = _lines.Count > 0 ? _lines[_lines.Count - 1].TurnId : 0;
 
-            RefreshIndexSelection();
-            RefreshIndexEmpty();
+            RebuildConversationIndex();
             // 删掉的如果是最后一轮，刷新按钮要回到新的最后一轮回答上。
             UpdateReplyRefreshAvailability();
             _dirty = true;
@@ -5631,29 +6063,10 @@ namespace IcarusII.UI
             if (key != null) _toolBlocks.Remove(key);
         }
 
-        private void ClearIndexRows()
-        {
-            if (_chatIndexContent != null)
-            {
-                for (int i = _chatIndexContent.childCount - 1; i >= 0; i--)
-                {
-                    var child = _chatIndexContent.GetChild(i);
-                    if (_chatIndexTemplate != null && child == _chatIndexTemplate) continue;
-                    if (child.name == "turn-row-template") continue;
-                    UnityEngine.Object.Destroy(child.gameObject);
-                }
-            }
-            foreach (var entry in _turns)
-            {
-                entry.Row = null;
-                entry.Link = null;
-            }
-        }
-
         private void RefreshIndexEmpty()
         {
             if (_chatIndexEmpty == null) return;
-            _chatIndexEmpty.gameObject.SetActive(_turns.Count == 0);
+            _chatIndexEmpty.gameObject.SetActive(_conversations.Count == 0);
         }
 
         private void RefreshIndexSelection()

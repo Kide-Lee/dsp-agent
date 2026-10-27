@@ -28,6 +28,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type {
   AgentSession,
   AgentSessionEvent,
@@ -68,6 +69,8 @@ import {
   type ErrorCode,
   type HistoryMessage,
   type HistoryStep,
+  type ConversationInfo,
+  type ConversationRecord,
   type HistoryToolStep,
   type JsonObject,
   type ModelCatalogEntry,
@@ -212,6 +215,32 @@ export interface AgentRunner {
    * 只读会话文件，不建模型会话、不联网、不改变当前 saveKey。
    */
   getHistory?(saveKey: string | null): Promise<HistoryMessage[]>;
+  /** A.13：当前活动会话 id；老实现可以不提供。 */
+  getActiveConversationId?(): string | null;
+  /** A.13：该存档的会话列表（含每个会话的用户提问记录）。 */
+  getConversations?(saveKey: string | null): Promise<ConversationInfo[]>;
+  /** A.13：按会话读取历史，供切换/删除后回放。 */
+  getHistoryFor?(saveKey: string | null, conversationId: string): Promise<HistoryMessage[]>;
+  /** A.13：新建空会话并设为活动会话。 */
+  createConversation?(saveKey: string | null): Promise<{
+    ok: boolean;
+    conversation?: ConversationInfo;
+    history?: HistoryMessage[];
+    error?: string;
+  }>;
+  /** A.13：切换活动会话。 */
+  switchConversation?(saveKey: string | null, conversationId: string): Promise<{
+    ok: boolean;
+    conversation?: ConversationInfo;
+    history?: HistoryMessage[];
+    error?: string;
+  }>;
+  /** A.13：删除会话；如果删的是活动会话，返回新的活动会话 id。 */
+  deleteConversation?(saveKey: string | null, conversationId: string): Promise<{
+    ok: boolean;
+    error?: string;
+    activeConversationId?: string | null;
+  }>;
   /**
    * 删除某个存档里的一个问答回合（M4e）。成功表示会话文件已被改写、
    * 内存会话已丢弃；失败用 `error` 说明原因（busy / turn_not_found / ...）。
@@ -428,6 +457,9 @@ export function extractHistoryMessages(
 
 /** 单条回答最多回放的步骤数（正常一轮 1~30 个，超出的只保留最近的）。 */
 const HISTORY_MAX_STEPS = 60;
+/** A.13：save.bound 里最多带多少个会话 / 每个会话多少条提问索引。 */
+const MAX_CONVERSATIONS = 50;
+const MAX_CONVERSATION_RECORDS = 40;
 const HISTORY_THINKING_MAX = 4000;
 const HISTORY_TOOL_ARGS_MAX = 600;
 const HISTORY_TOOL_SUMMARY_MAX = 160;
@@ -1071,6 +1103,12 @@ export class PiAgent implements AgentRunner {
   private pendingTeardown = false;
   /** 当前绑定的存档；每个存档使用独立的 session 目录。 */
   private saveKey: string | null = null;
+  /** A.13：当前活动会话 id；同一存档的多个 pi session 靠它切换。 */
+  private activeConversationId: string | null = null;
+  /** A.13：活动会话还没有 session 文件（新建后尚未发过消息）。 */
+  private activeConversationDraft = false;
+  /** A.13：activeConversationId 是针对哪个 saveKey 初始化的。 */
+  private conversationSaveKey: string | null = null;
   /** 当前载入是否启用游戏沙盒工具（由 save.bind 上报）。 */
   private sandboxEnabled = false;
   /** mod 在 save.bind 里被动上报的蓝图档位；模型不需要调用查询工具。 */
@@ -1173,6 +1211,11 @@ export class PiAgent implements AgentRunner {
     this.blueprintWorkspace.resetCwd();
     if (this.saveKey === saveKey) return;
     this.saveKey = saveKey;
+    // 换存档必须重新解析 activeConversationId；新存档的会话在第一次
+    // getConversations/getHistory 时惰性加载。
+    this.activeConversationId = null;
+    this.activeConversationDraft = false;
+    this.conversationSaveKey = null;
     this.logger.info('存档变化，切换对话会话', { saveKey });
 
     if (this.active) {
@@ -1182,15 +1225,124 @@ export class PiAgent implements AgentRunner {
     this.teardown();
   }
 
-  async getHistory(saveKey: string | null): Promise<HistoryMessage[]> {
-    if (!saveKey) return [];
-    const sessionDir = join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey));
-    // 没有会话文件就不要让 continueRecent 先建一个空会话（每次 bind 都会留垃圾）。
-    if (!existsSync(sessionDir)) return [];
-    if (!readdirSync(sessionDir).some((name) => isSessionFile(name))) return [];
+  getActiveConversationId(): string | null {
+    return this.activeConversationId;
+  }
 
-    const pi = await this.loadSdk();
-    const manager = pi.SessionManager.continueRecent(this.dataDir, sessionDir);
+  /** A.13：生成一个新的会话 id（同时作为 pi session id）。 */
+  private newConversationId(): string {
+    return `conv_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+  }
+
+  private activeFilePath(saveKey: string | null): string | null {
+    if (!saveKey) return null;
+    return join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey), 'active.json');
+  }
+
+  private readActiveConversationId(saveKey: string | null): string | null {
+    const path = this.activeFilePath(saveKey);
+    if (!path) return null;
+    try {
+      const parsed = JSON.parse(readFileSync(path, 'utf8')) as { activeConversationId?: unknown };
+      const id = parsed.activeConversationId;
+      return typeof id === 'string' && id.length > 0 ? id : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private writeActiveConversationId(saveKey: string | null, id: string): void {
+    const path = this.activeFilePath(saveKey);
+    if (!path) return;
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      const tmp = `${path}.tmp-${process.pid}`;
+      writeFileSync(tmp, JSON.stringify({ activeConversationId: id }), {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+      renameSync(tmp, path);
+    } catch (err) {
+      this.logger.warn('写活动会话记录失败', { saveKey, ...errorFields(err) });
+    }
+  }
+
+  /**
+   * 解析当前存档的活动会话。优先 active.json；没有时取最近修改的会话；
+   * 一个会话都没有就生成一个空 draft（尚未落盘，第一次提问时才创建文件）。
+   */
+  private async ensureActiveConversation(saveKey: string | null, pi: PiSdk): Promise<string | null> {
+    if (!saveKey) {
+      this.activeConversationId = null;
+      this.activeConversationDraft = false;
+      this.conversationSaveKey = null;
+      return null;
+    }
+    if (this.conversationSaveKey === saveKey && this.activeConversationId) {
+      return this.activeConversationId;
+    }
+
+    this.conversationSaveKey = saveKey;
+    const sessionDir = join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey));
+    const stored = this.readActiveConversationId(saveKey);
+    if (stored) {
+      const file = pi.SessionManager.findById(this.dataDir, stored, sessionDir);
+      if (file) {
+        this.activeConversationId = stored;
+        this.activeConversationDraft = false;
+        return stored;
+      }
+      // active.json 指向的会话文件已不存在（手动删除/迁移）：回退到最近会话。
+    }
+
+    let list: Awaited<ReturnType<typeof pi.SessionManager.list>> = [];
+    try {
+      list = await pi.SessionManager.list(this.dataDir, sessionDir);
+    } catch (err) {
+      this.logger.warn('列出存档会话失败，按空存档处理', { saveKey, ...errorFields(err) });
+    }
+    if (list.length > 0) {
+      this.activeConversationId = list[0]!.id;
+      this.activeConversationDraft = false;
+    } else {
+      this.activeConversationId = this.newConversationId();
+      this.activeConversationDraft = true;
+    }
+    this.writeActiveConversationId(saveKey, this.activeConversationId);
+    return this.activeConversationId;
+  }
+
+  private conversationTitle(info: { name?: string; firstMessage: string }): string {
+    const explicit = (info.name ?? '').trim();
+    if (explicit.length > 0) return explicit.slice(0, 40);
+    const first = (info.firstMessage ?? '').replace(/\s+/g, ' ').trim();
+    if (first.length === 0) return '新会话';
+    return first.length <= 24 ? first : `${first.slice(0, 24)}…`;
+  }
+
+  private conversationSessionDir(saveKey: string): string {
+    return join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey));
+  }
+
+  /**
+   * 读取一个会话的 UI 回放历史。只读会话文件，不建模型会话、不联网。
+   * 找不到会话时返回空数组（例如新建但还没发过消息的 draft）。
+   */
+  private readConversationHistory(
+    pi: PiSdk,
+    saveKey: string,
+    conversationId: string,
+  ): HistoryMessage[] {
+    const sessionDir = this.conversationSessionDir(saveKey);
+    const file = pi.SessionManager.findById(this.dataDir, conversationId, sessionDir);
+    if (!file) return [];
+    let manager;
+    try {
+      manager = pi.SessionManager.open(file, sessionDir, this.dataDir);
+    } catch (err) {
+      this.logger.warn('打开会话文件失败', { saveKey, conversationId, ...errorFields(err) });
+      return [];
+    }
     // 聊天记录回放必须用全量 branch：buildContextEntries() 会按 compaction 丢掉
     // 被摘要的旧消息，导致压缩后重进存档旧对话凭空消失。模型上下文由 pi 自己管，
     // 这里只负责 UI 回放。
@@ -1201,14 +1353,215 @@ export class PiAgent implements AgentRunner {
     const withLinks = attachLinkCards(withCards, linkRecords);
     const timeRecords = this.readReplyTimes(saveKey);
     const withTimes = attachGameTimes(withLinks, timeRecords);
-    this.logger.info('读取存档历史', {
+    this.logger.info('读取会话历史', {
       saveKey,
+      conversationId,
       messages: withTimes.length,
       blueprintCards: records.length,
       linkCards: linkRecords.length,
       replyTimes: timeRecords.length,
     });
     return withTimes;
+  }
+
+  private readConversationRecords(
+    pi: PiSdk,
+    saveKey: string,
+    conversationId: string,
+  ): ConversationRecord[] {
+    const history = this.readConversationHistory(pi, saveKey, conversationId);
+    const out: ConversationRecord[] = [];
+    for (const message of history) {
+      if (message.role !== 'user' || message.text.trim().length === 0) continue;
+      out.push({
+        text: message.text,
+        timestamp: message.timestamp ?? 0,
+        ...(message.gameTime ? { gameTime: message.gameTime } : {}),
+      });
+      if (out.length >= MAX_CONVERSATION_RECORDS) break;
+    }
+    return out;
+  }
+
+  private conversationInfoFrom(
+    pi: PiSdk,
+    saveKey: string,
+    info: { id: string; name?: string; firstMessage: string; created: Date; modified: Date },
+  ): ConversationInfo {
+    const records = this.readConversationRecords(pi, saveKey, info.id);
+    return {
+      id: info.id,
+      title: this.conversationTitle(info),
+      createdAt: info.created.getTime(),
+      updatedAt: info.modified.getTime(),
+      recordCount: records.length,
+      records,
+    };
+  }
+
+  private draftConversationInfo(conversationId: string): ConversationInfo {
+    const now = Date.now();
+    return {
+      id: conversationId,
+      title: '新会话',
+      createdAt: now,
+      updatedAt: now,
+      recordCount: 0,
+      records: [],
+    };
+  }
+
+  async getConversations(saveKey: string | null): Promise<ConversationInfo[]> {
+    if (!saveKey) return [];
+    const pi = await this.loadSdk();
+    const activeId = await this.ensureActiveConversation(saveKey, pi);
+    const sessionDir = this.conversationSessionDir(saveKey);
+    let list: Awaited<ReturnType<typeof pi.SessionManager.list>> = [];
+    try {
+      list = await pi.SessionManager.list(this.dataDir, sessionDir);
+    } catch (err) {
+      this.logger.warn('列出存档会话失败', { saveKey, ...errorFields(err) });
+    }
+
+    const out: ConversationInfo[] = [];
+    const seen = new Set<string>();
+    for (const info of list) {
+      if (out.length >= MAX_CONVERSATIONS) break;
+      out.push(this.conversationInfoFrom(pi, saveKey, info));
+      seen.add(info.id);
+    }
+    if (activeId && !seen.has(activeId)) {
+      out.unshift(this.draftConversationInfo(activeId));
+    }
+    out.sort((a, b) => b.updatedAt - a.updatedAt);
+    return out;
+  }
+
+  async getHistory(saveKey: string | null): Promise<HistoryMessage[]> {
+    if (!saveKey) return [];
+    const pi = await this.loadSdk();
+    const conversationId = await this.ensureActiveConversation(saveKey, pi);
+    if (!conversationId) return [];
+    return this.readConversationHistory(pi, saveKey, conversationId);
+  }
+
+  async getHistoryFor(saveKey: string | null, conversationId: string): Promise<HistoryMessage[]> {
+    if (!saveKey || !conversationId) return [];
+    const pi = await this.loadSdk();
+    return this.readConversationHistory(pi, saveKey, conversationId);
+  }
+
+  async createConversation(saveKey: string | null): Promise<{
+    ok: boolean;
+    conversation?: ConversationInfo;
+    history?: HistoryMessage[];
+    error?: string;
+  }> {
+    if (!saveKey) return { ok: false, error: 'no_save' };
+    if (this.active) return { ok: false, error: 'busy' };
+    const pi = await this.loadSdk();
+    const activeId = await this.ensureActiveConversation(saveKey, pi);
+
+    // 当前会话本来就是空的：复用它，避免每次点“新会话”都留下一个空 draft。
+    if (activeId && this.activeConversationDraft) {
+      return { ok: true, conversation: this.draftConversationInfo(activeId), history: [] };
+    }
+
+    const id = this.newConversationId();
+    this.activeConversationId = id;
+    this.activeConversationDraft = true;
+    this.writeActiveConversationId(saveKey, id);
+    this.teardown();
+    return { ok: true, conversation: this.draftConversationInfo(id), history: [] };
+  }
+
+  async switchConversation(saveKey: string | null, conversationId: string): Promise<{
+    ok: boolean;
+    conversation?: ConversationInfo;
+    history?: HistoryMessage[];
+    error?: string;
+  }> {
+    if (!saveKey) return { ok: false, error: 'no_save' };
+    if (this.active) return { ok: false, error: 'busy' };
+    const pi = await this.loadSdk();
+    const activeId = await this.ensureActiveConversation(saveKey, pi);
+    if (conversationId === activeId) {
+      const history = await this.readConversationHistory(pi, saveKey, conversationId);
+      const conversation = this.activeConversationDraft
+        ? this.draftConversationInfo(conversationId)
+        : this.conversationInfoFrom(pi, saveKey, {
+            id: conversationId,
+            firstMessage: history.find((m) => m.role === 'user')?.text ?? '',
+            created: new Date(),
+            modified: new Date(),
+          });
+      return { ok: true, conversation, history };
+    }
+
+    const sessionDir = this.conversationSessionDir(saveKey);
+    const file = pi.SessionManager.findById(this.dataDir, conversationId, sessionDir);
+    if (!file) return { ok: false, error: 'conversation_not_found' };
+
+    this.activeConversationId = conversationId;
+    this.activeConversationDraft = false;
+    this.writeActiveConversationId(saveKey, conversationId);
+    this.teardown();
+    const history = this.readConversationHistory(pi, saveKey, conversationId);
+    const conversation = this.conversationInfoFrom(pi, saveKey, {
+      id: conversationId,
+      firstMessage: history.find((m) => m.role === 'user')?.text ?? '',
+      created: new Date(),
+      modified: new Date(),
+    });
+    return { ok: true, conversation, history };
+  }
+
+  async deleteConversation(saveKey: string | null, conversationId: string): Promise<{
+    ok: boolean;
+    error?: string;
+    activeConversationId?: string | null;
+  }> {
+    if (!saveKey) return { ok: false, error: 'no_save' };
+    if (this.active) return { ok: false, error: 'busy' };
+    const pi = await this.loadSdk();
+    const activeId = await this.ensureActiveConversation(saveKey, pi);
+    const sessionDir = this.conversationSessionDir(saveKey);
+    const file = pi.SessionManager.findById(this.dataDir, conversationId, sessionDir);
+    const isActive = conversationId === activeId;
+    if (!file && !isActive) return { ok: false, error: 'conversation_not_found' };
+
+    if (file) {
+      try {
+        unlinkSync(file);
+      } catch (err) {
+        this.logger.warn('删除会话文件失败', { saveKey, conversationId, ...errorFields(err) });
+        return { ok: false, error: 'io_error' };
+      }
+    }
+
+    if (!isActive) {
+      return { ok: true, activeConversationId: activeId };
+    }
+
+    // 删掉的是活动会话：优先切到最近修改的剩余会话；没有就新建空 draft。
+    this.activeConversationId = null;
+    this.activeConversationDraft = false;
+    this.teardown();
+    let list: Awaited<ReturnType<typeof pi.SessionManager.list>> = [];
+    try {
+      list = await pi.SessionManager.list(this.dataDir, sessionDir);
+    } catch (err) {
+      this.logger.warn('删除会话后列出剩余会话失败', { saveKey, ...errorFields(err) });
+    }
+    if (list.length > 0) {
+      this.activeConversationId = list[0]!.id;
+      this.activeConversationDraft = false;
+    } else {
+      this.activeConversationId = this.newConversationId();
+      this.activeConversationDraft = true;
+    }
+    this.writeActiveConversationId(saveKey, this.activeConversationId);
+    return { ok: true, activeConversationId: this.activeConversationId };
   }
 
   // ---------------------------------------------------------------- 蓝图卡片持久化
@@ -1780,6 +2133,8 @@ export class PiAgent implements AgentRunner {
       const start = session.messages.length;
       // 不解析斜杠命令/模板。
       await session.prompt(text, { expandPromptTemplates: false });
+      // 第一条用户消息已经落盘；之后“新会话”应该创建新的 session，而不是复用它。
+      this.activeConversationDraft = false;
 
       if (
         run.requiredTool &&
@@ -2592,9 +2947,22 @@ export class PiAgent implements AgentRunner {
     // 否则 getExtensions() 还是空的（内联人格扩展就不会被注册）。
     await resourceLoader.reload();
 
-    // 每个存档独立的 session 目录：换档 = 换会话；同一存档重连/重启会恢复最近一次会话。
+    // A.13：每个存档一个 session 目录，目录里按 conversationId 存多个 pi session。
+    // 活动会话由 active.json 决定；第一次提问时才落盘。
+    const conversationId =
+      (await this.ensureActiveConversation(this.saveKey, pi)) ?? this.newConversationId();
     const sessionDir = join(this.dataDir, 'sessions', this.sessionDirName());
-    const sessionManager = pi.SessionManager.continueRecent(this.dataDir, sessionDir);
+    const existing = pi.SessionManager.findById(this.dataDir, conversationId, sessionDir);
+    let sessionManager;
+    if (existing) {
+      sessionManager = pi.SessionManager.open(existing, sessionDir, this.dataDir);
+      this.activeConversationDraft = false;
+    } else {
+      sessionManager = pi.SessionManager.create(this.dataDir, sessionDir, { id: conversationId });
+      this.activeConversationId = conversationId;
+      this.activeConversationDraft = true;
+      this.writeActiveConversationId(this.saveKey, conversationId);
+    }
 
     const options: CreateAgentSessionOptions = {
       cwd: this.dataDir,

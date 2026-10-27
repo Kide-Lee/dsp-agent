@@ -688,6 +688,51 @@ namespace IcarusII.Tests
             Eq("null 载荷的安全默认", 0, noBound.MessageCount);
             Check("null 载荷的 SaveKey 为空", string.IsNullOrEmpty(noBound.SaveKey));
 
+            // ---- 附录 A.13：一个存档多个会话 ----
+            Eq("conversation.create 类型名", "conversation.create", Protocol.ConversationCreate);
+            Eq("conversation.created 类型名", "conversation.created", Protocol.ConversationCreated);
+            Eq("conversation.switch 类型名", "conversation.switch", Protocol.ConversationSwitch);
+            Eq("conversation.switched 类型名", "conversation.switched", Protocol.ConversationSwitched);
+            Eq("conversation.delete 类型名", "conversation.delete", Protocol.ConversationDelete);
+            Eq("conversation.deleted 类型名", "conversation.deleted", Protocol.ConversationDeleted);
+            Eq("conversation.create 空载荷", 0, Protocol.BuildConversationCreate().Count);
+            Eq("conversation.switch payload", "conv-a",
+                Protocol.BuildConversationTarget("conv-a")["conversationId"].AsString());
+
+            var multi = SaveBoundInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"3f2a\",\"activeConversationId\":\"conv-a\"," +
+                "\"conversations\":[{" +
+                "\"id\":\"conv-a\",\"title\":\"量子芯片\",\"createdAt\":100,\"updatedAt\":200," +
+                "\"recordCount\":2,\"records\":[" +
+                "{\"text\":\"帮我规划\",\"timestamp\":1},{\"text\":\"再算一遍\",\"timestamp\":2,\"gameTime\":\"08:42\"}]}," +
+                "{\"id\":\"conv-b\",\"title\":\"新会话\",\"recordCount\":0,\"records\":[]}]}"));
+            Eq("save.bound activeConversationId", "conv-a", multi.ActiveConversationId);
+            Eq("save.bound conversations 数", 2, multi.Conversations.Count);
+            Eq("conversation title", "量子芯片", multi.Conversations[0].Title);
+            Eq("conversation records 数", 2, multi.Conversations[0].Records.Count);
+            Eq("conversation record text", "帮我规划", multi.Conversations[0].Records[0].Text);
+            Eq("conversation record gameTime", "08:42", multi.Conversations[0].Records[1].GameTime);
+
+            var switched = ConversationEventInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"3f2a\",\"conversationId\":\"conv-a\",\"existed\":true,\"messageCount\":2," +
+                "\"conversation\":{\"id\":\"conv-a\",\"title\":\"量子芯片\",\"recordCount\":1,\"records\":[{\"text\":\"帮我规划\",\"timestamp\":1}]}," +
+                "\"history\":[{\"role\":\"user\",\"text\":\"帮我规划\",\"timestamp\":1}]}"));
+            Eq("conversation.switched id", "conv-a", switched.ConversationId);
+            Eq("conversation.switched conversation", "量子芯片", switched.Conversation.Title);
+            Eq("conversation.switched history", 1, switched.History.Count);
+
+            var deletedInfo = ConversationEventInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"3f2a\",\"conversationId\":\"conv-a\",\"ok\":true,\"error\":null," +
+                "\"activeConversationId\":\"conv-b\",\"conversations\":[{\"id\":\"conv-b\",\"title\":\"新会话\",\"recordCount\":0}]," +
+                "\"history\":[]}"));
+            Eq("conversation.deleted ok", true, deletedInfo.Ok);
+            Eq("conversation.deleted active", "conv-b", deletedInfo.ActiveConversationId);
+            Eq("conversation.deleted conversations", 1, deletedInfo.Conversations.Count);
+            var failedDelete = ConversationEventInfo.Parse(JsonValue.Parse(
+                "{\"conversationId\":\"conv-a\",\"ok\":false,\"error\":\"busy\"}"));
+            Check("conversation.deleted 失败 ok=false", !failedDelete.Ok);
+            Eq("conversation.deleted 失败错误", "busy", failedDelete.Error);
+
             // ---- 附录 A.10：回存回答游戏时间 ----
             Eq("reply.time 类型名", "reply.time", Protocol.ReplyTime);
             var replyTime = Protocol.BuildReplyTime("问题", "回答", "08:42");

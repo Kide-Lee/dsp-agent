@@ -55,6 +55,26 @@ namespace IcarusII.Common.Protocol
         /// <summary>sidecar → mod：绑定结果。</summary>
         public const string SaveBound = "save.bound";
 
+        // ---- 多会话（协议附录 A.13）----
+
+        /// <summary>mod → sidecar：新建一个空会话并设为活动会话。</summary>
+        public const string ConversationCreate = "conversation.create";
+
+        /// <summary>sidecar → mod：新会话已创建。</summary>
+        public const string ConversationCreated = "conversation.created";
+
+        /// <summary>mod → sidecar：切换到指定会话。</summary>
+        public const string ConversationSwitch = "conversation.switch";
+
+        /// <summary>sidecar → mod：会话已切换，带回该会话历史。</summary>
+        public const string ConversationSwitched = "conversation.switched";
+
+        /// <summary>mod → sidecar：删除指定会话。</summary>
+        public const string ConversationDelete = "conversation.delete";
+
+        /// <summary>sidecar → mod：会话已删除，带回新的活动会话与列表。</summary>
+        public const string ConversationDeleted = "conversation.deleted";
+
         // ---- M4e 增量：删除对话回合（协议附录 A.7）----
 
         /// <summary>mod → sidecar：删除一个问答回合。</summary>
@@ -92,6 +112,8 @@ namespace IcarusII.Common.Protocol
         public const string CodeRateLimited = "rate_limited";
         public const string CodeConfigRequired = "config_required";
         public const string CodeSaveRequired = "save_required";
+        public const string CodeConversationNotFound = "conversation_not_found";
+        public const string CodeConversationMismatch = "conversation_mismatch";
 
         // ---- M2 增量：只读工具（协议附录 B）----
 
@@ -498,6 +520,20 @@ namespace IcarusII.Common.Protocol
             return p;
         }
 
+        /// <summary>构造 conversation.create 的空载荷（附录 A.13）。</summary>
+        public static JsonValue BuildConversationCreate()
+        {
+            return JsonValue.NewObject();
+        }
+
+        /// <summary>构造 conversation.switch / conversation.delete 载荷（附录 A.13）。</summary>
+        public static JsonValue BuildConversationTarget(string conversationId)
+        {
+            var p = JsonValue.NewObject();
+            if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
+            return p;
+        }
+
         /// <summary>构造 reply.time 载荷（协议附录 A.10）。</summary>
         public static JsonValue BuildReplyTime(string prompt, string reply, string gameTime)
         {
@@ -892,9 +928,225 @@ namespace IcarusII.Common.Protocol
         /// 老 sidecar 不带这个字段时为空列表。
         /// </summary>
         public List<HistoryStepInfo> Steps { get; set; } = new List<HistoryStepInfo>();
+
+        /// <summary>解析 save.bound / conversation.* 共用的 history 数组。</summary>
+        public static void ParseList(JsonValue history, List<HistoryMessageInfo> target)
+        {
+            if (history == null || target == null || history.Count <= 0) return;
+            for (int i = 0; i < history.Count; i++)
+            {
+                var item = history[i];
+                var role = item["role"].AsString(null);
+                if (role != "user" && role != "assistant") continue;
+                var text = item["text"].AsString(null);
+                if (string.IsNullOrEmpty(text)) continue;
+                var info = new HistoryMessageInfo
+                {
+                    Role = role,
+                    Text = text,
+                    Timestamp = item["timestamp"].AsLong(0),
+                    GameTime = item["gameTime"].AsString(null),
+                    Kind = item["kind"].AsString(null),
+                    CompactionId = item["compactionId"].AsString(null),
+                    TokensBefore = item["tokensBefore"].AsInt(0),
+                    EstimatedTokensAfter = item["estimatedTokensAfter"].AsInt(0),
+                };
+                var cards = item["cards"];
+                if (cards != null && cards.Count > 0)
+                {
+                    for (int c = 0; c < cards.Count; c++)
+                    {
+                        var card = BlueprintCardInfo.Parse(cards[c]);
+                        if (card != null && (!string.IsNullOrEmpty(card.FileName) || !string.IsNullOrEmpty(card.Path)))
+                            info.Cards.Add(card);
+                    }
+                }
+                var linkCards = item["linkCards"];
+                if (linkCards != null && linkCards.Count > 0)
+                {
+                    for (int c = 0; c < linkCards.Count; c++)
+                    {
+                        var card = LinkCardInfo.Parse(linkCards[c]);
+                        if (card != null) info.LinkCards.Add(card);
+                    }
+                }
+                // 思考/工具步骤：老 sidecar 不发送，空数组即可。
+                var steps = item["steps"];
+                if (steps != null && steps.Count > 0)
+                {
+                    for (int s = 0; s < steps.Count; s++)
+                    {
+                        var step = HistoryStepInfo.Parse(steps[s]);
+                        if (step != null) info.Steps.Add(step);
+                    }
+                }
+                target.Add(info);
+            }
+        }
     }
 
-    /// <summary>存档绑定结果（协议附录 A.6）。</summary>
+    /// <summary>会话索引里的一条用户提问（附录 A.13）。</summary>
+    public sealed class ConversationRecordInfo
+    {
+        public string Text { get; private set; }
+        public long Timestamp { get; private set; }
+        public string GameTime { get; private set; }
+
+        public static ConversationRecordInfo Parse(JsonValue value)
+        {
+            if (value == null || value.IsNull) return null;
+            var text = value["text"].AsString(null);
+            if (string.IsNullOrEmpty(text)) return null;
+            return new ConversationRecordInfo
+            {
+                Text = text,
+                Timestamp = value["timestamp"].AsLong(0),
+                GameTime = value["gameTime"].AsString(null),
+            };
+        }
+
+        public static ConversationRecordInfo Create(string text, long timestamp, string gameTime = null)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            return new ConversationRecordInfo
+            {
+                Text = text,
+                Timestamp = timestamp,
+                GameTime = gameTime,
+            };
+        }
+    }
+
+    /// <summary>一个会话的元信息（协议附录 A.13）。</summary>
+    public sealed class ConversationInfo
+    {
+        public string Id { get; private set; }
+        public string Title { get; private set; }
+        public long CreatedAt { get; private set; }
+        public long UpdatedAt { get; private set; }
+        public int RecordCount { get; private set; }
+        public List<ConversationRecordInfo> Records { get; private set; } = new List<ConversationRecordInfo>();
+
+        public static ConversationInfo Create(string id, string title)
+        {
+            return new ConversationInfo
+            {
+                Id = id,
+                Title = title ?? string.Empty,
+                CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                RecordCount = 0,
+            };
+        }
+
+        /// <summary>把一条新的用户提问追加到索引（本机实时提问用）。</summary>
+        public void AddRecord(ConversationRecordInfo record)
+        {
+            if (record == null || string.IsNullOrEmpty(record.Text)) return;
+            Records.Add(record);
+            RecordCount = Records.Count;
+        }
+
+        /// <summary>删除一条提问索引；优先按时间戳，否则匹配最后一条同文本。</summary>
+        public bool RemoveRecord(string text, long timestamp)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            for (int i = Records.Count - 1; i >= 0; i--)
+            {
+                var record = Records[i];
+                if (record == null || record.Text != text) continue;
+                if (timestamp > 0 && record.Timestamp > 0 && record.Timestamp != timestamp) continue;
+                Records.RemoveAt(i);
+                RecordCount = Records.Count;
+                return true;
+            }
+            return false;
+        }
+
+        public void SetTitle(string title)
+        {
+            Title = title ?? string.Empty;
+        }
+
+        public void MarkUpdated(long timestamp)
+        {
+            if (timestamp > 0) UpdatedAt = timestamp;
+        }
+
+        public static ConversationInfo Parse(JsonValue value)
+        {
+            if (value == null || value.IsNull) return null;
+            var id = value["id"].AsString(null);
+            if (string.IsNullOrEmpty(id)) return null;
+            var info = new ConversationInfo
+            {
+                Id = id,
+                Title = value["title"].AsString(string.Empty),
+                CreatedAt = value["createdAt"].AsLong(0),
+                UpdatedAt = value["updatedAt"].AsLong(0),
+                RecordCount = value["recordCount"].AsInt(0),
+            };
+            var records = value["records"];
+            if (records != null && records.Count > 0)
+            {
+                for (int i = 0; i < records.Count; i++)
+                {
+                    var record = ConversationRecordInfo.Parse(records[i]);
+                    if (record != null) info.Records.Add(record);
+                }
+            }
+            if (info.RecordCount <= 0) info.RecordCount = info.Records.Count;
+            return info;
+        }
+    }
+
+    /// <summary>
+    /// conversation.created / switched / deleted 的解析结果（附录 A.13）。
+    /// 三种回执共用同一个结构；没有的字段保持默认值。
+    /// </summary>
+    public sealed class ConversationEventInfo
+    {
+        public string SaveKey { get; private set; }
+        public string ConversationId { get; private set; }
+        public string ActiveConversationId { get; private set; }
+        public string Error { get; private set; }
+        public bool Ok { get; private set; }
+        public bool Existed { get; private set; }
+        public int MessageCount { get; private set; }
+        public ConversationInfo Conversation { get; private set; }
+        public List<ConversationInfo> Conversations { get; private set; } = new List<ConversationInfo>();
+        public List<HistoryMessageInfo> History { get; private set; } = new List<HistoryMessageInfo>();
+
+        public static ConversationEventInfo Parse(JsonValue payload)
+        {
+            var r = new ConversationEventInfo();
+            if (payload == null || payload.IsNull) return r;
+            r.SaveKey = payload["saveKey"].AsString(null);
+            r.ConversationId = payload["conversationId"].AsString(null);
+            r.ActiveConversationId = payload["activeConversationId"].AsString(null);
+            r.Error = payload["error"].AsString(null);
+            r.Ok = payload["ok"].AsBool(true);
+            r.Existed = payload["existed"].AsBool(false);
+            r.MessageCount = payload["messageCount"].AsInt(0);
+            r.Conversation = ConversationInfo.Parse(payload["conversation"]);
+            if (string.IsNullOrEmpty(r.ConversationId) && r.Conversation != null)
+                r.ConversationId = r.Conversation.Id;
+
+            var conversations = payload["conversations"];
+            if (conversations != null && conversations.Count > 0)
+            {
+                for (int i = 0; i < conversations.Count; i++)
+                {
+                    var info = ConversationInfo.Parse(conversations[i]);
+                    if (info != null) r.Conversations.Add(info);
+                }
+            }
+            HistoryMessageInfo.ParseList(payload["history"], r.History);
+            return r;
+        }
+    }
+
+    /// <summary>存档绑定结果（协议附录 A.6 / A.13）。</summary>
     public sealed class SaveBoundInfo
     {
         public string SaveKey { get; private set; }
@@ -903,6 +1155,10 @@ namespace IcarusII.Common.Protocol
         public bool Existed { get; private set; }
         /// <summary>恢复的历史消息条数。</summary>
         public int MessageCount { get; private set; }
+        /// <summary>当前活动会话 id（附录 A.13，可选）。</summary>
+        public string ActiveConversationId { get; private set; }
+        /// <summary>该存档的会话列表（附录 A.13，可选；老 sidecar 为空）。</summary>
+        public List<ConversationInfo> Conversations { get; private set; } = new List<ConversationInfo>();
         /// <summary>最近若干条可回放的 user/assistant 文本；只用于 UI，不进入模型上下文。</summary>
         public List<HistoryMessageInfo> History { get; private set; } = new List<HistoryMessageInfo>();
 
@@ -914,66 +1170,25 @@ namespace IcarusII.Common.Protocol
             r.SaveName = payload["saveName"].AsString(null);
             r.Existed = payload["existed"].AsBool(false);
             r.MessageCount = payload["messageCount"].AsInt(0);
+            r.ActiveConversationId = payload["activeConversationId"].AsString(null);
 
-            var history = payload["history"];
-            if (history != null && history.Count > 0)
+            var conversations = payload["conversations"];
+            if (conversations != null && conversations.Count > 0)
             {
-                for (int i = 0; i < history.Count; i++)
+                for (int i = 0; i < conversations.Count; i++)
                 {
-                    var item = history[i];
-                    var role = item["role"].AsString(null);
-                    if (role != "user" && role != "assistant") continue;
-                    var text = item["text"].AsString(null);
-                    if (string.IsNullOrEmpty(text)) continue;
-                    var info = new HistoryMessageInfo
-                    {
-                        Role = role,
-                        Text = text,
-                        Timestamp = item["timestamp"].AsLong(0),
-                        GameTime = item["gameTime"].AsString(null),
-                        Kind = item["kind"].AsString(null),
-                        CompactionId = item["compactionId"].AsString(null),
-                        TokensBefore = item["tokensBefore"].AsInt(0),
-                        EstimatedTokensAfter = item["estimatedTokensAfter"].AsInt(0),
-                    };
-                    var cards = item["cards"];
-                    if (cards != null && cards.Count > 0)
-                    {
-                        for (int c = 0; c < cards.Count; c++)
-                        {
-                            var card = BlueprintCardInfo.Parse(cards[c]);
-                            if (card != null && (!string.IsNullOrEmpty(card.FileName) || !string.IsNullOrEmpty(card.Path)))
-                                info.Cards.Add(card);
-                        }
-                    }
-                    var linkCards = item["linkCards"];
-                    if (linkCards != null && linkCards.Count > 0)
-                    {
-                        for (int c = 0; c < linkCards.Count; c++)
-                        {
-                            var card = LinkCardInfo.Parse(linkCards[c]);
-                            if (card != null) info.LinkCards.Add(card);
-                        }
-                    }
-                    // 思考/工具步骤：老 sidecar 不发送，空数组即可。
-                    var steps = item["steps"];
-                    if (steps != null && steps.Count > 0)
-                    {
-                        for (int s = 0; s < steps.Count; s++)
-                        {
-                            var step = HistoryStepInfo.Parse(steps[s]);
-                            if (step != null) info.Steps.Add(step);
-                        }
-                    }
-                    r.History.Add(info);
+                    var info = ConversationInfo.Parse(conversations[i]);
+                    if (info != null) r.Conversations.Add(info);
                 }
             }
+            HistoryMessageInfo.ParseList(payload["history"], r.History);
             return r;
         }
 
         public override string ToString()
         {
-            return $"{SaveName ?? SaveKey ?? "(无存档)"} existed={Existed} messages={MessageCount} history={History.Count}";
+            return $"{SaveName ?? SaveKey ?? "(无存档)"} existed={Existed} messages={MessageCount} " +
+                   $"conversations={Conversations.Count} history={History.Count}";
         }
     }
 

@@ -43,6 +43,10 @@ import {
   buildToolCallPayload,
   buildToolDebugResultPayload,
   buildConfirmRequestPayload,
+  buildConversationCreatedPayload,
+  buildConversationDeletedPayload,
+  buildConversationSwitchedPayload,
+  parseConversationTargetPayload,
   parseConfirmResultPayload,
   errorRetryable,
   parseConfigSetPayload,
@@ -71,6 +75,7 @@ import {
   type ToolResultPayload,
   type ConfirmRequestPayload,
   type ConfirmResultPayload,
+  type ConversationInfo,
 } from './protocol.js';
 import { UI_ASK_TOOL_NAME, UI_ASK_TOOL_NAME_ALIASES, UI_ASK_TIMEOUT_MS } from './tools/ask.js';
 import type { AgentEmitter, AgentRunner } from './agent.js';
@@ -462,6 +467,15 @@ export class Session {
         return;
       case MessageType.HistoryDelete:
         this.queueBind(() => this.handleHistoryDelete(env));
+        return;
+      case MessageType.ConversationCreate:
+        this.queueBind(() => this.handleConversationCreate(env));
+        return;
+      case MessageType.ConversationSwitch:
+        this.queueBind(() => this.handleConversationSwitch(env));
+        return;
+      case MessageType.ConversationDelete:
+        this.queueBind(() => this.handleConversationDelete(env));
         return;
       case MessageType.HistoryUndoCompaction:
         this.queueBind(() => this.handleHistoryUndoCompaction(env));
@@ -884,8 +898,24 @@ export class Session {
     }
     this.boundSaveKey = bind.saveKey;
 
-    // 先在服务端读历史，再把 save.bound 发给 mod；mod 用它回放上一次对话。
-    // 读文件是纯本地操作，不建模型会话、不联网；失败时按“无历史”处理。
+    // A.13：先得到该存档的会话列表（同时会解析 activeConversationId），
+    // 再读当前活动会话的历史。读文件是纯本地操作，不建模型会话、不联网。
+    let conversations: ConversationInfo[] = [];
+    if (bind.saveKey && this.options.agent.getConversations) {
+      try {
+        conversations = await this.options.agent.getConversations(bind.saveKey);
+      } catch (err) {
+        this.logger.warn('读取会话列表失败，按单会话处理', {
+          saveKey: bind.saveKey,
+          ...errorFields(err),
+        });
+      }
+    }
+    const activeConversationId =
+      this.options.agent.getActiveConversationId?.() ??
+      conversations[0]?.id ??
+      null;
+
     let history: Awaited<ReturnType<NonNullable<AgentRunner['getHistory']>>> = [];
     if (bind.saveKey && this.options.agent.getHistory) {
       try {
@@ -907,14 +937,151 @@ export class Session {
         payload: buildSaveBoundPayload({
           saveKey: bind.saveKey,
           saveName: bind.saveName,
-          existed: known || history.length > 0,
+          existed: known || conversations.length > 0 || history.length > 0,
           messageCount: history.length,
           history,
+          activeConversationId,
+          conversations,
         }),
       }),
     );
 
     if (bind.saveKey) this.ensureKnowledge();
+  }
+
+  // ---------------------------------------------------------------- 多会话（附录 A.13）
+
+  private async handleConversationCreate(env: import('./protocol.js').ParsedEnvelope): Promise<void> {
+    if (this._state !== 'ready') {
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+    if (!this.boundSaveKey) {
+      this.sendError('save_required', 'save.bind is required before conversation.create', env.id || null);
+      return;
+    }
+    if (!this.options.agent.createConversation) {
+      this.sendError('internal', '当前 agent 不支持多会话', env.id || null);
+      return;
+    }
+    const result = await this.options.agent.createConversation(this.boundSaveKey);
+    if (!result.ok || !result.conversation) {
+      this.sendError(
+        (result.error as ErrorCode) ?? 'internal',
+        '创建会话失败',
+        env.id || null,
+      );
+      return;
+    }
+    this.sendEnvelope(
+      buildEnvelope({
+        type: MessageType.ConversationCreated,
+        replyTo: env.id || null,
+        payload: buildConversationCreatedPayload({
+          saveKey: this.boundSaveKey,
+          conversation: result.conversation,
+          history: result.history ?? [],
+        }),
+      }),
+    );
+  }
+
+  private async handleConversationSwitch(env: import('./protocol.js').ParsedEnvelope): Promise<void> {
+    if (this._state !== 'ready') {
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+    if (!this.boundSaveKey) {
+      this.sendError('save_required', 'save.bind is required before conversation.switch', env.id || null);
+      return;
+    }
+    const target = parseConversationTargetPayload(env.payload);
+    if (!target) {
+      this.sendError('bad_request', 'conversation.switch.payload.conversationId 非法', env.id || null);
+      return;
+    }
+    if (!this.options.agent.switchConversation) {
+      this.sendError('internal', '当前 agent 不支持多会话', env.id || null);
+      return;
+    }
+    const result = await this.options.agent.switchConversation(this.boundSaveKey, target.conversationId);
+    if (!result.ok || !result.conversation) {
+      this.sendError(
+        (result.error as ErrorCode) ?? 'internal',
+        '切换会话失败',
+        env.id || null,
+      );
+      return;
+    }
+    const history = result.history ?? [];
+    this.sendEnvelope(
+      buildEnvelope({
+        type: MessageType.ConversationSwitched,
+        replyTo: env.id || null,
+        payload: buildConversationSwitchedPayload({
+          saveKey: this.boundSaveKey,
+          conversation: result.conversation,
+          existed: history.length > 0,
+          messageCount: history.length,
+          history,
+        }),
+      }),
+    );
+  }
+
+  private async handleConversationDelete(env: import('./protocol.js').ParsedEnvelope): Promise<void> {
+    if (this._state !== 'ready') {
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+    if (!this.boundSaveKey) {
+      this.sendError('save_required', 'save.bind is required before conversation.delete', env.id || null);
+      return;
+    }
+    const target = parseConversationTargetPayload(env.payload);
+    if (!target) {
+      this.sendError('bad_request', 'conversation.delete.payload.conversationId 非法', env.id || null);
+      return;
+    }
+    if (!this.options.agent.deleteConversation) {
+      this.sendError('internal', '当前 agent 不支持多会话', env.id || null);
+      return;
+    }
+    const result = await this.options.agent.deleteConversation(this.boundSaveKey, target.conversationId);
+    if (!result.ok) {
+      this.sendError(
+        (result.error as ErrorCode) ?? 'internal',
+        '删除会话失败',
+        env.id || null,
+      );
+      return;
+    }
+
+    const conversations = this.options.agent.getConversations
+      ? await this.options.agent.getConversations(this.boundSaveKey)
+      : [];
+    const activeConversationId =
+      this.options.agent.getActiveConversationId?.() ?? result.activeConversationId ?? null;
+    const conversation = conversations.find((item) => item.id === activeConversationId) ?? null;
+    const history = this.options.agent.getHistory
+      ? await this.options.agent.getHistory(this.boundSaveKey)
+      : [];
+    this.sendEnvelope(
+      buildEnvelope({
+        type: MessageType.ConversationDeleted,
+        replyTo: env.id || null,
+        payload: buildConversationDeletedPayload({
+          saveKey: this.boundSaveKey,
+          conversationId: target.conversationId,
+          ok: true,
+          activeConversationId,
+          conversation,
+          messageCount: history.length,
+          history,
+          conversations,
+        }),
+      }),
+    );
   }
 
   /**
@@ -1058,6 +1225,21 @@ export class Session {
     const prompt = parsePromptPayload(env.payload);
     if (!prompt) {
       this.sendError('bad_request', 'prompt.payload.text must be a string', env.id || null);
+      return;
+    }
+
+    // A.13：prompt 带的会话必须就是当前活动会话，避免把消息写进别的会话。
+    const activeConversationId = this.options.agent.getActiveConversationId?.();
+    if (
+      prompt.conversationId &&
+      activeConversationId &&
+      prompt.conversationId !== activeConversationId
+    ) {
+      this.sendError(
+        'conversation_mismatch',
+        'conversation.switch is required before prompting another conversation',
+        env.id || null,
+      );
       return;
     }
 
