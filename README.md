@@ -75,7 +75,7 @@ DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）�
 | `game_get_entity` | 单个建筑：原型、配方、功率、分拣器/传送带/仓储/物流塔、星系/行星/经纬度；`stale` 标记 id 已被回收 |
 | `game_get_entities` | 建筑分页列表，可按原型 / 名称 / 配方过滤 |
 | `game_get_progress` | 派生阶段（前期/行星内物流/星际物流/戴森球）+ 判定信号、里程碑、教程、研究队列 |
-| `game_capture_view` | 截取当前画面（不含 UI，JPEG），并附可见建筑屏幕坐标与经纬度；`view=topdown` 可临时切俯视，`view=orbit` 可绕目标点多角度拍摄（多角度拼成一张接触表）；默认画编号框并返回 legend |
+| `game_capture_view` | 截取当前画面（不含 UI，JPEG），并附可见建筑屏幕坐标与经纬度；`view=topdown` 可临时切俯视，`view=orbit` 可绕目标点换角度（一次一个机位，换角度就多次调用）；默认画编号框并返回 legend |
 | `game_render_layout` | 把区域建筑排布画成字符网格，判断布局/走线 |
 | `game_copy_blueprint` | 把选中的一批建筑存成游戏蓝图文件（复用游戏复制逻辑） |
 | `game_get_planets` | 跨行星总览：轨道、工厂、电力、按探索等级披露的矿脉 |

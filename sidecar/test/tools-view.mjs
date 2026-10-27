@@ -171,12 +171,12 @@ async function testContentBlocks() {
   check('截图工具被注册', capture !== undefined);
   if (!capture) return;
 
-  // 机位扩展必须真的出现在 schema 里；否则模型看不到 orbit 参数。
+  // 单次只拍一个机位；多角度由模型分多次调用完成，schema 不再暴露批量参数。
   const schema = JSON.stringify(capture.parameters);
   check('截图 schema 含 orbit 机位', schema.includes('orbit'));
-  check('截图 schema 含 angles', schema.includes('angles'));
-  check('截图 schema 含 count', schema.includes('count'));
   check('截图 schema 含 distance/pitch', schema.includes('distance') && schema.includes('pitch'));
+  check('截图 schema 不含 angles', !schema.includes('angles'));
+  check('截图 schema 不含 count', !schema.includes('count'));
 
   const withImage = await capture.execute('call_1', {}, undefined);
   check('结果有两个内容块', withImage.content.length === 2);

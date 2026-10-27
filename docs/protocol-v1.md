@@ -1100,21 +1100,18 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 
 | 协议/模型名 | 说明 |
 | --- | --- |
-| `game_capture_view` | 截取当前画面（JPEG，可带可见实体的屏幕坐标与 location）；`player` / `topdown` / `orbit`，多角度拼成一张接触表；图片走 `tool_result.image` |
+| `game_capture_view` | 截取当前画面（JPEG，可带可见实体的屏幕坐标与 location）；`player` / `topdown` / `orbit`，一次调用一个机位；图片走 `tool_result.image` |
 
 > `game_capture_view` 只截**游戏层**：`GameCamera.CaptureScreenshot` 把 `cullingMask` 设为
 > `gameLayerMask`，UGUI 不进画面，因此不需要额外的"隐藏界面"开关。
 >
 > **机位（可选）**：`view=player`（默认，当前镜头）/ `topdown`（俯视，`cameraHeight` 10–150m）/
-> `orbit`（绕 `entityId` 或 `center` 环绕，`distance` 10–500m、`pitch` 5–90°、`yaw` 起始方位）。
-> `view=orbit` 时 `count=2–6` 均分角度，或用 `angles` 显式指定最多 6 个方位角；
-> 多角度只回传**一张** 2×1 / 2×2 / 3×2 接触表，每格对应 `shots[i]`（含 `location` / `yaw` / `pitch` /
-> `distance`），格子左上角数字是 shot 序号。单角度仍返回原有的 `visibleEntities` / `legend`；
-> 多角度为控制体积只返回每格 `legend`（最多 6 个编号框）。
+> `orbit`（绕 `entityId` 或 `center` 环绕，`distance` 10–500m、`pitch` 5–90°、`yaw` 方位角）。
+> `view=orbit` 一次只拍一个机位；需要多角度时由模型分多次调用，每次改 `yaw` / `pitch` / `distance`。
+> 返回仍是一张 JPEG + 原有的 `visibleEntities` / `legend`。
 >
 > 拍摄使用主相机临时机位，渲染到内部 RenderTexture 后立即还原；玩家画面不受影响。
 > 标注框按**该张图自己的机位**投影，所以 `topdown` / `orbit` 的编号与图一致。
-> 多角度在一帧内顺序渲染 N 次（N≤6），会有一次明显卡顿；这是“玩家视角不变”的代价。
 > 机位仍受已流送区块限制：相机移动不会触发远处加载。
 
 > **坐标约定**：建筑/玩家位置统一输出 `location` 对象：
