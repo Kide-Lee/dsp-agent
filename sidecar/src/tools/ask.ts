@@ -76,7 +76,6 @@ export function createAskTool(host: GameToolHost): ToolDefinition {
       '向玩家展示一个或多个带选项的问题，等待玩家在游戏窗口里选择或输入答案。' +
       '当需要玩家明确偏好、取舍或确认，而现有信息不足以判断时使用。' +
       '一次最多 8 题，每题最多 4 个选项；选项尽量具体，玩家也可以自定义输入。需要多个答案时把 allowMultiple 设为 true。',
-    promptSnippet: '向玩家提出带选项的问题，等待游戏内作答',
     promptGuidelines: [
       'Use ask_user 当需要玩家明确选择/偏好/确认，且无法从游戏状态或知识库推断时。',
       '不要问能自己查到或验证的事实；能给出 2–4 个具体选项时优先给选项。',

@@ -106,7 +106,6 @@ function writeTool(
     name: string;
     label: string;
     description: string;
-    promptSnippet: string;
     promptGuidelines: string[];
     parameters: ReturnType<typeof Type.Object>;
     timeoutMs: number;
@@ -117,7 +116,6 @@ function writeTool(
     name: spec.name,
     label: spec.label,
     description: spec.description,
-    promptSnippet: spec.promptSnippet,
     promptGuidelines: spec.promptGuidelines,
     parameters: spec.parameters,
     executionMode: 'sequential',
@@ -143,7 +141,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       description:
         '在当前行星或指定行星上新建一个地图标记。写操作：执行前玩家必须确认。' +
         '用 latitude/longitude 指定位置（可从 game_get_entity 的 location 读取），text 是标记文字。',
-      promptSnippet: '在行星上新建标记（需要玩家确认）',
       promptGuidelines: [
         'Use game_place_marker 当玩家明确要求“在这里做个标记/标个点”时。',
         '坐标必须来自游戏数据或玩家给出；不要凭截图猜坐标。优先使用 game_get_entity 返回的 location.latitude/longitude。',
@@ -171,7 +168,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         '打开游戏内面板：inventory（背包）、tech（科技树）、starmap（星图）、' +
         'marker（标记）、mecha（机甲）、replicator（复制器）、statistics（统计）、blueprint（蓝图）。' +
         '写操作：执行前玩家必须确认。',
-      promptSnippet: '打开游戏面板（需要玩家确认）',
       promptGuidelines: [
         'Use game_open_panel 当玩家明确要求打开某个游戏面板时。',
         '只支持工具描述里列出的面板名；不要编造其他面板。',
@@ -191,7 +187,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         '把当前研究目标切换为指定科技。写操作，风险 2：可能浪费当前科技已投入的研究进度，' +
         '执行前玩家必须确认。已完成的科技会被拒绝；科技必须未完成且前置已满足。' +
         'techId 可以是科技 id 或名称。',
-      promptSnippet: '切换当前研究目标（高风险，需要确认）',
       promptGuidelines: [
         'Use game_set_research 当玩家明确要求切换研究目标时。',
         '调用前先用 game_get_research 或 kb_get 确认 techId；不确定就先问玩家。',
@@ -212,7 +207,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         '把背包里的物品丢到当前行星地面。写操作，风险 2：执行前玩家必须确认。' +
         '丢出的物品会变成可拾取的垃圾，需玩家手动拾回；不进入撤销栈。' +
         'itemId 可以是物品 id 或名称；count 默认 1，一次最多 500。',
-      promptSnippet: '把背包物品丢到地面（高风险，需要确认；需手动拾回）',
       promptGuidelines: [
         'Use game_drop_item 只在玩家明确要求“丢掉/扔了”某个物品时。',
         '调用前先用 game_get_player 确认背包里有该物品和数量；不要丢掉关键材料。',
@@ -237,7 +231,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         '把一台生产建筑（制造台/熔炉/化工厂/研究站等）的配方改为指定配方。写操作，风险 2：' +
         '执行前玩家必须确认。会先按游戏 UI 的“重置配方”把机器内原料/产物退回背包，再切换配方；' +
         '撤销只恢复配方，不把退回背包的物品塞回机器。recipeId=0 表示清空配方。',
-      promptSnippet: '更换一台生产建筑的配方（高风险，需要确认）',
       promptGuidelines: [
         'Use game_set_recipe 当玩家明确要求改某一台建筑的配方时；先用 game_get_entity 确认它是生产建筑。',
         'recipeId 先用 kb_search/kb_get 或 game_get_entity 的 recipeId 确认；不要编造。',
@@ -256,7 +249,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       description:
         '一次修改多台生产建筑的配方（最多 20 台），只弹一次确认、只压一层撤销。写操作，风险 2：' +
         '执行前玩家必须确认。每台都会先退回机器内原料/产物再切换；任何一台预检失败则整批不执行。',
-      promptSnippet: '批量更换生产建筑配方（一次确认，一次撤销）',
       promptGuidelines: [
         'Use game_set_assembler_batch 当玩家要求“这几台/这一排都改成同一个配方”时；先用 game_get_entities 拿到 id。',
         '一次最多 20 台；超过时分批，不要一次塞太多。',
@@ -280,7 +272,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       description:
         '设置一台存储建筑（箱子/储液罐/物流站仓储）的物品过滤器；itemId=0 清除过滤器。写操作，风险 2：' +
         '执行前玩家必须确认。已占用且物品不同的格子会跳过，不会替换物品。',
-      promptSnippet: '设置存储建筑过滤器（高风险，需要确认）',
       promptGuidelines: [
         'Use game_storage_set_filter 当玩家要求“这个箱子只放某物品/不要放某物品”时；先用 game_get_entity 确认 storage 段。',
         'itemId 用 kb_search/kb_get 或已知物品 id；0 表示清除过滤器。',
@@ -299,7 +290,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       description:
         '设置一台存储建筑的容量上限（允许使用的格数）。写操作，风险 2：执行前玩家必须确认。' +
         'limit 是允许使用的格数（0..总格数），不是禁止格数。',
-      promptSnippet: '设置存储建筑容量上限（高风险，需要确认）',
       promptGuidelines: [
         'Use game_storage_set_limit 当玩家要求“这个箱子只用前 N 格”时；先用 game_get_entity 看 storage.slots。',
         'limit 是允许格数，范围 0..slots。',
@@ -318,7 +308,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       description:
         '把指定物品从一台存储建筑移动到另一台存储建筑。写操作，风险 2：执行前玩家必须确认。' +
         '先预检目标容量/过滤器；目标放不下时整笔不执行。源不足时移动可用的部分并返回 remaining。',
-      promptSnippet: '在存储建筑之间移动物品（高风险，需要确认）',
       promptGuidelines: [
         'Use game_storage_move 当玩家要求“把这箱铜搬到那箱”时；先用 game_get_entity 确认两端 storage 段和距离。',
         'sourceId/targetId 都是建筑 entityId；itemId 用已知 id；count 是请求数量。',
@@ -339,7 +328,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       description:
         '把背包里的物品放进一台存储建筑（箱子/储液罐/物流站仓储）。写操作，风险 2：执行前玩家必须确认。' +
         '存储满时只放入能放下的部分，剩余会退回背包。',
-      promptSnippet: '把背包物品存入存储（高风险，需要确认）',
       promptGuidelines: [
         'Use game_storage_deposit 当玩家要求“把这些东西放进箱子”时；先用 game_get_entity 确认 storage 段。',
         'itemId/count 必填；存储满时返回 remaining，剩余仍在背包。',
@@ -358,7 +346,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       description:
         '把一台存储建筑里的物品取到背包。写操作，风险 2：执行前玩家必须确认。' +
         '背包满时只取能放下的部分，剩余留在存储里。',
-      promptSnippet: '从存储取物品到背包（高风险，需要确认）',
       promptGuidelines: [
         'Use game_storage_withdraw 当玩家要求“从箱子里拿点东西”时；先用 game_get_entity 确认 storage 段。',
         'itemId/count 必填；背包满时返回 remaining，剩余仍在存储。',
@@ -377,7 +364,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       description:
         '从背包把配方原料直接放进一台生产建筑的输入缓冲。写操作，风险 2：执行前玩家必须确认。' +
         '这条路径不经过分拣器/传送带；只接受当前配方需要的物品，最多 500 个。',
-      promptSnippet: '把背包原料直接投进生产建筑（高风险，需要确认）',
       promptGuidelines: [
         'Use game_feed_input 当玩家要求“把背包里的原料塞进这台机器”时；先用 game_get_entity 确认 assembler.recipeId/inputs。',
         'itemId 必须是当前配方 Items 里的输入；不要投成品或配方不需要的物品。',
@@ -397,7 +383,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       description:
         '把一台生产建筑当前已产出的成品取到背包，保留配方。写操作，风险 2：执行前玩家必须确认。' +
         '背包满时只取能放下的部分，并返回剩余数量。',
-      promptSnippet: '取出生产建筑成品（高风险，需要确认）',
       promptGuidelines: [
         'Use game_take_output 当玩家要求“把这几台机器的成品收了”时；先用 game_get_entity 确认 assembler 段。',
         '只取 produced 成品，不会退原料；配方保留。',
@@ -416,7 +401,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         '建立机甲到行星/建筑/矿脉的方位指示，可同时建立多个（最多 20 个）。本星球的每个建筑/矿脉各画一条 LineGizmo；' +
         '跨行星时用原生 navigation.indicatorAstroId 指向其中一个目标行星（游戏一次只支持一个导航朝向），' +
         '落到该行星后，该行星上的所有建筑/矿脉都切换为自绘线。写操作，风险 1：执行前玩家必须确认。',
-      promptSnippet: '建立多个机甲→行星/建筑/矿脉方位指示',
       promptGuidelines: [
         'Use game_tether_add 当玩家说“给这些建筑/星球/矿脉都做个方位指示”时；先用 game_get_entities/game_get_planet 确认目标。',
         'kind=planet 时用 planetId（缺省当前星球）；kind=building 时用 buildingId，可选 planetId；kind=vein 时用 veinId，可选 planetId。',
@@ -435,7 +419,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       name: 'game_tether_clear',
       label: '清除方位',
       description: '清除本 mod 建立的所有方位指示（导航朝向和建筑追踪线）。写操作，风险 1：执行前玩家必须确认。',
-      promptSnippet: '清除所有方位指示',
       promptGuidelines: ['Use game_tether_clear 当玩家说“取消方位/清除连线”时；只清本 mod 建立的目标。'],
       parameters: Type.Object({}),
       timeoutMs: 8000,
@@ -445,7 +428,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       name: 'game_tether_list',
       label: '方位列表',
       description: '列出当前方位指示（行星/建筑/矿脉及名称）。只读，不弹确认。',
-      promptSnippet: '查看当前方位指示',
       promptGuidelines: ['Use game_tether_list 当玩家问“现在连了哪些目标”时。'],
       parameters: Type.Object({}),
       timeoutMs: 5000,
@@ -458,7 +440,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         '在原生左侧“游戏目标”面板新增目标。写操作：执行前玩家必须确认。' +
         '先用 game_todo_templates 查原生 GoalProto 模板；templateId 必填，' +
         'title 是显示文案，params 可覆盖原生 DeterminatorParams。目标完成判定完全复用游戏原生 GoalDeterminator。',
-      promptSnippet: '新增原生游戏目标（需要玩家确认）',
       promptGuidelines: [
         'Use game_todo_add 当玩家明确要求“给我一个目标/待办/采集 N 个/解锁科技”等目标时。',
         '必须先调用 game_todo_templates 选择真实存在的模板；不要编造 templateId 或判断器名。',
@@ -487,7 +468,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       label: '删除游戏目标',
       description:
         '删除 AI 创建的原生游戏目标；groupId 删除整组，goalId 删除单个子目标。写操作：执行前玩家必须确认。',
-      promptSnippet: '删除 AI 创建的游戏目标（需要玩家确认）',
       promptGuidelines: [
         'Use game_todo_remove 当玩家明确要求删除目标时。',
         '先用 game_todo_list 找到 groupId/goalId；不要删除不是 AI 创建的原生目标。',
@@ -506,7 +486,6 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         '撤销最近一次由本 mod 执行的写操作（视角、标记、面板、研究、配方、存储、投料等）。' +
         '只保留一层撤销栈；最近一次写操作不可撤销（如丢物品/取成品/方位指示）时返回明确错误；' +
         '写操作，执行前玩家必须确认。',
-      promptSnippet: '撤销上一步写操作（需要确认）',
       promptGuidelines: [
         'Use game_undo_last_write 当玩家说“撤销/恢复刚才那一步”时。',
         '只撤销最近一次，不要连续撤销多次；不可撤销的操作会返回错误。',

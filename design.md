@@ -666,7 +666,7 @@ AutoReconnect = true
 [Agent]
 AgentDir =               ; 空=使用 %APPDATA%\icarus-ii（sidecar 自持凭证，不复用其他工具）
 Model =                  ; 空=使用 sidecar 默认（deepseek-v4-flash）
-SystemPromptFile =       ; 空=使用内置
+SystemPromptFile =       ; 未实现；调试/评测改用 sidecar `--system-prompt-file <path>`
 
 [Actions]
 ConfirmLevel2 = true
@@ -999,7 +999,19 @@ function gameTool<T>(spec: {
 - 涉及游戏内术语时使用游戏官方译名（可通过 kb_* 查询确认）。
 ```
 
-`DefaultResourceLoader({ systemPromptOverride })` 注入；玩家可通过 `SystemPromptFile` 覆盖。
+`DefaultResourceLoader({ systemPromptOverride })` 注入，并由 `before_agent_start` 整轮替换（去掉 pi 无条件追加的 cwd 尾巴）。
+
+当前实现（M5）：
+
+- **文本源在仓库里，编译进二进制**：`sidecar/prompts/system.zh.md` + `format.legacy.zh.md` / `format.rich.zh.md`，
+  `scripts/gen-prompts.mjs` 在 build/typecheck 时生成 `src/prompts.generated.ts`。
+  运行时不读文件——sidecar 是 esbuild 单文件 + Node SEA，多分发一份资源会和打包方式冲突。
+- **人格里不写工具清单**：能力段落和每个工具的 `promptGuidelines` 由 `agent.ts` 按本轮注册表生成
+  （`src/prompt/sections.ts`）。加/删工具后提示词自动跟上；实测踩过“人格仍称只能读 → 模型拒调写工具”。
+- **每轮附加段顺序**：能力+工具规则 → 权限档位 → 沙盒状态 → 强制工具。
+  稳定前缀在前、易变内容在后，便于上游 prompt cache 命中。
+- **调试覆盖**：`--system-prompt-file <path>` 启动读一次，日志记录 path + sha256；
+  文件缺失/为空直接报错，不静默回落到内置人格。游戏内 UI 不暴露这个开关。
 
 ---
 

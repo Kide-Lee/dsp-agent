@@ -64,7 +64,6 @@ export function createKbTools(store: KnowledgeStore): ToolDefinition[] {
     description:
       '在游戏本体知识库里搜索物品、配方、科技、建筑、矿脉，以及提示/教程/里程碑/指引/术语。' +
       '玩家问“X 是什么”“哪个科技解锁 X”“有没有相关提示”时先用它定位；再按 id 用 kb_get 或 kb_recipe_tree。',
-    promptSnippet: '搜索游戏本体知识库（物品/配方/科技/提示/教程/里程碑/指引）',
     promptGuidelines: [
       'Use kb_search 当玩家提到具体物品、配方、科技、建筑或游戏机制名称，而你需要确认官方数据时。',
       '先用 kb_search 拿到 kind + id，再用 kb_get 或 kb_recipe_tree；不要凭记忆编造配方/数值。',
@@ -121,7 +120,6 @@ export function createKbTools(store: KnowledgeStore): ToolDefinition[] {
     description:
       '按类别 + id/名称/SID 精确读取一条知识库条目（物品、配方、科技、建筑、矿脉、提示、教程、里程碑、指引、术语等）。' +
       '通常先用 kb_search 拿到 id，再用它读完整字段。',
-    promptSnippet: '按类别与 id 读取一条知识库条目',
     promptGuidelines: [
       'Use kb_get 当 kb_search 已经给出 kind + id，或玩家明确给出条目 id 时。',
       'kb_get 返回的是游戏本体数据；不要用它之外的信息补全配方/科技数值。',
@@ -174,7 +172,6 @@ export function createKbTools(store: KnowledgeStore): ToolDefinition[] {
     description:
       '按游戏本体的主配方递归展开一个物品，计算直接输入、原料总量与副产物。' +
       '玩家问“造 N 个 X 需要多少原料”“每分钟 N 个 X 怎么配”时用它，不要自己心算。',
-    promptSnippet: '递归展开配方并计算原料总量/副产物',
     promptGuidelines: [
       'Use kb_recipe_tree 当玩家问某个物品需要哪些原料、需要多少、每分钟产量怎么换算时。',
       'rate 表示目标物品每分钟产量；不传 rate 时 amount 表示一次目标产量（默认 1）。',
@@ -263,7 +260,6 @@ export function createKbTools(store: KnowledgeStore): ToolDefinition[] {
       '给定目标物品的每分钟产量，算出要建多少台什么机器、总功率、每条输入要几条传送带，' +
       '并复用 kb_recipe_tree 给出原料与副产物。' +
       '玩家问“我要建多少台机器”“这条线要多少电”“需要几条带”时用它。',
-    promptSnippet: '按目标产量计算机器数、电力、传送带与原料',
     promptGuidelines: [
       'Use kb_plan 当玩家问某条产线要多少机器、多少电、几条传送带时。',
       '玩家问“怎么把 X 做到 N/min / 怎么规划 / 要准备什么”时，第一步就调 kb_plan，不要先查现状再心算。',

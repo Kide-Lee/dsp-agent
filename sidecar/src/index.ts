@@ -55,6 +55,8 @@ interface ServeArgs {
   provider: string;
   model: string;
   debugTools: boolean;
+  /** 开发/评测用：整份替换内置人格（启动读一次）。 */
+  systemPromptFile?: string;
 }
 
 function usage(): string {
@@ -72,6 +74,8 @@ function usage(): string {
     `  --host <addr>     监听地址（默认 ${DEFAULT_HOST}）`,
     `  --data-dir <path> 数据目录（默认 ~/${DEFAULT_DATA_DIR_NAME}）；写 runtime.json 与 config.json`,
     '  --token <token>   握手 token（默认随机 32 字节 hex）',
+    '  --system-prompt-file <path>',
+    '                    用文件整份替换内置人格（仅调试/评测；启动时读一次，文件缺失直接报错）',
     '  --debug-tools     开启 !tool 调试直调（只读白名单；默认关闭）',
     '  --log-level <l>   debug | info | warn | error（默认 info，也可用 ICARUS_II_LOG_LEVEL）',
     '  -h, --help        显示本帮助',
@@ -136,8 +140,11 @@ function createAgent(
   dataDir: string,
   host: GameToolHost,
   kb: KnowledgeStore,
+  systemPromptFile?: string,
 ): AgentRunner {
-  return kind === 'echo' ? new EchoAgent() : new PiAgent({ dataDir, store, host, kb });
+  return kind === 'echo'
+    ? new EchoAgent()
+    : new PiAgent({ dataDir, store, host, kb, systemPromptFile });
 }
 
 export function newToken(): string {
@@ -219,7 +226,14 @@ async function runServe(args: ServeArgs): Promise<void> {
   const host = new GameToolHost();
   const kbStore = new KnowledgeStore(args.dataDir);
   const knowledge = new KnowledgeManager({ store: kbStore, logger: log });
-  const agent = createAgent(args.agentKind, config, args.dataDir, host, kbStore);
+  const agent = createAgent(
+    args.agentKind,
+    config,
+    args.dataDir,
+    host,
+    kbStore,
+    args.systemPromptFile,
+  );
 
   let server: RunningServer;
   try {
@@ -323,6 +337,7 @@ interface CliValues {
   provider?: string;
   model?: string;
   'debug-tools'?: boolean;
+  'system-prompt-file'?: string;
   selfcheck?: boolean;
   help?: boolean;
   version?: boolean;
@@ -347,6 +362,7 @@ async function main(argv: string[]): Promise<void> {
         provider: { type: 'string' },
         model: { type: 'string' },
         'debug-tools': { type: 'boolean' },
+        'system-prompt-file': { type: 'string' },
         selfcheck: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
@@ -440,6 +456,16 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
+  const systemPromptFile =
+    values['system-prompt-file'] === undefined
+      ? undefined
+      : expandHome(values['system-prompt-file']);
+  if (systemPromptFile !== undefined && systemPromptFile.trim().length === 0) {
+    process.stderr.write('--system-prompt-file 不能为空\n');
+    process.exit(2);
+    return;
+  }
+
   if (pkgVersion && pkgVersion !== SERVER_VERSION) {
     log.warn('内嵌版本号与 package.json 不一致', { embedded: SERVER_VERSION, package: pkgVersion });
   }
@@ -456,6 +482,7 @@ async function main(argv: string[]): Promise<void> {
     tokenLength: token.length,
     tokenGenerated: values['token'] === undefined,
     debugTools: values['debug-tools'] === true,
+    systemPromptFile: systemPromptFile ?? null,
   });
 
   await runServe({
@@ -467,6 +494,7 @@ async function main(argv: string[]): Promise<void> {
     provider,
     model,
     debugTools: values['debug-tools'] === true,
+    systemPromptFile,
   });
 }
 

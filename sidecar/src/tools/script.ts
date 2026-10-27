@@ -390,7 +390,6 @@ export function createScriptTool(host: GameToolHost): ToolDefinition {
       '`console.log` 会被收集；脚本要 `return` 一个可 JSON 序列化的结果。' +
       '脚本包含写工具时，执行前会向玩家弹一次脚本级确认，确认后最多执行 10000 次写调用；' +
       '没有 fs/net/process/require。',
-    promptSnippet: '执行脚本；批量取数，或在一次确认后批量写游戏状态',
     promptGuidelines: [
       'Use run_script 当需要对多个建筑/行星做批量查询、筛选、求和或条件判断时；单次查询仍直接用对应工具。',
       'dsp.call 是同步的，返回 JSON 字符串，需要 JSON.parse；脚本必须 return 一个可序列化的结果。',

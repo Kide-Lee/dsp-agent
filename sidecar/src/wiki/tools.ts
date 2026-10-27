@@ -42,7 +42,6 @@ export function createWikiTools(client: WikiClient = new WikiClient()): ToolDefi
       description:
         '在中/英文戴森球计划 Wiki 里搜索页面，返回标题、摘要与链接。' +
         '用于查游戏机制、版本改动、物品/建筑的百科说明；结果必须附上链接，不能凭记忆替代。',
-      promptSnippet: '搜索中英文 DSP Wiki，返回标题/摘要/链接',
       promptGuidelines: [
         'Use wiki_search 当玩家问机制、版本差异、百科背景，而 kb_* 没有覆盖时。',
         '回答里保留 wiki 链接（url），并说明信息来自哪个语言的 wiki。',
@@ -99,7 +98,6 @@ export function createWikiTools(client: WikiClient = new WikiClient()): ToolDefi
       description:
         '读取一个中/英文 DSP Wiki 页面的纯文本正文（自动处理重定向，最长 8000 字）。' +
         '适合在 wiki_search 之后展开细节；必须附上返回的 url。',
-      promptSnippet: '读取 Wiki 页面正文（带来源链接）',
       promptGuidelines: [
         'Use wiki_page 在 wiki_search 找到标题之后，读取正文细节。',
         '长度超过 8000 字会被截断（truncated=true）；不要假装读过截断之后的内容。',

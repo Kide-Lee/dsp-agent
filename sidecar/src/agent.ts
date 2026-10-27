@@ -51,6 +51,8 @@ import {
   ICARUS_II_RICH_TEXT_PROMPT,
   ICARUS_II_SYSTEM_PROMPT,
 } from './persona.js';
+import { renderCapabilitySection, renderToolRules, toolsSignature } from './prompt/sections.js';
+import { loadPromptOverride, type PromptOverride } from './prompt/override.js';
 
 /** mod 在 hello.capabilities 里声明：输出支持 Markdown + 小型 HTML 子集。 */
 const CAPABILITY_RICH_TEXT_V2 = 'ui.richtext.v2';
@@ -583,6 +585,11 @@ export interface PiAgentOptions {
   logger?: Logger;
   /** 便于测试注入 pi SDK；缺省时懒加载真实 SDK。 */
   loadSdk?: () => Promise<PiSdk>;
+  /**
+   * 开发/评测用：整份替换内置人格（启动读一次，失败直接抛错）。
+   * 游戏内 UI 不暴露这个开关，避免玩家把线上行为改成不可复现的状态。
+   */
+  systemPromptFile?: string;
 }
 
 /** 一次 prompt 的运行状态；事件回调按此聚合。 */
@@ -811,12 +818,12 @@ type LoaderReloadOptions = Parameters<ResourceLoader['reload']>[0];
  */
 function createPersonaSystemPromptExtension(
   getExtraPrompt: () => string | null,
-  getUseRichText: () => boolean,
+  getBasePrompt: () => string,
 ): ExtensionFactory {
   return (api) => {
     api.on('before_agent_start', () => {
       const extra = getExtraPrompt();
-      const persona = getUseRichText() ? ICARUS_II_RICH_TEXT_PROMPT : ICARUS_II_SYSTEM_PROMPT;
+      const persona = getBasePrompt();
       return {
         systemPrompt: extra ? `${persona}\n\n${extra}` : persona,
       };
@@ -910,10 +917,9 @@ function createPersonaResourceLoader(
   pi: PiSdk,
   options: { cwd: string; agentDir: string },
   getExtraPrompt: () => string | null,
-  getUseRichText: () => boolean,
+  getBasePrompt: () => string,
 ): ResourceLoader {
-  const getPrompt = () =>
-    getUseRichText() ? ICARUS_II_RICH_TEXT_PROMPT : ICARUS_II_SYSTEM_PROMPT;
+  const getPrompt = () => getBasePrompt();
   const base = new pi.DefaultResourceLoader({
     cwd: options.cwd,
     agentDir: options.agentDir,
@@ -927,7 +933,7 @@ function createPersonaResourceLoader(
     systemPromptOverride: getPrompt,
     appendSystemPromptOverride: () => [],
     agentsFilesOverride: () => ({ agentsFiles: [] }),
-    extensionFactories: [createPersonaSystemPromptExtension(getExtraPrompt, getUseRichText)],
+    extensionFactories: [createPersonaSystemPromptExtension(getExtraPrompt, getBasePrompt)],
   });
   return new PersonaResourceLoader(base, getPrompt());
 }
@@ -1056,6 +1062,8 @@ export class PiAgent implements AgentRunner {
   private readonly blueprintWorkspace: BlueprintWorkspace;
   private readonly logger: Logger;
   private readonly loadSdk: () => Promise<PiSdk>;
+  /** 非 null 时整份替换内置人格（--system-prompt-file）。 */
+  private readonly promptOverride: PromptOverride | null;
 
   private session: AgentSession | null = null;
   private runtime: ModelRuntime | null = null;
@@ -1071,6 +1079,8 @@ export class PiAgent implements AgentRunner {
   private blueprintTiers: BlueprintTiers | null = null;
   /** 进程内全局串行：多连接共用同一个 pi 会话。 */
   private chain: Promise<unknown> = Promise.resolve();
+  /** 工具能力/规则段落的缓存（能力集不变时复用同一段字节）。 */
+  private toolPromptCache: { signature: string; text: string } | null = null;
 
   onBlueprintTiers(tiers: BlueprintTiers | null): void {
     this.blueprintTiers = tiers;
@@ -1091,6 +1101,18 @@ export class PiAgent implements AgentRunner {
     this.logger = (options.logger ?? rootLog).child({ component: 'pi-agent' });
     this.loadSdk =
       options.loadSdk ?? (() => import('@earendil-works/pi-coding-agent') as Promise<PiSdk>);
+    this.promptOverride = options.systemPromptFile
+      ? loadPromptOverride(options.systemPromptFile)
+      : null;
+    if (this.promptOverride) {
+      // 覆盖是“启动即生效、运行期不变”的调试口子：把路径和哈希打进日志，
+      // bug report 才能对上到底用了哪份提示词。
+      this.logger.warn('使用外部 system prompt 覆盖（仅调试/评测）', {
+        path: this.promptOverride.path,
+        sha256: this.promptOverride.sha256,
+        chars: this.promptOverride.text.length,
+      });
+    }
   }
 
   get info(): AgentInfo {
@@ -2236,14 +2258,54 @@ export class PiAgent implements AgentRunner {
     return forcedToolInstruction(run.requiredTool);
   }
 
+  /** 人格本体：外部覆盖优先，其次按本次会话是否支持富文本选内置版本。 */
+  private systemPromptBase(): string {
+    if (this.promptOverride) return this.promptOverride.text;
+    return this.host.has(CAPABILITY_RICH_TEXT_V2)
+      ? ICARUS_II_RICH_TEXT_PROMPT
+      : ICARUS_II_SYSTEM_PROMPT;
+  }
+
   /**
-   * 每轮 system prompt 的附加段：强制工具 + 当前沙盒状态 + 权限档位。
+   * “本会话注册了哪些工具 + 每个工具的使用规则”。
+   *
+   * 工具清单必须按注册表生成：人格里手写的清单会在加工具后立刻过期
+   * （实机踩过：人格仍称“只能读”，模型拒绝调用写工具）。
+   * 规则段落也不手写：pi 的 promptGuidelines 只有在默认 coding prompt 分支里
+   * 才会被拼进去，我们整轮替换 system prompt，所以必须自己渲染。
+   *
+   * 按工具集签名缓存：能力没变时每轮都是同一段字节，对 prompt cache 友好。
+   */
+  private toolPromptSection(): string | null {
+    let tools: ToolDefinition[];
+    try {
+      tools = this.buildToolDefinitions();
+    } catch (err) {
+      // 注册表还没就绪（例如极早期回合）时不要打断本轮；下一轮会重新尝试。
+      this.logger.warn('生成工具提示段落失败，本轮跳过', errorFields(err));
+      return null;
+    }
+    const signature = toolsSignature(tools);
+    if (this.toolPromptCache && this.toolPromptCache.signature === signature) {
+      return this.toolPromptCache.text || null;
+    }
+    const parts = [renderCapabilitySection(tools), renderToolRules(tools)].filter(
+      (part): part is string => typeof part === 'string' && part.length > 0,
+    );
+    const text = parts.join('\n\n');
+    this.toolPromptCache = { signature, text };
+    return text || null;
+  }
+
+  /**
+   * 每轮 system prompt 的附加段（顺序：稳定 → 易变）：
+   *   工具能力/规则 → 权限档位 → 沙盒状态 → 强制工具。
    * 沙盒/权限都按当前状态实时读取，不写进人格常量，避免旧 mod 被误导。
    */
   private currentExtraPrompt(): string | null {
     const parts: string[] = [];
-    const forced = this.currentForcedToolPrompt();
-    if (forced) parts.push(forced);
+    const tools = this.toolPromptSection();
+    if (tools) parts.push(tools);
 
     const permission = this.store.get().permissionLevel ?? DEFAULT_PERMISSION_LEVEL;
     if (permission === 'readonly') {
@@ -2270,6 +2332,10 @@ export class PiAgent implements AgentRunner {
           : '当前存档未启用游戏沙盒工具。沙盒专属工具不会出现在工具列表中，不要尝试调用。',
       );
     }
+
+    // 强制工具放最后：它是本轮最强的指令，离用户消息最近效果最稳。
+    const forced = this.currentForcedToolPrompt();
+    if (forced) parts.push(forced);
 
     return parts.length > 0 ? parts.join('\n\n') : null;
   }
@@ -2529,7 +2595,7 @@ export class PiAgent implements AgentRunner {
         agentDir: this.agentDir,
       },
       () => this.currentExtraPrompt(),
-      () => this.host.has(CAPABILITY_RICH_TEXT_V2),
+      () => this.systemPromptBase(),
     );
     // pi 只有在「自己创建 loader」时才自动 reload；外部传入的 loader 必须我们自己 reload，
     // 否则 getExtensions() 还是空的（内联人格扩展就不会被注册）。
@@ -2564,13 +2630,13 @@ export class PiAgent implements AgentRunner {
 
     // 保险：确认 pi 真的用上了我们的人格（没生效就明确记一条 warn，别静默退化）。
     const effectivePrompt = created.session.systemPrompt ?? '';
-    if (
-      !effectivePrompt.startsWith(ICARUS_II_SYSTEM_PROMPT) &&
-      !effectivePrompt.startsWith(ICARUS_II_RICH_TEXT_PROMPT)
-    ) {
+    const expectedPrompt = this.systemPromptBase();
+    if (!effectivePrompt.startsWith(expectedPrompt)) {
       this.logger.warn('pi 没有采用自定义 system prompt，助手人格可能未生效', {
         personaName: ICARUS_II_PERSONA_NAME,
         promptChars: effectivePrompt.length,
+        expectedChars: expectedPrompt.length,
+        override: this.promptOverride ? this.promptOverride.path : null,
       });
     }
 
@@ -2583,6 +2649,8 @@ export class PiAgent implements AgentRunner {
       tools: created.session.getActiveToolNames(),
       persona: ICARUS_II_PERSONA_NAME,
       systemPromptChars: effectivePrompt.length,
+      systemPromptSha256: this.promptOverride?.sha256 ?? null,
+      systemPromptOverride: this.promptOverride?.path ?? null,
       extensions: created.extensionsResult.extensions.length,
       extensionErrors: created.extensionsResult.errors.length,
       apiKey: maskSecret(apiKey),

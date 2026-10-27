@@ -360,7 +360,6 @@ export function createBlueprintTools(
       description:
         '在游戏的蓝图目录里查看和整理文件，类似受限的 ls/cd/pwd/cat/mkdir/rm/rmdir。' +
         '路径以蓝图根为 `/`；默认保存目录是 `/IcarusII`。不能访问蓝图目录之外。',
-      promptSnippet: '查看/整理蓝图目录（ls/cd/pwd/cat/mkdir/rm/rmdir/write）',
       promptGuidelines: [
         'Use blueprint_fs 当玩家要查看蓝图目录、进入子目录、读取蓝图信息、建目录、删除或保存任意蓝图文本时。',
         '默认保存到 `/IcarusII`；用 op=write 保存模型从其他途径拿到的蓝图原文（必须是合法 .txt 蓝图）。',
@@ -582,7 +581,6 @@ export function createBlueprintTools(
       description:
         '在 DSPBluePrints/FactoryBluePrints 仓库和 Dyson Sphere Blueprints 网站里按关键词搜索蓝图（在线按需，不打包内容）。' +
         `GitHub 结果带仓库路径与许可 ${LICENSE}；网站结果带详情页 URL。引用时必须署名来源与作者。`,
-      promptSnippet: '搜索社区蓝图仓库（在线，带署名）',
       promptGuidelines: [
         'Use blueprint_search 当玩家想要现成蓝图/产线设计时。',
         '路径多为中文目录+文件名，用“物品/产线/规模”这类关键词搜索；可多次换词。',
@@ -668,7 +666,6 @@ export function createBlueprintTools(
       description:
         '读取一个蓝图文件并做格式体检（头部/base64+gzip/md5），返回大小与解码后字节数，不解析建筑。' +
         '支持 GitHub 仓库路径或 Dyson Sphere Blueprints 详情页 URL；内容版权归原作者，必须署名来源。',
-      promptSnippet: '读取蓝图文件并做格式体检',
       promptGuidelines: [
         'Use blueprint_info 在 blueprint_search 选中结果后，确认文件有效并给出下载链接。',
         'GitHub 结果传 path；Dyson Sphere Blueprints 结果传 url。',
@@ -735,7 +732,6 @@ export function createBlueprintTools(
         '把 blueprint_search 找到的蓝图保存到游戏蓝图目录（Documents/Dyson Sphere Program/Blueprint），' +
         '支持 GitHub 仓库路径或 Dyson Sphere Blueprints 详情页 URL；保存后打开游戏内蓝图界面即可使用。' +
         '内容版权归原作者，保存/再分发请遵守来源页面说明并署名。',
-      promptSnippet: '把社区蓝图保存到游戏蓝图目录',
       promptGuidelines: [
         'Use blueprint_save 当玩家说“帮我保存/导入这个蓝图”时；GitHub 结果传 path，Dyson Sphere Blueprints 结果传 url。',
         '默认不覆盖同名文件，会自动加 (2)/(3)；玩家明确要求覆盖时才传 overwrite=true。',
@@ -884,7 +880,6 @@ export function createBlueprintTools(
       description:
         '按知识库里的真实配方，从原矿开始生成完整产线蓝图（各阶段机器 + 传送带 + 分拣器 + 连接槽位），' +
         '保存到游戏蓝图目录。需要先进入存档让知识库建立；输入物品与每分钟产量，可选机器/带子/分拣器级别与行数。',
-      promptSnippet: '按真实配方生成带传送带和分拣器的完整产线蓝图',
       promptGuidelines: [
         'Use blueprint_generate 当玩家要“完整产线蓝图/带带子和爪子的蓝图”时，不要回答只能下载。',
         'item 可以是物品名（如“电磁涡轮”）或物品 id；rate 是每分钟产量。',

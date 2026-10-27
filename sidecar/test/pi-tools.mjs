@@ -298,7 +298,18 @@ async function main() {
     : (systemMessage?.content ?? []).map((b) => b?.text ?? '').join('');
   check('system prompt 未被 pi 的 “Available tools” 段落污染', !systemText.includes('Available tools:'));
   check('system prompt 不再声称只能读', !systemText.includes('你只能读取当前存档'));
-  check('system prompt 列出写工具边界', systemText.includes('game_drop_item') && systemText.includes('game_set_research') && systemText.includes('game_set_assembler_batch'));
+  // 能力段落由工具注册表生成：本会话只授予 game.read.v1 + game.drop.v1，
+  // 所以清单里必须有 drop_item，且**不能**出现未授予的写工具（旧实现手写清单，会在这里翻车）。
+  check('system prompt 含本轮能力段落', systemText.includes('本会话注册的工具'));
+  check('能力段落列出已授予的写工具', systemText.includes('game_drop_item'));
+  check(
+    '能力段落不列未授予的写工具',
+    !systemText.includes('game_set_research') && !systemText.includes('game_set_assembler_batch'),
+    '未授予的工具不应出现在 system prompt 里',
+  );
+  // promptGuidelines 过去是死代码（pi 只在默认 coding prompt 分支渲染它）。
+  check('提示词渲染了工具使用规则', systemText.includes('工具使用规则'));
+  check('规则段落含已注册工具的规则', systemText.includes('Use game_drop_item'));
 
   const secondBody = upstream.requests[1]?.body ?? {};
   const hasToolMessage = (secondBody.messages ?? []).some((m) => m?.role === 'tool');
