@@ -361,7 +361,7 @@ export function createBlueprintTools(
         '在游戏的蓝图目录里查看和整理文件，类似受限的 ls/cd/pwd/cat/mkdir/rm/rmdir。' +
         '路径以蓝图根为 `/`；默认保存目录是 `/IcarusII`。不能访问蓝图目录之外。',
       promptGuidelines: [
-        'Use blueprint_fs 当玩家要查看蓝图目录、进入子目录、读取蓝图信息、建目录、删除或保存任意蓝图文本时。',
+        '玩家要查看蓝图目录、进入子目录、读取蓝图信息、建目录、删除或保存任意蓝图文本时使用。',
         '默认保存到 `/IcarusII`；用 op=write 保存模型从其他途径拿到的蓝图原文（必须是合法 .txt 蓝图）。',
         'op=rm/rmdir 是永久删除；必须先向玩家确认，只有玩家明确同意后才传 confirm=true。',
         'cat 默认返回蓝图元数据；只有确实需要原文时才传 raw=true。',
@@ -582,7 +582,7 @@ export function createBlueprintTools(
         '在 DSPBluePrints/FactoryBluePrints 仓库和 Dyson Sphere Blueprints 网站里按关键词搜索蓝图（在线按需，不打包内容）。' +
         `GitHub 结果带仓库路径与许可 ${LICENSE}；网站结果带详情页 URL。引用时必须署名来源与作者。`,
       promptGuidelines: [
-        'Use blueprint_search 当玩家想要现成蓝图/产线设计时。',
+        '玩家想要现成蓝图/产线设计时使用。',
         '路径多为中文目录+文件名，用“物品/产线/规模”这类关键词搜索；可多次换词。',
         'GitHub 结果用 path 继续 blueprint_info/blueprint_save；Dyson Sphere Blueprints 结果用 url。',
         'GitHub 的来源链接用 blobUrl（文件页），不是 repo；Dyson Sphere Blueprints 用 url。',
@@ -667,7 +667,7 @@ export function createBlueprintTools(
         '读取一个蓝图文件并做格式体检（头部/base64+gzip/md5），返回大小与解码后字节数，不解析建筑。' +
         '支持 GitHub 仓库路径或 Dyson Sphere Blueprints 详情页 URL；内容版权归原作者，必须署名来源。',
       promptGuidelines: [
-        'Use blueprint_info 在 blueprint_search 选中结果后，确认文件有效并给出下载链接。',
+        '在 blueprint_search 选中结果后使用，确认文件有效并给出下载链接。',
         'GitHub 结果传 path；Dyson Sphere Blueprints 结果传 url。',
         'valid=false 时说明原因（format/gzip），不要猜里面的建筑。',
         '回答必须带来源链接和署名；GitHub 仓库内容许可为 ' + LICENSE + '。',
@@ -733,7 +733,7 @@ export function createBlueprintTools(
         '支持 GitHub 仓库路径或 Dyson Sphere Blueprints 详情页 URL；保存后打开游戏内蓝图界面即可使用。' +
         '内容版权归原作者，保存/再分发请遵守来源页面说明并署名。',
       promptGuidelines: [
-        'Use blueprint_save 当玩家说“帮我保存/导入这个蓝图”时；GitHub 结果传 path，Dyson Sphere Blueprints 结果传 url。',
+        '玩家说“帮我保存/导入这个蓝图”时使用；GitHub 结果传 path，Dyson Sphere Blueprints 结果传 url。',
         '默认不覆盖同名文件，会自动加 (2)/(3)；玩家明确要求覆盖时才传 overwrite=true。',
         '保存不改变游戏状态，但回答要说明保存位置，并保留来源链接与作者署名。',
         'GitHub 的来源链接用 blobUrl（文件页），不是 repo；Dyson Sphere Blueprints 用 url。',
@@ -881,7 +881,7 @@ export function createBlueprintTools(
         '按知识库里的真实配方，从原矿开始生成完整产线蓝图（各阶段机器 + 传送带 + 分拣器 + 连接槽位），' +
         '保存到游戏蓝图目录。需要先进入存档让知识库建立；输入物品与每分钟产量，可选机器/带子/分拣器级别与行数。',
       promptGuidelines: [
-        'Use blueprint_generate 当玩家要“完整产线蓝图/带带子和爪子的蓝图”时，不要回答只能下载。',
+        '玩家要“完整产线蓝图/带带子和爪子的蓝图”时使用，不要回答只能下载。',
         'item 可以是物品名（如“电磁涡轮”）或物品 id；rate 是每分钟产量。',
         'buildingTier: base 对应最低速机器 / mk2 / mk3；beltType: 0 黄带 / 1 绿带 / 2 蓝带；insertType: 0 分拣器 / 1 高速 / 2 极速 / 3 集装。',
         '返回里的 stages 是每个阶段的机器数与产物，回答时先报最终产物与总机器数，再按阶段说明。',

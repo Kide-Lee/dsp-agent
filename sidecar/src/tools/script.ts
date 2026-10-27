@@ -391,7 +391,7 @@ export function createScriptTool(host: GameToolHost): ToolDefinition {
       '脚本包含写工具时，执行前会向玩家弹一次脚本级确认，确认后最多执行 10000 次写调用；' +
       '没有 fs/net/process/require。',
     promptGuidelines: [
-      'Use run_script 当需要对多个建筑/行星做批量查询、筛选、求和或条件判断时；单次查询仍直接用对应工具。',
+      '需要对多个建筑/行星做批量查询、筛选、求和或条件判断时使用；单次查询仍直接用对应工具。',
       'dsp.call 是同步的，返回 JSON 字符串，需要 JSON.parse；脚本必须 return 一个可序列化的结果。',
       '脚本里要写写操作时，必须使用字面量 dsp.call("写工具名", …)，执行前会弹一次脚本级确认；动态拼工具名的写调用会被拒绝。',
       '写脚本一次最多 10000 次写调用；仍受 dsp.call 次数（默认 100，最大 10000）与运行时间（默认 30 秒，最大 120 秒）预算约束。',

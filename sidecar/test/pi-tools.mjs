@@ -309,7 +309,8 @@ async function main() {
   );
   // promptGuidelines 过去是死代码（pi 只在默认 coding prompt 分支渲染它）。
   check('提示词渲染了工具使用规则', systemText.includes('工具使用规则'));
-  check('规则段落含已注册工具的规则', systemText.includes('Use game_drop_item'));
+  check('规则段落含已注册工具的规则', systemText.includes('只在玩家明确要求“丢掉/扔了”某个物品时使用。'));
+  check('规则段落已中文化', !/\bUse (?:game|kb|wiki|blueprint|run_script|ask_user)/.test(systemText));
 
   const secondBody = upstream.requests[1]?.body ?? {};
   const hasToolMessage = (secondBody.messages ?? []).some((m) => m?.role === 'tool');

@@ -87,6 +87,27 @@ console.log('\n── legacy / rich 两个变体 ──');
   check('两版都不是同一份文本', legacy !== rich);
 }
 
+console.log('\n── 工具规则语言 ──');
+{
+  // 规则会和工具描述一起进 system prompt；英文模板句（"Use X when..."）已统一成中文。
+  const sources = [
+    '../src/tools/registry.ts',
+    '../src/tools/write.ts',
+    '../src/tools/ask.ts',
+    '../src/tools/script.ts',
+    '../src/kb/tools.ts',
+    '../src/wiki/tools.ts',
+    '../src/blueprint/tools.ts',
+  ];
+  for (const relative of sources) {
+    const text = readFileSync(new URL(relative, import.meta.url), 'utf8');
+    check(
+      `${relative} 的规则不含英文模板句`,
+      !/\bUse (?:game|kb|wiki|blueprint|run_script|ask_user)/.test(text),
+    );
+  }
+}
+
 console.log('\n── 能力段落（按注册表生成） ──');
 {
   const tools = [

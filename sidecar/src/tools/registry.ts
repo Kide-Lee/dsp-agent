@@ -192,7 +192,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '读取当前存档概览：存档名、游戏时刻、当前行星/星系、玩家经纬度、是否暂停。' +
         '玩家问“我在哪”“现在什么情况”时先调用它；不要凭印象回答。',
       promptGuidelines: [
-        'Use game_get_overview 当玩家询问当前存档、所在星球、游戏时间或“现在什么情况”时。',
+        '玩家询问当前存档、所在星球、游戏时间或“现在什么情况”时使用。',
       ],
       parameters: Type.Object({}),
       timeoutMs: 5000,
@@ -204,7 +204,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '读取伊卡洛斯的能量、护盾、反应堆能量与背包物品（id、名称、数量）。' +
         '玩家问“我还有多少能量”“背包里有什么”时调用。',
       promptGuidelines: [
-        'Use game_get_player 当玩家询问自己的能量、护盾或背包物品时。',
+        '玩家询问自己的能量、护盾或背包物品时使用。',
       ],
       parameters: Type.Object({
         offset: offsetArg,
@@ -220,7 +220,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         'veins=groups 返回按位置聚合的矿脉群（已扫描的远程行星也可）；veins=nodes 分页返回逐矿脉节点' +
         '（仅工厂已加载的行星）。远程行星未加载工厂时明确标注 factoryLoaded=false。',
       promptGuidelines: [
-        'Use game_get_planet 当玩家询问某个星球有什么矿、矿在哪、建了多少建筑时。',
+        '玩家询问某个星球有什么矿、矿在哪、建了多少建筑时使用。',
         '需要矿脉位置时用 veins="groups"；需要单个矿脉的精确经纬度时用 veins="nodes" 并配合 veinOffset/veinLimit。',
         '矿脉群/节点可能很多，不要一次拉全量。',
       ],
@@ -245,7 +245,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '读取指定行星（省略则为当前行星）的电网：需求、已供、容量、储能、满足率与充放电。' +
         '所有功率单位为 kW，储能为 kWh；玩家问“电够不够”时调用。',
       promptGuidelines: [
-        'Use game_get_power 当玩家询问电力是否足够、为什么停电或电网负载时。',
+        '玩家询问电力是否足够、为什么停电或电网负载时使用。',
       ],
       parameters: Type.Object({
         planetId: planetArg,
@@ -259,7 +259,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '读取当前研究科技、进度、队列、研究速度与已解锁科技数量。' +
         '玩家问“现在研究什么”“还差多少”时调用。',
       promptGuidelines: [
-        'Use game_get_research 当玩家询问研究进度、科技队列或已解锁科技时。',
+        '玩家询问研究进度、科技队列或已解锁科技时使用。',
       ],
       parameters: Type.Object({}),
       timeoutMs: 5000,
@@ -272,7 +272,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '按净产出从低到高排序，并给出库存还能撑几分钟。玩家问“我缺什么”时调用它，' +
         '再结合 game_get_power 判断瓶颈。',
       promptGuidelines: [
-        'Use game_get_production 当玩家问“我缺什么”、某条产线为什么停、库存还能撑多久时。',
+        '玩家问“我缺什么”、某条产线为什么停、库存还能撑多久时使用。',
         'basis=stats 是实际统计；basis=installed 表示 1 分钟桶为空，items 是按装配机算的装机产能（statsEmpty=true）。',
         'statsEmpty=true 时不要下“没有产线”的结论；设备在别处或需要空间明细时改调 game_analyze_area。',
       ],
@@ -297,7 +297,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '批量 entityIds 默认只返回 core，最多 10 个。' +
         'id 来自 game_get_entities 或截图标注；id 会被回收，返回里的 stale=true 表示该 id 已被别的建筑占用。',
       promptGuidelines: [
-        'Use game_get_entity 当玩家问某一栋建筑为什么不动、配方是什么、插了什么、有没有电时。',
+        '玩家问某一栋建筑为什么不动、配方是什么、插了什么、有没有电时使用。',
         '先只取需要的段：例如只关心缺料时传 fields=["assembler"]；要逐字段调试才传 components。',
         '检查多栋建筑时用 entityIds（最多 10 个）并配合 fields，避免一次返回完整详情。',
         '如果返回 stale=true，不要使用这条数据：id 已被回收，重新用 game_get_entities 定位。',
@@ -327,7 +327,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '可按原型 id/名称、配方 id 过滤；配合 game_get_entity 查看单体细节。' +
         '大星球请用 offset/limit 分页，不要一次拉全量。',
       promptGuidelines: [
-        'Use game_get_entities 当需要“这片区域有哪些建筑”“某个配方有多少台机器”时。',
+        '需要“这片区域有哪些建筑”“某个配方有多少台机器”时使用。',
       ],
       parameters: Type.Object({
         planetId: planetArg,
@@ -349,7 +349,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '已解锁科技数、里程碑、教程、当前研究与队列。' +
         '玩家问“我下一步该干什么”“我在什么阶段”时先调用它。',
       promptGuidelines: [
-        'Use game_get_progress 当玩家询问当前进度、下一步该做什么、阶段目标时。',
+        '玩家询问当前进度、下一步该做什么、阶段目标时使用。',
         '回答“下一步”时只给当前阶段与下一阶段的必要条件，不要剧透更后面的科技细节。',
       ],
       parameters: Type.Object({}),
@@ -363,7 +363,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         'view=topdown 临时切俯视看平面布局；view=orbit 绕目标点换一个角度；拍完自动还原玩家视角。' +
         '注意：只能拍到当前行星已渲染的区块，相机不会触发远处地形/建筑加载。',
       promptGuidelines: [
-        'Use game_capture_view 当玩家让你看画面、问布局/摆放/接线是否正确时。',
+        '玩家让你看画面、问布局/摆放/接线是否正确时使用。',
         '需要平面布局时用 view=topdown，并用 entityId/center 指定中心、cameraHeight 指定高度（10–150m）。',
         '需要换角度时用 view=orbit，配合 entityId/center、distance、pitch、yaw；一次调用只拍一个角度，想看多个方向就分多次调用并改 yaw/pitch/distance。',
         '俯视图只覆盖玩家附近已加载的区块；画面缺一块时说明是流送限制，不要当成空地。',
@@ -416,7 +416,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '把一片区域的建筑排布画成字符网格（上=+Z，左=-X）：物流站 S、生产设备 M、仓储 B、发电 P、' +
         '采矿 V、分拣器 >、传送带 =。用来判断“布局对不对/有没有断路/密度如何”，比截图更省 token。',
       promptGuidelines: [
-        'Use game_render_layout 当玩家问布局、走线、是否堵死，或截图看不清时。',
+        '玩家问布局、走线、是否堵死，或截图看不清时使用。',
         '字符只表达类别与占位；朝向、配方、输入输出要再用 game_get_entities / game_analyze_area。',
       ],
       parameters: Type.Object({
@@ -434,7 +434,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '列出银河里所有行星：轨道/类型/半径、是否有工厂与建筑数、电力汇总，以及按宇宙探索等级披露的矿脉。' +
         '未观察的星球只给基础轨道信息（veinsHidden=true），不泄露矿脉；已建工厂的星球可继续用区域工具分析。',
       promptGuidelines: [
-        'Use game_get_planets 当玩家问“哪个星球有 X 矿/哪颗星在产什么/银河整体情况”时。',
+        '玩家问“哪个星球有 X 矿/哪颗星在产什么/银河整体情况”时使用。',
         'observed=false 或 veinsHidden=true 表示玩家还没探索到，不要编造矿脉；如实说明需要提升宇宙探索等级。',
         'hasFactory=true 的行星可继续用 game_analyze_area / game_get_entities / game_get_power 分析。',
       ],
@@ -450,7 +450,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '从一栋建筑出发，沿传送带与分拣器把相连设备串成图：节点（id/名称/类别/星系/行星/经纬度/深度）与有向边。' +
         '用于回答“这条线从哪到哪、哪里断了、上下游有哪些机器”。',
       promptGuidelines: [
-        'Use game_trace_line 当玩家问某台机器的上下游、整条线是否连通、断在哪时。',
+        '玩家问某台机器的上下游、整条线是否连通、断在哪时使用。',
         '结果只含实体连接，不含配方流向与星际物流；跨星用 game_get_logistics。',
         'truncated=true 表示达到深度/节点上限，可调 depth / maxNodes 继续。',
       ],
@@ -469,7 +469,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '汇总所有已加载工厂的物流塔：哪些星球/站点在供给或需求某物品、星际塔与轨道采集器、' +
         '运输船/无人机与翘曲器数量。这是跨行星产线分析的入口。',
       promptGuidelines: [
-        'Use game_get_logistics 当玩家问“某个原料从哪来/哪颗星在供应/为什么跨星运不过来”时。',
+        '玩家问“某个原料从哪来/哪颗星在供应/为什么跨星运不过来”时使用。',
         'supply/demand 来自物流塔槽位的远程供应/需求设置；具体航线与在途量用 game_get_entity 看站点详情。',
         '先在这里定位物品与星球，再用 game_analyze_area / game_get_planet 下钻。',
       ],
@@ -488,7 +488,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '把指定的一批建筑（entityIds）存成游戏蓝图文件，复用游戏自己的复制逻辑，产物与游戏内复制同源。' +
         '保存到游戏蓝图目录（默认 IcarusII/，可传 dir），打开蓝图界面即可看到；只写蓝图文件，不改游戏状态。',
       promptGuidelines: [
-        'Use game_copy_blueprint 当玩家说“把这片产线存成蓝图”时；id 来自 game_analyze_area / game_get_entities。',
+        '玩家说“把这片产线存成蓝图”时使用；id 来自 game_analyze_area / game_get_entities。',
         '一次最多 500 个；工具只保存文件，不建造、不粘贴；权限档位会决定是否弹确认。',
         '保存后告诉玩家文件名与位置；重名会自动加 (2)/(3)。',
       ],
@@ -512,7 +512,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '涉及电网的供需。用于回答“这片区域是什么产线、规模多大、吃多少电”。' +
         '只给装机口径；实际产出请再用 game_get_production。',
       promptGuidelines: [
-        'Use game_analyze_area 当玩家问“这片产线是干什么的/多大/耗多少电”时。',
+        '玩家问“这片产线是干什么的/多大/耗多少电”时使用。',
         'game_get_production 返回 statsEmpty=true 或 items 为空时，用它看装机产能（可 all=true 扫整颗星球）。',
         '结果里 byRecipe 是“机器数 × 配方速度”，不要把它说成实际产出。',
         '结果是装机产能，不是实际产出；回答实际产量要结合 game_get_production。',
@@ -547,7 +547,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '列出游戏原生 GoalProto 目标模板：id、名称、判断器、等级、父分组和默认参数。' +
         '生成游戏目标前先调用它，选择真实存在的判断器/模板。',
       promptGuidelines: [
-        'Use game_todo_templates 在创建游戏目标前；不要凭记忆编造 GoalProto 模板 id。',
+        '创建游戏目标前先查；不要凭记忆编造 GoalProto 模板 id。',
         'params 是原生 DeterminatorParams 的默认值；game_todo_add 可覆盖它们。',
       ],
       parameters: Type.Object({}),
@@ -558,7 +558,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       label: '当前游戏目标',
       description: '读取 AI 创建的原生游戏目标及当前值/目标值/阶段，以及玩家当前是否关闭了目标显示。',
       promptGuidelines: [
-        'Use game_todo_list 当玩家询问当前目标进度或准备删除目标时。',
+        '玩家询问当前目标进度或准备删除目标时使用。',
         '如果结果里 goalPanelOff=true，说明玩家“目标建议”选了自由探索，目标不显示；回答进度时提醒玩家打开目标面板设置改成“关键节点”或“事无巨细”。',
       ],
       parameters: Type.Object({}),
