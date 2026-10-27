@@ -1033,13 +1033,21 @@ function gameTool<T>(spec: {
 | `game_get_entity` | `game.entity.v1` | `planetId?`, `entityId?`, `entityIds?`（≤10）, `expectProtoId?`, `fields?` | 单/批量建筑：原型、配方、功率、分拣器/传送带/仓储/物流塔、星系/行星/经纬度、`stale`；`fields` 裁剪段 | `PlanetFactory.entityPool` + `factorySystem` / `cargoTraffic` / `transport` |
 | `game_get_entities` | `game.entity.v1` | `planetId?`, `protoId?`, `protoName?`, `recipeId?`, `offset/limit` | 建筑分页列表 | 同上 |
 | `game_get_progress` | `game.progress.v1` | — | 派生阶段 + 判定信号、已解锁科技、里程碑、教程、研究队列 | `GameHistoryData`、`GameMain.data.milestoneSystem` |
-| `game_capture_view` | `game.view.v1` | `width?`, `height?`, `includeEntities?` | JPEG 图片 + 可见实体屏幕坐标与经纬度 | `GameCamera.CaptureScreenshot` |
+| `game_capture_view` | `game.view.v1` | `width?`, `height?`, `includeEntities?`, `view?`（`player`/`topdown`/`orbit`）, `entityId?`, `center?`, `cameraHeight?`, `yaw?`, `fov?`, `distance?`, `pitch?`, `angles?`, `count?` | JPEG 图片 + 可见实体屏幕坐标与经纬度；多角度为一张接触表 + 每格 `shots[i]` | `GameCamera.CaptureScreenshot` |
 | `game_analyze_area` | `game.analyze.v1` | `planetId?`, `entityId?`, `radius?`, `center?`, `all?` | 范围聚合：建筑/配方计数、装机产能、耗电、物流设施、电网 | `PlanetFactory` + `PowerSystem` |
 
 > **截图（M4a 起支持）**：`game_capture_view` 复用 `GameCamera.CaptureScreenshot`——
 > 它把 `cullingMask` 设成 `gameLayerMask`，UGUI 不进画面，所以不需要"隐藏界面"开关；
 > PNG 字节在 `GameMain.data.screenShot`，mod 侧转 JPEG（q80，长边 ≤1280）后按协议
 > `tool_result.image` 回传。图片既不混进 `data`，也不落盘。
+>
+> **多角度（M4a 扩展）**：`view=orbit` 绕 `entityId` / `center` 取景，`distance` / `pitch` / `yaw`
+> 定机位；`count`（2–6）或 `angles`（≤6）一次拍多张，按 2×1 / 2×2 / 3×2 拼成一张 JPEG。
+> 每个机位仍走 `GameCamera.CaptureScreenshot`：临时改主相机位姿 → 重跑实例剔除 → 渲染到
+> RenderTexture → 立即还原；玩家画面不受影响。多角度不新增协议字段，仍是一张
+> `tool_result.image`。为控制结果体积，多角度每格只带 `legend`（≤6 个编号框）；
+> 标注框在该机位下投影，避免 `topdown` / `orbit` 的编号与图像错位。
+> 多角度在一帧内顺序渲染 N 次（N≤6），会有一次明显卡顿。
 >
 > 模型侧：`ModelEntry.input` 覆盖 pi 目录的模态（目录仍把 DeepSeek 标成只收文本）。
 > 不覆盖时 pi 的 `openai-completions` 适配层会按 `model.input.includes("image")`

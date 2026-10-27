@@ -1088,6 +1088,8 @@ namespace IcarusII.Game.Tools
         private const int JpegQuality = 80;
         private const int MaxImageBytes = 2 * 1024 * 1024;
         private const int MaxVisibleEntities = 60;
+        private const int MaxMarksPerTile = 6;
+        private const int MaxAngles = 6;
 
         public IGameToolJob Start(JsonValue args)
         {
@@ -1117,78 +1119,151 @@ namespace IcarusII.Game.Tools
                 return new GameToolJobResult { Data = data };
             }
 
-            // 可选：临时把相机切到俯视/自定义机位，拍完立刻还原。
-            // 只对**当前行星、已流送的区块**有效——相机移动不会触发远处区块加载。
-            Camera cam = GameCamera.main;
-            Vector3 savedPos = Vector3.zero;
-            Quaternion savedRot = Quaternion.identity;
-            float savedFov = 60f;
-            var view = args["view"].AsString("player");
-            var cameraInfo = JsonValue.NewObject();
-            cameraInfo.Set("view", view);
-            if (cam != null)
-            {
-                savedPos = cam.transform.position;
-                savedRot = cam.transform.rotation;
-                savedFov = cam.fieldOfView;
-                if (view == "topdown")
-                {
-                    var center = ResolveCaptureCenter(gameData, args, out var centerSource);
-                    var heightMeters = Math.Max(10, Math.Min(150, args["cameraHeight"].AsDouble(60)));
-                    var yaw = args["yaw"].AsDouble(0);
-                    var fov = Math.Max(20, Math.Min(90, args["fov"].AsDouble(60)));
-                    var up = center.sqrMagnitude > 0.0001f ? center.normalized : Vector3.up;
-                    var forward = Vector3.Cross(up, Vector3.right);
-                    if (forward.sqrMagnitude < 0.01f) forward = Vector3.Cross(up, Vector3.forward);
-                    forward.Normalize();
-                    cam.transform.position = center + up * (float)heightMeters;
-                    cam.transform.rotation = Quaternion.LookRotation(-up, Quaternion.AngleAxis((float)yaw, up) * forward);
-                    cam.fieldOfView = (float)fov;
-                    cameraInfo.Set("center", GameToolFormat.Location(GameMain.localPlanet, center));
-                    cameraInfo.Set("centerSource", centerSource);
-                    cameraInfo.Set("height", GameToolFormat.Round(heightMeters, 1));
-                    cameraInfo.Set("yaw", GameToolFormat.Round(yaw, 0));
-                    cameraInfo.Set("fov", GameToolFormat.Round(fov, 0));
-                }
-            }
-
-            // 复用游戏自己的截图路径：它把 cullingMask 设成 gameLayerMask（UI 不进画面），
-            // 并把 PNG 字节放进 GameMain.data.screenShot。这里只做 PNG→JPEG 的压缩。
-            try
-            {
-                GameCamera.CaptureScreenshot(width, height);
-            }
-            catch (Exception ex)
+            var cam = GameCamera.main;
+            if (cam == null || GameCamera.instance == null)
             {
                 data.Set("available", false);
-                data.Set("reason", "capture_failed");
-                data.Set("display", "截图失败：" + ex.Message);
+                data.Set("reason", "camera_unavailable");
+                data.Set("display", "取不到游戏主相机（可能正在加载或切场景）");
                 return new GameToolJobResult { Data = data };
+            }
+
+            var view = NormalizeView(args["view"].AsString("player"));
+            // 星图/戴森球编辑器会临时把主相机搬到另一个尺度，行星局部坐标算出来的
+            // topdown/orbit 机位在那里没有意义；只允许 player 视角直接拍。
+            if (view != "player" && GameCamera.sceneIndex != GameCamera.GAME_SCENE)
+            {
+                data.Set("available", false);
+                data.Set("reason", "scene_not_supported");
+                data.Set("display", "当前不在游戏场景（星图/编辑器/菜单），无法切换截图机位");
+                return new GameToolJobResult { Data = data };
+            }
+
+            var shots = BuildShots(gameData, cam, view, args, width, height, out var layout);
+            if (shots == null || shots.Count == 0 || layout == null)
+            {
+                data.Set("available", false);
+                data.Set("reason", "invalid_view");
+                data.Set("display", "无效的截图机位");
+                return new GameToolJobResult { Data = data };
+            }
+
+            // 截图在 Plugin.Update 里同步完成；GameCamera.LateUpdate（executionOrder=1000）
+            // 之后还会用 poser 重设玩家机位。这里仍然完整保存/还原，避免截图异常时把
+            // cullingMask / targetTexture / aspect 留给玩家画面。
+            var savedPos = cam.transform.position;
+            var savedRot = cam.transform.rotation;
+            var savedFov = cam.fieldOfView;
+            var savedCullingMask = cam.cullingMask;
+            var savedTarget = cam.targetTexture;
+            var savedActive = RenderTexture.active;
+
+            byte[] jpeg = null;
+            var outWidth = width;
+            var outHeight = height;
+            Texture2D sheetTexture = null;
+
+            try
+            {
+                var sheetPixels = shots.Count > 1 ? CreateSheetPixels(layout) : null;
+
+                for (int i = 0; i < shots.Count; i++)
+                {
+                    var shot = shots[i];
+                    ApplyShot(cam, shot);
+                    // 让 WorldToViewportPoint 与截图的 RenderTexture 宽高比一致，
+                    // 否则非 16:9 的截图里编号框会整体偏斜。
+                    cam.aspect = (float)shot.TileW / shot.TileH;
+
+                    try
+                    {
+                        GameCamera.CaptureScreenshot(shot.TileW, shot.TileH);
+                    }
+                    catch (Exception ex)
+                    {
+                        data.Set("available", false);
+                        data.Set("reason", "capture_failed");
+                        data.Set("display", "截图失败：" + ex.Message);
+                        return new GameToolJobResult { Data = data };
+                    }
+
+                    // RenderTexture 复位后 aspect 可能回到屏幕比例；再设一次，
+                    // 保证下面的 WorldToViewportPoint 用的是这张截图的宽高比。
+                    cam.aspect = (float)shot.TileW / shot.TileH;
+
+                    var png = GameMain.data != null ? GameMain.data.screenShot : null;
+                    if (png == null || png.Length == 0)
+                    {
+                        data.Set("available", false);
+                        data.Set("reason", "empty_frame");
+                        data.Set("display", "没有取到画面（可能正在加载）");
+                        return new GameToolJobResult { Data = data };
+                    }
+
+                    // 标注必须按“这张图自己的机位”筛选；等相机还原后再算会用到玩家视角。
+                    var needMarks = annotate || (shots.Count == 1 && includeEntities);
+                    if (needMarks)
+                    {
+                        var maxMarks = shots.Count > 1 ? MaxMarksPerTile : MaxVisibleEntities;
+                        shot.Marks = CollectMarks(gameData, shot.TileW, shot.TileH, maxMarks);
+                    }
+
+                    Texture2D tile = null;
+                    try
+                    {
+                        if (!TryDecodePng(png, out tile))
+                        {
+                            data.Set("available", false);
+                            data.Set("reason", "encode_failed");
+                            data.Set("display", "画面解码失败");
+                            return new GameToolJobResult { Data = data };
+                        }
+
+                        if (annotate && shot.Marks.Count > 0)
+                            DrawMarks(tile, shot.Marks, shot.TileW, shot.TileH);
+                        tile.Apply(false, false);
+
+                        if (shots.Count == 1)
+                        {
+                            jpeg = tile.EncodeToJPG(JpegQuality);
+                            outWidth = tile.width;
+                            outHeight = tile.height;
+                        }
+                        else
+                        {
+                            CopyTile(sheetPixels, layout, shot, tile);
+                        }
+                    }
+                    finally
+                    {
+                        if (tile != null) UnityEngine.Object.Destroy(tile);
+                    }
+                }
+
+                if (shots.Count > 1)
+                {
+                    DrawTileDecorations(sheetPixels, layout, shots);
+                    sheetTexture = new Texture2D(layout.Width, layout.Height, TextureFormat.RGBA32, false);
+                    sheetTexture.SetPixels32(sheetPixels);
+                    sheetTexture.Apply(false, false);
+                    jpeg = sheetTexture.EncodeToJPG(JpegQuality);
+                    outWidth = layout.Width;
+                    outHeight = layout.Height;
+                }
             }
             finally
             {
-                if (cam != null && view == "topdown")
-                {
-                    cam.transform.position = savedPos;
-                    cam.transform.rotation = savedRot;
-                    cam.fieldOfView = savedFov;
-                }
+                cam.transform.position = savedPos;
+                cam.transform.rotation = savedRot;
+                cam.fieldOfView = savedFov;
+                cam.cullingMask = savedCullingMask;
+                cam.targetTexture = savedTarget;
+                cam.ResetAspect();
+                RenderTexture.active = savedActive;
+                if (sheetTexture != null) UnityEngine.Object.Destroy(sheetTexture);
             }
 
-            var png = gameData.screenShot;
-            if (png == null || png.Length == 0)
-            {
-                data.Set("available", false);
-                data.Set("reason", "empty_frame");
-                data.Set("display", "没有取到画面（可能正在加载）");
-                return new GameToolJobResult { Data = data };
-            }
-
-            var marks = CollectMarks(gameData, width, height);
-            byte[] jpeg;
-            int outWidth;
-            int outHeight;
-            if (!TryEncodeJpeg(png, width, height, annotate ? marks : null, out jpeg, out outWidth, out outHeight))
+            if (jpeg == null || jpeg.Length == 0)
             {
                 data.Set("available", false);
                 data.Set("reason", "encode_failed");
@@ -1201,7 +1276,7 @@ namespace IcarusII.Game.Tools
                 data.Set("available", false);
                 data.Set("reason", "image_too_large");
                 data.Set("bytes", jpeg.Length);
-                data.Set("display", "截图过大（" + (jpeg.Length / 1024) + " KiB），请降低分辨率");
+                data.Set("display", "截图过大（" + (jpeg.Length / 1024) + " KiB），请降低分辨率或角度数");
                 return new GameToolJobResult { Data = data };
             }
 
@@ -1211,29 +1286,361 @@ namespace IcarusII.Game.Tools
             image.Set("width", outWidth);
             image.Set("height", outHeight);
 
+            data.Set("width", outWidth);
+            data.Set("height", outHeight);
             data.Set("available", true);
             data.Set("bytes", jpeg.Length);
+            data.Set("view", view);
+            data.Set("shotCount", shots.Count);
+            var grid = JsonValue.NewObject();
+            grid.Set("cols", layout.Cols);
+            grid.Set("rows", layout.Rows);
+            grid.Set("tileWidth", layout.TileW);
+            grid.Set("tileHeight", layout.TileH);
+            data.Set("grid", grid);
+
             var info = CameraInfo();
-            if (cameraInfo.Count > 0)
+            ApplyCameraInfo(info, view, shots[0]);
+            data.Set("camera", info);
+            data.Set("shots", ShotRows(shots, shots.Count > 1, annotate, gameData.localPlanet));
+
+            // 单角度保留旧字段，老提示词/调用方不用改。
+            if (shots.Count == 1)
             {
-                foreach (var key in new[] { "view", "center", "centerSource", "height", "yaw", "fov" })
+                if (includeEntities)
+                    data.Set("visibleEntities", MarkRows(shots[0].Marks, outWidth, outHeight, gameData.localPlanet));
+                if (annotate)
                 {
-                    var value = cameraInfo[key];
-                    if (value != null && !value.IsNull) info.Set(key, value);
+                    data.Set("annotated", true);
+                    data.Set("legend", LegendRows(shots[0].Marks, outWidth, outHeight));
                 }
             }
-            data.Set("camera", info);
-            if (includeEntities) data.Set("visibleEntities", MarkRows(marks, outWidth, outHeight, gameData.localPlanet));
-            if (annotate)
+            else if (annotate)
             {
                 data.Set("annotated", true);
-                data.Set("legend", LegendRows(marks, outWidth, outHeight));
             }
 
-            data.Set("display", "已截图 " + outWidth + "×" + outHeight + "（"
-                + (jpeg.Length / 1024) + " KiB）");
+            data.Set("display", shots.Count == 1
+                ? "已截图 " + outWidth + "×" + outHeight + "（" + (jpeg.Length / 1024) + " KiB）"
+                : "已截图 " + outWidth + "×" + outHeight + "（" + shots.Count + " 角度，"
+                    + layout.Cols + "×" + layout.Rows + " 拼图，" + (jpeg.Length / 1024) + " KiB）");
 
             return new GameToolJobResult { Data = data, Image = image };
+        }
+
+        private static string NormalizeView(string view)
+        {
+            return view == "topdown" || view == "orbit" ? view : "player";
+        }
+
+        private static List<CaptureShot> BuildShots(GameData gameData, Camera cam, string view,
+            JsonValue args, int width, int height, out CaptureLayout layout)
+        {
+            var shots = new List<CaptureShot>();
+            if (view == "topdown")
+            {
+                var center = ResolveCaptureCenter(gameData, args, out var centerSource);
+                var cameraHeight = Clamp(args["cameraHeight"].AsDouble(60), 10, 150);
+                var yaw = args["yaw"].AsDouble(0);
+                var fov = Clamp(args["fov"].AsDouble(60), 20, 90);
+                shots.Add(new CaptureShot
+                {
+                    View = view,
+                    Center = center,
+                    CenterSource = centerSource,
+                    CameraPos = TopdownPosition(center, cameraHeight),
+                    CameraRot = TopdownRotation(center, yaw),
+                    Fov = (float)fov,
+                    Pitch = 90,
+                    Yaw = yaw,
+                    Distance = cameraHeight,
+                });
+            }
+            else if (view == "orbit")
+            {
+                var center = ResolveCaptureCenter(gameData, args, out var centerSource);
+                var distance = Clamp(args["distance"].AsDouble(80), 10, 500);
+                var pitch = Clamp(args["pitch"].AsDouble(35), 5, 90);
+                var fov = Clamp(args["fov"].AsDouble(60), 20, 90);
+                foreach (var yaw in ReadYaws(args))
+                {
+                    ComputeOrbitPose(center, (float)distance, pitch, yaw, out var pos, out var rot);
+                    shots.Add(new CaptureShot
+                    {
+                        View = view,
+                        Center = center,
+                        CenterSource = centerSource,
+                        CameraPos = pos,
+                        CameraRot = rot,
+                        Fov = (float)fov,
+                        Pitch = pitch,
+                        Yaw = yaw,
+                        Distance = distance,
+                    });
+                }
+            }
+            else
+            {
+                shots.Add(new CaptureShot
+                {
+                    View = "player",
+                    CameraPos = cam.transform.position,
+                    CameraRot = cam.transform.rotation,
+                    Fov = cam.fieldOfView,
+                });
+            }
+
+            layout = CaptureLayout.Plan(shots.Count, width, height);
+            for (int i = 0; i < shots.Count; i++)
+            {
+                var shot = shots[i];
+                var col = i % layout.Cols;
+                var row = i / layout.Cols;
+                shot.Index = i + 1;
+                shot.TileX = col * layout.TileW;
+                shot.TileY = row * layout.TileH;
+                shot.TileW = layout.TileW;
+                shot.TileH = layout.TileH;
+            }
+            return shots;
+        }
+
+        private static List<double> ReadYaws(JsonValue args)
+        {
+            var result = new List<double>();
+            var angles = args["angles"];
+            if (angles != null && angles.IsArray)
+            {
+                for (int i = 0; i < angles.Count && result.Count < MaxAngles; i++)
+                {
+                    var value = angles[i].AsDouble(double.NaN);
+                    if (!double.IsNaN(value)) result.Add(value);
+                }
+            }
+            if (result.Count > 0) return result;
+
+            var baseYaw = args["yaw"].AsDouble(0);
+            var count = args["count"].AsInt(0);
+            if (count < 2)
+            {
+                result.Add(baseYaw);
+                return result;
+            }
+            count = Math.Min(count, MaxAngles);
+            for (int i = 0; i < count; i++)
+                result.Add(baseYaw + 360.0 * i / count);
+            return result;
+        }
+
+        private static double Clamp(double value, double min, double max)
+        {
+            return value < min ? min : (value > max ? max : value);
+        }
+
+        private static Vector3 PlanetUp(Vector3 center)
+        {
+            return center.sqrMagnitude > 0.0001f ? center.normalized : Vector3.up;
+        }
+
+        private static Vector3 TopdownPosition(Vector3 center, double height)
+        {
+            return center + PlanetUp(center) * (float)height;
+        }
+
+        private static Quaternion TopdownRotation(Vector3 center, double yaw)
+        {
+            var up = PlanetUp(center);
+            var forward = Vector3.Cross(up, Vector3.right);
+            if (forward.sqrMagnitude < 0.01f) forward = Vector3.Cross(up, Vector3.forward);
+            forward.Normalize();
+            return Quaternion.LookRotation(-up, Quaternion.AngleAxis((float)yaw, up) * forward);
+        }
+
+        private static void ComputeOrbitPose(Vector3 center, float distance, double pitchDeg, double yawDeg,
+            out Vector3 position, out Quaternion rotation)
+        {
+            var up = PlanetUp(center);
+            var tangent = Vector3.Cross(up, Vector3.forward);
+            if (tangent.sqrMagnitude < 0.01f) tangent = Vector3.Cross(up, Vector3.right);
+            tangent.Normalize();
+            var tangent2 = Vector3.Cross(tangent, up).normalized;
+            var horizontal = Quaternion.AngleAxis((float)yawDeg, up) * tangent2;
+            var pitch = (float)Clamp(pitchDeg, 5, 90);
+            var dir = (horizontal * Mathf.Cos(pitch * Mathf.Deg2Rad)
+                + up * Mathf.Sin(pitch * Mathf.Deg2Rad)).normalized;
+            position = center + dir * distance;
+            // 俯角接近 90° 时 forward 与 up 几乎平行，LookRotation 会退化；
+            // 改用水平方向做 up 参考，保证正俯视也有稳定的滚转角。
+            var upRef = pitch >= 80f ? horizontal : up;
+            rotation = Quaternion.LookRotation(-dir, upRef);
+        }
+
+        private static void ApplyShot(Camera cam, CaptureShot shot)
+        {
+            if (shot.View == "player") return;
+            cam.transform.position = shot.CameraPos;
+            cam.transform.rotation = shot.CameraRot;
+            cam.fieldOfView = shot.Fov;
+        }
+
+        private sealed class CaptureShot
+        {
+            public string View;
+            public Vector3 Center;
+            public string CenterSource;
+            public Vector3 CameraPos;
+            public Quaternion CameraRot;
+            public float Fov;
+            public double Pitch;
+            public double Yaw;
+            public double Distance;
+            public int Index;
+            public int TileX;
+            public int TileY;
+            public int TileW;
+            public int TileH;
+            public List<VisibleMark> Marks = new List<VisibleMark>();
+        }
+
+        private sealed class CaptureLayout
+        {
+            public int Cols;
+            public int Rows;
+            public int TileW;
+            public int TileH;
+            public int Width { get { return Cols * TileW; } }
+            public int Height { get { return Rows * TileH; } }
+
+            public static CaptureLayout Plan(int count, int requestedWidth, int requestedHeight)
+            {
+                if (count <= 1)
+                {
+                    return new CaptureLayout
+                    {
+                        Cols = 1,
+                        Rows = 1,
+                        TileW = requestedWidth,
+                        TileH = requestedHeight,
+                    };
+                }
+
+                var cols = count <= 2 ? count : (count <= 4 ? 2 : 3);
+                var rows = (count + cols - 1) / cols;
+                var tileW = Math.Max(64, requestedWidth / cols);
+                var tileH = Math.Max(64, requestedHeight / rows);
+                return new CaptureLayout { Cols = cols, Rows = rows, TileW = tileW, TileH = tileH };
+            }
+        }
+
+        private static bool TryDecodePng(byte[] png, out Texture2D texture)
+        {
+            texture = null;
+            try
+            {
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (!tex.LoadImage(png))
+                {
+                    UnityEngine.Object.Destroy(tex);
+                    return false;
+                }
+                texture = tex;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static Color32[] CreateSheetPixels(CaptureLayout layout)
+        {
+            var pixels = new Color32[layout.Width * layout.Height];
+            var background = new Color32(18, 18, 18, 255);
+            for (int i = 0; i < pixels.Length; i++) pixels[i] = background;
+            return pixels;
+        }
+
+        private static void CopyTile(Color32[] sheet, CaptureLayout layout, CaptureShot shot, Texture2D tile)
+        {
+            var pixels = tile.GetPixels32();
+            var copyW = Math.Min(shot.TileW, tile.width);
+            var copyH = Math.Min(shot.TileH, tile.height);
+            var yBottom = layout.Height - shot.TileY - copyH;
+            for (int y = 0; y < copyH; y++)
+            {
+                Array.Copy(pixels, y * tile.width, sheet, (yBottom + y) * layout.Width + shot.TileX, copyW);
+            }
+        }
+
+        private static void DrawTileDecorations(Color32[] pixels, CaptureLayout layout, List<CaptureShot> shots)
+        {
+            var border = new Color32(64, 64, 64, 255);
+            var label = new Color32(255, 255, 255, 255);
+            foreach (var shot in shots)
+            {
+                var y0 = layout.Height - shot.TileY - shot.TileH;
+                var y1 = layout.Height - shot.TileY - 1;
+                DrawBox(pixels, layout.Width, layout.Height,
+                    shot.TileX, y0, shot.TileX + shot.TileW - 1, y1, border);
+                DrawNumber(pixels, layout.Width, layout.Height,
+                    shot.TileX + 6, y1 - 16, shot.Index, 2, label);
+            }
+        }
+
+        private static void ApplyCameraInfo(JsonValue info, string view, CaptureShot shot)
+        {
+            if (info == null || shot == null) return;
+            info.Set("view", view);
+            if (view != "topdown" && view != "orbit") return;
+
+            info.Set("center", GameToolFormat.Location(GameMain.localPlanet, shot.Center));
+            info.Set("centerSource", shot.CenterSource);
+            info.Set("fov", GameToolFormat.Round(shot.Fov, 1));
+            info.Set("yaw", GameToolFormat.Round(shot.Yaw, 0));
+            if (view == "topdown")
+            {
+                info.Set("height", GameToolFormat.Round(shot.Distance, 1));
+            }
+            else
+            {
+                info.Set("distance", GameToolFormat.Round(shot.Distance, 1));
+                info.Set("pitch", GameToolFormat.Round(shot.Pitch, 0));
+            }
+        }
+
+        private static JsonValue ShotRows(List<CaptureShot> shots, bool multi, bool annotate, PlanetData planet)
+        {
+            var rows = JsonValue.NewArray();
+            foreach (var shot in shots)
+            {
+                var row = JsonValue.NewObject();
+                row.Set("index", shot.Index);
+                row.Set("view", shot.View);
+                row.Set("x", shot.TileX);
+                row.Set("y", shot.TileY);
+                row.Set("width", shot.TileW);
+                row.Set("height", shot.TileH);
+                row.Set("location", GameToolFormat.Location(planet, shot.CameraPos));
+                row.Set("forward", EntityToolUtil.Vec3(shot.CameraRot * Vector3.forward));
+                if (shot.View == "topdown" || shot.View == "orbit")
+                {
+                    // 多角度时 center 对所有格子相同，放到顶层 camera 里即可，
+                    // 避免 6 格 × 两份 location 把工具结果顶到 9000 字符上限。
+                    if (!multi)
+                    {
+                        row.Set("center", GameToolFormat.Location(planet, shot.Center));
+                        row.Set("centerSource", shot.CenterSource);
+                    }
+                    row.Set("yaw", GameToolFormat.Round(shot.Yaw, 0));
+                    row.Set("pitch", GameToolFormat.Round(shot.Pitch, 0));
+                    row.Set("distance", GameToolFormat.Round(shot.Distance, 1));
+                    row.Set("fov", GameToolFormat.Round(shot.Fov, 1));
+                }
+                if (multi && annotate)
+                    row.Set("legend", LegendRows(shot.Marks, shot.TileW, shot.TileH, MaxMarksPerTile));
+                rows.Add(row);
+            }
+            return rows;
         }
 
         private static Vector3 ResolveCaptureCenter(GameData gameData, JsonValue args, out string source)
@@ -1254,35 +1661,6 @@ namespace IcarusII.Game.Tools
             }
             source = "player";
             return gameData.mainPlayer != null ? gameData.mainPlayer.position : Vector3.zero;
-        }
-
-        private static bool TryEncodeJpeg(byte[] png, int expectedWidth, int expectedHeight,
-            List<VisibleMark> marks, out byte[] jpeg, out int width, out int height)
-        {
-            jpeg = null;
-            width = expectedWidth;
-            height = expectedHeight;
-
-            Texture2D texture = null;
-            try
-            {
-                texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-                if (!texture.LoadImage(png)) return false;
-                width = texture.width;
-                height = texture.height;
-                if (marks != null && marks.Count > 0) DrawMarks(texture, marks, width, height);
-                texture.Apply(false, false);
-                jpeg = texture.EncodeToJPG(JpegQuality);
-                return jpeg != null && jpeg.Length > 0;
-            }
-            catch
-            {
-                return false;
-            }
-            finally
-            {
-                if (texture != null) UnityEngine.Object.Destroy(texture);
-            }
         }
 
         private static JsonValue CameraInfo()
@@ -1320,8 +1698,10 @@ namespace IcarusII.Game.Tools
         /// <summary>
         /// 屏幕内最近的实体（视口坐标换算成截图像素）。截图标注与 visibleEntities 共用这份结果，
         /// 避免两处筛选条件不一致导致“图上的编号和图例对不上”。
+        /// 多角度拼图时每个格子只取 maxMarks 个，避免 4–6 格 × 60 个把结果撑爆。
         /// </summary>
-        private static List<VisibleMark> CollectMarks(GameData gameData, int width, int height)
+        private static List<VisibleMark> CollectMarks(GameData gameData, int width, int height,
+            int maxMarks = MaxVisibleEntities)
         {
             var marks = new List<VisibleMark>();
             var camera = GameCamera.main;
@@ -1346,7 +1726,7 @@ namespace IcarusII.Game.Tools
             }
 
             candidates.Sort((a, b) => a.Key.CompareTo(b.Key));
-            for (int i = 0; i < candidates.Count && i < MaxVisibleEntities; i++)
+            for (int i = 0; i < candidates.Count && i < maxMarks; i++)
             {
                 var id = candidates[i].Value;
                 var entity = factory.entityPool[id];
@@ -1385,11 +1765,11 @@ namespace IcarusII.Game.Tools
             return rows;
         }
 
-        /// <summary>只给前 20 个画编号框，避免图上一团花；图例序号与之对应。</summary>
-        private static JsonValue LegendRows(List<VisibleMark> marks, int width, int height)
+        /// <summary>只给前 maxRows 个画编号框，避免图上一团花；图例序号与之对应。</summary>
+        private static JsonValue LegendRows(List<VisibleMark> marks, int width, int height, int maxRows = 20)
         {
             var rows = JsonValue.NewArray();
-            for (int i = 0; i < marks.Count && i < 20; i++)
+            for (int i = 0; i < marks.Count && i < maxRows; i++)
             {
                 var mark = marks[i];
                 var row = JsonValue.NewObject();
