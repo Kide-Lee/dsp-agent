@@ -602,6 +602,7 @@ namespace IcarusII.UI
         private Text _chatIndexEmpty;
         private Button _newConversationButton;
         private Text _conversationTitleText;
+        private InputField _conversationTitleInput;
         private GameObject _conversationTitlePlaceholder;
         private readonly List<ConversationInfo> _conversations = new List<ConversationInfo>();
         private readonly List<ConversationView> _conversationViews = new List<ConversationView>();
@@ -881,6 +882,7 @@ namespace IcarusII.UI
             _chatIndexEmpty = null;
             _newConversationButton = null;
             _conversationTitleText = null;
+            _conversationTitleInput = null;
             _conversationTitlePlaceholder = null;
             _activeConversationId = null;
             _pendingFocusConversationId = null;
@@ -5889,6 +5891,7 @@ namespace IcarusII.UI
                 : null;
             if (input == null) return;
             _conversationTitleText = input.Find("name-text")?.GetComponent<Text>();
+            _conversationTitleInput = input.GetComponent<InputField>();
             var placeholder = input.Find("name-over");
             _conversationTitlePlaceholder = placeholder != null ? placeholder.gameObject : null;
         }
@@ -5898,6 +5901,10 @@ namespace IcarusII.UI
         {
             var conversation = FindConversation(_activeConversationId);
             var title = conversation != null ? conversation.Title : string.Empty;
+            // 先同步输入框的“真实文本”，再覆盖显示为省略号版本；
+            // 用 SetTextWithoutNotify 避免触发 prefab 里的 onValueChanged 回调。
+            if (_conversationTitleInput != null && _conversationTitleInput.text != title)
+                _conversationTitleInput.SetTextWithoutNotify(title ?? string.Empty);
             if (_conversationTitleText != null)
                 _conversationTitleText.text = FitLabel(title, 16, 210f);
             if (_conversationTitlePlaceholder != null)
