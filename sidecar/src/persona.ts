@@ -31,7 +31,10 @@
  *   - 文本里不能出现 pi 默认 prompt 的特征串（见 test/prompts.mjs、test/pi-loopback.mjs 的禁词断言）。
  */
 
-/** 助手身份标识（mod 名）。测试会断言生成的提示词里含这个串。 */
-export const ICARUS_II_PERSONA_NAME = '伊卡洛斯·贰';
+/**
+ * AI 自称（Icarus II）；日志与测试用它标识人格。
+ * 注意：这不是 mod 的中文名，提示词里也不会出现中文译名。
+ */
+export const ICARUS_II_PERSONA_NAME = 'Icarus II';
 
 export { ICARUS_II_SYSTEM_PROMPT } from './prompts.generated.js';

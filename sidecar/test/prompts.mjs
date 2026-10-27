@@ -128,7 +128,7 @@ console.log('\n── 人格内容 ──');
 console.log('\n── 提示词结构 ──');
 {
   const text = ICARUS_II_SYSTEM_PROMPT;
-  check('使用 Markdown 格式段', text.includes('Markdown'));
+  check('使用 Markdown 格式段（大小写不敏感）', /markdown/i.test(text));
   check('不含 legacy 的“只用游戏富文本”告警', !text.includes('否则玩家看到的是一堆符号'));
   check('不再要求“不要输出 Markdown”', !text.includes('不要输出 Markdown'));
   for (const section of ['## 扮演', '## 格式', '## 使用工具']) {

@@ -72,7 +72,7 @@ const PI_DEFAULT_PROMPT_MARKERS = [
 ];
 
 /** 人格里必须出现的稳定标识串（mod 名）。 */
-const PERSONA_MARKER = '伊卡洛斯·贰';
+const PERSONA_MARKER = 'Icarus II';
 
 /** system/user 消息的 content 可能是字符串，也可能是 text block 数组。 */
 function messageText(message) {
