@@ -1585,7 +1585,7 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 | --- | --- | --- | --- |
 | D1 | 第 9 条"摧毁背包物品"是否实现？ | A 不做；B 改"丢弃到地面"；C 仅沙盒 + 二次确认 + 不可撤销 | **B 丢弃**。实现用 `Player.TakeItemFromPlayer(..., true, ...)` 从背包取出，再 `Player.ThrowTrash(..., life=0)`；物品以可拾回的 trash 落地/漂浮。按 risk 2 实现；确认卡标注"可撤销（需手动拾回）"，不是一键撤销。这不属于 R7 的"无法撤销" |
 | D2 | 第 12 条"自动驾驶"与 §1.2"不做全自动代打"冲突 | A 改为"确认后的一次性长任务"；B 保持 §1.2 不做；C 独立扩展模块 | **B 暂不做**。长任务/自动驾驶仍不排期。2026-10-27 新增的「接管」权限只免除**单次写操作确认**，不是长任务自动驾驶：仍由玩家逐轮提问、模型逐步调用工具，且可随时切回只读/受限 |
-| D3 | 第 11 条"游戏目标"用原生还是 mod 侧 | A 原生 `TodoModule` + mod 侧有界触发器；B 注入 `GoalProto`；C 只在聊天窗做任务卡 | **B（2026-10-26 改）**。用户要求复用原生左侧 `UIGoalPanel`；注入 `GoalProto`/`GoalData`，触发器复用原生 `GoalDeterminator`；目标定义存 Global TodoModule JSON，读档重注入 |
+| D3 | 第 11 条"游戏目标"用原生还是 mod 侧 | A 原生 `TodoModule` + mod 侧有界触发器；B 注入 `GoalProto`；C 只在聊天窗做任务卡 | **B（2026-10-26 改）**。用户要求复用原生左侧 `UIGoalPanel`；注入 `GoalProto`/`GoalData`，触发器复用原生 `GoalDeterminator`；目标定义存 Global TodoModule JSON，读档重注入。**2026-10-27 修正**：AI 目标按 `EGoalLevel.Off` 注入并插到 `goalQueue` 队首（原生面板最多显示 2 个分组），注入后立即补跑 `DetermineOnPatch`/`DetermineOnLoad`；否则 `GD_UnlockTech` 等判断器的 `targetValue` 为 0，面板会把它当“忽略/无进度”而不显示。`goalLevel=Off` 时瞬态展开面板一次，不改玩家偏好 |
 | D4 | 高频 risk 2 的确认方式 | A 批量工具，一次确认、一次撤销；B 会话级租约（需改 §9.3）；C 每次确认 | **A 批量工具**。补充：`game_get_entity` 是高频**读**工具（risk 0），不走确认，但要按读侧优化：字段裁剪、按实体/帧缓存、批量 id、结果上限（2026-10-24 已实现 fields/entityIds，缓存沿用 dispatcher 5s） |
 | D5 | 新增工具的能力串粒度 | A 每族一个新能力串 + `save_bind.sandbox`；B hello 里带工具清单；C 继续复用 `game.write.v1`/`game.read.v1` | **A**。新增工具按族拆能力串；不继续复用粗粒度能力串 |
 
@@ -1606,7 +1606,7 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 | 8 | 沙盒门禁（D5=A） | 无新工具；`save_bind.sandbox` + 工具集刷新 | — | 全局 | — | `save_bind` 可选字段 + 回合边界重建会话 | **已实现门禁（2026-10-24）**；沙盒工具未实现 |
 | 9 | 丢弃物品（D1=B） | `game_drop_item` | 2 | 任意 | 可撤销（需手动拾回） | 新 `game.drop.v1` | **已实现（2026-10-24，待实机）** |
 | 10 | 生成物品 | `game_spawn_item` | 2 | 仅沙盒 | 可撤销（移除刚生成） | 新 `game.sandbox.v1` | 待拍板 |
-| 11 | 游戏目标/待办（D3=B） | `game_todo_add` / `game_todo_list` / `game_todo_remove` / `game_todo_templates`（触发器复用原生 GoalDeterminator） | 2 | 任意 | 删除只隐藏 AI 目标 | 新 `game.todo.v1`（对用户称"目标"） | **已实现，待实机** |
+| 11 | 游戏目标/待办（D3=B） | `game_todo_add` / `game_todo_list` / `game_todo_remove` / `game_todo_templates`（触发器复用原生 GoalDeterminator） | 2 | 任意 | 删除只隐藏 AI 目标 | 新 `game.todo.v1`（对用户称"目标"） | **已实现；2026-10-27 修正即时显示（Off 等级 + 队首 + 补跑 OnLoad），待实机** |
 | 12 | 自动驾驶（D2=B） | `game_autopilot_start` / `game_autopilot_status` / `game_autopilot_cancel` | 2 + 租约 | 任意 | 可取消；位置不可逆 | 新 `game.task.v1`（长任务） | **暂不做**；重启需复议 |
 | 13 | 瞬移 | `game_teleport` | 2 | 仅沙盒 | 不可撤销（可再传送返回） | 新 `game.sandbox.v1` | 待拍板 |
 
@@ -1649,7 +1649,7 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 | 存储 | `SetFilter` 对已占用且物品不同的格子只告警不生效；`SetBans` 是输入限制；`SetFilter` 不触发 `onStorageChange` | `Component/Storage/StorageComponent.cs:258-267,372-402` |
 | 丢弃 | `Player.TakeItemFromPlayer(..., true, ...)` 从背包取；`Player.ThrowTrash(..., life=0)` 生成 trash；trash 落地后可被 `PlayerAction_Pick` 拾回，`life=0` 不过期 | `Controller/Player/Player.cs:297,437`；`Component/Systems/TrashSystem.cs:163`；`Controller/Player/Action/PlayerAction_Pick.cs:41` |
 | 导航 | `Player.navigation` 公开；`Navigate/Abort/Pause/Resume` 可用；`GameTick` 被禁用；移动脚本在 `navigating` 时调用 `Determine*`；直线转向、无绕障；翘曲器/能量由 `UseWarper`/`UseWarpEnergy` 处理 | `Controller/Player/PlayerNavigation.cs:273,367,475`；`Controller/Player/Action/PlayerMove_Sail.cs:177,1000`；`Controller/Player/Mecha/Mecha.cs:1352` |
-| 目标 | 原生目标由 LDB `GoalProto` 驱动；`DeterminatorName` 反射创建；`DeterminatorParams` 仅 `long[]`；文案在原型 | `Prototypes/Tables/GoalProto.cs:8-16`；`Scenario/Goal/GoalLogic.cs:310` |
+| 目标 | 原生目标由 LDB `GoalProto` 驱动；`DeterminatorName` 反射创建；`DeterminatorParams` 仅 `long[]`；文案在原型。`UIGoalPanel` 每帧按 `goalQueue` 取组，最多 `GoalLogic.kMaxShowEntry=2` 个，并用 `IsLevelPass(proto.Level)` 过滤；`GoalLogic.DetermineGoal` 每 tick 还会按 `CheckLogic`/`target==0` 把不满足的组移出队列。判断器的初始进度只在 `GoalLogic.InitDeterminator` 的 `DetermineOnPatch`/`DetermineOnLoad` 里建立，`OnGoalStageChanged` 自动建判断器时不会补跑 | `Prototypes/Tables/GoalProto.cs:8-16`；`UI/Window/UIGoalPanel.cs:615-670,864-871`；`Scenario/Goal/GoalLogic.cs:310,450-485,520-560`；`Scenario/Goal/Determinator/GD_UnlockTech.cs` |
 | Todo | 原生 `TodoModule` 有 title/content/owner（Global/Astro/Entity），随存档保存；`AddTodoModule`/`RemoveTodoModule` 公开 | `Component/Todo Module/TodoModule.cs:13-14,174-179`；`Component/Systems/GalacticDigitalSystem.cs:173,181` |
 | Marker/Tether | `MarkerComponent` 可挂 `entityId`、`todo`、name/icon/visibility，上限 256；`SetHeight`/`SetRadius` 公开；`LineGizmo` 在 `GameGizmo.gizmoGroup`，`ClearGizmos` 会统一清空 | `Component/Marker/MarkerComponent.cs:9,32,48,83,94`；`UI/Gizmo/GameGizmo.cs:6-28`；`UI/Gizmo/LineGizmo.cs:8` |
 | 能力协商 | 工具按 hello 的 `capabilities` 注册；`game.write.v1` 是粗粒度能力；`save_bind` 只有 key/name/tiers | `Shared/Protocol/Protocol.cs:108-126,277-281`；`sidecar/src/tools/registry.ts:39-60`；`docs/protocol-v1.md:54,888-896` |

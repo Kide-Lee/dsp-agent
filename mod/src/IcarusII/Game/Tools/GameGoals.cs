@@ -40,6 +40,7 @@ namespace IcarusII.Game.Tools
         private static string _saveKey;
         private static bool _loaded;
         private static bool _needsApply;
+        private static bool _revealPending;
         private static int _nextId = CustomIdStart;
 
         public static void Tick()
@@ -59,6 +60,7 @@ namespace IcarusII.Game.Tools
                     _saveKey = key;
                     _loaded = false;
                     _applied = false;
+                    _revealPending = false;
                     _notes = null;
                     _nextId = CustomIdStart;
                 }
@@ -67,6 +69,9 @@ namespace IcarusII.Game.Tools
                     _store = LoadStore();
                     _loaded = true;
                     _needsApply = _store != null && _store.goals.Count > 0;
+                    // 读档后已有 AI 目标也要可见；goalLevel=Off 时原生面板默认折叠，
+                    // 这里同样做一次瞬态展开，否则玩家会以为目标丢了。
+                    _revealPending = _needsApply;
                     EnsureNextId();
                 }
                 if (_notes == null) _notes = new Dictionary<int, string>();
@@ -79,6 +84,7 @@ namespace IcarusII.Game.Tools
                     }
                 }
                 if (_applied) RefreshNotes();
+                if (_revealPending) RevealPanel();
             }
             catch (Exception ex)
             {
@@ -97,6 +103,7 @@ namespace IcarusII.Game.Tools
             _store = null;
             _applied = false;
             _needsApply = false;
+            _revealPending = false;
             _notes = null;
         }
 
@@ -219,7 +226,16 @@ namespace IcarusII.Game.Tools
             SaveStore();
             _needsApply = true;
             _applied = false;
-            ApplyAll();
+            if (ApplyAll())
+            {
+                _needsApply = false;
+                _applied = true;
+            }
+            // 玩家主动要求生成目标，就必须马上能看到。原生目标面板在“关闭/折叠”状态
+            // 不会自动弹开，因此这里做一次瞬态展开（不写 goalLevel 偏好）。
+            _revealPending = true;
+            Plugin.Log.LogInfo("游戏目标已注入 +" + added.Count.ToString(CultureInfo.InvariantCulture) +
+                               "，groupId=" + groupId.ToString(CultureInfo.InvariantCulture));
             var data = JsonValue.NewObject();
             data.Set("groupId", groupId);
             data.Set("added", added);
@@ -307,7 +323,9 @@ namespace IcarusII.Game.Tools
             {
                 existing.Name = title;
                 existing.name = title;
-                existing.Level = EGoalLevel.Full;
+                // AI 目标由玩家主动要求生成，不受原生“目标等级”筛选限制。
+                // Off 是最低级，IsLevelPass(Off) 对 Off/Key/Full 全部成立。
+                existing.Level = EGoalLevel.Off;
                 existing.ParentId = 0;
                 existing.DeterminatorName = "GD_Group";
                 return;
@@ -317,7 +335,7 @@ namespace IcarusII.Game.Tools
                 ID = id,
                 SID = "ICARUSII_GOAL_GROUP_" + id.ToString(CultureInfo.InvariantCulture),
                 Name = title,
-                Level = EGoalLevel.Full,
+                Level = EGoalLevel.Off,
                 ParentId = 0,
                 DeterminatorName = "GD_Group",
                 DeterminatorParams = new long[0],
@@ -340,7 +358,7 @@ namespace IcarusII.Game.Tools
             p.Name = g.title;
             p.name = g.title;
             p.ParentId = g.groupId;
-            p.Level = EGoalLevel.Full;
+            p.Level = EGoalLevel.Off;
             p.Childs = new int[0];
             p.DeterminatorParams = CopyParams(g.parameters);
         }
@@ -353,7 +371,7 @@ namespace IcarusII.Game.Tools
                 SID = "ICARUSII_GOAL_" + id.ToString(CultureInfo.InvariantCulture),
                 Name = src.Name,
                 TooltipText = src.TooltipText,
-                Level = EGoalLevel.Full,
+                Level = EGoalLevel.Off,
                 QueueJumpPriority = src.QueueJumpPriority,
                 ParentId = 0,
                 NeedCombatMode = src.NeedCombatMode,
@@ -391,10 +409,20 @@ namespace IcarusII.Game.Tools
             if (data == null)
             {
                 data = new GoalData(id);
+                // 新注入的 GoalData 必须走一次 OnPatch 判定，之后由 EnsureDeterminator 调 OnLoad。
+                data.isPatched = false;
                 system.goalDatas[id] = data;
             }
             data.isGroup = isGroup;
-            data.isPatched = true;
+            if (isGroup && (data.stage == EGoalStage.Completed || data.stage == EGoalStage.Ignored))
+            {
+                // 往已经收起的组里追加新目标时，组必须重新激活；
+                // 旧判断器可能已经 isFinished，必须丢掉重建，否则 DetermineByChild 不会再跑。
+                data.stage = EGoalStage.Enabled;
+                data.isManualIgnore = false;
+                data.SetProgress(0, 0);
+                DropDeterminator(id);
+            }
             if (data.stage == EGoalStage.Disabled) data.stage = EGoalStage.Enabled;
             if (data.displayingState == null || data.displayingState.Length <= (int)EGoalLevel.Full)
                 data.displayingState = new bool[(int)EGoalLevel.Full + 1];
@@ -407,17 +435,32 @@ namespace IcarusII.Game.Tools
             if (system.goalQueue == null) system.goalQueue = new int[16];
             foreach (var pair in groups)
             {
-                bool present = false;
+                int existing = -1;
                 for (int i = 0; i < system.queueCursor; i++)
-                    if (system.goalQueue[i] == pair.Key) { present = true; break; }
-                if (present) continue;
-                if (system.queueCursor >= system.goalQueue.Length)
+                    if (system.goalQueue[i] == pair.Key) { existing = i; break; }
+
+                // 原生 UIGoalPanel 最多只显示 kMaxShowEntry(2) 个分组，且按队列顺序取。
+                // AI 目标是玩家当前要求的东西，必须排到队首，否则会被前面两个原生分组挤掉。
+                if (existing == 0) continue;
+                if (existing < 0)
                 {
-                    var next = new int[system.goalQueue.Length * 2];
-                    Array.Copy(system.goalQueue, next, system.goalQueue.Length);
-                    system.goalQueue = next;
+                    if (system.queueCursor >= system.goalQueue.Length)
+                    {
+                        var next = new int[system.goalQueue.Length * 2];
+                        Array.Copy(system.goalQueue, next, system.goalQueue.Length);
+                        system.goalQueue = next;
+                    }
+                    for (int i = system.queueCursor; i > 0; i--)
+                        system.goalQueue[i] = system.goalQueue[i - 1];
+                    system.goalQueue[0] = pair.Key;
+                    system.queueCursor++;
                 }
-                system.goalQueue[system.queueCursor++] = pair.Key;
+                else
+                {
+                    for (int i = existing; i > 0; i--)
+                        system.goalQueue[i] = system.goalQueue[i - 1];
+                    system.goalQueue[0] = pair.Key;
+                }
             }
         }
 
@@ -425,7 +468,22 @@ namespace IcarusII.Game.Tools
         {
             var logic = GameMain.gameScenario != null ? GameMain.gameScenario.goalLogic : null;
             if (logic == null || !logic.isInit) return;
-            if (logic.determinatorIndices != null && logic.determinatorIndices.ContainsKey(id)) return;
+
+            if (logic.determinatorIndices != null && logic.determinatorIndices.TryGetValue(id, out int existingIndex))
+            {
+                var existing = logic.determinators != null &&
+                               existingIndex >= 0 && existingIndex < logic.determinators.Length
+                    ? logic.determinators[existingIndex] : null;
+                if (existing != null && existing.inited)
+                {
+                    // 原生 OnGoalStageChanged 会在我们设 stage=Enabled 时同步建好判断器，
+                    // 但它只调 Init，不会补 OnPatch/OnLoad —— GD_UnlockTech 这类判断器的
+                    // targetValue 只在 DetermineOnLoad 里设置，漏掉就会 0/1 永远不显示。
+                    DetermineInitial(existing);
+                    return;
+                }
+            }
+
             var proto = LDB.goals.Select(id);
             if (proto == null || string.IsNullOrEmpty(proto.DeterminatorName)) return;
             var det = GoalDeterminator.asm.CreateInstance(proto.DeterminatorName) as GoalDeterminator;
@@ -443,8 +501,79 @@ namespace IcarusII.Game.Tools
             int index = logic.determinatorCursor++;
             logic.determinators[index] = det;
             logic.determinatorIndices[id] = index;
-            det.DetermineOnPatch();
-            det.DetermineOnLoad();
+            DetermineInitial(det);
+        }
+
+        private static void DropDeterminator(int id)
+        {
+            var logic = GameMain.gameScenario != null ? GameMain.gameScenario.goalLogic : null;
+            if (logic == null || logic.determinatorIndices == null || logic.determinators == null) return;
+            if (!logic.determinatorIndices.TryGetValue(id, out int index)) return;
+            if (index >= 0 && index < logic.determinators.Length && logic.determinators[index] != null)
+            {
+                logic.determinators[index].Free();
+                logic.determinators[index] = null;
+            }
+            logic.determinatorIndices.Remove(id);
+        }
+
+        private static void DetermineInitial(GoalDeterminator det)
+        {
+            if (det == null || !det.inited) return;
+            try
+            {
+                var system = GameMain.data != null ? GameMain.data.goalSystem : null;
+                var data = system != null ? system.GetGoalDataById(det.protoId) : null;
+                if (data != null && !data.isPatched)
+                {
+                    det.DetermineOnPatch();
+                    data.isPatched = true;
+                }
+                det.DetermineOnLoad();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning("目标判断器初始化失败 #" + det.protoId.ToString(CultureInfo.InvariantCulture) +
+                                      "：" + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// 玩家把“目标”设为关闭时，原生面板默认折叠成小圆点；AI 目标是玩家主动要的，
+        /// 这里把面板瞬态展开（只改 stateOverwritten，不写 goalLevel 偏好）。
+        /// 原生 DetermineVisiable 可能还没把 Off 折叠状态设好，所以允许下一帧再试。
+        /// </summary>
+        private static void RevealPanel()
+        {
+            try
+            {
+                if (GameMain.data == null || GameMain.data.gameDesc == null ||
+                    GameMain.data.gameDesc.goalLevel != EGoalLevel.Off)
+                {
+                    _revealPending = false;
+                    return;
+                }
+                var uiGame = UIRoot.instance != null ? UIRoot.instance.uiGame : null;
+                var panel = uiGame != null ? uiGame.goalPanel : null;
+                if (panel == null || !panel.inited) return;
+                if (panel.isEnxpand)
+                {
+                    _revealPending = false;
+                    return;
+                }
+                if (!panel.isCollapse) return;
+                panel.OnCollapseButtonClick(0);
+                if (panel.isEnxpand)
+                {
+                    _revealPending = false;
+                    Plugin.Log.LogInfo("目标面板处于关闭状态，已为 AI 目标瞬态展开");
+                }
+            }
+            catch (Exception ex)
+            {
+                _revealPending = false;
+                Plugin.Log.LogWarning("展开目标面板失败：" + ex.Message);
+            }
         }
 
         private static void HideGoal(int id)

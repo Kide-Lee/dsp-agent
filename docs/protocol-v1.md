@@ -80,6 +80,10 @@
 - `game.todo.v1`：mod 支持原生 GoalProto 目标注入与读取：`game_todo_templates` /
   `game_todo_list` / `game_todo_add` / `game_todo_remove`。目标直接进入原生
   `LDB.goals` / `GoalSystem` / `UIGoalPanel`；完成判定复用原生 `GoalDeterminator`。
+  AI 目标以 `EGoalLevel.Off` 注入并插到目标队列队首（原生面板最多显示 2 个分组），
+  注入后立即补跑判断器的 `DetermineOnPatch` / `DetermineOnLoad`，不受原生
+  `GoalLogic.CheckLogic` 的显示条件影响；玩家把目标面板设为“关闭”时，`game_todo_add`
+  会瞬态展开一次面板（不改 `goalLevel` 偏好）。
 
 ### 4.2 `ready` — sidecar → mod
 
@@ -1254,7 +1258,7 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | `game_tether_list` | 0 | 无 | 列出当前方位指示 |
 | `game_todo_templates` | 0 | 无 | 列出原生 GoalProto 模板与判断器 |
 | `game_todo_list` | 0 | 无 | 列出 AI 创建的目标、进度与阶段 |
-| `game_todo_add` | 2 | `group?`, `goals[]`（`templateId`, `title?`, `params?`, `itemId?`, `count?`） | 注入原生目标；确认后执行；使用原生 GoalDeterminator |
+| `game_todo_add` | 2 | `group?`, `goals[]`（`templateId`, `title?`, `params?`, `itemId?`, `count?`） | 注入原生目标；确认后执行；立即显示并补跑 GoalDeterminator 判定 |
 | `game_todo_remove` | 2 | `groupId?`, `goalId?` | 隐藏/删除 AI 创建的目标；确认后执行 |
 | `game_take_output` | 2 | `buildingId` | 取生产建筑成品；保留配方；背包满返回剩余；不进入撤销栈 |
 | `game_undo_last_write` | 1 | 无 | 撤销最近一次可撤销写操作；最近一次不可撤销时返回错误 |
