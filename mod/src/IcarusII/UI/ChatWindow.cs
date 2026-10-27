@@ -4352,7 +4352,6 @@ namespace IcarusII.UI
                 dropDown.anchoredPosition = new Vector2(0f, comboRt != null ? comboRt.sizeDelta.y : 24f);
             }
 
-            AdjustModelGroupSpacing(panel, combo);
             Plugin.Log.LogInfo("[UI] 已接上「模型」下拉框。");
             if (_pendingModelState != null)
             {
@@ -4360,29 +4359,6 @@ namespace IcarusII.UI
                 _pendingModelState = null;
                 ApplyModels(pending);
             }
-        }
-
-        /// <summary>
-        /// prefab 里 model-group 和 thinking-group 都靠右摆；玩家改版时两者可能贴太近
-        /// （模型框右缘压到「思考」标签）。这里按实际 rect 留 6px 间距，运行时兜底。
-        /// </summary>
-        private static void AdjustModelGroupSpacing(RectTransform panel, UIComboBox combo)
-        {
-            var group = combo != null ? combo.transform.parent as RectTransform : null;
-            var thinking = panel != null
-                ? FindNode(panel, "input/editor/tool-bar/thinking-group") as RectTransform
-                : null;
-            if (group == null || thinking == null || group.name != "model-group") return;
-
-            var width = group.rect.width > 1f ? group.rect.width : group.sizeDelta.x;
-            var groupRight = group.anchoredPosition.x + width;
-            var thinkingLeft = thinking.anchoredPosition.x;
-            var gap = thinkingLeft - groupRight;
-            if (gap >= 6f) return;
-
-            group.anchoredPosition = new Vector2(
-                group.anchoredPosition.x - (6f - gap), group.anchoredPosition.y);
-            Plugin.Log.LogInfo($"[UI] 模型框与思考框间距过小（{gap:0.#}px），已左移 {6f - gap:0.#}px。");
         }
 
         /// <summary>开始一段流式回复；后续 delta 会填进同一条消息。</summary>
