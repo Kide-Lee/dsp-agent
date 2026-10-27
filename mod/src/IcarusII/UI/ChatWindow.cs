@@ -601,6 +601,8 @@ namespace IcarusII.UI
         private ScrollRect _chatIndexScroll;
         private Text _chatIndexEmpty;
         private Button _newConversationButton;
+        private Text _conversationTitleText;
+        private GameObject _conversationTitlePlaceholder;
         private readonly List<ConversationInfo> _conversations = new List<ConversationInfo>();
         private readonly List<ConversationView> _conversationViews = new List<ConversationView>();
         private readonly Dictionary<string, bool> _conversationExpanded =
@@ -611,6 +613,7 @@ namespace IcarusII.UI
         private string _pendingFocusConversationId;
         private string _pendingFocusText;
         private long _pendingFocusTimestamp;
+        private string _pendingScrollBottomConversationId;
         private readonly List<TurnEntry> _turns = new List<TurnEntry>();
         private int _nextTurnId;
         private int _currentTurnId;
@@ -877,10 +880,13 @@ namespace IcarusII.UI
             _chatIndexScroll = null;
             _chatIndexEmpty = null;
             _newConversationButton = null;
+            _conversationTitleText = null;
+            _conversationTitlePlaceholder = null;
             _activeConversationId = null;
             _pendingFocusConversationId = null;
             _pendingFocusText = null;
             _pendingFocusTimestamp = 0;
+            _pendingScrollBottomConversationId = null;
             _conversations.Clear();
             _conversationViews.Clear();
             _conversationExpanded.Clear();
@@ -5270,6 +5276,7 @@ namespace IcarusII.UI
             _chatIndexEmpty = emptyRt != null ? emptyRt.GetComponent<Text>() : null;
             _newConversationButton = _chatIndex
                 .Find("chat-index-topbar/new-conversation")?.GetComponent<Button>();
+            EnsureConversationTitle();
 
             if (_chatIndexScroll == null || _chatIndexContent == null ||
                 _conversationTemplate == null || _recordTemplate == null || _expandMoreTemplate == null)
@@ -5428,16 +5435,37 @@ namespace IcarusII.UI
         {
             LinkTurnsToConversationRows();
             RefreshIndexSelection();
+            if (!string.IsNullOrEmpty(_pendingScrollBottomConversationId) &&
+                _pendingScrollBottomConversationId == _activeConversationId)
+            {
+                _pendingScrollBottomConversationId = null;
+                _pendingFocusConversationId = null;
+                _pendingFocusText = null;
+                _pendingFocusTimestamp = 0;
+                ScrollToBottom();
+                return;
+            }
             TryFocusPendingConversationRecord();
+        }
+
+        /// <summary>切换被 busy/断线拒绝时清掉待打开状态，避免下次误滚动。</summary>
+        public void CancelPendingConversationOpen()
+        {
+            _pendingScrollBottomConversationId = null;
+            _pendingFocusConversationId = null;
+            _pendingFocusText = null;
+            _pendingFocusTimestamp = 0;
         }
 
         public void ClearConversations()
         {
             _conversations.Clear();
             _activeConversationId = null;
+            _pendingScrollBottomConversationId = null;
             _conversationViews.Clear();
             ClearConversationGroups();
             RefreshIndexEmpty();
+            RefreshConversationTitle();
         }
 
         private void RememberActiveConversation()
@@ -5465,6 +5493,7 @@ namespace IcarusII.UI
             RefreshIndexEmpty();
             LinkTurnsToConversationRows();
             RefreshIndexSelection();
+            RefreshConversationTitle();
         }
 
         private void CaptureConversationState()
@@ -5541,7 +5570,13 @@ namespace IcarusII.UI
             if (headerButton != null)
             {
                 headerButton.onClick.RemoveAllListeners();
-                headerButton.onClick.AddListener(() => ToggleConversation(info.Id));
+                headerButton.onClick.AddListener(() => OnConversationHeaderClicked(info.Id));
+            }
+            var chevronButton = header.Find("chevron")?.GetComponent<Button>();
+            if (chevronButton != null)
+            {
+                chevronButton.onClick.RemoveAllListeners();
+                chevronButton.onClick.AddListener(() => ToggleConversation(info.Id));
             }
 
             var delete = header.Find("delete");
@@ -5561,7 +5596,8 @@ namespace IcarusII.UI
         {
             if (view == null) return;
             if (view.Title != null)
-                view.Title.text = string.IsNullOrEmpty(view.Info.Title) ? "新会话" : view.Info.Title;
+                view.Title.text = HeaderTitleLabel(
+                    string.IsNullOrEmpty(view.Info.Title) ? "新会话" : view.Info.Title);
             if (view.Count != null) view.Count.text = view.Info.RecordCount + " 条";
             if (view.Chevron != null) view.Chevron.text = view.Expanded ? "▾" : "▸";
             if (view.ActiveBar != null) view.ActiveBar.SetActive(view.Id == _activeConversationId);
@@ -5642,6 +5678,43 @@ namespace IcarusII.UI
             view.Records.gameObject.SetActive(view.Expanded);
         }
 
+        /// <summary>点会话标题：打开该会话并滚到最新；点 chevron 只负责展开/收起。</summary>
+        private void OnConversationHeaderClicked(string conversationId)
+        {
+            var view = FindConversationView(conversationId);
+            if (view == null) return;
+
+            if (conversationId != _activeConversationId)
+            {
+                _conversationExpanded[conversationId] = true;
+                if (!_conversationVisible.TryGetValue(conversationId, out var visible) || visible < 5)
+                    _conversationVisible[conversationId] = 5;
+                _pendingScrollBottomConversationId = conversationId;
+                _pendingFocusConversationId = null;
+                _pendingFocusText = null;
+                _pendingFocusTimestamp = 0;
+                try
+                {
+                    ConversationSwitchRequested?.Invoke(conversationId);
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogWarning($"[索引] 请求打开会话失败：{ex.Message}");
+                }
+                return;
+            }
+
+            // 已经是当前会话：强制展开，并滚到最新一条。
+            _conversationExpanded[conversationId] = true;
+            if (view.Visible <= 0) view.Visible = 5;
+            view.Expanded = true;
+            BuildConversationRecords(view);
+            UpdateConversationHeader(view);
+            LinkTurnsToConversationRows();
+            RefreshIndexSelection();
+            ScrollToBottom();
+        }
+
         private void ToggleConversation(string conversationId)
         {
             var view = FindConversationView(conversationId);
@@ -5705,6 +5778,7 @@ namespace IcarusII.UI
             if (record == null) return;
             if (conversationId != _activeConversationId)
             {
+                _pendingScrollBottomConversationId = null;
                 _pendingFocusConversationId = conversationId;
                 _pendingFocusText = record.Text;
                 _pendingFocusTimestamp = record.Timestamp;
@@ -5789,6 +5863,45 @@ namespace IcarusII.UI
                 if (!char.IsLetterOrDigit(c) && c != '_' && c != '-') chars[i] = '_';
             }
             return new string(chars);
+        }
+
+        private static string FitLabel(string text, int fontSize, float maxWidth)
+        {
+            var s = (text ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (s.Length == 0) return string.Empty;
+            maxWidth = Mathf.Max(20f, maxWidth);
+            if (EstimateTextWidth(s, fontSize) <= maxWidth) return s;
+            while (s.Length > 0 && EstimateTextWidth(s + "…", fontSize) > maxWidth)
+                s = s.Substring(0, s.Length - 1);
+            return s + "…";
+        }
+
+        /// <summary>左栏会话标题：最多 144px，超出用省略号，避免压到“# 条”和删除按钮。</summary>
+        private static string HeaderTitleLabel(string text)
+        {
+            return FitLabel(text, 13, 140f);
+        }
+
+        private void EnsureConversationTitle()
+        {
+            var input = _panel != null
+                ? _panel.Find("content-column/title/name-input") as RectTransform
+                : null;
+            if (input == null) return;
+            _conversationTitleText = input.Find("name-text")?.GetComponent<Text>();
+            var placeholder = input.Find("name-over");
+            _conversationTitlePlaceholder = placeholder != null ? placeholder.gameObject : null;
+        }
+
+        /// <summary>右栏标题显示当前会话的完整标题；左侧索引只显示截断版。</summary>
+        private void RefreshConversationTitle()
+        {
+            var conversation = FindConversation(_activeConversationId);
+            var title = conversation != null ? conversation.Title : string.Empty;
+            if (_conversationTitleText != null)
+                _conversationTitleText.text = FitLabel(title, 16, 210f);
+            if (_conversationTitlePlaceholder != null)
+                _conversationTitlePlaceholder.SetActive(string.IsNullOrEmpty(title));
         }
 
         private string IndexLabel(string text, float maxWidth)

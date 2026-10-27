@@ -1653,6 +1653,7 @@ namespace IcarusII
                 if (_chat == null) return;
                 if (!info.Ok)
                 {
+                    _chat.CancelPendingConversationOpen();
                     _chat.AppendSystem(Strings.Get("chat.conversation.failed", info.Error ?? "unknown"));
                     _chat.SetStatus(Strings.Get("status.ready"), OkColor);
                     return;
@@ -1714,11 +1715,15 @@ namespace IcarusII
             if (string.IsNullOrEmpty(conversationId)) return;
             if (_streaming)
             {
+                _chat.CancelPendingConversationOpen();
                 _chat.AppendSystem(Strings.Get("chat.conversation.busy"));
                 return;
             }
             if (_client.SendConversationSwitch(conversationId) == null)
+            {
+                _chat.CancelPendingConversationOpen();
                 _chat.AppendSystem(Strings.Get("chat.conversation.failed", "连接未就绪"));
+            }
         }
 
         private void OnConversationDeleteRequested(string conversationId)
