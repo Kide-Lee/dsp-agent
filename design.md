@@ -1003,10 +1003,13 @@ function gameTool<T>(spec: {
 
 当前实现（M5）：
 
-- **文本源在仓库里，编译进二进制**：`sidecar/prompts/system.zh.md`（单份提示词，Markdown 格式，无占位符），
+- **文本源在仓库里，编译进二进制**：`sidecar/prompts/system.zh.md`（单份提示词，Markdown 格式），
   `scripts/gen-prompts.mjs` 在 build/typecheck 时生成 `src/prompts.generated.ts`。
   运行时不读文件——sidecar 是 esbuild 单文件 + Node SEA，多分发一份资源会和打包方式冲突。
   老 mod 的“只用游戏标签”legacy 提示词已移除：mod 统一支持 `ui.richtext.v2`。
+- **本地化引用**：文本里的 `{{顾问字幕42}}` 在构建期从游戏 `Locale/<lcid>/base.txt` 取同名条目
+  （默认 zh-CN/2052，可用 `ICARUS_II_PROMPT_LOCALE` 覆盖），并把 `<color=#…>` 等游戏标记
+  规范化成 mod 语法；缺条目或含 `$LKEY` 直接构建失败。目录可用 `ICARUS_II_LOCALE_DIR` 指定。
 - **人格里不写工具清单**：能力段落和每个工具的 `promptGuidelines` 由 `agent.ts` 按本轮注册表生成
   （`src/prompt/sections.ts`）。加/删工具后提示词自动跟上；实测踩过“人格仍称只能读 → 模型拒调写工具”。
 - **每轮附加段顺序**：能力+工具规则 → 权限档位 → 沙盒状态 → 强制工具。

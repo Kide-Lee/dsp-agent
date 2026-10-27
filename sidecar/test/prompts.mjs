@@ -25,7 +25,13 @@ import {
   toolsSignature,
 } from '../dist/prompt/sections.js';
 import { loadPromptOverride } from '../dist/prompt/override.js';
-import { generatePromptsSource, OUTPUT_PATH } from '../scripts/gen-prompts.mjs';
+import {
+  generatePromptsSource,
+  normalizeLocalizedText,
+  OUTPUT_PATH,
+  parseLocaleTable,
+  resolvePromptReferences,
+} from '../scripts/gen-prompts.mjs';
 import { check, summary } from './helpers.mjs';
 
 /** pi 默认 coding prompt 的特征串：一个都不能出现在人格里。 */
@@ -55,6 +61,53 @@ console.log('── 生成物新鲜度 ──');
   );
 }
 
+console.log('\n── 本地化引用 ──');
+{
+  const table = parseLocaleTable(
+    '顾问字幕1\t\t5\t<color="#61D8FFc0">射线接收站</color>\r\n' +
+      '顾问字幕2\t\t2\t矿脉枯竭\\r\\n第二行\u2009!\r\n' +
+      '无文本\t\t5\r\n',
+  );
+  check('解析 key/文本列', table.get('顾问字幕1') === '<color="#61D8FFc0">射线接收站</color>', table.get('顾问字幕1'));
+  check('忽略列数不足的行', !table.has('无文本'));
+
+  check(
+    '颜色标签规范化为 value= 形式',
+    normalizeLocalizedText(table.get('顾问字幕1')) === '<color value="#61D8FFc0">射线接收站</color>',
+    normalizeLocalizedText(table.get('顾问字幕1')),
+  );
+  check(
+    '字面量 \\r\\n 转成换行',
+    normalizeLocalizedText(table.get('顾问字幕2')) === '矿脉枯竭\n第二行!',
+    JSON.stringify(normalizeLocalizedText(table.get('顾问字幕2'))),
+  );
+  check('去掉 <b> 标签', normalizeLocalizedText('a<b>粗</b>b') === 'a粗b');
+  check(
+    '未加引号的游戏 color 写法也能转换',
+    normalizeLocalizedText('<color=#61D8FFc0>x</color>') === '<color value="#61D8FFc0">x</color>',
+  );
+
+  let threw = '';
+  try {
+    normalizeLocalizedText('请使用 [$LKEY_1;]');
+  } catch (err) {
+    threw = err.message;
+  }
+  check('$LKEY 参数引用让构建失败', threw.includes('$LKEY'), threw);
+
+  check(
+    '替换引用',
+    resolvePromptReferences('前 {{顾问字幕1}} 后', table) === '前 <color value="#61D8FFc0">射线接收站</color> 后',
+  );
+  threw = '';
+  try {
+    resolvePromptReferences('{{不存在的条目}}', table);
+  } catch (err) {
+    threw = err.message;
+  }
+  check('缺条目时明确报出 key', threw.includes('不存在的条目'), threw);
+}
+
 console.log('\n── 人格内容 ──');
 {
   const text = ICARUS_II_SYSTEM_PROMPT;
@@ -67,20 +120,26 @@ console.log('\n── 人格内容 ──');
   // 工具清单由 prompt/sections.ts 按注册表生成；人格里点名具体工具 = 迟早腐烂。
   const toolNames = text.match(/\b(?:game|kb|wiki|blueprint)_[a-z_]+\b/g) ?? [];
   check('人格不手写具体工具名', toolNames.length === 0, toolNames.join(','));
-  check('人格保留格式占位内容（读取游戏状态段）', text.includes('读取游戏状态'));
+  check('人格保留工具使用段', text.includes('## 使用工具'));
   check('人格保留能力边界', text.includes('能力边界') && text.includes('以本轮函数列表为唯一权威'));
   check('人格长度在预算内（≤ 3000 字符）', text.length <= 3000, `${text.length} 字符`);
 }
 
-console.log('\n── 单一提示词格式 ──');
+console.log('\n── 提示词结构 ──');
 {
   const text = ICARUS_II_SYSTEM_PROMPT;
-  check('使用标准 Markdown 格式段', text.includes('标准 Markdown'));
+  check('使用 Markdown 格式段', text.includes('Markdown'));
   check('不含 legacy 的“只用游戏富文本”告警', !text.includes('否则玩家看到的是一堆符号'));
   check('不再要求“不要输出 Markdown”', !text.includes('不要输出 Markdown'));
-  for (const section of ['读取游戏状态', '知识库', '能力边界']) {
+  for (const section of ['## 扮演', '## 格式', '## 使用工具']) {
     check(`含「${section}」段`, text.includes(section));
   }
+  // 本地化引用已在生成时展开：能看到字幕原文，且不再有 {{...}}。
+  check('本地化引用已展开', text.includes('戴森云') && !text.includes('{{'));
+  check(
+    '展开后的颜色标签是 mod 语法',
+    !/<color\s*=/.test(text) && text.includes('<color value="#61D8FFc0">'),
+  );
 }
 
 console.log('\n── 工具规则语言 ──');

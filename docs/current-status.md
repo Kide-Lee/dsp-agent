@@ -39,7 +39,7 @@
 | Game Menu 聊天入口 | 右下角 Game Menu 的截图键正上方新增聊天入口按钮（`button-agent.prefab` 随 UI bundle 分发）；Game Menu 是 `DSPGame.unity` 里的场景对象，运行期按 `UIGameMenu.buttonS` 锚定并绑定打开聊天窗；离线构建通过，待实机验收 |
 | 首次配置引导 | 取消聊天输入框的密钥录入态；`missing_key` / `invalid_key` / `unreachable` 时在聊天窗提示点击右上角设置按钮，由设置页「模型」页提交 Key。未配置时发送提问会被拦截并再次指向设置页，不再把输入当成 Key |
 | 输入工具条修复 | 图标 / 复选框 / 文字颜色改为按点击工具条前的光标/选区插入：工具栏按钮带 Unity `Button`，点击会让 InputField 失焦并把内部 caret 清 0；现在运行期记住最后聚焦时的选区并在插入前恢复 |
-| 提示词装配重构 | 单一人格文本在 `sidecar/prompts/system.zh.md`，构建时生成 TS 常量（`gen-prompts.mjs`；legacy 富文本版与 `{{NAME}}`/`{{FORMAT}}` 占位符已移除，残留 `{{}}` 仍会让构建失败）；人格不再手写工具清单，能力段落与 `promptGuidelines` 按本轮注册表生成；新增 `--system-prompt-file`（仅调试/评测）与 `test/prompts.mjs` 护栏 |
+| 提示词装配重构 | 单一人格文本在 `sidecar/prompts/system.zh.md`，构建时生成 TS 常量（`gen-prompts.mjs`；legacy 富文本版已移除）；`{{顾问字幕42}}` 这类引用在构建期从游戏 `Locale/<lcid>/base.txt` 取值并规范化，缺条目/`$LKEY` 直接失败；人格不再手写工具清单，能力段落与 `promptGuidelines` 按本轮注册表生成；新增 `--system-prompt-file`（仅调试/评测）与 `test/prompts.mjs` 护栏 |
 
 ### M4 收尾修复
 
