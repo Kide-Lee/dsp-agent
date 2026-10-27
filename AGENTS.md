@@ -300,7 +300,6 @@ scripts/package.sh
   - 已验收的右锚点位置：`send-button -20`、`permission-group -100`、`thinking-group -220`、`model-group -340`（间距 20/30/20）。
   - 任何 prefab/构建操作前后都用 `IcarusIIDumpPrefab` dump 并对比这四项；不要靠 `git diff` 判断二进制 prefab。
   - 发现漂移时，先恢复 `mod/unity/Prefab/ChatWindow.prefab` 快照再重打 bundle；不要把漂移后的 `dsp-game` prefab 回存/提交，也不要在运行期代码里补位置。
-- **右锚点组不要用 `anchoredPosition.x + width` 当右缘**：`send-button` / `permission-group` / `thinking-group` / `model-group` 都以 `(1,0.5)` 为锚点、pivot `(1,0.5)`，`anchoredPosition.x` 本身就是右缘偏移。曾经的 `AdjustModelGroupSpacing` 把它当左缘，算出 -50px 间距后又把模型框左移 56px，导致游戏里模型框比 prefab 预览偏左。这类“间距兜底”一律删除，间距直接写 prefab；需要留白就改预制体里的 `anchoredPosition`。
 - Unity batch 在 sandbox 下没有 `/dev/dri` 会 graphics 初始化失败，需要 GPU/full access。
 - 只改 DLL 不会更新 prefab；只重打 bundle 不会更新 DLL。按改动类型分别更新。
 - 图标/文字材质是游戏定制资源；需要柔化时优先复用原生 `widget-text-default-icon-set` / `GameTextStyle`，不要随意改全局材质。
