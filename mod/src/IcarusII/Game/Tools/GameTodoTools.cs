@@ -43,7 +43,10 @@ namespace IcarusII.Game.Tools
             {
                 var data = GameGoals.Add(args);
                 WriteActionStack.MarkNonUndoable("新增游戏目标");
-                return Ok("已新增 " + data["count"].AsInt(0).ToString(CultureInfo.InvariantCulture) + " 个游戏目标", data);
+                var message = "已新增 " + data["count"].AsInt(0).ToString(CultureInfo.InvariantCulture) + " 个游戏目标";
+                if (data["goalPanelOff"].AsBool(false))
+                    message += "。注意：当前“目标建议”为自由探索，左侧目标面板不会显示；请提醒玩家打开目标面板设置，改为“关键节点”或“事无巨细”";
+                return Ok(message, data);
             }
             catch (Exception ex)
             {

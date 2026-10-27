@@ -486,7 +486,8 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         'Use game_todo_add 当玩家明确要求“给我一个目标/待办/采集 N 个/解锁科技”等目标时。',
         '必须先调用 game_todo_templates 选择真实存在的模板；不要编造 templateId 或判断器名。',
         'title 要写清楚目标；itemId/count 只用于模板参数确实是 item/count 的常见情况，其他模板用 params 按模板原参数顺序覆盖。',
-        '目标会直接出现在游戏左侧原生目标面板；不要重复添加同一个目标。',
+        '目标默认会出现在游戏左侧原生目标面板；不要重复添加同一个目标。',
+        '如果结果里 goalPanelOff=true（玩家“目标建议”选了自由探索），目标已经创建但面板不会显示；必须明确提醒玩家打开目标面板设置，把“目标建议”改为“关键节点”或“事无巨细”，不要声称目标已经显示。',
       ],
       parameters: Type.Object({
         group: Type.Optional(Type.String({ description: '分组标题，默认“游戏目标”' })),

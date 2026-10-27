@@ -40,7 +40,6 @@ namespace IcarusII.Game.Tools
         private static string _saveKey;
         private static bool _loaded;
         private static bool _needsApply;
-        private static bool _revealPending;
         private static int _nextId = CustomIdStart;
 
         public static void Tick()
@@ -60,7 +59,6 @@ namespace IcarusII.Game.Tools
                     _saveKey = key;
                     _loaded = false;
                     _applied = false;
-                    _revealPending = false;
                     _notes = null;
                     _nextId = CustomIdStart;
                 }
@@ -69,9 +67,6 @@ namespace IcarusII.Game.Tools
                     _store = LoadStore();
                     _loaded = true;
                     _needsApply = _store != null && _store.goals.Count > 0;
-                    // 读档后已有 AI 目标也要可见；goalLevel=Off 时原生面板默认折叠，
-                    // 这里同样做一次瞬态展开，否则玩家会以为目标丢了。
-                    _revealPending = _needsApply;
                     EnsureNextId();
                 }
                 if (_notes == null) _notes = new Dictionary<int, string>();
@@ -84,7 +79,6 @@ namespace IcarusII.Game.Tools
                     }
                 }
                 if (_applied) RefreshNotes();
-                if (_revealPending) RevealPanel();
             }
             catch (Exception ex)
             {
@@ -103,7 +97,6 @@ namespace IcarusII.Game.Tools
             _store = null;
             _applied = false;
             _needsApply = false;
-            _revealPending = false;
             _notes = null;
         }
 
@@ -161,6 +154,7 @@ namespace IcarusII.Game.Tools
             var data = JsonValue.NewObject();
             data.Set("goals", arr);
             data.Set("count", arr.Count);
+            AppendGoalPanelState(data);
             return data;
         }
 
@@ -231,15 +225,14 @@ namespace IcarusII.Game.Tools
                 _needsApply = false;
                 _applied = true;
             }
-            // 玩家主动要求生成目标，就必须马上能看到。原生目标面板在“关闭/折叠”状态
-            // 不会自动弹开，因此这里做一次瞬态展开（不写 goalLevel 偏好）。
-            _revealPending = true;
+            // 玩家主动要求生成目标，日志里留一条便于实机追溯。
             Plugin.Log.LogInfo("游戏目标已注入 +" + added.Count.ToString(CultureInfo.InvariantCulture) +
                                "，groupId=" + groupId.ToString(CultureInfo.InvariantCulture));
             var data = JsonValue.NewObject();
             data.Set("groupId", groupId);
             data.Set("added", added);
             data.Set("count", added.Count);
+            AppendGoalPanelState(data);
             return data;
         }
 
@@ -539,41 +532,19 @@ namespace IcarusII.Game.Tools
         }
 
         /// <summary>
-        /// 玩家把“目标”设为关闭时，原生面板默认折叠成小圆点；AI 目标是玩家主动要的，
-        /// 这里把面板瞬态展开（只改 stateOverwritten，不写 goalLevel 偏好）。
-        /// 原生 DetermineVisiable 可能还没把 Off 折叠状态设好，所以允许下一帧再试。
+        /// 玩家把“目标建议”选成“自由探索”(EGoalLevel.Off) 时，原生 UIGoalPanel 只会
+        /// 折叠成一个小圆点，不会展示任何目标。工具把状态带回给模型，由模型提醒玩家
+        /// 打开目标显示，而不是去强行修改玩家的偏好。
         /// </summary>
-        private static void RevealPanel()
+        private static void AppendGoalPanelState(JsonValue data)
         {
-            try
-            {
-                if (GameMain.data == null || GameMain.data.gameDesc == null ||
-                    GameMain.data.gameDesc.goalLevel != EGoalLevel.Off)
-                {
-                    _revealPending = false;
-                    return;
-                }
-                var uiGame = UIRoot.instance != null ? UIRoot.instance.uiGame : null;
-                var panel = uiGame != null ? uiGame.goalPanel : null;
-                if (panel == null || !panel.inited) return;
-                if (panel.isEnxpand)
-                {
-                    _revealPending = false;
-                    return;
-                }
-                if (!panel.isCollapse) return;
-                panel.OnCollapseButtonClick(0);
-                if (panel.isEnxpand)
-                {
-                    _revealPending = false;
-                    Plugin.Log.LogInfo("目标面板处于关闭状态，已为 AI 目标瞬态展开");
-                }
-            }
-            catch (Exception ex)
-            {
-                _revealPending = false;
-                Plugin.Log.LogWarning("展开目标面板失败：" + ex.Message);
-            }
+            var desc = GameMain.data != null ? GameMain.data.gameDesc : null;
+            var level = desc != null ? desc.goalLevel : EGoalLevel.None;
+            bool off = level == EGoalLevel.Off;
+            data.Set("goalLevel", level.ToString());
+            data.Set("goalPanelOff", off);
+            if (off)
+                data.Set("notice", "玩家当前选择“自由探索”（目标建议关闭），游戏左侧“游戏目标”面板不会显示目标；请提醒玩家打开目标面板的设置，把“目标建议”改为“关键节点”或“事无巨细”。");
         }
 
         private static void HideGoal(int id)

@@ -569,9 +569,12 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
     gameTool(host, {
       name: 'game_todo_list',
       label: '当前游戏目标',
-      description: '读取 AI 创建的原生游戏目标及当前值/目标值/阶段。',
+      description: '读取 AI 创建的原生游戏目标及当前值/目标值/阶段，以及玩家当前是否关闭了目标显示。',
       promptSnippet: '读取当前 AI 游戏目标',
-      promptGuidelines: ['Use game_todo_list 当玩家询问当前目标进度或准备删除目标时。'],
+      promptGuidelines: [
+        'Use game_todo_list 当玩家询问当前目标进度或准备删除目标时。',
+        '如果结果里 goalPanelOff=true，说明玩家“目标建议”选了自由探索，目标不显示；回答进度时提醒玩家打开目标面板设置改成“关键节点”或“事无巨细”。',
+      ],
       parameters: Type.Object({}),
       timeoutMs: 5000,
     }),
