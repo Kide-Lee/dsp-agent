@@ -65,8 +65,11 @@ namespace IcarusII.EditorTools
                     bg.raycastTarget = false;
                 }
 
+                // 只迁移“旧版 chat-index-header + 没有新 topbar”的 prefab。
+                // 用户新版已经有 chat-index-topbar 时，绝不删除同名自定义节点。
                 var oldHeader = index.Find(HeaderName);
-                if (oldHeader != null) UnityEngine.Object.DestroyImmediate(oldHeader.gameObject);
+                if (oldHeader != null && index.Find("chat-index-topbar") == null)
+                    UnityEngine.Object.DestroyImmediate(oldHeader.gameObject);
 
                 var scroll = index.Find(ScrollName) as RectTransform;
                 var content = scroll != null
@@ -74,6 +77,7 @@ namespace IcarusII.EditorTools
                     : null;
                 var template = content != null ? content.Find(TemplateName) as RectTransform : null;
                 if (template != null &&
+                    content.Find("conversation-group-template") == null &&
                     (template.Find("link/label") == null ||
                      template.GetComponent<Image>() == null ||
                      template.Find("link").GetComponent<Button>() != null))
