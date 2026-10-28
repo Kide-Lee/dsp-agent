@@ -455,8 +455,10 @@ pi 默认 coding prompt——所有工具段落都白写了。
 
 ## 14. 相关文档
 
-- [protocol-v1.md](../protocol-v1.md) 附录 B：**有哪些工具**、`tool_call` / `tool_result` 协议字段
+- [index.md](index.md)：**每个模型可见工具**的提示词原文、参数、返回字段、风险等级
+- [protocol-v1.md](../protocol-v1.md) 附录 B：协议字段与能力位协商
 - [current-status.md](../current-status.md)：各工具的实现与验收状态
-- 本文：**模型看到的文本**怎么生成、从哪来、改哪里
 
-后续单工具文档（`docs/tools/<tool-name>.md`）应引用本文，不重复描述拼接机制。
+单工具文档由 `sidecar/scripts/gen-tool-docs.mts` 从运行期 `ToolDefinition` 生成，
+只引用本文、不重复描述拼接机制。改工具的 `description` / `promptGuidelines` 后
+必须重新生成，否则 `npm test` 里的 `test:tool-docs` 会失败。

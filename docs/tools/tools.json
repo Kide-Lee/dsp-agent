@@ -1,0 +1,2998 @@
+{
+  "generatedBy": "sidecar/scripts/gen-tool-docs.mts",
+  "tools": [
+    {
+      "name": "ask_user",
+      "label": "向玩家提问",
+      "description": "向玩家展示一个或多个带选项的问题，等待玩家在游戏窗口里选择或输入答案。当需要玩家明确偏好、取舍或确认，而现有信息不足以判断时使用。一次最多 8 题，每题最多 4 个选项；选项尽量具体，玩家也可以自定义输入。需要多个答案时把 allowMultiple 设为 true。",
+      "promptGuidelines": [
+        "需要玩家明确选择/偏好/确认，且无法从游戏状态或知识库推断时使用。",
+        "不要问能自己查到或验证的事实；能给出 2–4 个具体选项时优先给选项。",
+        "一次可以问多个相关问题，UI 会逐题展示并允许玩家返回上一题；提交按钮在非最后一题显示“下一个”。",
+        "玩家可能跳过问题；收到 skipped=true 时不要重复追问同一题。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "单个问题；与 questions 二选一"
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "question"
+              ],
+              "properties": {
+                "question": {
+                  "type": "string",
+                  "description": "要问玩家的完整问题"
+                },
+                "context": {
+                  "type": "string",
+                  "description": "可选上下文"
+                },
+                "header": {
+                  "type": "string",
+                  "description": "可选短标题"
+                },
+                "options": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "title"
+                    ],
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "description": "选项文字"
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "选项补充说明"
+                      }
+                    }
+                  },
+                  "description": "0–4 个选项",
+                  "maxItems": 4
+                },
+                "allowMultiple": {
+                  "type": "boolean",
+                  "description": "是否多选；多选时每个选项前显示复选框，默认 false"
+                },
+                "allowFreeform": {
+                  "type": "boolean",
+                  "description": "是否允许玩家输入自定义答案，默认 true"
+                }
+              }
+            },
+            "description": "1–8 个问题；UI 逐题展示",
+            "minItems": 1,
+            "maxItems": 8
+          },
+          "context": {
+            "type": "string",
+            "description": "可选上下文"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "title"
+              ],
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "选项文字"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "选项补充说明"
+                }
+              }
+            },
+            "description": "单题选项，0–4 个",
+            "maxItems": 4
+          },
+          "allowMultiple": {
+            "type": "boolean",
+            "description": "是否多选，默认 false"
+          },
+          "allowFreeform": {
+            "type": "boolean",
+            "description": "是否允许自定义输入，默认 true"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "ask",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "interactive.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "blueprint_fs",
+      "label": "蓝图文件",
+      "description": "在游戏的蓝图目录里查看和整理文件，类似受限的 ls/cd/pwd/cat/mkdir/rm/rmdir。路径以蓝图根为 `/`；默认保存目录是 `/IcarusII`。不能访问蓝图目录之外。",
+      "promptGuidelines": [
+        "玩家要查看蓝图目录、进入子目录、读取蓝图信息、建目录、删除或保存任意蓝图文本时使用。",
+        "默认保存到 `/IcarusII`；用 op=write 保存模型从其他途径拿到的蓝图原文（必须是合法 .txt 蓝图）。",
+        "op=rm/rmdir 是永久删除；必须先向玩家确认，只有玩家明确同意后才传 confirm=true。",
+        "cat 默认返回蓝图元数据；只有确实需要原文时才传 raw=true。",
+        "路径不能含 .. 或盘符；不能越出蓝图根。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "pwd"
+              },
+              {
+                "type": "string",
+                "const": "cd"
+              },
+              {
+                "type": "string",
+                "const": "ls"
+              },
+              {
+                "type": "string",
+                "const": "cat"
+              },
+              {
+                "type": "string",
+                "const": "mkdir"
+              },
+              {
+                "type": "string",
+                "const": "write"
+              },
+              {
+                "type": "string",
+                "const": "rm"
+              },
+              {
+                "type": "string",
+                "const": "rmdir"
+              }
+            ],
+            "description": "操作类型"
+          },
+          "path": {
+            "type": "string",
+            "description": "虚拟路径；相对当前目录，或以 / 开头"
+          },
+          "content": {
+            "type": "string",
+            "description": "op=write：蓝图 .txt 原文"
+          },
+          "recursive": {
+            "type": "boolean",
+            "description": "ls 递归 / rmdir 递归删除，默认 false"
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "rm/rmdir 必须为 true；永久删除"
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "write 是否覆盖同名文件，默认 false"
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "cat 是否返回蓝图原文，默认 false（只返回元数据）"
+          },
+          "details": {
+            "type": "boolean",
+            "description": "ls 是否解析 .txt 蓝图元数据，默认 false"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "description": "ls 最多返回条目，默认 200"
+          }
+        }
+      },
+      "source": "blueprint",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "blueprint.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "blueprint_generate",
+      "label": "生成产线蓝图",
+      "description": "按知识库里的真实配方，从原矿开始生成完整产线蓝图（各阶段机器 + 传送带 + 分拣器 + 连接槽位），保存到游戏蓝图目录。需要先进入存档让知识库建立；输入物品与每分钟产量，可选机器/带子/分拣器级别与行数。",
+      "promptGuidelines": [
+        "玩家要“完整产线蓝图/带带子和爪子的蓝图”时使用，不要回答只能下载。",
+        "item 可以是物品名（如“电磁涡轮”）或物品 id；rate 是每分钟产量。",
+        "buildingTier: base 对应最低速机器 / mk2 / mk3；beltType: 0 黄带 / 1 绿带 / 2 蓝带；insertType: 0 分拣器 / 1 高速 / 2 极速 / 3 集装。",
+        "返回里的 stages 是每个阶段的机器数与产物，回答时先报最终产物与总机器数，再按阶段说明。",
+        "warnings 非空时必须原样告诉玩家，不要声称“完整可用”。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "item",
+          "rate"
+        ],
+        "properties": {
+          "item": {
+            "type": "string",
+            "description": "物品名或物品 id"
+          },
+          "rate": {
+            "type": "number",
+            "description": "目标每分钟产量"
+          },
+          "buildingTier": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "base"
+              },
+              {
+                "type": "string",
+                "const": "mk2"
+              },
+              {
+                "type": "string",
+                "const": "mk3"
+              }
+            ],
+            "description": "机器档位，默认 base（知识库里的最低速机器）"
+          },
+          "beltType": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2,
+            "description": "默认 2（蓝带）"
+          },
+          "insertType": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3,
+            "description": "默认 2（极速）"
+          },
+          "rows": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "产线行数，默认 1；超宽时会自动加行"
+          },
+          "stackSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "集装堆叠，默认 1"
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16,
+            "description": "配方展开深度，默认 8"
+          },
+          "from": {
+            "type": "string",
+            "description": "起点：ore（默认，从原矿投入）/ smelted（从冶炼产物，如铁块/钛块开始）/ 物品名或 id（从该中间产物开始）"
+          },
+          "dir": {
+            "type": "string",
+            "description": "保存目录（相对蓝图根，默认 /IcarusII）；不存在会自动创建"
+          },
+          "name": {
+            "type": "string",
+            "description": "蓝图文件名"
+          },
+          "author": {
+            "type": "string",
+            "description": "作者，默认“自动生成”"
+          },
+          "version": {
+            "type": "string",
+            "description": "版本号，默认当前游戏版本"
+          },
+          "attributes": {
+            "type": "string",
+            "description": "蓝图属性"
+          },
+          "description": {
+            "type": "string",
+            "description": "蓝图介绍"
+          }
+        }
+      },
+      "source": "blueprint",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "blueprint.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "blueprint_info",
+      "label": "蓝图详情",
+      "description": "读取一个蓝图文件并做格式体检（头部/base64+gzip/md5），返回大小与解码后字节数，不解析建筑。支持 GitHub 仓库路径或 Dyson Sphere Blueprints 详情页 URL；内容版权归原作者，必须署名来源。",
+      "promptGuidelines": [
+        "在 blueprint_search 选中结果后使用，确认文件有效并给出下载链接。",
+        "GitHub 结果传 path；Dyson Sphere Blueprints 结果传 url。",
+        "valid=false 时说明原因（format/gzip），不要猜里面的建筑。",
+        "回答必须带来源链接和署名；GitHub 仓库内容许可为 CC BY-NC-SA 4.0。",
+        "GitHub 的来源链接用返回的 blobUrl（文件页），不是 repo；Dyson Sphere Blueprints 用 url。",
+        "没有 author 时不要编造，按 header 里实际内容或“作者见蓝图页”处理。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "GitHub 仓库路径（blueprint_search 的 path）"
+          },
+          "url": {
+            "type": "string",
+            "description": "Dyson Sphere Blueprints 详情页 URL"
+          }
+        }
+      },
+      "source": "blueprint",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "blueprint.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "blueprint_save",
+      "label": "保存蓝图",
+      "description": "把 blueprint_search 找到的蓝图保存到游戏蓝图目录（Documents/Dyson Sphere Program/Blueprint），支持 GitHub 仓库路径或 Dyson Sphere Blueprints 详情页 URL；保存后打开游戏内蓝图界面即可使用。内容版权归原作者，保存/再分发请遵守来源页面说明并署名。",
+      "promptGuidelines": [
+        "玩家说“帮我保存/导入这个蓝图”时使用；GitHub 结果传 path，Dyson Sphere Blueprints 结果传 url。",
+        "默认不覆盖同名文件，会自动加 (2)/(3)；玩家明确要求覆盖时才传 overwrite=true。",
+        "保存不改变游戏状态，但回答要说明保存位置，并保留来源链接与作者署名。",
+        "GitHub 的来源链接用 blobUrl（文件页），不是 repo；Dyson Sphere Blueprints 用 url。",
+        "没有 author 时不要编造。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "GitHub 仓库路径（blueprint_search 的 path）"
+          },
+          "url": {
+            "type": "string",
+            "description": "Dyson Sphere Blueprints 详情页 URL"
+          },
+          "name": {
+            "type": "string",
+            "description": "保存名（不含 .txt），默认用蓝图/文件名"
+          },
+          "dir": {
+            "type": "string",
+            "description": "保存目录（相对蓝图根，默认 /IcarusII）；不存在会自动创建"
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "同名时覆盖，默认 false"
+          }
+        }
+      },
+      "source": "blueprint",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "blueprint.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "blueprint_search",
+      "label": "蓝图搜索",
+      "description": "在 DSPBluePrints/FactoryBluePrints 仓库和 Dyson Sphere Blueprints 网站里按关键词搜索蓝图（在线按需，不打包内容）。GitHub 结果带仓库路径与许可 CC BY-NC-SA 4.0；网站结果带详情页 URL。引用时必须署名来源与作者。",
+      "promptGuidelines": [
+        "玩家想要现成蓝图/产线设计时使用。",
+        "路径多为中文目录+文件名，用“物品/产线/规模”这类关键词搜索；可多次换词。",
+        "GitHub 结果用 path 继续 blueprint_info/blueprint_save；Dyson Sphere Blueprints 结果用 url。",
+        "GitHub 的来源链接用 blobUrl（文件页），不是 repo；Dyson Sphere Blueprints 用 url。",
+        "结果必须附来源链接与作者；GitHub 内容许可 CC BY-NC-SA 4.0，不要把蓝图内容说成自己生成的。",
+        "GitHub 搜索条目没有作者时不要编造；作者以 blueprint_info/blueprint_save 读出的 header 为准。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "路径关键词，例如“卡西米尔”“白糖”“300/min”"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "description": "默认 10"
+          }
+        }
+      },
+      "source": "blueprint",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "blueprint.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_analyze_area",
+      "label": "产线分析",
+      "description": "按空间范围聚合产线：各类建筑数量、各配方的机器数与装机产能、耗电、传送带/分拣器/物流塔数量、涉及电网的供需。用于回答“这片区域是什么产线、规模多大、吃多少电”。只给装机口径；实际产出请再用 game_get_production。",
+      "promptGuidelines": [
+        "玩家问“这片产线是干什么的/多大/耗多少电”时使用。",
+        "game_get_production 返回 statsEmpty=true 或 items 为空时，用它看装机产能（可 all=true 扫整颗星球）。",
+        "结果里 byRecipe 是“机器数 × 配方速度”，不要把它说成实际产出。",
+        "结果是装机产能，不是实际产出；回答实际产量要结合 game_get_production。",
+        "范围默认以玩家为中心 60m；可用 entityId 指定中心，或用 all 分析整星球。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "planetId": {
+            "type": "integer",
+            "description": "行星 id；省略时使用当前所在行星"
+          },
+          "entityId": {
+            "type": "integer",
+            "description": "以该建筑为圆心"
+          },
+          "radius": {
+            "type": "number",
+            "description": "半径（米），默认 60，范围 5–500"
+          },
+          "center": {
+            "type": "object",
+            "properties": {
+              "latitude": {
+                "type": "number"
+              },
+              "longitude": {
+                "type": "number"
+              },
+              "altitude": {
+                "type": "number"
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              }
+            },
+            "description": "中心：latitude+longitude；x/y/z 仅兼容旧调用"
+          },
+          "all": {
+            "type": "boolean",
+            "description": "分析整颗星球，忽略 radius/center"
+          },
+          "includeEntities": {
+            "type": "boolean",
+            "description": "是否列出范围内建筑，默认 false"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "列出的建筑上限，默认 40，最大 100"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.analyze.v1",
+      "risk": 0,
+      "timeoutMs": 15000,
+      "group": "game-progress.md",
+      "cs": {
+        "timeoutMs": 15000,
+        "topFields": [
+          "planetId",
+          "available",
+          "display",
+          "area",
+          "byRecipe",
+          "categories",
+          "totals",
+          "powerNetworks",
+          "entities",
+          "assumptions"
+        ],
+        "allFields": [
+          "mode",
+          "center",
+          "centerSource",
+          "radius",
+          "id",
+          "protoId",
+          "protoName",
+          "category",
+          "recipeId",
+          "recipeName",
+          "buildings",
+          "installedCraftsPerMin",
+          "powerKw",
+          "powerConsumers",
+          "belts",
+          "inserters",
+          "stations",
+          "storages",
+          "requiredKw",
+          "servedKw",
+          "capacityKw",
+          "storedKwh",
+          "satisfactionPct"
+        ]
+      }
+    },
+    {
+      "name": "game_capture_view",
+      "label": "截图",
+      "description": "截取当前游戏画面（不含 UI），以 JPEG 返回图片本身，并附带可见建筑的屏幕坐标。view=topdown 临时切俯视看平面布局；view=orbit 绕目标点换一个角度；拍完自动还原玩家视角。注意：只能拍到当前行星已渲染的区块，相机不会触发远处地形/建筑加载。",
+      "promptGuidelines": [
+        "玩家让你看画面、问布局/摆放/接线是否正确时使用。",
+        "需要平面布局时用 view=topdown，并用 entityId/center 指定中心、cameraHeight 指定高度（10–150m）。",
+        "需要换角度时用 view=orbit，配合 entityId/center、distance、pitch、yaw；一次调用只拍一个角度，想看多个方向就分多次调用并改 yaw/pitch/distance。",
+        "俯视图只覆盖玩家附近已加载的区块；画面缺一块时说明是流送限制，不要当成空地。",
+        "图上的编号框与 legend 的 index 一一对应；先按编号定位，再结合 game_get_entity / game_get_entities 的数值下结论，不要只凭像素猜配方。",
+        "annotate=false 可关掉标注（例如只想看纯净画面）。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "width": {
+            "type": "integer",
+            "description": "像素宽，默认 1280，上限 1600"
+          },
+          "height": {
+            "type": "integer",
+            "description": "像素高，默认 720，上限 900"
+          },
+          "includeEntities": {
+            "type": "boolean",
+            "description": "是否附带可见建筑的屏幕坐标，默认 true"
+          },
+          "annotate": {
+            "type": "boolean",
+            "description": "是否在图上画编号框并返回 legend，默认 true"
+          },
+          "view": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "player"
+              },
+              {
+                "type": "string",
+                "const": "topdown"
+              },
+              {
+                "type": "string",
+                "const": "orbit"
+              }
+            ],
+            "description": "player=当前镜头（默认），topdown=临时俯视，orbit=绕目标点换角度"
+          },
+          "entityId": {
+            "type": "integer",
+            "description": "取景中心：建筑 id（topdown/orbit）"
+          },
+          "center": {
+            "type": "object",
+            "properties": {
+              "latitude": {
+                "type": "number"
+              },
+              "longitude": {
+                "type": "number"
+              },
+              "altitude": {
+                "type": "number"
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              }
+            },
+            "description": "取景中心：latitude+longitude；x/y/z 仅兼容旧调用（topdown/orbit）"
+          },
+          "cameraHeight": {
+            "type": "number",
+            "description": "topdown 高度（米），默认 60，范围 10–150"
+          },
+          "distance": {
+            "type": "number",
+            "description": "orbit 环绕半径（米），默认 80，范围 10–500"
+          },
+          "pitch": {
+            "type": "number",
+            "description": "orbit 俯角（度），默认 35，范围 5–90；90=正俯视"
+          },
+          "yaw": {
+            "type": "number",
+            "description": "topdown/orbit 方位角（度），默认 0"
+          },
+          "fov": {
+            "type": "number",
+            "description": "topdown/orbit 视场角，默认 60，范围 20–90"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.view.v1",
+      "risk": 0,
+      "timeoutMs": 15000,
+      "group": "game-progress.md",
+      "cs": {
+        "timeoutMs": 15000,
+        "topFields": [
+          "width",
+          "height",
+          "available",
+          "display",
+          "reason",
+          "bytes",
+          "view",
+          "camera",
+          "visibleEntities",
+          "annotated",
+          "legend"
+        ],
+        "allFields": [
+          "mimeType",
+          "data",
+          "center",
+          "centerSource",
+          "fov",
+          "yaw",
+          "distance",
+          "pitch",
+          "location",
+          "forward",
+          "id",
+          "protoId",
+          "protoName",
+          "category",
+          "x",
+          "y",
+          "index"
+        ]
+      }
+    },
+    {
+      "name": "game_copy_blueprint",
+      "label": "存为蓝图",
+      "description": "把指定的一批建筑（entityIds）存成游戏蓝图文件，复用游戏自己的复制逻辑，产物与游戏内复制同源。保存到游戏蓝图目录（默认 IcarusII/，可传 dir），打开蓝图界面即可看到；只写蓝图文件，不改游戏状态。",
+      "promptGuidelines": [
+        "玩家说“把这片产线存成蓝图”时使用；id 来自 game_analyze_area / game_get_entities。",
+        "一次最多 500 个；工具只保存文件，不建造、不粘贴；权限档位会决定是否弹确认。",
+        "保存后告诉玩家文件名与位置；重名会自动加 (2)/(3)。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "entityIds"
+        ],
+        "properties": {
+          "planetId": {
+            "type": "integer",
+            "description": "行星 id；省略时使用当前所在行星"
+          },
+          "entityIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "要包含的建筑 id"
+          },
+          "name": {
+            "type": "string",
+            "description": "蓝图文件名（不含 .txt），默认 IcarusII-时间戳"
+          },
+          "dir": {
+            "type": "string",
+            "description": "保存目录（相对蓝图根，默认 IcarusII）；不存在会自动创建"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.entity.v1",
+      "risk": 1,
+      "timeoutMs": 20000,
+      "group": "game-entity.md",
+      "cs": {
+        "timeoutMs": 20000,
+        "topFields": [
+          "saved",
+          "error",
+          "display",
+          "source",
+          "path",
+          "relPath",
+          "dir",
+          "dirRel",
+          "fileName",
+          "buildings",
+          "areas",
+          "name",
+          "author",
+          "version",
+          "attributes",
+          "description",
+          "iconItemId",
+          "width",
+          "height"
+        ],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_drop_item",
+      "label": "丢弃物品",
+      "description": "把背包里的物品丢到当前行星地面。写操作，风险 2：执行前玩家必须确认。丢出的物品会变成可拾取的垃圾，需玩家手动拾回；不进入撤销栈。itemId 可以是物品 id 或名称；count 默认 1，一次最多 500。",
+      "promptGuidelines": [
+        "只在玩家明确要求“丢掉/扔了”某个物品时使用。",
+        "调用前先用 game_get_player 确认背包里有该物品和数量；不要丢掉关键材料。",
+        "丢弃后不进入撤销栈，必须明确告诉玩家“需要手动拾回”。",
+        "如果玩家拒绝确认，不要再次调用。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "itemId"
+        ],
+        "properties": {
+          "itemId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "物品 id 或名称"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "description": "丢弃数量，默认 1，最大 500"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.drop.v1",
+      "risk": 2,
+      "timeoutMs": 8000,
+      "group": "game-write-basic.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": [
+          "itemId",
+          "itemName",
+          "count",
+          "requested",
+          "undoable",
+          "undoNote"
+        ]
+      }
+    },
+    {
+      "name": "game_feed_input",
+      "label": "投料",
+      "description": "从背包把配方原料直接放进一台生产建筑的输入缓冲。写操作，风险 2：执行前玩家必须确认。这条路径不经过分拣器/传送带；只接受当前配方需要的物品，最多 500 个。",
+      "promptGuidelines": [
+        "玩家要求“把背包里的原料塞进这台机器”时使用；先用 game_get_entity 确认 assembler.recipeId/inputs。",
+        "itemId 必须是当前配方 Items 里的输入；不要投成品或配方不需要的物品。",
+        "它会直接写 served/incServed，绕过分拣器/传送带；确认卡会说明。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "buildingId",
+          "itemId",
+          "count"
+        ],
+        "properties": {
+          "buildingId": {
+            "type": "integer",
+            "description": "生产建筑 entityId"
+          },
+          "itemId": {
+            "type": "integer",
+            "description": "配方输入物品 id"
+          },
+          "count": {
+            "type": "integer",
+            "description": "投入数量，1..500"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.build.v1",
+      "risk": 2,
+      "timeoutMs": 8000,
+      "group": "game-write-build.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [
+          "buildingId",
+          "itemId",
+          "itemName",
+          "fed",
+          "served",
+          "undoable"
+        ],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_get_entities",
+      "label": "建筑列表",
+      "description": "分页列出指定行星（省略则为当前行星）的建筑：id、原型、配方、星系/行星/经纬度、朝向。可按原型 id/名称、配方 id 过滤；配合 game_get_entity 查看单体细节。大星球请用 offset/limit 分页，不要一次拉全量。",
+      "promptGuidelines": [
+        "需要“这片区域有哪些建筑”“某个配方有多少台机器”时使用。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "planetId": {
+            "type": "integer",
+            "description": "行星 id；省略时使用当前所在行星"
+          },
+          "protoId": {
+            "type": "integer",
+            "description": "按建筑原型 id 过滤"
+          },
+          "protoName": {
+            "type": "string",
+            "description": "按建筑原型名称子串过滤，例如“组装机”"
+          },
+          "recipeId": {
+            "type": "integer",
+            "description": "按配方 id 过滤"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "分页偏移，默认 0"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回条数上限，默认 25"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.entity.v1",
+      "risk": 0,
+      "timeoutMs": 10000,
+      "group": "game-entity.md",
+      "cs": {
+        "timeoutMs": 10000,
+        "topFields": [
+          "planetId",
+          "available",
+          "rows",
+          "total",
+          "display",
+          "offset",
+          "limit",
+          "hasMore"
+        ],
+        "allFields": [
+          "id",
+          "protoId",
+          "protoName",
+          "iconTag",
+          "category",
+          "yaw",
+          "recipeId",
+          "recipeName"
+        ]
+      }
+    },
+    {
+      "name": "game_get_entity",
+      "label": "建筑详情",
+      "description": "按 entityId 读取单个建筑（或用 entityIds 批量读取）的实际情况，尽量对齐游戏面板：原型、配方、输入/输出槽（数量/需求/增产）、功率与供电满足率、工作状态（缺料/没电/运行/待机）、分拣器目标、传送带线路容量/节点/货物数与区间、仓储容量、物流塔槽位（当前/在途/上限/供需模式）、无人机/运输船/翘曲器与充电状态。fields 可裁剪返回段（assembler/miner/inserter/belt/storage/station/components；默认全量）；批量 entityIds 默认只返回 core，最多 10 个。id 来自 game_get_entities 或截图标注；id 会被回收，返回里的 stale=true 表示该 id 已被别的建筑占用。",
+      "promptGuidelines": [
+        "玩家问某一栋建筑为什么不动、配方是什么、插了什么、有没有电时使用。",
+        "先只取需要的段：例如只关心缺料时传 fields=[\"assembler\"]；要逐字段调试才传 components。",
+        "检查多栋建筑时用 entityIds（最多 10 个）并配合 fields，避免一次返回完整详情。",
+        "如果返回 stale=true，不要使用这条数据：id 已被回收，重新用 game_get_entities 定位。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "planetId": {
+            "type": "integer",
+            "description": "行星 id；省略时使用当前所在行星"
+          },
+          "entityId": {
+            "type": "integer",
+            "description": "单个建筑 id（PlanetFactory.entityPool 的下标）"
+          },
+          "entityIds": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "批量建筑 id，最多 10 个；与 entityId 二选一"
+          },
+          "expectProtoId": {
+            "type": "integer",
+            "description": "期望的原型 id；不匹配时返回 stale=true"
+          },
+          "fields": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ],
+            "description": "要返回的段：core/assembler/miner/inserter/belt/storage/station/components；也接受逗号分隔字符串"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.entity.v1",
+      "risk": 0,
+      "timeoutMs": 6000,
+      "group": "game-entity.md",
+      "cs": {
+        "timeoutMs": 6000,
+        "topFields": [
+          "planetId",
+          "entityId",
+          "available",
+          "reason",
+          "display",
+          "protoId",
+          "protoName",
+          "iconTag",
+          "category",
+          "yaw",
+          "power",
+          "stale",
+          "expectProtoId",
+          "count",
+          "entities",
+          "assembler",
+          "miner",
+          "inserter",
+          "belt",
+          "storage",
+          "station",
+          "components"
+        ],
+        "allFields": [
+          "recipeId",
+          "recipeName",
+          "recipeSeconds",
+          "speedMultiplier",
+          "craftsPerMin",
+          "cycleCount",
+          "extraCycleCount",
+          "working",
+          "replicating",
+          "extraSpeed",
+          "productPerMin",
+          "forceAccMode",
+          "itemId",
+          "name",
+          "needed",
+          "incServed",
+          "inputs",
+          "outputs",
+          "powerSatisfactionPct",
+          "status",
+          "productId",
+          "productName",
+          "productCount",
+          "period",
+          "orePerMin",
+          "veinCount",
+          "totalVeinAmount",
+          "workstate",
+          "grade",
+          "bidirectional",
+          "stage",
+          "filterItemId",
+          "filterItemName",
+          "pickTarget",
+          "insertTarget",
+          "pickTargetName",
+          "insertTargetName",
+          "handItemId",
+          "handItemName",
+          "handItemCount",
+          "handItemInc",
+          "stackCount",
+          "canStack",
+          "stackInput",
+          "stackOutput",
+          "delay",
+          "itemsPerSec",
+          "segLength",
+          "rangeFrom",
+          "rangeTo",
+          "nodeIndex",
+          "pathId",
+          "pathCapacity",
+          "pathNodeCount",
+          "pathCargoCount",
+          "cargoItems",
+          "outputId",
+          "backInputId",
+          "leftInputId",
+          "rightInputId",
+          "slots",
+          "items",
+          "totalCount",
+          "isCollector",
+          "isStellar",
+          "warperCount",
+          "warperMaxCount",
+          "idleDroneCount",
+          "workDroneCount",
+          "idleShipCount",
+          "workShipCount",
+          "deliveryDrones",
+          "deliveryShips",
+          "warpEnableDistAu",
+          "energy",
+          "energyMax",
+          "chargeKw",
+          "charging",
+          "inTransit",
+          "max",
+          "localOrder",
+          "remoteOrder",
+          "localLogic",
+          "remoteLogic",
+          "kind",
+          "poolId",
+          "fields"
+        ]
+      }
+    },
+    {
+      "name": "game_get_logistics",
+      "label": "星际物流",
+      "description": "汇总所有已加载工厂的物流塔：哪些星球/站点在供给或需求某物品、星际塔与轨道采集器、运输船/无人机与翘曲器数量。这是跨行星产线分析的入口。",
+      "promptGuidelines": [
+        "玩家问“某个原料从哪来/哪颗星在供应/为什么跨星运不过来”时使用。",
+        "supply/demand 来自物流塔槽位的远程供应/需求设置；具体航线与在途量用 game_get_entity 看站点详情。",
+        "先在这里定位物品与星球，再用 game_analyze_area / game_get_planet 下钻。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "itemFilter": {
+            "type": "string",
+            "description": "物品名或 id，例如“钛块”"
+          },
+          "planetId": {
+            "type": "integer",
+            "description": "只看某颗行星"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "分页偏移，默认 0"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 40,
+            "description": "站点条数，默认 20"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.entity.v1",
+      "risk": 0,
+      "timeoutMs": 20000,
+      "group": "game-entity.md",
+      "cs": {
+        "timeoutMs": 20000,
+        "topFields": [
+          "available",
+          "display",
+          "itemFilter",
+          "totalStations",
+          "matchedStations",
+          "offset",
+          "limit",
+          "items",
+          "stations"
+        ],
+        "allFields": [
+          "planetId",
+          "planetName",
+          "stationId",
+          "isStellar",
+          "isCollector",
+          "warperCount",
+          "idleShipCount",
+          "workShipCount",
+          "idleDroneCount",
+          "workDroneCount",
+          "itemId",
+          "name",
+          "iconTag",
+          "supply",
+          "demand",
+          "count",
+          "max",
+          "inTransit",
+          "localLogic",
+          "remoteLogic"
+        ]
+      }
+    },
+    {
+      "name": "game_get_overview",
+      "label": "存档概览",
+      "description": "读取当前存档概览：存档名、游戏时刻、当前行星/星系、玩家经纬度、是否暂停。玩家问“我在哪”“现在什么情况”时先调用它；不要凭印象回答。",
+      "promptGuidelines": [
+        "玩家询问当前存档、所在星球、游戏时间或“现在什么情况”时使用。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.read.v1",
+      "risk": 0,
+      "timeoutMs": 5000,
+      "group": "game-read.md",
+      "cs": {
+        "timeoutMs": 5000,
+        "topFields": [
+          "saveName",
+          "saveKey",
+          "gameVersion",
+          "gameTick",
+          "gameTimeSec",
+          "gameTimeDisplay",
+          "paused",
+          "planet",
+          "star",
+          "player",
+          "mode",
+          "display"
+        ],
+        "allFields": [
+          "id",
+          "name",
+          "type",
+          "factoryLoaded",
+          "peace",
+          "sandbox",
+          "combat",
+          "goalLevel"
+        ]
+      }
+    },
+    {
+      "name": "game_get_planet",
+      "label": "行星状态",
+      "description": "读取指定行星（省略则为当前行星）的类型、半径、矿脉按资源汇总、建筑按原型计数。veins=groups 返回按位置聚合的矿脉群（已扫描的远程行星也可）；veins=nodes 分页返回逐矿脉节点（仅工厂已加载的行星）。远程行星未加载工厂时明确标注 factoryLoaded=false。",
+      "promptGuidelines": [
+        "玩家询问某个星球有什么矿、矿在哪、建了多少建筑时使用。",
+        "需要矿脉位置时用 veins=\"groups\"；需要单个矿脉的精确经纬度时用 veins=\"nodes\" 并配合 veinOffset/veinLimit。",
+        "矿脉群/节点可能很多，不要一次拉全量。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "planetId": {
+            "type": "integer",
+            "description": "行星 id；省略时使用当前所在行星"
+          },
+          "veins": {
+            "type": "string",
+            "description": "summary（默认，按资源汇总）/ groups（矿脉群+位置）/ nodes（逐矿脉+位置，需工厂已加载）/ all"
+          },
+          "veinOffset": {
+            "type": "integer",
+            "description": "逐矿脉分页起点，默认 0"
+          },
+          "veinLimit": {
+            "type": "integer",
+            "description": "逐矿脉每页数量，默认 50，最大 200"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "分页偏移，默认 0"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回条数上限，默认 25"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.read.v1",
+      "risk": 0,
+      "timeoutMs": 12000,
+      "group": "game-read.md",
+      "cs": {
+        "timeoutMs": 12000,
+        "topFields": [
+          "planetId",
+          "name",
+          "type",
+          "radius",
+          "factoryLoaded",
+          "veins",
+          "buildings",
+          "display",
+          "veinGroupsAvailable",
+          "veinGroupsReason",
+          "veinGroupCount",
+          "veinGroups",
+          "veinNodesAvailable",
+          "veinNodesReason",
+          "veinNodes"
+        ],
+        "allFields": [
+          "productId",
+          "iconTag",
+          "amount",
+          "count",
+          "id",
+          "items",
+          "total",
+          "offset",
+          "limit",
+          "truncated",
+          "nextOffset",
+          "groupIndex",
+          "minerCount"
+        ]
+      }
+    },
+    {
+      "name": "game_get_planets",
+      "label": "星球一览",
+      "description": "列出银河里所有行星：轨道/类型/半径、是否有工厂与建筑数、电力汇总，以及按宇宙探索等级披露的矿脉。未观察的星球只给基础轨道信息（veinsHidden=true），不泄露矿脉；已建工厂的星球可继续用区域工具分析。",
+      "promptGuidelines": [
+        "玩家问“哪个星球有 X 矿/哪颗星在产什么/银河整体情况”时使用。",
+        "observed=false 或 veinsHidden=true 表示玩家还没探索到，不要编造矿脉；如实说明需要提升宇宙探索等级。",
+        "hasFactory=true 的行星可继续用 game_analyze_area / game_get_entities / game_get_power 分析。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "includeVeins": {
+            "type": "boolean",
+            "description": "是否返回已观察星球的矿脉，默认 true"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.entity.v1",
+      "risk": 0,
+      "timeoutMs": 20000,
+      "group": "game-entity.md",
+      "cs": {
+        "timeoutMs": 20000,
+        "topFields": [
+          "available",
+          "display",
+          "observeLevel",
+          "planetCount",
+          "observedCount",
+          "factoryCount",
+          "planets",
+          "note"
+        ],
+        "allFields": [
+          "id",
+          "name",
+          "starId",
+          "starName",
+          "type",
+          "orbitRadiusAu",
+          "orbitIndex",
+          "orbitalPeriod",
+          "rotationPeriod",
+          "radius",
+          "theme",
+          "scanned",
+          "observed",
+          "requiredObserveLevel",
+          "hasFactory",
+          "factoryLoaded",
+          "buildingCount",
+          "power",
+          "veins",
+          "veinsHidden",
+          "demandKw",
+          "servedKw",
+          "capacityKw",
+          "satisfactionPct",
+          "productId",
+          "iconTag",
+          "amount"
+        ]
+      }
+    },
+    {
+      "name": "game_get_player",
+      "label": "玩家状态",
+      "description": "读取伊卡洛斯的能量、护盾、反应堆能量与背包物品（id、名称、数量）。玩家问“我还有多少能量”“背包里有什么”时调用。",
+      "promptGuidelines": [
+        "玩家询问自己的能量、护盾或背包物品时使用。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "offset": {
+            "type": "integer",
+            "description": "分页偏移，默认 0"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回条数上限，默认 25"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.read.v1",
+      "risk": 0,
+      "timeoutMs": 6000,
+      "group": "game-read.md",
+      "cs": {
+        "timeoutMs": 6000,
+        "topFields": [
+          "display",
+          "mecha",
+          "inventory"
+        ],
+        "allFields": [
+          "coreEnergy",
+          "coreEnergyCap",
+          "coreEnergyPct",
+          "reactorEnergy",
+          "shieldEnergy",
+          "shieldCapacity",
+          "shieldPct",
+          "id",
+          "name",
+          "iconTag",
+          "count",
+          "items",
+          "total",
+          "offset",
+          "limit",
+          "truncated",
+          "nextOffset"
+        ]
+      }
+    },
+    {
+      "name": "game_get_power",
+      "label": "电力状态",
+      "description": "读取指定行星（省略则为当前行星）的电网：需求、已供、容量、储能、满足率与充放电。所有功率单位为 kW，储能为 kWh；玩家问“电够不够”时调用。",
+      "promptGuidelines": [
+        "玩家询问电力是否足够、为什么停电或电网负载时使用。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "planetId": {
+            "type": "integer",
+            "description": "行星 id；省略时使用当前所在行星"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.read.v1",
+      "risk": 0,
+      "timeoutMs": 6000,
+      "group": "game-read.md",
+      "cs": {
+        "timeoutMs": 6000,
+        "topFields": [
+          "planetId",
+          "planetName",
+          "factoryLoaded",
+          "demandKw",
+          "servedKw",
+          "capacityKw",
+          "storedKwh",
+          "accumulatorKw",
+          "satisfactionPct",
+          "nets",
+          "display",
+          "demandDisplay",
+          "servedDisplay",
+          "capacityDisplay",
+          "generatorCount",
+          "consumerCount",
+          "accumulatorCount"
+        ],
+        "allFields": [
+          "id"
+        ]
+      }
+    },
+    {
+      "name": "game_get_production",
+      "label": "实际产出",
+      "description": "读取指定行星（省略则为当前行星）按物品聚合的产量/消耗/库存（每分钟口径），按净产出从低到高排序，并给出库存还能撑几分钟。玩家问“我缺什么”时调用它，再结合 game_get_power 判断瓶颈。",
+      "promptGuidelines": [
+        "玩家问“我缺什么”、某条产线为什么停、库存还能撑多久时使用。",
+        "basis=stats 是实际统计；basis=installed 表示 1 分钟桶为空，items 是按装配机算的装机产能（statsEmpty=true）。",
+        "statsEmpty=true 时不要下“没有产线”的结论；设备在别处或需要空间明细时改调 game_analyze_area。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "planetId": {
+            "type": "integer",
+            "description": "行星 id；省略时使用当前所在行星"
+          },
+          "itemFilter": {
+            "type": "string",
+            "description": "按物品名或 id 过滤，例如“铁块”或“1001”"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "分页偏移，默认 0"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回条数上限，默认 25"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.read.v1",
+      "risk": 0,
+      "timeoutMs": 12000,
+      "group": "game-read.md",
+      "cs": {
+        "timeoutMs": 12000,
+        "topFields": [
+          "planetId",
+          "planetName",
+          "statsPending",
+          "items",
+          "shortageCount",
+          "surplusCount",
+          "display",
+          "total",
+          "offset",
+          "limit",
+          "truncated",
+          "nextOffset",
+          "powerSatisfactionPct",
+          "buildingCount",
+          "statsEmpty",
+          "basis",
+          "hint"
+        ],
+        "allFields": [
+          "id",
+          "name",
+          "iconTag",
+          "producedPerMin",
+          "consumedPerMin",
+          "netPerMin",
+          "stored",
+          "minutesOfStock"
+        ]
+      }
+    },
+    {
+      "name": "game_get_progress",
+      "label": "进度阶段",
+      "description": "读取玩家进度：派生阶段（电磁/炼油/钛/星际物流/翘曲/戴森球…）及判定依据、已解锁科技数、里程碑、教程、当前研究与队列。玩家问“我下一步该干什么”“我在什么阶段”时先调用它。",
+      "promptGuidelines": [
+        "玩家询问当前进度、下一步该做什么、阶段目标时使用。",
+        "回答“下一步”时只给当前阶段与下一阶段的必要条件，不要剧透更后面的科技细节。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.progress.v1",
+      "risk": 0,
+      "timeoutMs": 6000,
+      "group": "game-progress.md",
+      "cs": {
+        "timeoutMs": 6000,
+        "topFields": [
+          "display",
+          "signals",
+          "stage",
+          "stageNote",
+          "unlockedTechs",
+          "tutorials",
+          "currentTechId",
+          "currentTechName",
+          "techSpeed",
+          "queue",
+          "milestoneCount",
+          "recentMilestones"
+        ],
+        "allFields": [
+          "logisticsSystem",
+          "intraplanetaryStation",
+          "interstellarStation",
+          "dispenser",
+          "foundation",
+          "marker",
+          "dysonSphereSystem",
+          "ultraPhoton",
+          "verticalConstruct",
+          "combatDrone",
+          "combatShip",
+          "id",
+          "name",
+          "iconTag",
+          "unlockTick"
+        ]
+      }
+    },
+    {
+      "name": "game_get_research",
+      "label": "研究状态",
+      "description": "读取当前研究科技、进度、队列、研究速度与已解锁科技数量。玩家问“现在研究什么”“还差多少”时调用。",
+      "promptGuidelines": [
+        "玩家询问研究进度、科技队列或已解锁科技时使用。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.read.v1",
+      "risk": 0,
+      "timeoutMs": 5000,
+      "group": "game-read.md",
+      "cs": {
+        "timeoutMs": 5000,
+        "topFields": [
+          "display",
+          "currentTechId",
+          "current",
+          "queue",
+          "techSpeed",
+          "unlockedCount",
+          "totalTechs"
+        ],
+        "allFields": [
+          "id",
+          "name",
+          "iconTag",
+          "level",
+          "hashUploaded",
+          "hashNeeded",
+          "progressPct"
+        ]
+      }
+    },
+    {
+      "name": "game_open_panel",
+      "label": "打开面板",
+      "description": "打开游戏内面板：inventory（背包）、tech（科技树）、starmap（星图）、marker（标记）、mecha（机甲）、replicator（复制器）、statistics（统计）、blueprint（蓝图）。写操作：执行前玩家必须确认。",
+      "promptGuidelines": [
+        "玩家明确要求打开某个游戏面板时使用。",
+        "只支持工具描述里列出的面板名；不要编造其他面板。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "panel"
+        ],
+        "properties": {
+          "panel": {
+            "type": "string",
+            "description": "inventory / tech / starmap / marker / mecha / replicator / statistics / blueprint"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.write.v1",
+      "risk": 1,
+      "timeoutMs": 8000,
+      "group": "game-write-basic.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_place_marker",
+      "label": "新建标记",
+      "description": "在当前行星或指定行星上新建一个地图标记。写操作：执行前玩家必须确认。用 latitude/longitude 指定位置（可从 game_get_entity 的 location 读取），text 是标记文字。",
+      "promptGuidelines": [
+        "玩家明确要求“在这里做个标记/标个点”时使用。",
+        "坐标必须来自游戏数据或玩家给出；不要凭截图猜坐标。优先使用 game_get_entity 返回的 location.latitude/longitude。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "planetId": {
+            "type": "integer",
+            "description": "行星 id；省略为当前行星"
+          },
+          "latitude": {
+            "type": "number",
+            "description": "纬度（-90..90）"
+          },
+          "longitude": {
+            "type": "number",
+            "description": "经度（-180..180）"
+          },
+          "altitude": {
+            "type": "number",
+            "description": "海拔（米），默认 0"
+          },
+          "position": {
+            "type": "object",
+            "required": [
+              "x",
+              "y",
+              "z"
+            ],
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              }
+            },
+            "description": "旧版行星局部坐标，仅兼容用"
+          },
+          "text": {
+            "type": "string",
+            "description": "标记完整文字；地图简述只显示前 2 个字，详情保存完整名称"
+          },
+          "icon": {
+            "type": "integer",
+            "description": "标记图标 id，可选"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.write.v1",
+      "risk": 1,
+      "timeoutMs": 8000,
+      "group": "game-write-basic.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_render_layout",
+      "label": "布局图",
+      "description": "把一片区域的建筑排布画成字符网格（上=+Z，左=-X）：物流站 S、生产设备 M、仓储 B、发电 P、采矿 V、分拣器 >、传送带 =。用来判断“布局对不对/有没有断路/密度如何”，比截图更省 token。",
+      "promptGuidelines": [
+        "玩家问布局、走线、是否堵死，或截图看不清时使用。",
+        "字符只表达类别与占位；朝向、配方、输入输出要再用 game_get_entities / game_analyze_area。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "planetId": {
+            "type": "integer",
+            "description": "行星 id；省略时使用当前所在行星"
+          },
+          "entityId": {
+            "type": "integer",
+            "description": "以该建筑为中心"
+          },
+          "radius": {
+            "type": "number",
+            "description": "半径（米），默认 40，范围 4–400"
+          },
+          "cellSize": {
+            "type": "number",
+            "description": "每格米数，默认按半径自动（约 2–8m）"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.entity.v1",
+      "risk": 0,
+      "timeoutMs": 10000,
+      "group": "game-entity.md",
+      "cs": {
+        "timeoutMs": 10000,
+        "topFields": [
+          "planetId",
+          "available",
+          "display",
+          "grid",
+          "width",
+          "height",
+          "cellSize",
+          "origin",
+          "legend",
+          "orientation"
+        ],
+        "allFields": [
+          "char",
+          "kind",
+          "count",
+          "centerSource"
+        ]
+      }
+    },
+    {
+      "name": "game_set_assembler_batch",
+      "label": "批量配方",
+      "description": "一次修改多台生产建筑的配方（最多 20 台），只弹一次确认、只压一层撤销。写操作，风险 2：执行前玩家必须确认。每台都会先退回机器内原料/产物再切换；任何一台预检失败则整批不执行。",
+      "promptGuidelines": [
+        "玩家要求“这几台/这一排都改成同一个配方”时使用；先用 game_get_entities 拿到 id。",
+        "一次最多 20 台；超过时分批，不要一次塞太多。",
+        "返回 changed/skipped/items；如果某台不匹配，整批会失败并说明原因。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "selections"
+        ],
+        "properties": {
+          "selections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "buildingId",
+                "recipeId"
+              ],
+              "properties": {
+                "buildingId": {
+                  "type": "integer",
+                  "description": "生产建筑 entityId"
+                },
+                "recipeId": {
+                  "type": "integer",
+                  "description": "配方 id；0 = 清空配方"
+                }
+              }
+            },
+            "minItems": 1,
+            "maxItems": 20,
+            "description": "最多 20 台；同一 buildingId 不能重复"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.build.v1",
+      "risk": 2,
+      "timeoutMs": 8000,
+      "group": "game-write-build.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_set_recipe",
+      "label": "更换配方",
+      "description": "把一台生产建筑（制造台/熔炉/化工厂/研究站等）的配方改为指定配方。写操作，风险 2：执行前玩家必须确认。会先按游戏 UI 的“重置配方”把机器内原料/产物退回背包，再切换配方；撤销只恢复配方，不把退回背包的物品塞回机器。recipeId=0 表示清空配方。",
+      "promptGuidelines": [
+        "玩家明确要求改某一台建筑的配方时使用；先用 game_get_entity 确认它是生产建筑。",
+        "recipeId 先用 kb_search/kb_get 或 game_get_entity 的 recipeId 确认；不要编造。",
+        "会先退料；如果玩家不想让物品回背包，先说明。撤销只恢复配方。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "buildingId",
+          "recipeId"
+        ],
+        "properties": {
+          "buildingId": {
+            "type": "integer",
+            "description": "生产建筑 entityId"
+          },
+          "recipeId": {
+            "type": "integer",
+            "description": "配方 id；0 = 清空配方"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.build.v1",
+      "risk": 2,
+      "timeoutMs": 8000,
+      "group": "game-write-build.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_set_research",
+      "label": "切换研究",
+      "description": "把当前研究目标切换为指定科技。写操作，风险 2：可能浪费当前科技已投入的研究进度，执行前玩家必须确认。已完成的科技会被拒绝；科技必须未完成且前置已满足。techId 可以是科技 id 或名称。",
+      "promptGuidelines": [
+        "玩家明确要求切换研究目标时使用。",
+        "调用前先用 game_get_research 或 kb_get 确认 techId；不确定就先问玩家。",
+        "如果玩家拒绝确认，不要再次调用。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "techId"
+        ],
+        "properties": {
+          "techId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "科技 id 或名称"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.write.v1",
+      "risk": 2,
+      "timeoutMs": 8000,
+      "group": "game-write-basic.md",
+      "cs": {
+        "timeoutMs": 8000,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_storage_deposit",
+      "label": "存入存储",
+      "description": "把背包里的物品放进一台存储建筑（箱子/储液罐/物流站仓储）。写操作，风险 2：执行前玩家必须确认。存储满时只放入能放下的部分，剩余会退回背包。",
+      "promptGuidelines": [
+        "玩家要求“把这些东西放进箱子”时使用；先用 game_get_entity 确认 storage 段。",
+        "itemId/count 必填；存储满时返回 remaining，剩余仍在背包。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "buildingId",
+          "itemId",
+          "count"
+        ],
+        "properties": {
+          "buildingId": {
+            "type": "integer",
+            "description": "存储建筑 entityId"
+          },
+          "itemId": {
+            "type": "integer",
+            "description": "物品 id"
+          },
+          "count": {
+            "type": "integer",
+            "description": "放入数量"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.storage.v1",
+      "risk": 2,
+      "timeoutMs": 8000,
+      "group": "game-write-build.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [
+          "buildingId",
+          "itemId",
+          "itemName",
+          "requested",
+          "stored",
+          "remaining",
+          "undoable"
+        ],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_storage_move",
+      "label": "移库",
+      "description": "把指定物品从一台存储建筑移动到另一台存储建筑。写操作，风险 2：执行前玩家必须确认。先预检目标容量/过滤器；目标放不下时整笔不执行。源不足时移动可用的部分并返回 remaining。",
+      "promptGuidelines": [
+        "玩家要求“把这箱铜搬到那箱”时使用；先用 game_get_entity 确认两端 storage 段和距离。",
+        "sourceId/targetId 都是建筑 entityId；itemId 用已知 id；count 是请求数量。",
+        "目标空间不足会整笔失败；源不足只移动可用部分，remaining 表示没移动的数量。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "sourceId",
+          "targetId",
+          "itemId",
+          "count"
+        ],
+        "properties": {
+          "sourceId": {
+            "type": "integer",
+            "description": "源存储建筑 entityId"
+          },
+          "targetId": {
+            "type": "integer",
+            "description": "目标存储建筑 entityId"
+          },
+          "itemId": {
+            "type": "integer",
+            "description": "物品 id"
+          },
+          "count": {
+            "type": "integer",
+            "description": "请求移动数量"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.storage.v1",
+      "risk": 2,
+      "timeoutMs": 8000,
+      "group": "game-write-build.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [
+          "sourceId",
+          "targetId",
+          "itemId",
+          "itemName",
+          "requested",
+          "moved",
+          "remaining",
+          "undoable"
+        ],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_storage_set_filter",
+      "label": "存储过滤",
+      "description": "设置一台存储建筑（箱子/储液罐/物流站仓储）的物品过滤器；itemId=0 清除过滤器。写操作，风险 2：执行前玩家必须确认。已占用且物品不同的格子会跳过，不会替换物品。",
+      "promptGuidelines": [
+        "玩家要求“这个箱子只放某物品/不要放某物品”时使用；先用 game_get_entity 确认 storage 段。",
+        "itemId 用 kb_search/kb_get 或已知物品 id；0 表示清除过滤器。",
+        "只支持普通箱子/储液罐/物流站仓储；燃料/弹药等专用存储不支持。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "buildingId",
+          "itemId"
+        ],
+        "properties": {
+          "buildingId": {
+            "type": "integer",
+            "description": "存储建筑 entityId"
+          },
+          "itemId": {
+            "type": "integer",
+            "description": "物品 id；0 = 清除过滤器"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.storage.v1",
+      "risk": 2,
+      "timeoutMs": 8000,
+      "group": "game-write-build.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [
+          "buildingId",
+          "itemId",
+          "itemName",
+          "changedGrids",
+          "slots",
+          "undoable"
+        ],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_storage_set_limit",
+      "label": "存储上限",
+      "description": "设置一台存储建筑的容量上限（允许使用的格数）。写操作，风险 2：执行前玩家必须确认。limit 是允许使用的格数（0..总格数），不是禁止格数。",
+      "promptGuidelines": [
+        "玩家要求“这个箱子只用前 N 格”时使用；先用 game_get_entity 看 storage.slots。",
+        "limit 是允许格数，范围 0..slots。",
+        "只支持普通箱子/储液罐/物流站仓储。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "buildingId",
+          "limit"
+        ],
+        "properties": {
+          "buildingId": {
+            "type": "integer",
+            "description": "存储建筑 entityId"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "允许使用的格数，0..总格数"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.storage.v1",
+      "risk": 2,
+      "timeoutMs": 8000,
+      "group": "game-write-build.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [
+          "buildingId",
+          "limit",
+          "slots",
+          "bans",
+          "undoable"
+        ],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_storage_withdraw",
+      "label": "从存储取出",
+      "description": "把一台存储建筑里的物品取到背包。写操作，风险 2：执行前玩家必须确认。背包满时只取能放下的部分，剩余留在存储里。",
+      "promptGuidelines": [
+        "玩家要求“从箱子里拿点东西”时使用；先用 game_get_entity 确认 storage 段。",
+        "itemId/count 必填；背包满时返回 remaining，剩余仍在存储。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "buildingId",
+          "itemId",
+          "count"
+        ],
+        "properties": {
+          "buildingId": {
+            "type": "integer",
+            "description": "存储建筑 entityId"
+          },
+          "itemId": {
+            "type": "integer",
+            "description": "物品 id"
+          },
+          "count": {
+            "type": "integer",
+            "description": "取出数量"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.storage.v1",
+      "risk": 2,
+      "timeoutMs": 8000,
+      "group": "game-write-build.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [
+          "buildingId",
+          "itemId",
+          "itemName",
+          "requested",
+          "taken",
+          "remaining",
+          "undoable"
+        ],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_take_output",
+      "label": "取成品",
+      "description": "把一台生产建筑当前已产出的成品取到背包，保留配方。写操作，风险 2：执行前玩家必须确认。背包满时只取能放下的部分，并返回剩余数量。",
+      "promptGuidelines": [
+        "玩家要求“把这几台机器的成品收了”时使用；先用 game_get_entity 确认 assembler 段。",
+        "只取 produced 成品，不会退原料；配方保留。",
+        "背包满时会返回 remaining，不要把 remaining 当成已取走。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "buildingId"
+        ],
+        "properties": {
+          "buildingId": {
+            "type": "integer",
+            "description": "生产建筑 entityId"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.build.v1",
+      "risk": 2,
+      "timeoutMs": 8000,
+      "group": "game-write-build.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [
+          "buildingId",
+          "taken",
+          "remaining",
+          "items",
+          "undoable"
+        ],
+        "allFields": [
+          "itemId",
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "game_tether_add",
+      "label": "方位指示",
+      "description": "建立机甲到行星/建筑/矿脉的方位指示，可同时建立多个（最多 20 个）。本星球的每个建筑/矿脉各画一条 LineGizmo；跨行星时用原生 navigation.indicatorAstroId 指向其中一个目标行星（游戏一次只支持一个导航朝向），落到该行星后，该行星上的所有建筑/矿脉都切换为自绘线。写操作，风险 1：执行前玩家必须确认。",
+      "promptGuidelines": [
+        "玩家说“给这些建筑/星球/矿脉都做个方位指示”时使用；先用 game_get_entities/game_get_planet 确认目标。",
+        "kind=planet 时用 planetId（缺省当前星球）；kind=building 时用 buildingId，可选 planetId；kind=vein 时用 veinId，可选 planetId。",
+        "本星球建筑/矿脉会同时显示多条线；跨行星原生导航一次只指一个目标行星，不要声称所有跨行星线都同时可见。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "planet",
+              "building",
+              "vein"
+            ],
+            "description": "planet / building / vein"
+          },
+          "planetId": {
+            "type": "integer",
+            "description": "行星 id，缺省当前星球"
+          },
+          "buildingId": {
+            "type": "integer",
+            "description": "kind=building 时必填"
+          },
+          "veinId": {
+            "type": "integer",
+            "description": "kind=vein 时必填"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.tether.v1",
+      "risk": 1,
+      "timeoutMs": 8000,
+      "group": "game-assist.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [
+          "kind",
+          "planetId",
+          "name",
+          "subtitle",
+          "description",
+          "iconLabel"
+        ],
+        "allFields": [
+          "veinId",
+          "buildingId"
+        ]
+      }
+    },
+    {
+      "name": "game_tether_clear",
+      "label": "清除方位",
+      "description": "清除本 mod 建立的所有方位指示（导航朝向和建筑追踪线）。写操作，风险 1：执行前玩家必须确认。",
+      "promptGuidelines": [
+        "玩家说“取消方位/清除连线”时使用；只清本 mod 建立的目标。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.tether.v1",
+      "risk": 1,
+      "timeoutMs": 8000,
+      "group": "game-assist.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_tether_list",
+      "label": "方位列表",
+      "description": "列出当前方位指示（行星/建筑/矿脉及名称）。只读，不弹确认。",
+      "promptGuidelines": [
+        "玩家问“现在连了哪些目标”时使用。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.tether.v1",
+      "risk": 0,
+      "timeoutMs": 5000,
+      "group": "game-assist.md",
+      "cs": {
+        "timeoutMs": 5000,
+        "topFields": [
+          "display"
+        ],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_todo_add",
+      "label": "新增游戏目标",
+      "description": "在原生左侧“游戏目标”面板新增目标。写操作：执行前玩家必须确认。先用 game_todo_templates 查原生 GoalProto 模板；templateId 必填，title 是显示文案，params 可覆盖原生 DeterminatorParams。目标完成判定完全复用游戏原生 GoalDeterminator。",
+      "promptGuidelines": [
+        "玩家明确要求“给我一个目标/待办/采集 N 个/解锁科技”等目标时使用。",
+        "必须先调用 game_todo_templates 选择真实存在的模板；不要编造 templateId 或判断器名。",
+        "title 要写清楚目标；itemId/count 只用于模板参数确实是 item/count 的常见情况，其他模板用 params 按模板原参数顺序覆盖。",
+        "目标默认会出现在游戏左侧原生目标面板；不要重复添加同一个目标。",
+        "如果结果里 goalPanelOff=true（玩家“目标建议”选了自由探索），目标已经创建但面板不会显示；必须明确提醒玩家打开目标面板设置，把“目标建议”改为“关键节点”或“事无巨细”，不要声称目标已经显示。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "goals"
+        ],
+        "properties": {
+          "group": {
+            "type": "string",
+            "description": "分组标题，默认“游戏目标”"
+          },
+          "goals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "templateId"
+              ],
+              "properties": {
+                "templateId": {
+                  "type": "integer",
+                  "description": "原生 GoalProto 模板 id，来自 game_todo_templates"
+                },
+                "title": {
+                  "type": "string",
+                  "description": "目标显示文案；留空用模板名"
+                },
+                "params": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "description": "覆盖原生 DeterminatorParams"
+                },
+                "itemId": {
+                  "type": "integer",
+                  "description": "模板参数第 0 位为物品 id 时可填"
+                },
+                "count": {
+                  "type": "integer",
+                  "description": "模板参数第 1 位为目标数量时可填"
+                }
+              }
+            },
+            "description": "本轮要新增的目标列表"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.todo.v1",
+      "risk": 2,
+      "timeoutMs": 8000,
+      "group": "game-assist.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_todo_list",
+      "label": "当前游戏目标",
+      "description": "读取 AI 创建的原生游戏目标及当前值/目标值/阶段，以及玩家当前是否关闭了目标显示。",
+      "promptGuidelines": [
+        "玩家询问当前目标进度或准备删除目标时使用。",
+        "如果结果里 goalPanelOff=true，说明玩家“目标建议”选了自由探索，目标不显示；回答进度时提醒玩家打开目标面板设置改成“关键节点”或“事无巨细”。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.todo.v1",
+      "risk": 0,
+      "timeoutMs": 5000,
+      "group": "game-assist.md",
+      "cs": {
+        "timeoutMs": 5000,
+        "topFields": [
+          "goals",
+          "count"
+        ],
+        "allFields": [
+          "groupId",
+          "goalId",
+          "group",
+          "title",
+          "templateId",
+          "current",
+          "target",
+          "stage"
+        ]
+      }
+    },
+    {
+      "name": "game_todo_remove",
+      "label": "删除游戏目标",
+      "description": "删除 AI 创建的原生游戏目标；groupId 删除整组，goalId 删除单个子目标。写操作：执行前玩家必须确认。",
+      "promptGuidelines": [
+        "玩家明确要求删除目标时使用。",
+        "先用 game_todo_list 找到 groupId/goalId；不要删除不是 AI 创建的原生目标。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "groupId": {
+            "type": "integer",
+            "description": "删除整组目标"
+          },
+          "goalId": {
+            "type": "integer",
+            "description": "删除单个目标"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.todo.v1",
+      "risk": 2,
+      "timeoutMs": 8000,
+      "group": "game-assist.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "game_todo_templates",
+      "label": "目标模板",
+      "description": "列出游戏原生 GoalProto 目标模板：id、名称、判断器、等级、父分组和默认参数。生成游戏目标前先调用它，选择真实存在的判断器/模板。",
+      "promptGuidelines": [
+        "创建游戏目标前先查；不要凭记忆编造 GoalProto 模板 id。",
+        "params 是原生 DeterminatorParams 的默认值；game_todo_add 可覆盖它们。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.todo.v1",
+      "risk": 0,
+      "timeoutMs": 5000,
+      "group": "game-assist.md",
+      "cs": {
+        "timeoutMs": 5000,
+        "topFields": [
+          "templates",
+          "count"
+        ],
+        "allFields": [
+          "id",
+          "name",
+          "determinator",
+          "level",
+          "parentId",
+          "params"
+        ]
+      }
+    },
+    {
+      "name": "game_trace_line",
+      "label": "产线拓扑",
+      "description": "从一栋建筑出发，沿传送带与分拣器把相连设备串成图：节点（id/名称/类别/星系/行星/经纬度/深度）与有向边。用于回答“这条线从哪到哪、哪里断了、上下游有哪些机器”。",
+      "promptGuidelines": [
+        "玩家问某台机器的上下游、整条线是否连通、断在哪时使用。",
+        "结果只含实体连接，不含配方流向与星际物流；跨星用 game_get_logistics。",
+        "truncated=true 表示达到深度/节点上限，可调 depth / maxNodes 继续。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "entityId"
+        ],
+        "properties": {
+          "planetId": {
+            "type": "integer",
+            "description": "行星 id；省略时使用当前所在行星"
+          },
+          "entityId": {
+            "type": "integer",
+            "description": "起点建筑 id（来自 game_get_entities / 截图）"
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 60,
+            "description": "最大跳数，默认 20"
+          },
+          "maxNodes": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 300,
+            "description": "最大节点数，默认 200"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.entity.v1",
+      "risk": 0,
+      "timeoutMs": 15000,
+      "group": "game-entity.md",
+      "cs": {
+        "timeoutMs": 15000,
+        "topFields": [
+          "available",
+          "display",
+          "planetId",
+          "seed",
+          "depthLimit",
+          "nodeCount",
+          "edgeCount",
+          "truncated",
+          "nodes",
+          "edges"
+        ],
+        "allFields": [
+          "id",
+          "protoId",
+          "protoName",
+          "category",
+          "depth",
+          "from",
+          "to",
+          "kind"
+        ]
+      }
+    },
+    {
+      "name": "game_undo_last_write",
+      "label": "撤销上一步",
+      "description": "撤销最近一次由本 mod 执行的写操作（视角、标记、面板、研究、配方、存储、投料等）。只保留一层撤销栈；最近一次写操作不可撤销（如丢物品/取成品/方位指示）时返回明确错误；写操作，执行前玩家必须确认。",
+      "promptGuidelines": [
+        "玩家说“撤销/恢复刚才那一步”时使用。",
+        "只撤销最近一次，不要连续撤销多次；不可撤销的操作会返回错误。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "game.write.v1",
+      "risk": 1,
+      "timeoutMs": 8000,
+      "group": "game-write-basic.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "kb_get",
+      "label": "知识库条目",
+      "description": "按类别 + id/名称/SID 精确读取一条知识库条目（物品、配方、科技、建筑、矿脉、提示、教程、里程碑、指引、术语等）。通常先用 kb_search 拿到 id，再用它读完整字段。",
+      "promptGuidelines": [
+        "kb_search 已经给出 kind + id，或玩家明确给出条目 id 时使用。",
+        "kb_get 返回的是游戏本体数据；不要用它之外的信息补全配方/科技数值。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "kind",
+          "idOrName"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "item/recipe/tech/model/vein/signal/tip/tutorial/..."
+          },
+          "idOrName": {
+            "type": "string",
+            "description": "数字 id、名称或 SID"
+          }
+        }
+      },
+      "source": "kb",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "kb.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "kb_plan",
+      "label": "产线规划",
+      "description": "给定目标物品的每分钟产量，算出要建多少台什么机器、总功率、每条输入要几条传送带，并复用 kb_recipe_tree 给出原料与副产物。玩家问“我要建多少台机器”“这条线要多少电”“需要几条带”时用它。",
+      "promptGuidelines": [
+        "玩家问某条产线要多少机器、多少电、几条传送带时使用。",
+        "玩家问“怎么把 X 做到 N/min / 怎么规划 / 要准备什么”时，第一步就调 kb_plan，不要先查现状再心算。",
+        "rate 是目标物品的每分钟产量，必填；机器数已向上取整（exactCount 是未取整值）。",
+        "结果里的 assumptions 必须转述给玩家：未建模矿脉产率、建筑堆叠与喷涂消耗。",
+        "玩家提到增产剂/喷涂时传 proliferator=mk1/mk2/mk3；默认 extra（额外产出），要加速则 proliferatorMode=speed。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "item",
+          "rate"
+        ],
+        "properties": {
+          "item": {
+            "type": "string",
+            "description": "目标物品名称、id 或 SID"
+          },
+          "rate": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "目标每分钟产量"
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16,
+            "description": "递归深度，默认 8"
+          },
+          "recipeId": {
+            "type": "integer",
+            "description": "可选：指定根配方 id"
+          },
+          "buildingTier": {
+            "type": "string",
+            "description": "机器档位：base（默认，最低速）/ mk2 / mk3"
+          },
+          "buildingId": {
+            "type": "integer",
+            "description": "可选：直接指定机器原型 id"
+          },
+          "proliferator": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "none"
+              },
+              {
+                "type": "string",
+                "const": "mk1"
+              },
+              {
+                "type": "string",
+                "const": "mk2"
+              },
+              {
+                "type": "string",
+                "const": "mk3"
+              }
+            ],
+            "description": "增产剂档位，默认 none"
+          },
+          "proliferatorMode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "extra"
+              },
+              {
+                "type": "string",
+                "const": "speed"
+              }
+            ],
+            "description": "extra=额外产出（默认），speed=加速生产"
+          },
+          "beltSpeed": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "单条带吞吐（个/秒），默认 6（Mk.I）"
+          },
+          "from": {
+            "type": "string",
+            "description": "起点：ore（默认，从原矿）/ smelted（从冶炼产物）/ 物品名或 id"
+          }
+        }
+      },
+      "source": "kb",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "kb.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "kb_recipe_tree",
+      "label": "配方树",
+      "description": "按游戏本体的主配方递归展开一个物品，计算直接输入、原料总量与副产物。玩家问“造 N 个 X 需要多少原料”“每分钟 N 个 X 怎么配”时用它，不要自己心算。",
+      "promptGuidelines": [
+        "玩家问某个物品需要哪些原料、需要多少、每分钟产量怎么换算时使用。",
+        "rate 表示目标物品每分钟产量；不传 rate 时 amount 表示一次目标产量（默认 1）。",
+        "结果里的 raw 是原料汇总，byproducts 是副产物；副产物未从原料中抵扣，回答时要说明。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "item"
+        ],
+        "properties": {
+          "item": {
+            "type": "string",
+            "description": "物品名称、id 或 SID"
+          },
+          "amount": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "目标数量，默认 1"
+          },
+          "rate": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "目标每分钟产量；给出时忽略 amount"
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16,
+            "description": "递归深度，默认 8"
+          },
+          "recipeId": {
+            "type": "integer",
+            "description": "可选：指定根物品的配方 id（替代配方）"
+          },
+          "from": {
+            "type": "string",
+            "description": "起点：ore（默认，从原矿）/ smelted（从冶炼产物）/ 物品名或 id"
+          }
+        }
+      },
+      "source": "kb",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "kb.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "kb_search",
+      "label": "知识库搜索",
+      "description": "在游戏本体知识库里搜索物品、配方、科技、建筑、矿脉，以及提示/教程/里程碑/指引/术语。玩家问“X 是什么”“哪个科技解锁 X”“有没有相关提示”时先用它定位；再按 id 用 kb_get 或 kb_recipe_tree。",
+      "promptGuidelines": [
+        "玩家提到具体物品、配方、科技、建筑或游戏机制名称，而你需要确认官方数据时使用。",
+        "先用 kb_search 拿到 kind + id，再用 kb_get 或 kb_recipe_tree；不要凭记忆编造配方/数值。",
+        "默认 spoiler=low 不返回剧情教程；只有玩家明确问剧情/教程时才传 spoiler=\"story\"，不要主动剧透。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "名称、ID 或 SID，例如“量子芯片”“1201”“coil”"
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "可选类别过滤：item/recipe/tech/model/vein/signal/tip/tutorial/milestone/goal/prompt/glossary/achievement/journal"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "description": "返回条数，默认 8"
+          },
+          "spoiler": {
+            "type": "string",
+            "description": "剧透上限：none（只要无剧透）/low（默认）/story（含剧情/教程）。默认 low"
+          }
+        }
+      },
+      "source": "kb",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "kb.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "run_script",
+      "label": "脚本",
+      "executionMode": "sequential",
+      "description": "在沙箱里执行一段 JavaScript，用来批量取数、循环、条件判断、聚合，或在确认后批量执行写操作。可用 `dsp.call(工具名, 参数)`（同步）调用当前已注册的 game_* 工具，返回 JSON 字符串；`console.log` 会被收集；脚本要 `return` 一个可 JSON 序列化的结果。脚本包含写工具时，执行前会向玩家弹一次脚本级确认，确认后最多执行 10000 次写调用；没有 fs/net/process/require。",
+      "promptGuidelines": [
+        "需要对多个建筑/行星做批量查询、筛选、求和或条件判断时使用；单次查询仍直接用对应工具。",
+        "dsp.call 是同步的，返回 JSON 字符串，需要 JSON.parse；脚本必须 return 一个可序列化的结果。",
+        "脚本里要写写操作时，必须使用字面量 dsp.call(\"写工具名\", …)，执行前会弹一次脚本级确认；动态拼工具名的写调用会被拒绝。",
+        "写脚本一次最多 10000 次写调用；仍受 dsp.call 次数（默认 100，最大 10000）与运行时间（默认 30 秒，最大 120 秒）预算约束。",
+        "不要用 try/catch 包住 dsp.call：它的挂起靠异常实现，被吞掉会导致结果错误；也不要用 Date.now/Math.random（重放会不一致）。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "脚本正文。示例：const r = JSON.parse(dsp.call(\"game_get_power\", {})); return {kw: r.data.demandKw};"
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 120000,
+            "description": "运行上限，默认 30000ms，最大 120000ms"
+          },
+          "maxCalls": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000,
+            "description": "工具调用次数上限，默认 100，最大 10000"
+          }
+        }
+      },
+      "source": "script",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "interactive.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "wiki_page",
+      "label": "Wiki 页面",
+      "description": "读取一个中/英文 DSP Wiki 页面的纯文本正文（自动处理重定向，最长 8000 字）。适合在 wiki_search 之后展开细节；必须附上返回的 url。",
+      "promptGuidelines": [
+        "在 wiki_search 找到标题之后使用，读取正文细节。",
+        "长度超过 8000 字会被截断（truncated=true）；不要假装读过截断之后的内容。",
+        "wiki 链接必须原样使用返回的 url；不要自行拼接或改写成 /wiki/、/Wiki/。",
+        "页面不存在时如实说“wiki 没有这个页面”，不要用记忆补。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "页面标题（wiki_search 返回的 title）"
+          },
+          "lang": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "zh"
+              },
+              {
+                "type": "string",
+                "const": "en"
+              }
+            ],
+            "description": "默认 zh"
+          }
+        }
+      },
+      "source": "wiki",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "wiki.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    },
+    {
+      "name": "wiki_search",
+      "label": "Wiki 搜索",
+      "description": "在中/英文戴森球计划 Wiki 里搜索页面，返回标题、摘要与链接。用于查游戏机制、版本改动、物品/建筑的百科说明；结果必须附上链接，不能凭记忆替代。",
+      "promptGuidelines": [
+        "玩家问机制、版本差异、百科背景，而 kb_* 没有覆盖时使用。",
+        "回答里保留 wiki 链接（url），并说明信息来自哪个语言的 wiki。",
+        "wiki 链接必须原样使用工具返回的 url；不要自行拼接或改写成 /wiki/、/Wiki/。",
+        "wiki 没有结果或站点不可用时，直说“wiki 没查到/暂时不可用”，不要改用记忆编造。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索词，例如“增产剂”“黑雾”“物流塔”"
+          },
+          "lang": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "zh"
+              },
+              {
+                "type": "string",
+                "const": "en"
+              },
+              {
+                "type": "string",
+                "const": "both"
+              }
+            ],
+            "description": "zh / en / both（默认 both）"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "每种语言返回条数，默认 5"
+          }
+        }
+      },
+      "source": "wiki",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "wiki.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      }
+    }
+  ]
+}
