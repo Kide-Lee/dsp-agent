@@ -696,6 +696,8 @@ namespace IcarusII.Tests
             Eq("conversation.delete 类型名", "conversation.delete", Protocol.ConversationDelete);
             Eq("conversation.deleted 类型名", "conversation.deleted", Protocol.ConversationDeleted);
             Eq("conversation.updated 类型名", "conversation.updated", Protocol.ConversationUpdated);
+            Eq("conversation.rename 类型名", "conversation.rename", Protocol.ConversationRename);
+            Eq("conversation.renamed 类型名", "conversation.renamed", Protocol.ConversationRenamed);
             Eq("conversation.create 空载荷", 0, Protocol.BuildConversationCreate().Count);
             Eq("conversation.switch payload", "conv-a",
                 Protocol.BuildConversationTarget("conv-a")["conversationId"].AsString());
@@ -729,6 +731,17 @@ namespace IcarusII.Tests
             var updatedPayload = Protocol.BuildConversationUpdated("conv-a", "量子芯片产线规划");
             Eq("conversation.updated builder id", "conv-a", updatedPayload["conversationId"].AsString());
             Eq("conversation.updated builder title", "量子芯片产线规划", updatedPayload["title"].AsString());
+            var renamePayload = Protocol.BuildConversationRename("conv-a", "玩家标题");
+            Eq("conversation.rename builder id", "conv-a", renamePayload["conversationId"].AsString());
+            Eq("conversation.rename builder title", "玩家标题", renamePayload["title"].AsString());
+            var renamedInfo = ConversationEventInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"3f2a\",\"conversationId\":\"conv-a\",\"title\":\"玩家标题\",\"ok\":true,\"error\":null}"));
+            Eq("conversation.renamed ok", true, renamedInfo.Ok);
+            Eq("conversation.renamed title", "玩家标题", renamedInfo.Title);
+            var failedRename = ConversationEventInfo.Parse(JsonValue.Parse(
+                "{\"conversationId\":\"conv-a\",\"title\":\"\",\"ok\":false,\"error\":\"invalid_title\"}"));
+            Check("conversation.renamed 失败 ok=false", !failedRename.Ok);
+            Eq("conversation.renamed 失败错误", "invalid_title", failedRename.Error);
 
             var deletedInfo = ConversationEventInfo.Parse(JsonValue.Parse(
                 "{\"saveKey\":\"3f2a\",\"conversationId\":\"conv-a\",\"ok\":true,\"error\":null," +

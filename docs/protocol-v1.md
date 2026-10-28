@@ -1060,15 +1060,19 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 - 每个会话仍然是 pi 的一个 session 文件，放在原来的存档目录
   `%APPDATA%/icarus-ii/sessions/<saveKey>/` 下；会话的 pi session id 就是
   `conversationId`。
-- 活动会话记录在 `sessions/<saveKey>/active.json`：`{"activeConversationId":"…"}`。
-  该文件不是 pi session，`SessionManager.list` 会忽略它。
+- 活动会话记录在 `sessions/<saveKey>/active.json`：
+  `{"activeConversationId":"…"}`；空 draft 如果被玩家改过标题，会多一个
+  `"title"` 字段。该文件不是 pi session，`SessionManager.list` 会忽略它。
 - 新建但还没有发过消息的会话没有 session 文件（pi 只在第一条 user/assistant 消息时落盘）。
   sidecar 在内存里把它作为空会话保留，并在同一存档的 `save.bound.conversations`
   里用 `id + title="新会话" + records=[]` 表示；它仍然可以通过 `active.json` 恢复。
 - 会话标题由 sidecar 生成：第一条问答完成后异步调用一次模型，把这次对话的主题
   总结成一行短标题，写入 pi 的 `session_info.name`；生成失败时退回第一条用户消息
   截断，保证可用。标题生成不阻塞主回答，也不进入主模型上下文。
-- 如果会话已经有 `session_info.name`（模型总结或用户重命名），不再自动生成。
+- 玩家可以在聊天区上方的标题输入框里改名；改名同样写入 `session_info.name`，
+  优先级高于自动生成。已有 `session_info.name` 的会话不会自动覆盖。
+- 空 draft 的改名先写在 `active.json.title`，第一次提问创建 session 时补写
+  `session_info`；没有消息前不单独创建 session 文件。
 - 会话按 `updatedAt` 降序排列（最近活动的在前）。
 
 #### `save.bound` 新增字段（sidecar → mod，均可选）
@@ -1172,6 +1176,37 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 - mod 只更新左侧该会话的标题和右侧标题栏，不重放历史、不切换活动会话。
 - 老 mod 忽略该消息；标题仍会在下一次 `save.bound` / `conversation.switch` 时更新。
 - 标题生成只针对新会话的前两次成功问答（第一次失败时允许再试一次）；失败保留第一条提问的截断标题。
+
+#### `conversation.rename`（mod → sidecar）
+
+玩家从聊天区标题输入框改名时发送：
+
+```jsonc
+{ "v": 1, "id": "m-84", "type": "conversation.rename",
+  "payload": { "conversationId": "conv_7c1e…", "title": "量子芯片产线规划" } }
+```
+
+返回：
+
+```jsonc
+{
+  "v": 1, "id": "s-84", "type": "conversation.renamed", "replyTo": "m-84",
+  "payload": {
+    "saveKey": "3f2a91c4d8e05b17",
+    "conversationId": "conv_7c1e…",
+    "title": "量子芯片产线规划",
+    "ok": true,
+    "error": null
+  }
+}
+```
+
+- 标题会去掉换行/控制字符、压缩空白并限制 40 个字符；空标题返回
+  `ok:false,error:"invalid_title"`，不会改动原标题。
+- 活动会话的改名立即写入 pi `session_info`；其他会话直接追加到对应 session 文件。
+- 空 draft 的改名先写入 `active.json.title`，第一次提问建 session 时再补
+  `session_info`。
+- 改名成功会固定标题；之后的模型自动总结不会覆盖它。重命名期间允许继续流式回答。
 
 #### `conversation.delete`（mod → sidecar）
 

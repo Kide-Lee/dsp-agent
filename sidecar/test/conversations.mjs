@@ -11,7 +11,7 @@ import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Session } from '../dist/session.js';
-import { PiAgent, normalizeConversationTitle } from '../dist/agent.js';
+import { PiAgent, normalizeConversationRename, normalizeConversationTitle } from '../dist/agent.js';
 import { MessageType, buildConversationUpdatedPayload } from '../dist/protocol.js';
 
 let passed = 0;
@@ -84,6 +84,14 @@ function makeAgent() {
       if (!found) return { ok: false, error: 'conversation_not_found' };
       activeId = id;
       return { ok: true, conversation: found, history: historyFor(id) };
+    },
+    renameConversation: async (_key, id, title) => {
+      const found = list.find((c) => c.id === id);
+      if (!found) return { ok: false, error: 'conversation_not_found' };
+      const clean = String(title ?? '').trim();
+      if (!clean) return { ok: false, error: 'invalid_title' };
+      found.title = clean;
+      return { ok: true, title: clean };
     },
     deleteConversation: async (_key, id) => {
       const at = list.findIndex((c) => c.id === id);
@@ -161,6 +169,26 @@ console.log('── 1. Session 消息 ──');
   check('conversation.delete 带回剩余列表', deleted?.payload?.conversations?.length === 2);
 
   session.handleFrame(Buffer.from(JSON.stringify({
+    v: 1, id: 'c-4', type: 'conversation.rename',
+    payload: { conversationId: 'conv-b', title: '  物流站改名  ' },
+  })), false);
+  const renamedFrame = await waitFrame(socket, 'conversation.renamed');
+  check('conversation.rename 回执', renamedFrame?.payload?.ok === true);
+  check('conversation.rename 回传标题', renamedFrame?.payload?.title === '物流站改名');
+  check('conversation.rename 更新列表', agent.getConversations && (await agent.getConversations()).find((c) => c.id === 'conv-b')?.title === '物流站改名');
+
+  session.handleFrame(Buffer.from(JSON.stringify({
+    v: 1, id: 'c-5', type: 'conversation.rename',
+    payload: { conversationId: 'conv-b', title: '   ' },
+  })), false);
+  let emptyRename = null;
+  for (let i = 0; i < 100 && !emptyRename; i++) {
+    emptyRename = socket.frames.find((f) => f.type === 'conversation.renamed' && f.replyTo === 'c-5') ?? null;
+    if (!emptyRename) await delay(2);
+  }
+  check('空标题被拒绝', emptyRename?.payload?.ok === false && emptyRename?.payload?.error === 'invalid_title');
+
+  session.handleFrame(Buffer.from(JSON.stringify({
     v: 1, id: 'p-1', type: 'prompt',
     payload: { text: '你好', conversationId: 'conv-a' },
   })), false);
@@ -214,6 +242,12 @@ console.log('── 2. PiAgent 会话文件 ──');
     check('切换后 active=A', agent.getActiveConversationId() === 'conv-a');
 
     const bPath = pi.SessionManager.findById(dataDir, 'conv-b', sessionDir);
+    const renamed = await agent.renameConversation('saveA', 'conv-b', '  物流站标题  ');
+    check('重命名现有会话', renamed.ok === true && renamed.title === '物流站标题');
+    const renamedList = await agent.getConversations('saveA');
+    check('重命名后列表标题更新', renamedList.find((c) => c.id === 'conv-b')?.title === '物流站标题');
+    check('重命名写入 session_info', Boolean(bPath) && readFileSync(bPath, 'utf8').includes('"session_info"') && readFileSync(bPath, 'utf8').includes('物流站标题'));
+
     const deleted = await agent.deleteConversation('saveA', 'conv-b');
     check('删除非活动会话', deleted.ok === true);
     check('删除后文件不存在', Boolean(bPath) && !existsSync(bPath));
@@ -224,6 +258,25 @@ console.log('── 2. PiAgent 会话文件 ──');
     const deleteActive = await agent.deleteConversation('saveA', 'conv-a');
     check('删除活动会话成功', deleteActive.ok === true);
     check('删除活动会话后换新 active', deleteActive.activeConversationId !== 'conv-a');
+
+    const draftId = deleteActive.activeConversationId;
+    const draftRenamed = await agent.renameConversation('saveA', draftId, '空会话标题');
+    check('重命名空会话', draftRenamed.ok === true && draftRenamed.title === '空会话标题');
+    const draftList = await agent.getConversations('saveA');
+    check('空会话重命名后列表可见', draftList.find((c) => c.id === draftId)?.title === '空会话标题');
+    check('空会话重命名暂不落 session 文件', !pi.SessionManager.findById(dataDir, draftId, sessionDir));
+    const activeDraft = JSON.parse(readFileSync(join(sessionDir, 'active.json'), 'utf8'));
+    check('空会话标题写入 active.json', activeDraft.title === '空会话标题');
+    const restoredAgent = new PiAgent({
+      dataDir,
+      store: { get: () => ({}), hasKey: () => false },
+      host: {},
+      logger: { child: () => noop },
+      loadSdk: () => import('@earendil-works/pi-coding-agent'),
+    });
+    restoredAgent.onSaveChanged('saveA');
+    const restoredList = await restoredAgent.getConversations('saveA');
+    check('重启后空会话标题保留', restoredList.find((c) => c.id === draftId)?.title === '空会话标题');
   } finally {
     rmSync(dataDir, { recursive: true, force: true });
   }
@@ -241,6 +294,8 @@ check('去掉 Markdown 包裹的前缀', normalizeConversationTitle('**标题：
 check('只取第一行', normalizeConversationTitle('量子芯片产线\n这是解释') === '量子芯片产线');
 check('空输出为空', normalizeConversationTitle('   ') === '');
 check('超长截断', Array.from(normalizeConversationTitle('一'.repeat(80))).length === 24);
+check('重命名压缩空白', normalizeConversationRename('  量子  芯片  ') === '量子 芯片');
+check('重命名上限 40', Array.from(normalizeConversationRename('一'.repeat(80))).length === 40);
 
 console.log();
 if (failed === 0) {

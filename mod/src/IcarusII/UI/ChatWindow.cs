@@ -601,9 +601,9 @@ namespace IcarusII.UI
         private ScrollRect _chatIndexScroll;
         private Text _chatIndexEmpty;
         private Button _newConversationButton;
-        private Text _conversationTitleText;
         private InputField _conversationTitleInput;
-        private GameObject _conversationTitlePlaceholder;
+        private Text _conversationTitleOver;
+        private ConversationTitleDisplay _conversationTitleDisplay;
         private readonly List<ConversationInfo> _conversations = new List<ConversationInfo>();
         private readonly List<ConversationView> _conversationViews = new List<ConversationView>();
         private readonly Dictionary<string, bool> _conversationExpanded =
@@ -881,9 +881,9 @@ namespace IcarusII.UI
             _chatIndexScroll = null;
             _chatIndexEmpty = null;
             _newConversationButton = null;
-            _conversationTitleText = null;
             _conversationTitleInput = null;
-            _conversationTitlePlaceholder = null;
+            _conversationTitleOver = null;
+            _conversationTitleDisplay = null;
             _activeConversationId = null;
             _pendingFocusConversationId = null;
             _pendingFocusText = null;
@@ -2015,6 +2015,7 @@ namespace IcarusII.UI
 
         /// <summary>玩家点了会话标题右侧的删除按钮（A.13）。</summary>
         public event Action<string> ConversationDeleteRequested;
+        public event Action<string, string> ConversationRenameRequested;
 
         /// <summary>
         /// 玩家点了压缩记录行的删除：请求 sidecar 撤销最近一次压缩（协议 A.11）。
@@ -5442,7 +5443,9 @@ namespace IcarusII.UI
                 if (conversation == null || conversation.Title == title) return;
                 conversation.SetTitle(title);
             }
-            if (conversationId == _activeConversationId) RefreshConversationTitle();
+            if (conversationId == _activeConversationId &&
+                (_conversationTitleInput == null || !_conversationTitleInput.isFocused))
+                RefreshConversationTitle();
         }
 
         public void SetActiveConversation(string conversationId)
@@ -5477,6 +5480,12 @@ namespace IcarusII.UI
             _pendingFocusConversationId = null;
             _pendingFocusText = null;
             _pendingFocusTimestamp = 0;
+        }
+
+        /// <summary>重命名失败/取消时把输入框恢复成当前会话标题。</summary>
+        public void RevertConversationTitle()
+        {
+            RefreshConversationTitle();
         }
 
         public void ClearConversations()
@@ -5887,7 +5896,7 @@ namespace IcarusII.UI
             return new string(chars);
         }
 
-        private static string FitLabel(string text, int fontSize, float maxWidth)
+        internal static string FitLabel(string text, int fontSize, float maxWidth)
         {
             var s = (text ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
             if (s.Length == 0) return string.Empty;
@@ -5910,25 +5919,77 @@ namespace IcarusII.UI
                 ? _panel.Find("content-column/title/name-input") as RectTransform
                 : null;
             if (input == null) return;
-            _conversationTitleText = input.Find("name-text")?.GetComponent<Text>();
             _conversationTitleInput = input.GetComponent<InputField>();
-            var placeholder = input.Find("name-over");
-            _conversationTitlePlaceholder = placeholder != null ? placeholder.gameObject : null;
+            _conversationTitleOver = input.Find("name-over")?.GetComponent<Text>();
+            if (_conversationTitleInput != null)
+            {
+                // 玩家按 Enter 或点走时提交；先移除旧监听，避免 Ensure 多次挂重复回调。
+                _conversationTitleInput.onEndEdit.RemoveListener(OnConversationTitleEndEdit);
+                _conversationTitleInput.onEndEdit.AddListener(OnConversationTitleEndEdit);
+            }
+            if (_conversationTitleInput != null && _conversationTitleOver != null)
+            {
+                var display = input.GetComponent<ConversationTitleDisplay>();
+                if (display == null) display = input.gameObject.AddComponent<ConversationTitleDisplay>();
+                display.Input = _conversationTitleInput;
+                display.Over = _conversationTitleOver;
+                _conversationTitleDisplay = display;
+            }
         }
 
-        /// <summary>右栏标题显示当前会话的完整标题；左侧索引只显示截断版。</summary>
+        /// <summary>
+        /// 右栏标题：输入框里始终是完整标题；未编辑时由 UIInputField 负责把 overText
+        /// 显示出来，ConversationTitleDisplay 再按宽度补省略号。不要手工隐藏 overText。
+        /// </summary>
         private void RefreshConversationTitle()
         {
             var conversation = FindConversation(_activeConversationId);
             var title = conversation != null ? conversation.Title : string.Empty;
-            // 先同步输入框的“真实文本”，再覆盖显示为省略号版本；
-            // 用 SetTextWithoutNotify 避免触发 prefab 里的 onValueChanged 回调。
             if (_conversationTitleInput != null && _conversationTitleInput.text != title)
                 _conversationTitleInput.SetTextWithoutNotify(title ?? string.Empty);
-            if (_conversationTitleText != null)
-                _conversationTitleText.text = FitLabel(title, 16, 210f);
-            if (_conversationTitlePlaceholder != null)
-                _conversationTitlePlaceholder.SetActive(string.IsNullOrEmpty(title));
+            _conversationTitleDisplay?.RefreshNow();
+        }
+
+        private void OnConversationTitleEndEdit(string value)
+        {
+            var conversationId = _activeConversationId;
+            var conversation = FindConversation(conversationId);
+            if (conversation == null)
+            {
+                RefreshConversationTitle();
+                return;
+            }
+            var title = NormalizeConversationTitleInput(value);
+            if (title.Length == 0 || title == conversation.Title)
+            {
+                RefreshConversationTitle();
+                return;
+            }
+            try
+            {
+                ConversationRenameRequested?.Invoke(conversationId, title);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[标题] 请求重命名失败：{ex.Message}");
+                RefreshConversationTitle();
+            }
+        }
+
+        private static string NormalizeConversationTitleInput(string value)
+        {
+            var raw = value ?? string.Empty;
+            var builder = new StringBuilder(raw.Length);
+            for (int i = 0; i < raw.Length; i++)
+            {
+                var ch = raw[i];
+                builder.Append(char.IsControl(ch) ? ' ' : ch);
+            }
+            var text = System.Text.RegularExpressions.Regex
+                .Replace(builder.ToString(), @"\s+", " ")
+                .Trim();
+            var chars = text.ToCharArray();
+            return chars.Length <= 40 ? text : new string(chars, 0, 40).TrimEnd();
         }
 
         private string IndexLabel(string text, float maxWidth)
@@ -8940,4 +9001,29 @@ namespace IcarusII.UI
             return s.IndexOf('<') < 0 ? s : s.Replace("<", "<\u200B");
         }
     }
+
+    /// <summary>
+    /// 右栏会话标题的显示层。输入框里保留完整标题；未编辑时 UIInputField 会把
+    /// 文本同步到 overText，这里在 LateUpdate 再按宽度补省略号，避免长标题溢出。
+    /// 编辑时跳过，交给 InputField 自己显示完整文本和光标。
+    /// </summary>
+    internal sealed class ConversationTitleDisplay : MonoBehaviour
+    {
+        public InputField Input;
+        public Text Over;
+
+        private void LateUpdate()
+        {
+            RefreshNow();
+        }
+
+        public void RefreshNow()
+        {
+            if (Input == null || Over == null || Input.isFocused) return;
+            var title = Input.text ?? string.Empty;
+            var display = title.Length == 0 ? "会话标题" : ChatWindow.FitLabel(title, 16, 210f);
+            if (Over.text != display) Over.text = display;
+        }
+    }
+
 }

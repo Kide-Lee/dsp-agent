@@ -57,6 +57,8 @@ export const MessageType = {
   ConversationDeleted: 'conversation.deleted',
   // A.13：标题由模型异步总结后更新（不重建正文）
   ConversationUpdated: 'conversation.updated',
+  ConversationRename: 'conversation.rename',
+  ConversationRenamed: 'conversation.renamed',
   // M4e：删除一个问答回合（附录 A.7）
   HistoryDelete: 'history.delete',
   HistoryDeleted: 'history.deleted',
@@ -134,7 +136,8 @@ export type ErrorCode =
   | 'sandbox_required'
   // A.13：多会话
   | 'conversation_not_found'
-  | 'conversation_mismatch';
+  | 'conversation_mismatch'
+  | 'invalid_title';
 
 export type StatusState =
   | 'idle'
@@ -739,6 +742,43 @@ export interface ConversationInfo {
 
 export interface ConversationTargetPayload {
   conversationId: string;
+}
+
+export interface ConversationRenamePayload {
+  conversationId: string;
+  title: string;
+}
+
+/** 解析 conversation.rename：title 可以是空串，由 agent 统一校验。 */
+export function parseConversationRenamePayload(payload: JsonObject): ConversationRenamePayload | null {
+  const id = payload['conversationId'];
+  const title = payload['title'];
+  if (typeof id !== 'string' || id.trim().length === 0) return null;
+  if (typeof title !== 'string') return null;
+  return { conversationId: id.trim(), title };
+}
+
+export function buildConversationRenamePayload(args: {
+  conversationId: string;
+  title: string;
+}): JsonObject {
+  return { conversationId: args.conversationId, title: args.title };
+}
+
+export function buildConversationRenamedPayload(args: {
+  saveKey: string | null;
+  conversationId: string;
+  title: string;
+  ok: boolean;
+  error?: string | null;
+}): JsonObject {
+  return {
+    saveKey: args.saveKey,
+    conversationId: args.conversationId,
+    title: args.title,
+    ok: args.ok,
+    error: args.error ?? null,
+  };
 }
 
 /** 解析 conversation.switch / conversation.delete 的目标。 */

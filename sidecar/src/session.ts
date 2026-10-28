@@ -47,6 +47,8 @@ import {
   buildConversationDeletedPayload,
   buildConversationSwitchedPayload,
   buildConversationUpdatedPayload,
+  buildConversationRenamedPayload,
+  parseConversationRenamePayload,
   parseConversationTargetPayload,
   parseConfirmResultPayload,
   errorRetryable,
@@ -474,6 +476,9 @@ export class Session {
         return;
       case MessageType.ConversationSwitch:
         this.queueBind(() => this.handleConversationSwitch(env));
+        return;
+      case MessageType.ConversationRename:
+        this.queueBind(() => this.handleConversationRename(env));
         return;
       case MessageType.ConversationDelete:
         this.queueBind(() => this.handleConversationDelete(env));
@@ -1028,6 +1033,52 @@ export class Session {
         }),
       }),
     );
+  }
+
+  private async handleConversationRename(env: import('./protocol.js').ParsedEnvelope): Promise<void> {
+    if (this._state !== 'ready') {
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+    const payload = parseConversationRenamePayload(env.payload ?? {});
+    if (!payload) {
+      this.sendError('bad_request', 'conversation.rename.payload 非法', env.id || null);
+      return;
+    }
+    const reply = (ok: boolean, title: string, error?: string | null) => {
+      this.sendEnvelope(
+        buildEnvelope({
+          type: MessageType.ConversationRenamed,
+          replyTo: env.id || null,
+          payload: buildConversationRenamedPayload({
+            saveKey: this.boundSaveKey,
+            conversationId: payload.conversationId,
+            title,
+            ok,
+            error: error ?? null,
+          }),
+        }),
+      );
+    };
+    if (!this.boundSaveKey) {
+      reply(false, payload.title, 'save_required');
+      return;
+    }
+    if (!this.options.agent.renameConversation) {
+      reply(false, payload.title, 'internal');
+      return;
+    }
+    try {
+      const result = await this.options.agent.renameConversation(
+        this.boundSaveKey,
+        payload.conversationId,
+        payload.title,
+      );
+      reply(result.ok, result.title ?? payload.title, result.error);
+    } catch (err) {
+      this.logger.warn('重命名会话异常', { error: err instanceof Error ? err.message : String(err) });
+      reply(false, payload.title, 'internal');
+    }
   }
 
   private async handleConversationDelete(env: import('./protocol.js').ParsedEnvelope): Promise<void> {

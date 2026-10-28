@@ -78,6 +78,12 @@ namespace IcarusII.Common.Protocol
         /// <summary>sidecar → mod：会话标题已由模型总结更新（只更新索引标题）。</summary>
         public const string ConversationUpdated = "conversation.updated";
 
+        /// <summary>mod → sidecar：玩家重命名会话。</summary>
+        public const string ConversationRename = "conversation.rename";
+
+        /// <summary>sidecar → mod：重命名结果。</summary>
+        public const string ConversationRenamed = "conversation.renamed";
+
         // ---- M4e 增量：删除对话回合（协议附录 A.7）----
 
         /// <summary>mod → sidecar：删除一个问答回合。</summary>
@@ -117,6 +123,7 @@ namespace IcarusII.Common.Protocol
         public const string CodeSaveRequired = "save_required";
         public const string CodeConversationNotFound = "conversation_not_found";
         public const string CodeConversationMismatch = "conversation_mismatch";
+        public const string CodeInvalidTitle = "invalid_title";
 
         // ---- M2 增量：只读工具（协议附录 B）----
 
@@ -543,6 +550,15 @@ namespace IcarusII.Common.Protocol
             var p = JsonValue.NewObject();
             if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
             if (!string.IsNullOrEmpty(title)) p.Set("title", title);
+            return p;
+        }
+
+        /// <summary>构造 conversation.rename 载荷（附录 A.13）：玩家改标题。</summary>
+        public static JsonValue BuildConversationRename(string conversationId, string title)
+        {
+            var p = JsonValue.NewObject();
+            if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
+            p.Set("title", title ?? string.Empty);
             return p;
         }
 

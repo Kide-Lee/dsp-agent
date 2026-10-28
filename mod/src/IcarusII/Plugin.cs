@@ -153,6 +153,7 @@ namespace IcarusII
                 _chat.ConversationCreateRequested += OnConversationCreateRequested;
                 _chat.ConversationSwitchRequested += OnConversationSwitchRequested;
                 _chat.ConversationDeleteRequested += OnConversationDeleteRequested;
+                _chat.ConversationRenameRequested += OnConversationRenameRequested;
                 _chat.BlueprintCardActionRequested += OnBlueprintCardAction;
                 _chat.AskCompleted += OnAskCompleted;
                 _chat.AskCancelled += OnAskCancelled;
@@ -455,6 +456,10 @@ namespace IcarusII
 
                 case Protocol.ConversationUpdated:
                     OnConversationUpdated(ConversationEventInfo.Parse(payload));
+                    break;
+
+                case Protocol.ConversationRenamed:
+                    OnConversationRenamed(ConversationEventInfo.Parse(payload));
                     break;
 
                 case Protocol.ToolActivity:
@@ -1638,6 +1643,41 @@ namespace IcarusII
             Post(() =>
             {
                 if (_chat == null) return;
+                _chat.UpdateConversationTitle(info.ConversationId, info.Title);
+            });
+        }
+
+        private void OnConversationRenameRequested(string conversationId, string title)
+        {
+            if (_chat == null || _client == null || _client.State != ConnectionState.Ready)
+            {
+                _chat?.RevertConversationTitle();
+                return;
+            }
+            if (string.IsNullOrEmpty(conversationId) || string.IsNullOrEmpty(title))
+            {
+                _chat.RevertConversationTitle();
+                return;
+            }
+            if (_client.SendConversationRename(conversationId, title) == null)
+            {
+                _chat.AppendSystem(Strings.Get("chat.conversation.failed", "连接未就绪"));
+                _chat.RevertConversationTitle();
+            }
+        }
+
+        private void OnConversationRenamed(ConversationEventInfo info)
+        {
+            if (info == null || string.IsNullOrEmpty(info.ConversationId)) return;
+            Post(() =>
+            {
+                if (_chat == null) return;
+                if (!info.Ok)
+                {
+                    _chat.AppendSystem(Strings.Get("chat.conversation.failed", info.Error ?? "unknown"));
+                    _chat.RevertConversationTitle();
+                    return;
+                }
                 _chat.UpdateConversationTitle(info.ConversationId, info.Title);
             });
         }

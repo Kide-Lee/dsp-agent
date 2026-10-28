@@ -237,6 +237,12 @@ export interface AgentRunner {
     history?: HistoryMessage[];
     error?: string;
   }>;
+  /** A.13：玩家重命名会话（写入 pi session_info）。 */
+  renameConversation?(saveKey: string | null, conversationId: string, title: string): Promise<{
+    ok: boolean;
+    title?: string;
+    error?: string;
+  }>;
   /** A.13：删除会话；如果删的是活动会话，返回新的活动会话 id。 */
   deleteConversation?(saveKey: string | null, conversationId: string): Promise<{
     ok: boolean;
@@ -465,6 +471,7 @@ const MAX_CONVERSATION_RECORDS = 40;
 /** 模型总结标题的输入预算与输出长度（字符）。 */
 const CONVERSATION_TITLE_INPUT_MAX = 2000;
 const CONVERSATION_TITLE_MAX_CHARS = 24;
+const CONVERSATION_RENAME_MAX_CHARS = 40;
 const CONVERSATION_TITLE_SYSTEM_PROMPT = [
   '你为《戴森球计划》的 AI 助手会话生成一个短标题。',
   '根据玩家的提问和助手的回答，概括这次对话的主题或任务；不要照抄提问。',
@@ -511,6 +518,19 @@ export function normalizeConversationTitle(raw: string): string {
   if (chars.length > CONVERSATION_TITLE_MAX_CHARS)
     title = chars.slice(0, CONVERSATION_TITLE_MAX_CHARS).join('');
   return title;
+}
+
+/** 玩家重命名：去换行/控制字符、压缩空白，最多 40 个字符。 */
+export function normalizeConversationRename(raw: string): string {
+  const text = String(raw ?? '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const chars = Array.from(text);
+  return chars.length > CONVERSATION_RENAME_MAX_CHARS
+    ? chars.slice(0, CONVERSATION_RENAME_MAX_CHARS).join('')
+    : text;
 }
 
 /** 标题模型只看到这次问答的裁剪版，避免长回答把请求撑大。 */
@@ -1160,6 +1180,8 @@ export class PiAgent implements AgentRunner {
   private activeConversationId: string | null = null;
   /** A.13：活动会话还没有 session 文件（新建后尚未发过消息）。 */
   private activeConversationDraft = false;
+  /** A.13：未落盘 draft 的标题；第一次提问建会话时写入 session_info。 */
+  private activeConversationDraftTitle: string | null = null;
   /** A.13：activeConversationId 是针对哪个 saveKey 初始化的。 */
   private conversationSaveKey: string | null = null;
   /** A.13：正在异步生成标题的会话，避免重复调用模型。 */
@@ -1270,6 +1292,7 @@ export class PiAgent implements AgentRunner {
     // getConversations/getHistory 时惰性加载。
     this.activeConversationId = null;
     this.activeConversationDraft = false;
+    this.activeConversationDraftTitle = null;
     this.conversationSaveKey = null;
     this.logger.info('存档变化，切换对话会话', { saveKey });
 
@@ -1306,13 +1329,31 @@ export class PiAgent implements AgentRunner {
     }
   }
 
-  private writeActiveConversationId(saveKey: string | null, id: string): void {
+  private readActiveConversationTitle(saveKey: string | null): string | null {
+    const path = this.activeFilePath(saveKey);
+    if (!path) return null;
+    try {
+      const parsed = JSON.parse(readFileSync(path, 'utf8')) as { title?: unknown };
+      return typeof parsed.title === 'string' && parsed.title.trim().length > 0
+        ? parsed.title.trim()
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private writeActiveConversationId(
+    saveKey: string | null,
+    id: string,
+    title: string | null = null,
+  ): void {
     const path = this.activeFilePath(saveKey);
     if (!path) return;
     try {
       mkdirSync(dirname(path), { recursive: true });
       const tmp = `${path}.tmp-${process.pid}`;
-      writeFileSync(tmp, JSON.stringify({ activeConversationId: id }), {
+      const data = title ? { activeConversationId: id, title } : { activeConversationId: id };
+      writeFileSync(tmp, JSON.stringify(data), {
         encoding: 'utf8',
         mode: 0o600,
       });
@@ -1345,9 +1386,16 @@ export class PiAgent implements AgentRunner {
       if (file) {
         this.activeConversationId = stored;
         this.activeConversationDraft = false;
+        this.activeConversationDraftTitle = null;
         return stored;
       }
-      // active.json 指向的会话文件已不存在（手动删除/迁移）：回退到最近会话。
+      // active.json 可能指向一个还没落盘的 draft（只改过标题、没发过消息）。
+      // 保留它和标题，而不是丢掉玩家刚改的名字。
+      this.activeConversationId = stored;
+      this.activeConversationDraft = true;
+      this.activeConversationDraftTitle = this.readActiveConversationTitle(saveKey);
+      this.writeActiveConversationId(saveKey, stored, this.activeConversationDraftTitle);
+      return stored;
     }
 
     let list: Awaited<ReturnType<typeof pi.SessionManager.list>> = [];
@@ -1359,9 +1407,11 @@ export class PiAgent implements AgentRunner {
     if (list.length > 0) {
       this.activeConversationId = list[0]!.id;
       this.activeConversationDraft = false;
+      this.activeConversationDraftTitle = null;
     } else {
       this.activeConversationId = this.newConversationId();
       this.activeConversationDraft = true;
+      this.activeConversationDraftTitle = null;
     }
     this.writeActiveConversationId(saveKey, this.activeConversationId);
     return this.activeConversationId;
@@ -1455,6 +1505,8 @@ export class PiAgent implements AgentRunner {
   ): Promise<boolean> {
     const live = this.session;
     if (live && live.sessionId === conversationId) {
+      // 生成期间玩家可能刚改过名；已有标题时绝不能用模型结果覆盖。
+      if ((live.sessionName ?? '').trim().length > 0) return false;
       try {
         live.setSessionName(title);
         return true;
@@ -1472,6 +1524,7 @@ export class PiAgent implements AgentRunner {
       const file = pi.SessionManager.findById(this.dataDir, conversationId, sessionDir);
       if (!file) return false;
       const manager = pi.SessionManager.open(file, sessionDir, this.dataDir);
+      if ((manager.getSessionName() ?? '').trim().length > 0) return false;
       manager.appendSessionInfo(title);
       return true;
     } catch (err) {
@@ -1559,11 +1612,11 @@ export class PiAgent implements AgentRunner {
     };
   }
 
-  private draftConversationInfo(conversationId: string): ConversationInfo {
+  private draftConversationInfo(conversationId: string, title: string | null = null): ConversationInfo {
     const now = Date.now();
     return {
       id: conversationId,
-      title: '新会话',
+      title: title && title.trim().length > 0 ? title.trim() : '新会话',
       createdAt: now,
       updatedAt: now,
       recordCount: 0,
@@ -1591,7 +1644,7 @@ export class PiAgent implements AgentRunner {
       seen.add(info.id);
     }
     if (activeId && !seen.has(activeId)) {
-      out.unshift(this.draftConversationInfo(activeId));
+      out.unshift(this.draftConversationInfo(activeId, this.activeConversationDraftTitle));
     }
     out.sort((a, b) => b.updatedAt - a.updatedAt);
     return out;
@@ -1624,12 +1677,17 @@ export class PiAgent implements AgentRunner {
 
     // 当前会话本来就是空的：复用它，避免每次点“新会话”都留下一个空 draft。
     if (activeId && this.activeConversationDraft) {
-      return { ok: true, conversation: this.draftConversationInfo(activeId), history: [] };
+      return {
+        ok: true,
+        conversation: this.draftConversationInfo(activeId, this.activeConversationDraftTitle),
+        history: [],
+      };
     }
 
     const id = this.newConversationId();
     this.activeConversationId = id;
     this.activeConversationDraft = true;
+    this.activeConversationDraftTitle = null;
     this.writeActiveConversationId(saveKey, id);
     this.teardown();
     return { ok: true, conversation: this.draftConversationInfo(id), history: [] };
@@ -1648,7 +1706,7 @@ export class PiAgent implements AgentRunner {
     if (conversationId === activeId) {
       const history = await this.readConversationHistory(pi, saveKey, conversationId);
       const conversation = this.activeConversationDraft
-        ? this.draftConversationInfo(conversationId)
+        ? this.draftConversationInfo(conversationId, this.activeConversationDraftTitle)
         : this.conversationInfoFrom(pi, saveKey, {
             id: conversationId,
             firstMessage: history.find((m) => m.role === 'user')?.text ?? '',
@@ -1664,6 +1722,7 @@ export class PiAgent implements AgentRunner {
 
     this.activeConversationId = conversationId;
     this.activeConversationDraft = false;
+    this.activeConversationDraftTitle = null;
     this.writeActiveConversationId(saveKey, conversationId);
     this.teardown();
     const history = this.readConversationHistory(pi, saveKey, conversationId);
@@ -1674,6 +1733,58 @@ export class PiAgent implements AgentRunner {
       modified: new Date(),
     });
     return { ok: true, conversation, history };
+  }
+
+  async renameConversation(saveKey: string | null, conversationId: string, rawTitle: string): Promise<{
+    ok: boolean;
+    title?: string;
+    error?: string;
+  }> {
+    if (!saveKey) return { ok: false, error: 'no_save' };
+    const title = normalizeConversationRename(rawTitle);
+    if (!title) return { ok: false, error: 'invalid_title' };
+
+    const pi = await this.loadSdk();
+    const activeId = await this.ensureActiveConversation(saveKey, pi);
+    const sessionDir = this.conversationSessionDir(saveKey);
+    const file = pi.SessionManager.findById(this.dataDir, conversationId, sessionDir);
+    if (!file && conversationId !== activeId) return { ok: false, error: 'conversation_not_found' };
+
+    // 空 draft 还没有 session 文件：标题先存在 active.json，等第一次提问时再写
+    // 进 session_info（pi 在没有 user/assistant 消息前不会落盘）。
+    if (!file && conversationId === activeId && this.activeConversationDraft) {
+      this.activeConversationDraftTitle = title;
+      this.writeActiveConversationId(saveKey, conversationId, title);
+      return { ok: true, title };
+    }
+
+    // 活动会话还活着：直接走 session manager，保证 leaf/parent 一致。
+    const live = this.session;
+    if (live && live.sessionId === conversationId) {
+      try {
+        live.setSessionName(title);
+        return { ok: true, title };
+      } catch (err) {
+        this.logger.debug('活会话重命名失败，改走文件', {
+          conversationId,
+          ...errorFields(err),
+        });
+      }
+    }
+
+    if (file) {
+      try {
+        const manager = pi.SessionManager.open(file, sessionDir, this.dataDir);
+        manager.appendSessionInfo(title);
+        return { ok: true, title };
+      } catch (err) {
+        this.logger.warn('重命名会话失败', { conversationId, ...errorFields(err) });
+        return { ok: false, error: 'io_error' };
+      }
+    }
+
+    // 理论到不了：既没有文件、又不是活动 draft，说明会话已被删除。
+    return { ok: false, error: 'conversation_not_found' };
   }
 
   async deleteConversation(saveKey: string | null, conversationId: string): Promise<{
@@ -1706,6 +1817,7 @@ export class PiAgent implements AgentRunner {
     // 删掉的是活动会话：优先切到最近修改的剩余会话；没有就新建空 draft。
     this.activeConversationId = null;
     this.activeConversationDraft = false;
+    this.activeConversationDraftTitle = null;
     this.teardown();
     let list: Awaited<ReturnType<typeof pi.SessionManager.list>> = [];
     try {
@@ -1716,9 +1828,11 @@ export class PiAgent implements AgentRunner {
     if (list.length > 0) {
       this.activeConversationId = list[0]!.id;
       this.activeConversationDraft = false;
+      this.activeConversationDraftTitle = null;
     } else {
       this.activeConversationId = this.newConversationId();
       this.activeConversationDraft = true;
+      this.activeConversationDraftTitle = null;
     }
     this.writeActiveConversationId(saveKey, this.activeConversationId);
     return { ok: true, activeConversationId: this.activeConversationId };
@@ -3144,10 +3258,15 @@ export class PiAgent implements AgentRunner {
       sessionManager = pi.SessionManager.open(existing, sessionDir, this.dataDir);
       this.activeConversationDraft = false;
     } else {
+      const draftTitle = this.activeConversationDraftTitle;
       sessionManager = pi.SessionManager.create(this.dataDir, sessionDir, { id: conversationId });
+      // 空 draft 的标题先挂在 active.json；第一次提问建 session 时补一条
+      // session_info。pi 在第一条 user/assistant 消息落盘时会把它一起写出。
+      if (draftTitle) sessionManager.appendSessionInfo(draftTitle);
       this.activeConversationId = conversationId;
       this.activeConversationDraft = true;
-      this.writeActiveConversationId(this.saveKey, conversationId);
+      this.activeConversationDraftTitle = null;
+      this.writeActiveConversationId(this.saveKey, conversationId, draftTitle);
     }
 
     const options: CreateAgentSessionOptions = {

@@ -286,6 +286,21 @@ namespace IcarusII.Common.Transport
             return env["id"].AsString();
         }
 
+        /// <summary>A.13：玩家重命名会话。</summary>
+        public string SendConversationRename(string conversationId, string title)
+        {
+            if (_state != ConnectionState.Ready || string.IsNullOrEmpty(conversationId)) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ConversationRename,
+                Protocol.Protocol.BuildConversationRename(conversationId, title),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
         /// <summary>A.13：删除会话。</summary>
         public string SendConversationDelete(string conversationId)
         {
