@@ -38,28 +38,31 @@ namespace IcarusII.EditorTools
         }
 
         /// <summary>
-        /// 把 output/input/choose 放进一列，由 VerticalLayoutGroup 按当前 active 的
-        /// 底部面板 preferredHeight 自动分配高度。运行期只切 active，不写 RectTransform。
-        /// 已有 content-column 时只校正布局，不重建子节点。
+        /// 只在 content-column 完全缺失时做结构性默认搭建（output/input/choose 进一列）。
+        /// 已有 content-column 时完全跳过，不碰它的子节点顺序、RectTransform 或样式。
         /// </summary>
         private static void EnsureContentColumn(Transform root)
         {
             var column = root.Find("content-column") as RectTransform;
-            if (column == null)
-            {
-                var go = new GameObject("content-column", typeof(RectTransform), typeof(VerticalLayoutGroup));
-                column = (RectTransform)go.transform;
-                column.SetParent(root, false);
-                column.SetAsLastSibling();
-                column.anchorMin = Vector2.zero;
-                column.anchorMax = Vector2.one;
-                column.pivot = new Vector2(0.5f, 0.5f);
-                column.offsetMin = new Vector2(300f, 40f);
-                column.offsetMax = new Vector2(-40f, -64f);
-            }
+            // 只要用户已经有 content-column，就完全不动它。
+            // 之前的版本会在这里强制 output/input/choose 的 sibling index、anchors、
+            // sizeDelta 和 LayoutElement，导致用户新加的 title 被挤到最后；这属于
+            // 构建器覆盖手工布局，已经移除。
+            if (column != null) return;
+
+            // 只有 prefab 连 content-column 都没有（旧 prefab/损坏）时，才做一次
+            // 结构性的默认搭建。这是“缺节点才补”，不是覆盖已有布局。
+            var go = new GameObject("content-column", typeof(RectTransform), typeof(VerticalLayoutGroup));
+            column = (RectTransform)go.transform;
+            column.SetParent(root, false);
+            column.SetAsLastSibling();
+            column.anchorMin = Vector2.zero;
+            column.anchorMax = Vector2.one;
+            column.pivot = new Vector2(0.5f, 0.5f);
+            column.offsetMin = new Vector2(300f, 40f);
+            column.offsetMax = new Vector2(-40f, -64f);
 
             var layout = column.GetComponent<VerticalLayoutGroup>();
-            if (layout == null) layout = column.gameObject.AddComponent<VerticalLayoutGroup>();
             layout.padding = new RectOffset(0, 0, 0, 0);
             layout.spacing = 2f;
             layout.childAlignment = TextAnchor.UpperCenter;
@@ -68,21 +71,9 @@ namespace IcarusII.EditorTools
             layout.childForceExpandWidth = true;
             layout.childForceExpandHeight = false;
 
-            // 玩家在聊天区上方加的会话标题栏：只调整兄弟顺序，绝不改它的
-            // RectTransform/字体/颜色/LayoutElement（样式由 prefab 自己决定）。
-            var title = column.Find("title") as RectTransform;
-            if (title == null) title = root.Find("title") as RectTransform;
-            var firstPanel = 0;
-            if (title != null)
-            {
-                if (title.parent != column) title.SetParent(column, false);
-                title.SetSiblingIndex(0);
-                firstPanel = 1;
-            }
-
-            MoveInto(column, root, "output", firstPanel, flexibleHeight: true, preferredHeight: 0f);
-            MoveInto(column, root, "input", firstPanel + 1, flexibleHeight: false, preferredHeight: 100f);
-            MoveInto(column, root, "choose", firstPanel + 2, flexibleHeight: false, preferredHeight: 200f);
+            MoveInto(column, root, "output", 0, flexibleHeight: true, preferredHeight: 0f);
+            MoveInto(column, root, "input", 1, flexibleHeight: false, preferredHeight: 100f);
+            MoveInto(column, root, "choose", 2, flexibleHeight: false, preferredHeight: 200f);
         }
 
         private static void MoveInto(RectTransform column, Transform root, string name,
