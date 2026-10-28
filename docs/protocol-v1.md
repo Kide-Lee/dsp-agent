@@ -1229,6 +1229,10 @@ sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.
 
 ### B.1 工具名
 
+> 本附录只定义**有哪些工具**与调用字段。模型实际收到的那几段提示词
+> （能力段、工具使用规则、权限/沙盒/强制工具段）如何生成与拼接，
+> 见 [docs/tools/prompt-shape.md](tools/prompt-shape.md)。
+
 模型可见的工具名使用下划线（OpenAI 兼容端点会把非 `[a-zA-Z0-9_-]` 替换成 `_`）：
 
 工具按**能力**分组：mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告哪一组。

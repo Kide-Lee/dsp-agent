@@ -435,6 +435,7 @@ tests/ProtocolTests/   本机可跑的验证程序
 tools/MetaDump/        开发辅助：转储游戏程序集元数据
 tools/build-kb.py      开发辅助：从本地游戏资源离线生成知识库
 docs/kb-v1.md          知识库 schema、文本清洗与缓存
+docs/tools/            模型看到的工具提示词如何生成（改工具提示词前先读）
 scripts/               构建 / 安装
 ```
 
