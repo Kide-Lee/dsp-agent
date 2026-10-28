@@ -68,9 +68,21 @@ namespace IcarusII.EditorTools
             layout.childForceExpandWidth = true;
             layout.childForceExpandHeight = false;
 
-            MoveInto(column, root, "output", 0, flexibleHeight: true, preferredHeight: 0f);
-            MoveInto(column, root, "input", 1, flexibleHeight: false, preferredHeight: 100f);
-            MoveInto(column, root, "choose", 2, flexibleHeight: false, preferredHeight: 200f);
+            // 玩家在聊天区上方加的会话标题栏：只调整兄弟顺序，绝不改它的
+            // RectTransform/字体/颜色/LayoutElement（样式由 prefab 自己决定）。
+            var title = column.Find("title") as RectTransform;
+            if (title == null) title = root.Find("title") as RectTransform;
+            var firstPanel = 0;
+            if (title != null)
+            {
+                if (title.parent != column) title.SetParent(column, false);
+                title.SetSiblingIndex(0);
+                firstPanel = 1;
+            }
+
+            MoveInto(column, root, "output", firstPanel, flexibleHeight: true, preferredHeight: 0f);
+            MoveInto(column, root, "input", firstPanel + 1, flexibleHeight: false, preferredHeight: 100f);
+            MoveInto(column, root, "choose", firstPanel + 2, flexibleHeight: false, preferredHeight: 200f);
         }
 
         private static void MoveInto(RectTransform column, Transform root, string name,
