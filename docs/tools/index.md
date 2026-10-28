@@ -109,6 +109,12 @@ mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告�
 
 所以：mod 侧共 39 个 `Name` 声明，其中 37 个进入模型工具列表，2 个是内部导出工具。
 
+### 返回字段表怎么来的
+
+每个工具「返回」下的字段表：字段名由生成器从 mod 侧 C# 实现里提取，类型与说明来自 `sidecar/scripts/tool-field-notes.mts`（**人工维护**）。C# 里出现、说明表里没有的字段会让 `npm test` 的 `test:tool-docs` 失败，所以不会悄悄漏字段。
+
+嵌套对象只展开一层：对象/数组字段的内部结构写在它自己的说明里（例如 `inputs` 的元素含 `itemId` / `name` / `count`）。更深的结构以 C# 实现为准。
+
 ## 通用返回信封
 
 **只有 `game_*` 工具**走 mod 的 `data` 信封（协议附录 B.3）。`kb_*` / `wiki_*` / `blueprint_*` / `ask_user` / `run_script` 是 sidecar 本地工具，返回给模型的是文本内容块，不是 JSON 信封。

@@ -27,9 +27,22 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`display`、`signals`、`stage`、`stageNote`、`unlockedTechs`、`tutorials`、`currentTechId`、`currentTechName`、`techSpeed`、`queue`、`milestoneCount`、`recentMilestones`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `signals` | `object` | 阶段判定信号：是否已解锁关键科技/建筑 |
+| `stage` | `string` | 派生阶段（电磁 / 炼油 / 钛 / 星际物流 / 翘曲 / 戴森球…） |
+| `stageNote` | `string` | 提示：阶段是派生结果，回答时要说明依据 |
+| `unlockedTechs` | `integer` | 已解锁科技数 |
+| `tutorials` | `integer` | 已完成教程数 |
+| `currentTechId` | `integer` | 当前研究科技 id |
+| `currentTechName` | `string` | 当前研究科技名 |
+| `techSpeed` | `number` | 研究速度倍率 |
+| `queue` | `array` | 研究队列 |
+| `milestoneCount` | `integer` | 里程碑达成数 |
+| `recentMilestones` | `array` | 最近的里程碑 |
+| `display` | `string` | 一行摘要 |
 
-其他出现过的字段（多为嵌套）：`logisticsSystem`、`intraplanetaryStation`、`interstellarStation`、`dispenser`、`foundation`、`marker`、`dysonSphereSystem`、`ultraPhoton`、`verticalConstruct`、`combatDrone`、`combatShip`、`id` 等 15 个
+嵌套对象内部字段（未逐个展开）：`logisticsSystem`、`intraplanetaryStation`、`interstellarStation`、`dispenser`、`foundation`、`marker`、`dysonSphereSystem`、`ultraPhoton`、`verticalConstruct`、`combatDrone`、`combatShip`、`id` 等 15 个
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -73,9 +86,21 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`width`、`height`、`available`、`display`、`reason`、`bytes`、`view`、`camera`、`visibleEntities`、`annotated`、`legend`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `width` | `integer` | 图像宽度（像素） |
+| `height` | `integer` | 图像高度（像素） |
+| `available` | `boolean` | 游戏/相机是否就绪 |
+| `reason` | `string` | 不可用原因（例如 `camera_unavailable`） |
+| `bytes` | `integer` | JPEG 字节数 |
+| `view` | `string` | 实际使用的机位：player / topdown / orbit |
+| `camera` | `object` | 机位参数（距离/俯角/方位角/视场角/中心点） |
+| `visibleEntities` | `array` | 可见建筑的屏幕坐标：编号 / 名称 / x / y（与图片标注对应） |
+| `annotated` | `boolean` | 是否在图上画了编号标注 |
+| `legend` | `array` | 标注图例：编号 → 建筑名 |
+| `display` | `string` | 一行摘要 |
 
-其他出现过的字段（多为嵌套）：`mimeType`、`data`、`center`、`centerSource`、`fov`、`yaw`、`distance`、`pitch`、`location`、`forward`、`id`、`protoId` 等 17 个
+嵌套对象内部字段（未逐个展开）：`mimeType`、`data`、`center`、`centerSource`、`fov`、`yaw`、`distance`、`pitch`、`location`、`forward`、`id`、`protoId` 等 17 个
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -113,9 +138,20 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`planetId`、`available`、`display`、`area`、`byRecipe`、`categories`、`totals`、`powerNetworks`、`entities`、`assumptions`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `planetId` | `integer` | 同参数 `planetId` |
+| `available` | `boolean` | 工厂是否已加载 |
+| `area` | `object` | 分析范围：中心 `location` / 半径 / 是否整星 |
+| `byRecipe` | `array` | 按配方聚合：配方 id/名 / 机器数 / 装机产能 / 耗电 |
+| `categories` | `object` | 按建筑类别计数：类别 → 数量 |
+| `totals` | `object` | 汇总：建筑数 / 耗电 / 传送带 / 分拣器 / 物流塔 |
+| `powerNetworks` | `array` | 涉及的电网供需 |
+| `entities` | `array` | 范围内的建筑 id 列表（可继续用 game_get_entity 下钻） |
+| `assumptions` | `array` | 口径假设（装机产能 ≠ 实际产出等） |
+| `display` | `string` | 一行摘要 |
 
-其他出现过的字段（多为嵌套）：`mode`、`center`、`centerSource`、`radius`、`id`、`protoId`、`protoName`、`category`、`recipeId`、`recipeName`、`buildings`、`installedCraftsPerMin` 等 23 个
+嵌套对象内部字段（未逐个展开）：`mode`、`center`、`centerSource`、`radius`、`id`、`protoId`、`protoName`、`category`、`recipeId`、`recipeName`、`buildings`、`installedCraftsPerMin` 等 23 个
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 

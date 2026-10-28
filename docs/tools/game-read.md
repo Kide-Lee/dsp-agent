@@ -26,9 +26,20 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`saveName`、`saveKey`、`gameVersion`、`gameTick`、`gameTimeSec`、`gameTimeDisplay`、`paused`、`planet`、`star`、`player`、`mode`、`display`
-
-其他出现过的字段（多为嵌套）：`id`、`name`、`type`、`factoryLoaded`、`peace`、`sandbox`、`combat`、`goalLevel`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `saveName` | `string` | 存档名；空字符串表示尚未进入存档 |
+| `saveKey` | `string` | 当前存档的稳定标识；换档后变化，可用于判断上下文是否失效 |
+| `gameVersion` | `string` | 游戏版本号 |
+| `gameTick` | `integer` | 游戏 tick（存档逻辑时间） |
+| `gameTimeSec` | `number` | 游戏时间，单位秒（兼容旧字段） |
+| `gameTimeDisplay` | `string` | 游戏时间的可读文本（时分秒） |
+| `paused` | `boolean` | 游戏是否暂停 |
+| `planet` | `object` | 当前行星：`id` / `name` / `type` / `factoryLoaded` |
+| `star` | `object` | 当前星系：`id` / `name` / `type` |
+| `player` | `object` | 玩家位置 `location`（经纬度）；机甲状态用 game_get_player |
+| `mode` | `object` | 存档模式：`peace` / `sandbox` / `combat` / `goalLevel` |
+| `display` | `string` | 一行摘要：`行星名 · 游戏时间` |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -57,9 +68,14 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`display`、`mecha`、`inventory`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `mecha` | `object` | 机甲状态：`coreEnergy` / `coreEnergyCap` / `coreEnergyPct`（核心能量）、`reactorEnergy`（反应堆）、`shieldEnergy` / `shieldCapacity` / `shieldPct`（护盾） |
+| `inventory` | `array` | 背包物品：`id` / `name` / `iconTag` / `count`（按 offset/limit 分页） |
+| `location` | `object` | 玩家坐标 `location`（经纬度），由 GameToolFormat.SetLocation 追加 |
+| `display` | `string` | 一行摘要 |
 
-其他出现过的字段（多为嵌套）：`coreEnergy`、`coreEnergyCap`、`coreEnergyPct`、`reactorEnergy`、`shieldEnergy`、`shieldCapacity`、`shieldPct`、`id`、`name`、`iconTag`、`count`、`items` 等 17 个
+嵌套对象内部字段（未逐个展开）：`items`、`total`、`offset`、`limit`、`truncated`、`nextOffset`
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -94,9 +110,25 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`planetId`、`name`、`type`、`radius`、`factoryLoaded`、`veins`、`buildings`、`display`、`veinGroupsAvailable`、`veinGroupsReason`、`veinGroupCount`、`veinGroups`、`veinNodesAvailable`、`veinNodesReason`、`veinNodes`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `planetId` | `integer` | 同参数 `planetId`；省略时是当前行星 id |
+| `name` | `string` | 行星显示名 |
+| `type` | `string` | 行星类型（枚举名） |
+| `radius` | `number` | 行星半径（米） |
+| `factoryLoaded` | `boolean` | 该行星的工厂是否已加载；false 时矿脉/建筑统计不完整 |
+| `veins` | `object` | 按资源汇总的矿脉：资源名 → 数量/储量 |
+| `buildings` | `object` | 按原型计数的建筑：原型名 → 数量 |
+| `veinGroupsAvailable` | `boolean` | `veins=groups` 时是否返回了矿脉群 |
+| `veinGroupsReason` | `string` | 不可用原因：`vein_groups_not_ready`（尚未扫描）/ `planet_not_scanned`（未观察） |
+| `veinGroupCount` | `integer` | 矿脉群数量（仅 veins=groups） |
+| `veinGroups` | `array` | 矿脉群：`groupIndex` / 资源 / 位置 / 节点数（仅 veins=groups） |
+| `veinNodesAvailable` | `boolean` | `veins=nodes` 时是否返回了逐矿脉节点 |
+| `veinNodesReason` | `string` | 不可用原因：`factory_not_loaded` / `vein_pool_empty` |
+| `veinNodes` | `array` | 逐矿脉节点：`id` / 资源 / 位置（仅 veins=nodes；分页用 veinOffset/veinLimit） |
+| `display` | `string` | 一行摘要 |
 
-其他出现过的字段（多为嵌套）：`productId`、`iconTag`、`amount`、`count`、`id`、`items`、`total`、`offset`、`limit`、`truncated`、`nextOffset`、`groupIndex` 等 13 个
+嵌套对象内部字段（未逐个展开）：`productId`、`iconTag`、`amount`、`count`、`items`、`total`、`offset`、`limit`、`truncated`、`nextOffset`、`minerCount`
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -124,9 +156,27 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`planetId`、`planetName`、`factoryLoaded`、`demandKw`、`servedKw`、`capacityKw`、`storedKwh`、`accumulatorKw`、`satisfactionPct`、`nets`、`display`、`demandDisplay`、`servedDisplay`、`capacityDisplay`、`generatorCount`、`consumerCount`、`accumulatorCount`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `planetId` | `integer` | 同参数 `planetId` |
+| `planetName` | `string` | 行星显示名 |
+| `factoryLoaded` | `boolean` | 工厂是否已加载；false 时其余字段全为 0 |
+| `demandKw` | `number` | 电网总需求（kW） |
+| `servedKw` | `number` | 实际已供（kW） |
+| `capacityKw` | `number` | 发电容量（kW） |
+| `storedKwh` | `number` | 储能电量（kWh） |
+| `accumulatorKw` | `number` | 蓄电器当前充放电功率（kW，正=充电） |
+| `satisfactionPct` | `number` | 满足率（%，0–100） |
+| `nets` | `array` | 各电网明细（按电网拆分时的需求/供给/容量） |
+| `demandDisplay` | `string` | 需求的可读文本（自动换算 W/kW/MW） |
+| `servedDisplay` | `string` | 已供的可读文本 |
+| `capacityDisplay` | `string` | 容量的可读文本 |
+| `generatorCount` | `integer` | 发电建筑数 |
+| `consumerCount` | `integer` | 耗电建筑数 |
+| `accumulatorCount` | `integer` | 蓄电器数量 |
+| `display` | `string` | 一行摘要：需求 · 满足率 |
 
-其他出现过的字段（多为嵌套）：`id`
+嵌套对象内部字段（未逐个展开）：`id`
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -152,9 +202,17 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`display`、`currentTechId`、`current`、`queue`、`techSpeed`、`unlockedCount`、`totalTechs`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `currentTechId` | `integer` | 当前研究科技 id；0 表示没有在研 |
+| `current` | `object` | 当前研究详情：名称 / 进度 / 剩余时间 |
+| `queue` | `array` | 研究队列（科技 id / 名称 / 顺序） |
+| `techSpeed` | `number` | 研究速度倍率 |
+| `unlockedCount` | `integer` | 已解锁科技数 |
+| `totalTechs` | `integer` | 科技总数 |
+| `display` | `string` | 一行摘要：在研科技与进度 |
 
-其他出现过的字段（多为嵌套）：`id`、`name`、`iconTag`、`level`、`hashUploaded`、`hashNeeded`、`progressPct`
+嵌套对象内部字段（未逐个展开）：`id`、`name`、`iconTag`、`level`、`hashUploaded`、`hashNeeded`、`progressPct`
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -187,9 +245,27 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`planetId`、`planetName`、`statsPending`、`items`、`shortageCount`、`surplusCount`、`display`、`total`、`offset`、`limit`、`truncated`、`nextOffset`、`powerSatisfactionPct`、`buildingCount`、`statsEmpty`、`basis`、`hint`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `planetId` | `integer` | 同参数 `planetId` |
+| `planetName` | `string` | 行星显示名 |
+| `statsPending` | `boolean` | 产线统计尚未建立（远程行星/刚读档）；true 时 items 为空 |
+| `items` | `array` | 按物品聚合：`id` / `name` / `iconTag` / 产量 / 消耗 / 库存 / 净产出 / 可撑分钟数 |
+| `total` | `integer` | 匹配的物品总数（分页前） |
+| `offset` | `integer` | 同参数 `offset` |
+| `limit` | `integer` | 同参数 `limit` |
+| `shortageCount` | `integer` | 净产出为负的物品数（缺口） |
+| `surplusCount` | `integer` | 净产出为正的物品数（盈余） |
+| `truncated` | `boolean` | 本页之后还有数据；用 nextOffset 续读 |
+| `nextOffset` | `integer` | 下一页 offset；-1 表示没有更多 |
+| `powerSatisfactionPct` | `number` | 该行星电网满足率（%） |
+| `buildingCount` | `integer` | 该行星建筑总数 |
+| `statsEmpty` | `boolean` | 统计桶为空；true 时 items 是按装机产能推算的，不是实际产出 |
+| `basis` | `string` | 数据口径：`stats`（实际统计）/ `installed`（装机产能）/ `none` |
+| `hint` | `string` | 给模型的提示（statsEmpty 时说明不要据此下结论） |
+| `display` | `string` | 一行摘要 |
 
-其他出现过的字段（多为嵌套）：`id`、`name`、`iconTag`、`producedPerMin`、`consumedPerMin`、`netPerMin`、`stored`、`minutesOfStock`
+嵌套对象内部字段（未逐个展开）：`producedPerMin`、`consumedPerMin`、`netPerMin`、`stored`、`minutesOfStock`
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 

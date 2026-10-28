@@ -27,9 +27,11 @@ tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”�
 
 #### 返回
 
-顶层字段（mod 侧实现）：`templates`、`count`
-
-其他出现过的字段（多为嵌套）：`id`、`name`、`determinator`、`level`、`parentId`、`params`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `templates` | `array` | 目标模板：`id` / `name` / `determinator` / `level` / `parentId` / `params` |
+| `count` | `integer` | 模板数量 |
+| `display` | `string` | 一行摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -56,9 +58,12 @@ tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”�
 
 #### 返回
 
-顶层字段（mod 侧实现）：`goals`、`count`
-
-其他出现过的字段（多为嵌套）：`groupId`、`goalId`、`group`、`title`、`templateId`、`current`、`target`、`stage`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `goals` | `array` | AI 创建的目标：`groupId` / `goalId` / `group` / `title` / `templateId` / `current` / `target` / `stage` |
+| `count` | `integer` | 目标数量 |
+| `goalPanelOff` | `boolean` | 玩家把目标显示设为“自由探索”；true 时提醒玩家打开 |
+| `display` | `string` | 一行摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -91,9 +96,17 @@ tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”�
 
 #### 返回
 
-顶层字段（mod 侧实现）：`kind`、`planetId`、`name`、`subtitle`、`description`、`iconLabel`
-
-其他出现过的字段（多为嵌套）：`veinId`、`buildingId`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `kind` | `string` | 指示类型：`planet` / `vein` / `building` |
+| `planetId` | `integer` | 目标所在行星 id |
+| `veinId` | `integer` | 矿脉 id（仅 kind=vein） |
+| `buildingId` | `integer` | 建筑 id（仅 kind=building） |
+| `name` | `string` | 目标名称（显示用） |
+| `subtitle` | `string` | 副标题 |
+| `description` | `string` | 描述文本 |
+| `iconLabel` | `string` | 图标短码或 `#id` |
+| `display` | `string` | 一行确认摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -145,7 +158,10 @@ tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”�
 
 #### 返回
 
-顶层字段（mod 侧实现）：`display`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `items` | `array` | 当前方位指示：类型 / 行星 / 建筑或矿脉 id / 名称 |
+| `display` | `string` | 一行摘要：当前有几个指示 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -178,7 +194,11 @@ tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”�
 
 #### 返回
 
-写工具的 `data` 只有 `display`（一句话确认，`WriteToolBase.Ok`）；失败时 `ok=false` 并带 `error.code`。撤销语义见 [index.md](index.md#写操作的确认与撤销)。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `count` | `integer` | 新增的目标数 |
+| `goalPanelOff` | `boolean` | 目标面板被关闭（自由探索），需要提醒玩家 |
+| `display` | `string` | 一行确认摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -208,7 +228,10 @@ tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”�
 
 #### 返回
 
-写工具的 `data` 只有 `display`（一句话确认，`WriteToolBase.Ok`）；失败时 `ok=false` 并带 `error.code`。撤销语义见 [index.md](index.md#写操作的确认与撤销)。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `removed` | `integer` | 删除的目标数 |
+| `display` | `string` | 一行确认摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 

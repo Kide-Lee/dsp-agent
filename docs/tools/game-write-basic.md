@@ -35,7 +35,7 @@
 
 #### 返回
 
-写工具的 `data` 只有 `display`（一句话确认，`WriteToolBase.Ok`）；失败时 `ok=false` 并带 `error.code`。撤销语义见 [index.md](index.md#写操作的确认与撤销)。
+只返回 `display`：一行确认摘要
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -64,7 +64,7 @@
 
 #### 返回
 
-写工具的 `data` 只有 `display`（一句话确认，`WriteToolBase.Ok`）；失败时 `ok=false` 并带 `error.code`。撤销语义见 [index.md](index.md#写操作的确认与撤销)。
+只返回 `display`：一行确认摘要
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -94,7 +94,7 @@
 
 #### 返回
 
-写工具的 `data` 只有 `display`（一句话确认，`WriteToolBase.Ok`）；失败时 `ok=false` 并带 `error.code`。撤销语义见 [index.md](index.md#写操作的确认与撤销)。
+只返回 `display`：一行确认摘要
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -126,9 +126,9 @@
 
 #### 返回
 
-写工具的 `data` 只有 `display`（一句话确认，`WriteToolBase.Ok`）；失败时 `ok=false` 并带 `error.code`。撤销语义见 [index.md](index.md#写操作的确认与撤销)。
+只返回 `display`：一行确认摘要
 
-其他出现过的字段（多为嵌套）：`itemId`、`itemName`、`count`、`requested`、`undoable`、`undoNote`
+嵌套对象内部字段（未逐个展开）：`itemId`、`itemName`、`count`、`requested`、`undoable`、`undoNote`
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -155,7 +155,7 @@
 
 #### 返回
 
-写工具的 `data` 只有 `display`（一句话确认，`WriteToolBase.Ok`）；失败时 `ok=false` 并带 `error.code`。撤销语义见 [index.md](index.md#写操作的确认与撤销)。
+只返回 `display`：撤销结果；最近一步不可撤销时会明确说明
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 

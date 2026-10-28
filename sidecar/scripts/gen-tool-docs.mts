@@ -24,6 +24,7 @@ import { createKbTools } from '../src/kb/tools.js';
 import { createWikiTools } from '../src/wiki/tools.js';
 import { createBlueprintTools } from '../src/blueprint/tools.js';
 import { isWriteToolName, writeToolRisk } from '../src/tools/write.js';
+import { TOOL_FIELD_NOTES, type FieldNote } from './tool-field-notes.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const DOCS_DIR = path.join(ROOT, 'docs/tools');
@@ -183,6 +184,8 @@ interface DocTool extends RawTool {
   timeoutMs: number | null;
   group: string;
   cs: CsInfo;
+  /** 人工维护的返回字段说明；null 表示本地工具（返回文本，无 data 字段）。 */
+  notes: Record<string, FieldNote> | null;
 }
 
 function mockHost(): unknown {
@@ -303,6 +306,7 @@ function buildTools(): DocTool[] {
       timeoutMs: csInfo.timeoutMs ?? (write ? 8000 : null),
       group: groupOf(tool.name),
       cs: csInfo,
+      notes: TOOL_FIELD_NOTES[tool.name] ?? null,
     };
   });
 }
@@ -403,11 +407,19 @@ function renderTool(tool: DocTool): string {
 
   lines.push('#### 返回');
   lines.push('');
-  if (tool.cs.topFields.length > 0) {
-    const origin = tool.source === 'game' ? 'mod 侧实现' : 'sidecar 实现';
-    lines.push(
-      `顶层字段（${origin}）：${tool.cs.topFields.map((f) => `\`${f}\``).join('、')}`,
-    );
+  const notes = tool.notes;
+  const noteEntries = notes ? Object.entries(notes) : [];
+  const nonDisplay = noteEntries.filter(([name]) => name !== 'display');
+  const noteKeys = new Set(noteEntries.map(([name]) => name));
+
+  if (nonDisplay.length > 0) {
+    lines.push('| 字段 | 类型 | 说明 |');
+    lines.push('| --- | --- | --- |');
+    for (const [name, note] of noteEntries) {
+      lines.push(`| \`${name}\` | \`${note[0]}\` | ${note[1].replace(/\|/g, '\\|')} |`);
+    }
+  } else if (noteEntries.length === 1) {
+    lines.push(`只返回 \`display\`：${noteEntries[0][1][1]}`);
   } else if (LOCAL_RETURN[tool.source]) {
     lines.push(LOCAL_RETURN[tool.source]);
   } else if (tool.risk > 0) {
@@ -418,13 +430,22 @@ function renderTool(tool: DocTool): string {
   } else {
     lines.push('未从实现提取到顶层字段；以实际返回为准。');
   }
-  if (tool.cs.allFields.length > 0) {
-    const shown = tool.cs.allFields.slice(0, 12);
-    const rest = tool.cs.allFields.length - shown.length;
+
+  // 说明里已经用反引号点名的字段（planet: `id` / `name` …）不再重复列。
+  const described = new Set<string>();
+  for (const [, note] of noteEntries) {
+    for (const match of note[1].matchAll(/`([A-Za-z0-9_]+)`/g)) described.add(match[1]);
+  }
+  const nested = tool.cs.allFields.filter(
+    (field) => !noteKeys.has(field) && !described.has(field),
+  );
+  if (nested.length > 0) {
+    const shown = nested.slice(0, 12);
+    const rest = nested.length - shown.length;
     lines.push('');
     lines.push(
-      `其他出现过的字段（多为嵌套）：${shown.map((f) => `\`${f}\``).join('、')}` +
-        (rest > 0 ? ` 等 ${tool.cs.allFields.length} 个` : ''),
+      `嵌套对象内部字段（未逐个展开）：${shown.map((f) => `\`${f}\``).join('、')}` +
+        (rest > 0 ? ` 等 ${nested.length} 个` : ''),
     );
   }
   lines.push('');
@@ -436,6 +457,26 @@ function renderTool(tool: DocTool): string {
     lines.push('');
   }
   return lines.join('\n');
+}
+
+/**
+ * 校验：C# 里出现的每个顶层返回字段，都必须在 TOOL_FIELD_NOTES 里有类型与说明。
+ * 反向不校验——notes 可以写只在部分分支出现的字段（veinId / buildingId 等）。
+ */
+function validateFieldNotes(tools: DocTool[]): string[] {
+  const problems: string[] = [];
+  for (const tool of tools) {
+    if (tool.cs.topFields.length === 0) continue;
+    const notes = TOOL_FIELD_NOTES[tool.name];
+    if (!notes) {
+      problems.push(`${tool.name}: 有顶层返回字段，但 tool-field-notes.mts 里没有该工具的说明`);
+      continue;
+    }
+    for (const field of tool.cs.topFields) {
+      if (!notes[field]) problems.push(`${tool.name}: 返回字段 ${field} 缺少类型/说明`);
+    }
+  }
+  return problems;
 }
 
 function renderGroup(group: DocGroup, tools: DocTool[]): string {
@@ -558,6 +599,21 @@ function renderIndex(tools: DocTool[]): string {
   );
   lines.push('');
 
+  lines.push('### 返回字段表怎么来的');
+  lines.push('');
+  lines.push(
+    '每个工具「返回」下的字段表：字段名由生成器从 mod 侧 C# 实现里提取，' +
+      '类型与说明来自 `sidecar/scripts/tool-field-notes.mts`（**人工维护**）。' +
+      'C# 里出现、说明表里没有的字段会让 `npm test` 的 `test:tool-docs` 失败，' +
+      '所以不会悄悄漏字段。',
+  );
+  lines.push('');
+  lines.push(
+    '嵌套对象只展开一层：对象/数组字段的内部结构写在它自己的说明里（例如 `inputs` 的元素含 ' +
+      '`itemId` / `name` / `count`）。更深的结构以 C# 实现为准。',
+  );
+  lines.push('');
+
   lines.push('## 通用返回信封');
   lines.push('');
   lines.push(
@@ -677,7 +733,7 @@ function main(): void {
   const nextSnapshot = snapshot(tools);
 
   if (check) {
-    const problems: string[] = [];
+    const problems: string[] = [...validateFieldNotes(tools)];
     const current = fs.existsSync(SNAPSHOT) ? fs.readFileSync(SNAPSHOT, 'utf8') : '';
     if (current !== nextSnapshot) problems.push('docs/tools/tools.json 与当前工具定义不一致');
     for (const [file, content] of files) {

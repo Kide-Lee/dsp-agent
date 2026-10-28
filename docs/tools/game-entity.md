@@ -35,9 +35,33 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`planetId`、`entityId`、`available`、`reason`、`display`、`protoId`、`protoName`、`iconTag`、`category`、`yaw`、`power`、`stale`、`expectProtoId`、`count`、`entities`、`assembler`、`miner`、`inserter`、`belt`、`storage`、`station`、`components`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `planetId` | `integer` | 同参数 `planetId` |
+| `entityId` | `integer` | 同参数 `entityId` |
+| `available` | `boolean` | 工厂是否已加载；false 时看 `reason` |
+| `reason` | `string` | 不可用原因：`factory_not_loaded` / `not_found` / `empty_slot` |
+| `protoId` | `integer` | 建筑原型 id |
+| `protoName` | `string` | 建筑原型名 |
+| `iconTag` | `string` | 图标短码（可直接写进 `<icon tag>`） |
+| `category` | `string` | 建筑类别：assembler / miner / belt / station … |
+| `yaw` | `number` | 朝向角（度） |
+| `power` | `object` | 该建筑的功率信息（需求/供给/满足率） |
+| `stale` | `boolean` | id 已被回收或与 expectProtoId 不匹配；true 时整条数据不可用 |
+| `expectProtoId` | `integer` | 回显参数 `expectProtoId`，用于核对 |
+| `count` | `integer` | 批量读取（entityIds）时的条数 |
+| `entities` | `array` | 批量读取结果；默认只含 core 字段 |
+| `assembler` | `object` | 装配/制造段：`recipeId` / `recipeName` / `recipeSeconds`（配方与单次耗时）、`speedMultiplier`（速度倍率）、`craftsPerMin`（每分钟次数）、`working`（是否在运行）、`replicating` / `extraSpeed`（增产与加成）、`productPerMin`（每分钟产量）、`forceAccMode`（强制加速）、`inputs` / `outputs`（槽位数组，元素含 `itemId` / `name` / `iconTag` / `count`，输入还有 `needed` / `incServed`）、`powerSatisfactionPct`（供电满足率）、`status`（缺料/没电/运行/待机） |
+| `miner` | `object` | 采矿段：`productId` / `productName`（产出物品）、`productCount`（单次产出）、`period`（周期）、`orePerMin`（每分钟产量）、`veinCount`（覆盖矿脉数）、`totalVeinAmount`（剩余总储量）、`workstate`（工作状态） |
+| `inserter` | `object` | 分拣器段：`grade`（等级）、`bidirectional`（是否双向）、`stage`、`filterItemId` / `filterItemName`（过滤物品）、`pickTarget` / `insertTarget`（取/放目标 id）与 `pickTargetName` / `insertTargetName`、`handItemId` / `handItemName` / `handItemCount` / `handItemInc`（手上物品）、`stackCount` / `canStack` / `stackInput` / `stackOutput`（堆叠）、`delay`（延迟 tick） |
+| `belt` | `object` | 传送带段：`itemsPerSec`（实际吞吐/秒）、`segLength`（段长）、`rangeFrom` / `rangeTo`（起止节点）、`nodeIndex`、`pathId`（所属线路）、`pathCapacity`（线路容量）、`pathNodeCount` / `pathCargoCount`（线路上节点/货物数） |
+| `storage` | `object` | 仓储段：`slots`（格数）、`items`（物品数组，元素含 `itemId` / `name` / `iconTag` / `count`）、`totalCount`（总物品数） |
+| `station` | `object` | 物流塔段：`isCollector`（轨道采集器）、`isStellar`（星际塔）、`warperCount` / `warperMaxCount`（翘曲器）、`workDroneCount` / `idleDroneCount`（无人机）、`workShipCount` / `idleShipCount`（运输船）、`deliveryDrones` / `deliveryShips`（配送中）、`warpEnableDistAu`（启用翘曲距离，AU）、`energy` / `energyMax` / `chargeKw` / `charging`（储能与充电）、`slots`（槽位数组，元素含 `itemId` / `name` / `inTransit` / `max` / `localOrder` / `remoteOrder` / `localLogic` / `remoteLogic`） |
+| `components` | `object` | 逐字段调试段（仅 fields 含 components，返回量大） |
+| `location` | `object` | 建筑坐标 `location`（经纬度），由 GameToolFormat.SetLocation 追加 |
+| `display` | `string` | 一行摘要 |
 
-其他出现过的字段（多为嵌套）：`recipeId`、`recipeName`、`recipeSeconds`、`speedMultiplier`、`craftsPerMin`、`cycleCount`、`extraCycleCount`、`working`、`replicating`、`extraSpeed`、`productPerMin`、`forceAccMode` 等 87 个
+嵌套对象内部字段（未逐个展开）：`cycleCount`、`extraCycleCount`、`cargoItems`、`outputId`、`backInputId`、`leftInputId`、`rightInputId`、`kind`、`poolId`、`fields`
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -70,9 +94,18 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`planetId`、`available`、`rows`、`total`、`display`、`offset`、`limit`、`hasMore`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `planetId` | `integer` | 同参数 `planetId` |
+| `available` | `boolean` | 工厂是否已加载 |
+| `rows` | `array` | 建筑行：`id` / 原型 / 配方 / 星系 / 行星 / 经纬度 / 朝向（按 offset/limit 分页） |
+| `total` | `integer` | 匹配的建筑总数（分页前） |
+| `offset` | `integer` | 同参数 `offset` |
+| `limit` | `integer` | 同参数 `limit` |
+| `hasMore` | `boolean` | 是否还有下一页 |
+| `display` | `string` | 一行摘要：匹配数与本页条数 |
 
-其他出现过的字段（多为嵌套）：`id`、`protoId`、`protoName`、`iconTag`、`category`、`yaw`、`recipeId`、`recipeName`
+嵌套对象内部字段（未逐个展开）：`protoId`、`protoName`、`iconTag`、`category`、`yaw`、`recipeId`、`recipeName`
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -104,9 +137,20 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`planetId`、`available`、`display`、`grid`、`width`、`height`、`cellSize`、`origin`、`legend`、`orientation`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `planetId` | `integer` | 同参数 `planetId` |
+| `available` | `boolean` | 工厂是否已加载 |
+| `grid` | `array` | 字符网格行；每个字符代表一个 cellSize 米方格 |
+| `width` | `integer` | 网格宽度（格） |
+| `height` | `integer` | 网格高度（格） |
+| `cellSize` | `number` | 每格米数 |
+| `origin` | `object` | 网格原点坐标 `location`（经纬度） |
+| `legend` | `array` | 字符图例：字符 → 建筑类别 |
+| `orientation` | `string` | 方向约定：上=+Z，左=-X |
+| `display` | `string` | 一行摘要 |
 
-其他出现过的字段（多为嵌套）：`char`、`kind`、`count`、`centerSource`
+嵌套对象内部字段（未逐个展开）：`char`、`kind`、`count`、`centerSource`
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -136,9 +180,18 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`available`、`display`、`observeLevel`、`planetCount`、`observedCount`、`factoryCount`、`planets`、`note`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `available` | `boolean` | 银河数据是否已加载 |
+| `observeLevel` | `integer` | 宇宙探索等级；决定未观察星球是否披露矿脉 |
+| `planetCount` | `integer` | 行星总数 |
+| `observedCount` | `integer` | 已观察行星数 |
+| `factoryCount` | `integer` | 已建工厂的行星数 |
+| `planets` | `array` | 行星列表：`id` / `name` / 类型 / 轨道 / `factoryLoaded` / `hasFactory` / `observed` / `veinsHidden`（未观察时不给矿脉） |
+| `note` | `string` | 给模型的说明：未观察星球只给基础轨道信息 |
+| `display` | `string` | 一行摘要：行星数 · 已观察 · 有工厂 |
 
-其他出现过的字段（多为嵌套）：`id`、`name`、`starId`、`starName`、`type`、`orbitRadiusAu`、`orbitIndex`、`orbitalPeriod`、`rotationPeriod`、`radius`、`theme`、`scanned` 等 27 个
+嵌套对象内部字段（未逐个展开）：`starId`、`starName`、`type`、`orbitRadiusAu`、`orbitIndex`、`orbitalPeriod`、`rotationPeriod`、`radius`、`theme`、`scanned`、`requiredObserveLevel`、`buildingCount` 等 21 个
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -171,9 +224,20 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`available`、`display`、`planetId`、`seed`、`depthLimit`、`nodeCount`、`edgeCount`、`truncated`、`nodes`、`edges`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `available` | `boolean` | 工厂是否已加载，或 seed entityId 是否有效 |
+| `planetId` | `integer` | 同参数 `planetId` |
+| `seed` | `integer` | 起点建筑 id（回显） |
+| `depthLimit` | `integer` | 实际使用的最大跳数 |
+| `nodeCount` | `integer` | 节点数 |
+| `edgeCount` | `integer` | 边数 |
+| `truncated` | `boolean` | 达到深度/节点上限；调大 depth / maxNodes 继续 |
+| `nodes` | `array` | 节点：`id` / 名称 / 类别 / 星系 / 行星 / 经纬度 / 深度 |
+| `edges` | `array` | 有向边：`from` → `to`（传送带/分拣器连接） |
+| `display` | `string` | 一行摘要：节点数 · 连接数 |
 
-其他出现过的字段（多为嵌套）：`id`、`protoId`、`protoName`、`category`、`depth`、`from`、`to`、`kind`
+嵌套对象内部字段（未逐个展开）：`protoId`、`protoName`、`category`、`depth`、`kind`
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -206,9 +270,19 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`available`、`display`、`itemFilter`、`totalStations`、`matchedStations`、`offset`、`limit`、`items`、`stations`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `available` | `boolean` | 银河数据是否已加载 |
+| `itemFilter` | `string` | 回显参数 `itemFilter`；未传时为 null |
+| `totalStations` | `integer` | 已加载工厂里的物流塔总数 |
+| `matchedStations` | `integer` | 命中过滤的塔数 |
+| `offset` | `integer` | 同参数 `offset` |
+| `limit` | `integer` | 同参数 `limit` |
+| `items` | `array` | 按物品聚合的供给/需求：`itemId` / `name` / 供给行星 / 需求行星 |
+| `stations` | `array` | 站点明细：星球 / 塔类型 / 槽位方向 / 运输船 / 无人机 / 翘曲器 |
+| `display` | `string` | 一行摘要：匹配塔数 · 物品种数 |
 
-其他出现过的字段（多为嵌套）：`planetId`、`planetName`、`stationId`、`isStellar`、`isCollector`、`warperCount`、`idleShipCount`、`workShipCount`、`idleDroneCount`、`workDroneCount`、`itemId`、`name` 等 20 个
+嵌套对象内部字段（未逐个展开）：`planetId`、`planetName`、`stationId`、`isStellar`、`isCollector`、`warperCount`、`idleShipCount`、`workShipCount`、`idleDroneCount`、`workDroneCount`、`iconTag`、`supply` 等 18 个
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -241,7 +315,27 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`saved`、`error`、`display`、`source`、`path`、`relPath`、`dir`、`dirRel`、`fileName`、`buildings`、`areas`、`name`、`author`、`version`、`attributes`、`description`、`iconItemId`、`width`、`height`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `saved` | `boolean` | 是否成功写出蓝图文件 |
+| `error` | `string` | 失败原因（例如 `factory_not_loaded`） |
+| `source` | `string` | 蓝图来源：`copied`（游戏复制逻辑） |
+| `path` | `string` | 蓝图文件的完整路径 |
+| `relPath` | `string` | 相对蓝图根的路径（默认 `IcarusII/文件名`） |
+| `dir` | `string` | 传入的目录参数（回显） |
+| `dirRel` | `string` | 相对蓝图根的实际目录；根目录时为空字符串 |
+| `fileName` | `string` | 文件名（含 `.txt`） |
+| `buildings` | `integer` | 蓝图包含的建筑数 |
+| `areas` | `integer` | 蓝图包含的区域数 |
+| `name` | `string` | 蓝图标题（来自游戏蓝图元数据） |
+| `author` | `string` | 蓝图作者 |
+| `version` | `string` | 蓝图自定义版本 |
+| `attributes` | `string` | 蓝图外部字段（游戏原始字符串） |
+| `description` | `string` | 蓝图说明 |
+| `iconItemId` | `integer` | 蓝图图标使用的物品 id |
+| `width` | `integer` | 蓝图拖拽框宽（格） |
+| `height` | `integer` | 蓝图拖拽框高（格） |
+| `display` | `string` | 一行摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 

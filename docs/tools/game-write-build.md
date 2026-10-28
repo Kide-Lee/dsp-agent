@@ -31,7 +31,7 @@
 
 #### 返回
 
-写工具的 `data` 只有 `display`（一句话确认，`WriteToolBase.Ok`）；失败时 `ok=false` 并带 `error.code`。撤销语义见 [index.md](index.md#写操作的确认与撤销)。
+只返回 `display`：一行确认摘要
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -61,7 +61,7 @@
 
 #### 返回
 
-写工具的 `data` 只有 `display`（一句话确认，`WriteToolBase.Ok`）；失败时 `ok=false` 并带 `error.code`。撤销语义见 [index.md](index.md#写操作的确认与撤销)。
+只返回 `display`：一行确认摘要（成功台数 / 跳过台数）
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -92,7 +92,15 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`buildingId`、`itemId`、`itemName`、`changedGrids`、`slots`、`undoable`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `buildingId` | `integer` | 存储建筑 id |
+| `itemId` | `integer` | 同参数 `itemId`；0 表示清除过滤器 |
+| `itemName` | `string` | 物品名；清除时为「清除」 |
+| `changedGrids` | `integer` | 实际改动的格数 |
+| `slots` | `integer` | 该存储的总格数 |
+| `undoable` | `boolean` | 固定 true |
+| `display` | `string` | 一行确认摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -123,7 +131,14 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`buildingId`、`limit`、`slots`、`bans`、`undoable`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `buildingId` | `integer` | 存储建筑 id |
+| `limit` | `integer` | 同参数 `limit`（允许使用的格数） |
+| `slots` | `integer` | 该存储的总格数 |
+| `bans` | `integer` | 被禁用的格数 |
+| `undoable` | `boolean` | 固定 true |
+| `display` | `string` | 一行确认摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -156,7 +171,17 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`sourceId`、`targetId`、`itemId`、`itemName`、`requested`、`moved`、`remaining`、`undoable`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `sourceId` | `integer` | 同参数 `sourceId` |
+| `targetId` | `integer` | 同参数 `targetId` |
+| `itemId` | `integer` | 同参数 `itemId` |
+| `itemName` | `string` | 物品名 |
+| `requested` | `integer` | 请求移动的数量 |
+| `moved` | `integer` | 实际移动的数量 |
+| `remaining` | `integer` | 因空间/库存不足没移动的数量 |
+| `undoable` | `boolean` | 固定 true |
+| `display` | `string` | 一行确认摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -187,7 +212,16 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`buildingId`、`itemId`、`itemName`、`requested`、`stored`、`remaining`、`undoable`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `buildingId` | `integer` | 存储建筑 id |
+| `itemId` | `integer` | 同参数 `itemId` |
+| `itemName` | `string` | 物品名 |
+| `requested` | `integer` | 请求存入的数量 |
+| `stored` | `integer` | 实际存入的数量 |
+| `remaining` | `integer` | 没存进去、仍留在背包的数量 |
+| `undoable` | `boolean` | 固定 true |
+| `display` | `string` | 一行确认摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -218,7 +252,16 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`buildingId`、`itemId`、`itemName`、`requested`、`taken`、`remaining`、`undoable`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `buildingId` | `integer` | 存储建筑 id |
+| `itemId` | `integer` | 同参数 `itemId` |
+| `itemName` | `string` | 物品名 |
+| `requested` | `integer` | 请求取出的数量 |
+| `taken` | `integer` | 实际取出的数量 |
+| `remaining` | `integer` | 没取出、仍留在存储里的数量 |
+| `undoable` | `boolean` | 固定 true |
+| `display` | `string` | 一行确认摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -250,7 +293,15 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`buildingId`、`itemId`、`itemName`、`fed`、`served`、`undoable`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `buildingId` | `integer` | 生产建筑 id |
+| `itemId` | `integer` | 同参数 `itemId` |
+| `itemName` | `string` | 物品名 |
+| `fed` | `integer` | 实际放进输入缓冲的数量 |
+| `served` | `integer` | 该输入槽当前已满足的需求量 |
+| `undoable` | `boolean` | 固定 true：投料可撤销 |
+| `display` | `string` | 一行确认摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
@@ -280,9 +331,16 @@
 
 #### 返回
 
-顶层字段（mod 侧实现）：`buildingId`、`taken`、`remaining`、`items`、`undoable`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `buildingId` | `integer` | 生产建筑 id |
+| `taken` | `integer` | 本次取出的成品总数 |
+| `remaining` | `integer` | 取出后仍留在建筑里的数量 |
+| `items` | `array` | 取出的物品明细：`id` / `name` / `count` |
+| `undoable` | `boolean` | 固定 false：取成品不可撤销，且会占用撤销栈顶 |
+| `display` | `string` | 一行确认摘要 |
 
-其他出现过的字段（多为嵌套）：`itemId`、`name`
+嵌套对象内部字段（未逐个展开）：`itemId`
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 
