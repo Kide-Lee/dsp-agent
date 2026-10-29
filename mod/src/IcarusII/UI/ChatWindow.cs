@@ -229,7 +229,7 @@ namespace IcarusII.UI
             public RectTransform Records;
             public Text Title;
             public Text Count;
-            public Text Chevron;
+            public Image Chevron;
             public GameObject ActiveBar;
             public GameObject ExpandMore;
             public Text ExpandMoreText;
@@ -5148,7 +5148,7 @@ namespace IcarusII.UI
                 Records = records,
                 Title = header.Find("title-mask/title")?.GetComponent<Text>(),
                 Count = header.Find("count")?.GetComponent<Text>(),
-                Chevron = header.Find("chevron")?.GetComponent<Text>(),
+                Chevron = header.Find("chevron")?.GetComponent<Image>(),
                 ActiveBar = header.Find("active-bar")?.gameObject,
             };
             // 展开状态只由标题左侧的 chevron 改变；首次出现时只有当前会话默认展开，
@@ -5198,7 +5198,9 @@ namespace IcarusII.UI
                 view.Title.text = HeaderTitleLabel(
                     string.IsNullOrEmpty(view.Info.Title) ? Strings.Get("chat.conversation.new") : view.Info.Title);
             if (view.Count != null) view.Count.text = Strings.Get("chat.index.count", view.Info.RecordCount);
-            if (view.Chevron != null) view.Chevron.text = view.Expanded ? "▾" : "▸";
+            if (view.Chevron != null)
+                view.Chevron.rectTransform.localRotation =
+                    view.Expanded ? Quaternion.Euler(0f, 0f, -90f) : Quaternion.identity;
             if (view.ActiveBar != null) view.ActiveBar.SetActive(view.Id == _activeConversationId);
             if (view.Records != null) view.Records.gameObject.SetActive(view.Expanded);
 

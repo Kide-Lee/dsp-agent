@@ -179,6 +179,8 @@ namespace IcarusII.EditorTools
                     // 输入工具条的“工具列表”按钮图标
                     IconDir + "sandbox-tools-icon-256.png",
                     IconDir + "copy.png",
+                    // 左栏会话标题的展开/收起三角
+                    IconDir + "triangle-right.png",
                     // 关闭/菜单按钮（照抄游戏窗口的 btn-box）
                     SpriteDir + "hex-bg-30.png",
                     SpriteDir + "hex-border-up-30.png",
@@ -216,6 +218,7 @@ namespace IcarusII.EditorTools
                     "insert-icon-40",
                     "sandbox-tools-icon-256",
                     "copy",
+                    "triangle-right",
                     "hex-bg-30",
                     "hex-border-up-30",
                     "close-x-m",
