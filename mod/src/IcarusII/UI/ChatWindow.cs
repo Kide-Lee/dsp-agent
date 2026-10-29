@@ -5164,6 +5164,11 @@ namespace IcarusII.UI
             AssignIconMapping(view.Title, TryGetPreferredIconMapping(), restyle: false);
             _conversationViews.Add(view);
 
+            var headerHover = header.gameObject.GetComponent<ConversationHeaderHover>();
+            if (headerHover == null) headerHover = header.gameObject.AddComponent<ConversationHeaderHover>();
+            headerHover.Background = header.GetComponent<Image>();
+            headerHover.HoverColor = new Color(_accent.r, _accent.g, _accent.b, 0.10f);
+
             var headerButton = header.GetComponent<Button>();
             if (headerButton != null)
             {
