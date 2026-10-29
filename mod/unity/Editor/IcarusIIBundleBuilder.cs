@@ -45,6 +45,7 @@ namespace IcarusII.EditorTools
         private const string MaterialDir = "Assets/Resources/UI/Materials/";
         /// <summary>入口按钮的图标（用户提供）；随 prefab 一起进 bundle，避免引用丢失。</summary>
         private const string AgentButtonIconPath = "Assets/IcarusII/Resources/console.png";
+        private const string NewConversationIconPath = "Assets/IcarusII/Resources/new-conversation.png";
         private const string OutputDir = "Build/IcarusIIBundle";
         private const string BundleName = "icarusii-ui";
         private const string AssetName = "IcarusIIWindow";
@@ -162,6 +163,7 @@ namespace IcarusII.EditorTools
                     // 右下角 Game Menu 的聊天入口按钮（含它自己的图标/底图/材质）。
                     AgentButtonPrefabPath,
                     AgentButtonIconPath,
+                    NewConversationIconPath,
                     SpriteDir + "crystal-btn-black.png",
                     SpriteDir + "circle-thin-64.png",
                     MaterialDir + "trsl-colored.mat",
@@ -204,6 +206,7 @@ namespace IcarusII.EditorTools
                     AssetName,
                     AgentButtonAssetName,
                     "console",
+                    "new-conversation",
                     "crystal-btn-black",
                     "circle-thin-64",
                     "trsl-colored",

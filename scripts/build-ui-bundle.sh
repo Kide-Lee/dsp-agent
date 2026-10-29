@@ -63,7 +63,9 @@ for f in \
   "$PROJ/Assets/IcarusII/button-agent.prefab" \
   "$PROJ/Assets/IcarusII/button-agent.prefab.meta" \
   "$PROJ/Assets/IcarusII/Resources/console.png" \
-  "$PROJ/Assets/IcarusII/Resources/console.png.meta"; do
+  "$PROJ/Assets/IcarusII/Resources/console.png.meta" \
+  "$PROJ/Assets/IcarusII/Resources/new-conversation.png" \
+  "$PROJ/Assets/IcarusII/Resources/new-conversation.png.meta"; do
   [ -f "$f" ] && cp "$f" "$SNAP/"
 done
 echo "==> 已回存 prefab 快照到 $SNAP"

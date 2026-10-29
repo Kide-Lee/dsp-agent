@@ -12,6 +12,7 @@
 | [QuickJS](https://github.com/quickjs-ng/quickjs) / [quickjs-emscripten](https://github.com/justjake/quickjs-emscripten) | `run_script` 的脚本沙箱（M4d） | MIT | 打包进 sidecar；WASM 以 base64 内联（`@jitl/quickjs-singlefile-cjs-release-sync`），不额外落文件 |
 | [dsp-calc](https://github.com/antian369/dsp-calc) | 蓝图布局算法与建筑/配方数据（`blueprint_generate`） | 木兰宽松许可证，第 2 版（Mulan PSL v2） | 仅算法与数据 vendored 到 `sidecar/vendor/dsp-calc/`，打包进 sidecar；不包含其 UI |
 | [Unity Skills](https://github.com/Unity-Technologies/skills) — `ui-ugui` | Agent Skill：Unity uGUI / Canvas / RectTransform / Layout Group 开发规范 | Unity Companion License | 内容收录于 `.dsh/skills/ui-ugui/`，仅用于开发期辅助，不进入发布产物 |
+| [Material Design Icons](https://github.com/google/material-design-icons) — `add_comment` | 左栏“新会话”按钮图标 | Apache-2.0 | 转成白色 PNG 后打包进 UI AssetBundle（`new-conversation.png`） |
 
 ## 关于 BepInEx
 

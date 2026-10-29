@@ -58,6 +58,7 @@ namespace IcarusII.I18n
             ["welcome"] = "我是伊卡洛斯·贰。可以问我《戴森球计划》的机制、产线排布、或者卡住了该先修什么。",
             ["chat.index.empty"] = "暂无提问",
             ["chat.index.delete.tip"] = "删除",
+            ["chat.index.new.tip"] = "新会话",
             ["chat.conversation.created"] = "已新建会话。",
             ["chat.conversation.deleted"] = "已删除会话。",
             ["chat.conversation.busy"] = "正在回答当前问题，结束后再操作会话。",

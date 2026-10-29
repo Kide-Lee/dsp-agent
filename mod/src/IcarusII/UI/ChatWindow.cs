@@ -4871,6 +4871,23 @@ namespace IcarusII.UI
             {
                 _newConversationButton.onClick.RemoveAllListeners();
                 _newConversationButton.onClick.AddListener(OnNewConversationClicked);
+                try
+                {
+                    var tipButton = _newConversationButton.GetComponent<UIButton>();
+                    if (tipButton != null)
+                    {
+                        var tips = tipButton.tips;
+                        tips.tipTitle = Strings.Get("chat.index.new.tip");
+                        tips.tipText = string.Empty;
+                        if (tips.corner == 0) tips.corner = 9;
+                        tipButton.tips = tips;
+                        tipButton.UpdateTip();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogWarning("新会话按钮提示失败：" + ex.Message);
+                }
             }
             else
             {
