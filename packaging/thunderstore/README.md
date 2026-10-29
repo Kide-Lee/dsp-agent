@@ -152,6 +152,14 @@ DSP 每次大版本更新都可能改动内部类型。看日志里的报错，�
 
 ---
 
+## 遇到问题？加群讨论
+
+QQ 群 **1091497260**（伊卡洛斯二号研发中心）。
+
+提问时带上现象描述和 `BepInEx/LogOutput.log` 里对应的报错，能更快定位。
+
+---
+
 ## 文件校验（1.0.0）
 
 ```
@@ -169,6 +177,8 @@ confirmation**, perform in-game actions.
 
 Requires **BepInEx 5.4.17+** (5.4.23.5 also tested) and your own **DeepSeek** (or any OpenAI-compatible) API key.
 The key is stored locally only; all traffic goes to the endpoint you configure.
+
+Questions? Join the QQ group **1091497260**.
 
 ---
 
