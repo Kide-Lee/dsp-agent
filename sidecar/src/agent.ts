@@ -1543,23 +1543,25 @@ export class PiAgent implements AgentRunner {
   }
 
   /**
-   * 读取一个会话的 UI 回放历史。只读会话文件，不建模型会话、不联网。
-   * 找不到会话时返回空数组（例如新建但还没发过消息的 draft）。
+   * 读一个会话的回放记录与文件里保存的标题。只读会话文件，不建模型会话、不联网。
+   * 找不到会话时返回空历史（例如新建但还没发过消息的 draft）。
+   * 标题只认 session_info（玩家改名和模型总结都写这里）；用第一条提问重新推导，
+   * 会让玩家改名在切走再切回时丢失。
    */
-  private readConversationHistory(
+  private readConversation(
     pi: PiSdk,
     saveKey: string,
     conversationId: string,
-  ): HistoryMessage[] {
+  ): { history: HistoryMessage[]; name: string | null } {
     const sessionDir = this.conversationSessionDir(saveKey);
     const file = pi.SessionManager.findById(this.dataDir, conversationId, sessionDir);
-    if (!file) return [];
+    if (!file) return { history: [], name: null };
     let manager;
     try {
       manager = pi.SessionManager.open(file, sessionDir, this.dataDir);
     } catch (err) {
       this.logger.warn('打开会话文件失败', { saveKey, conversationId, ...errorFields(err) });
-      return [];
+      return { history: [], name: null };
     }
     // 聊天记录回放必须用全量 branch：buildContextEntries() 会按 compaction 丢掉
     // 被摘要的旧消息，导致压缩后重进存档旧对话凭空消失。模型上下文由 pi 自己管，
@@ -1579,15 +1581,25 @@ export class PiAgent implements AgentRunner {
       linkCards: linkRecords.length,
       replyTimes: timeRecords.length,
     });
-    return withTimes;
+    return { history: withTimes, name: manager.getSessionName() ?? null };
+  }
+
+  /** 只取 UI 回放历史；标题走 readConversation。 */
+  private readConversationHistory(
+    pi: PiSdk,
+    saveKey: string,
+    conversationId: string,
+  ): HistoryMessage[] {
+    return this.readConversation(pi, saveKey, conversationId).history;
   }
 
   private readConversationRecords(
     pi: PiSdk,
     saveKey: string,
     conversationId: string,
+    knownHistory?: HistoryMessage[],
   ): ConversationRecord[] {
-    const history = this.readConversationHistory(pi, saveKey, conversationId);
+    const history = knownHistory ?? this.readConversationHistory(pi, saveKey, conversationId);
     const out: ConversationRecord[] = [];
     for (const message of history) {
       if (message.role !== 'user' || message.text.trim().length === 0) continue;
@@ -1604,9 +1616,16 @@ export class PiAgent implements AgentRunner {
   private conversationInfoFrom(
     pi: PiSdk,
     saveKey: string,
-    info: { id: string; name?: string; firstMessage: string; created: Date; modified: Date },
+    info: {
+      id: string;
+      name?: string;
+      firstMessage: string;
+      created: Date;
+      modified: Date;
+      history?: HistoryMessage[];
+    },
   ): ConversationInfo {
-    const records = this.readConversationRecords(pi, saveKey, info.id);
+    const records = this.readConversationRecords(pi, saveKey, info.id, info.history);
     return {
       id: info.id,
       title: this.conversationTitle(info),
@@ -1709,14 +1728,16 @@ export class PiAgent implements AgentRunner {
     const pi = await this.loadSdk();
     const activeId = await this.ensureActiveConversation(saveKey, pi);
     if (conversationId === activeId) {
-      const history = await this.readConversationHistory(pi, saveKey, conversationId);
+      const { history, name } = this.readConversation(pi, saveKey, conversationId);
       const conversation = this.activeConversationDraft
         ? this.draftConversationInfo(conversationId, this.activeConversationDraftTitle)
         : this.conversationInfoFrom(pi, saveKey, {
             id: conversationId,
+            name: name ?? undefined,
             firstMessage: history.find((m) => m.role === 'user')?.text ?? '',
             created: new Date(),
             modified: new Date(),
+            history,
           });
       return { ok: true, conversation, history };
     }
@@ -1730,12 +1751,14 @@ export class PiAgent implements AgentRunner {
     this.activeConversationDraftTitle = null;
     this.writeActiveConversationId(saveKey, conversationId);
     this.teardown();
-    const history = this.readConversationHistory(pi, saveKey, conversationId);
+    const { history, name } = this.readConversation(pi, saveKey, conversationId);
     const conversation = this.conversationInfoFrom(pi, saveKey, {
       id: conversationId,
+      name: name ?? undefined,
       firstMessage: history.find((m) => m.role === 'user')?.text ?? '',
       created: new Date(),
       modified: new Date(),
+      history,
     });
     return { ok: true, conversation, history };
   }

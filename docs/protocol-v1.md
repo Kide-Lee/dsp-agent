@@ -1159,6 +1159,8 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 ```
 
 - 会话不存在时返回 `error{code:"conversation_not_found"}`。
+- `conversation.title` 优先取该会话的 `session_info.name`（玩家改名或模型总结），
+  没有时才退回第一条用户消息；切走再切回不会丢掉玩家改过的标题。
 - 切换成功后，下一次 `prompt` 的 `conversationId` 必须是该 id；sidecar 会用它
   校验/路由（见下）。
 

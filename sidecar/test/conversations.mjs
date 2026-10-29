@@ -248,6 +248,15 @@ console.log('── 2. PiAgent 会话文件 ──');
     check('重命名后列表标题更新', renamedList.find((c) => c.id === 'conv-b')?.title === '物流站标题');
     check('重命名写入 session_info', Boolean(bPath) && readFileSync(bPath, 'utf8').includes('"session_info"') && readFileSync(bPath, 'utf8').includes('物流站标题'));
 
+    const backToB = await agent.switchConversation('saveA', 'conv-b');
+    check('切回 B 后改过的标题保留', backToB.conversation?.title === '物流站标题', JSON.stringify(backToB.conversation?.title));
+    const backToBList = await agent.getConversations('saveA');
+    check('切回后列表标题保留', backToBList.find((c) => c.id === 'conv-b')?.title === '物流站标题');
+    const sameB = await agent.switchConversation('saveA', 'conv-b');
+    check('重复切到同一会话标题保留', sameB.conversation?.title === '物流站标题', JSON.stringify(sameB.conversation?.title));
+    const backToA = await agent.switchConversation('saveA', 'conv-a');
+    check('切回 A 成功', backToA.ok === true);
+
     const deleted = await agent.deleteConversation('saveA', 'conv-b');
     check('删除非活动会话', deleted.ok === true);
     check('删除后文件不存在', Boolean(bPath) && !existsSync(bPath));
