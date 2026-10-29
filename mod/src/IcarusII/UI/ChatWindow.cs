@@ -230,7 +230,6 @@ namespace IcarusII.UI
             public Text Title;
             public Text Count;
             public Image Chevron;
-            public GameObject ActiveBar;
             public GameObject ExpandMore;
             public Text ExpandMoreText;
             public bool Expanded;
@@ -5149,7 +5148,6 @@ namespace IcarusII.UI
                 Title = header.Find("title-mask/title")?.GetComponent<Text>(),
                 Count = header.Find("count")?.GetComponent<Text>(),
                 Chevron = header.Find("chevron")?.GetComponent<Image>(),
-                ActiveBar = header.Find("active-bar")?.gameObject,
             };
             // 展开状态只由标题左侧的 chevron 改变；首次出现时只有当前会话默认展开，
             // 并把这次默认写进状态，之后切走再切回不会被重新展开。
@@ -5199,9 +5197,11 @@ namespace IcarusII.UI
                     string.IsNullOrEmpty(view.Info.Title) ? Strings.Get("chat.conversation.new") : view.Info.Title);
             if (view.Count != null) view.Count.text = Strings.Get("chat.index.count", view.Info.RecordCount);
             if (view.Chevron != null)
+            {
                 view.Chevron.rectTransform.localRotation =
                     view.Expanded ? Quaternion.Euler(0f, 0f, -90f) : Quaternion.identity;
-            if (view.ActiveBar != null) view.ActiveBar.SetActive(view.Id == _activeConversationId);
+                view.Chevron.color = view.Id == _activeConversationId ? _accent : Color.white;
+            }
             if (view.Records != null) view.Records.gameObject.SetActive(view.Expanded);
 
             var headerImage = view.Header != null ? view.Header.GetComponent<Image>() : null;
