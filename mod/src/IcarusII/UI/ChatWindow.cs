@@ -229,9 +229,9 @@ namespace IcarusII.UI
             public RectTransform Records;
             public Text Title;
             public Color TitleColor;
-            public Text Count;
             public Image Chevron;
             public ChevronSpin ChevronSpin;
+            public ConversationDeleteHover DeleteHover;
             public GameObject ExpandMore;
             public Text ExpandMoreText;
             public bool Expanded;
@@ -5165,7 +5165,6 @@ namespace IcarusII.UI
                 Header = header,
                 Records = records,
                 Title = header.Find("title-mask/title")?.GetComponent<Text>(),
-                Count = header.Find("count")?.GetComponent<Text>(),
                 Chevron = header.Find("chevron/icon")?.GetComponent<Image>(),
             };
             // 展开状态只由标题左侧的 chevron 改变；首次出现时只有当前会话默认展开，
@@ -5208,6 +5207,14 @@ namespace IcarusII.UI
                 deleteButton.onClick.RemoveAllListeners();
                 deleteButton.onClick.AddListener(() => OnDeleteConversationClicked(info.Id));
             }
+            if (delete != null)
+            {
+                var deleteHover = delete.GetComponent<ConversationDeleteHover>();
+                if (deleteHover == null) deleteHover = delete.gameObject.AddComponent<ConversationDeleteHover>();
+                deleteHover.Icon = delete.Find("x")?.GetComponent<Image>();
+                view.DeleteHover = deleteHover;
+            }
+            headerHover.DeleteButton = delete != null ? delete.gameObject : null;
 
             BuildConversationRecords(view);
             UpdateConversationHeader(view);
@@ -5217,19 +5224,20 @@ namespace IcarusII.UI
         private void UpdateConversationHeader(ConversationView view)
         {
             if (view == null) return;
+            var titleColor = view.Id == _activeConversationId ? _accent : view.TitleColor;
             if (view.Title != null)
             {
                 view.Title.text = HeaderTitleLabel(
                     string.IsNullOrEmpty(view.Info.Title) ? Strings.Get("chat.conversation.new") : view.Info.Title);
-                view.Title.color = view.Id == _activeConversationId ? _accent : view.TitleColor;
+                view.Title.color = titleColor;
             }
-            if (view.Count != null) view.Count.text = Strings.Get("chat.index.count", view.Info.RecordCount);
             if (view.Chevron != null)
             {
                 view.ChevronSpin ??= view.Chevron.gameObject.AddComponent<ChevronSpin>();
                 view.ChevronSpin.SetAngle(view.Expanded ? -90f : 0f, true);
                 view.Chevron.color = view.Id == _activeConversationId ? _accent : Color.white;
             }
+            if (view.DeleteHover != null) view.DeleteHover.SetNormal(titleColor);
             if (view.Records != null) view.Records.gameObject.SetActive(view.Expanded);
         }
 
@@ -5527,7 +5535,7 @@ namespace IcarusII.UI
         /// <summary>左栏会话标题：最多 144px，超出用省略号，避免压到“# 条”和删除按钮。</summary>
         private static string HeaderTitleLabel(string text)
         {
-            return FitLabel(text, 13, 140f);
+            return FitLabel(text, 13, 182f);
         }
 
         private void EnsureConversationTitle()

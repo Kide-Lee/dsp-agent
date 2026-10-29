@@ -12,6 +12,7 @@ namespace IcarusII.UI
     {
         public Graphic Background;
         public Color HoverColor = new Color(0.35f, 0.75f, 1f, 0.10f);
+        public GameObject DeleteButton;
 
         public void OnPointerEnter(PointerEventData eventData)
         {
@@ -31,6 +32,7 @@ namespace IcarusII.UI
         private void Apply(bool hovered)
         {
             if (Background != null) Background.color = hovered ? HoverColor : Color.clear;
+            if (DeleteButton != null) DeleteButton.SetActive(hovered);
         }
     }
 }

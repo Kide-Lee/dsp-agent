@@ -266,7 +266,6 @@ namespace IcarusII.I18n
             // 会话索引 / 回复脚注
             ["chat.conversation.current"] = "当前会话",
             ["chat.conversation.new"] = "新会话",
-            ["chat.index.count"] = "{0} 条",
             ["chat.index.expand_more"] = "展开其余 {0} 条记录",
             ["chat.index.title_placeholder"] = "会话标题",
             ["reply.footer.copy"] = "点击复制",
