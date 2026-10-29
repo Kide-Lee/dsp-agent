@@ -1037,8 +1037,7 @@ namespace IcarusII.UI
                 GameTether.Added += OnTetherAdded;
                 GameTether.Changed += OnTetherChanged;
                 _tetherHooked = true;
-                Plugin.Log.LogInfo("[link] ChatWindow 已订阅 tether 事件");
-            }
+                }
 
             SetStatus(Strings.Get("status.disconnected"), _textDim);
             _root.SetActive(false);
@@ -6180,7 +6179,7 @@ namespace IcarusII.UI
                 if (view.BuildingCardTemplate != null) view.BuildingCardTemplate.gameObject.SetActive(false);
                 if (view.StarCardTemplate != null) view.StarCardTemplate.gameObject.SetActive(false);
                 cards.gameObject.SetActive(false);
-                Plugin.Log.LogInfo("[link] BindReply cards-group=" + (view.BlueprintCards != null) +
+                Plugin.Log.LogDebug("[link] BindReply cards-group=" + (view.BlueprintCards != null) +
                     " blueprint=" + (view.CardTemplate != null) +
                     " building=" + (view.BuildingCardTemplate != null) +
                     " star=" + (view.StarCardTemplate != null));

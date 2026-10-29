@@ -57,6 +57,16 @@ namespace IcarusII.Core
         /// 让 sidecar 就位并返回连接参数。
         /// 失败时返回 false，并把可读原因写入 error（调用方负责显示到 UI）。
         /// </summary>
+        /// <summary>sidecar 的日志行只让 warn/error 进主日志，info 降到 debug，避免刷屏。</summary>
+        private static void LogSidecarLine(ManualLogSource log, string prefix, string line)
+        {
+            bool Has(string level) => line.IndexOf("\"level\":\"" + level + "\"", StringComparison.Ordinal) >= 0;
+            if (Has("error")) log.LogError($"{prefix} {line}");
+            else if (Has("warn")) log.LogWarning($"{prefix} {line}");
+            else if (line.IndexOf("\"level\":\"", StringComparison.Ordinal) >= 0) log.LogDebug($"{prefix} {line}");
+            else log.LogWarning($"{prefix} {line}");
+        }
+
         public bool TryPrepare(out SidecarOptions options, out string error)
         {
             options = null;
@@ -161,11 +171,11 @@ namespace IcarusII.Core
                 // 子进程输出必须持续消费，否则管道写满会把 sidecar 卡死。
                 proc.OutputDataReceived += (_, e) =>
                 {
-                    if (!string.IsNullOrEmpty(e.Data)) _log.LogInfo($"[sidecar] {e.Data}");
+                    if (!string.IsNullOrEmpty(e.Data)) LogSidecarLine(_log, "[sidecar]", e.Data);
                 };
                 proc.ErrorDataReceived += (_, e) =>
                 {
-                    if (!string.IsNullOrEmpty(e.Data)) _log.LogInfo($"[sidecar:err] {e.Data}");
+                    if (!string.IsNullOrEmpty(e.Data)) LogSidecarLine(_log, "[sidecar:err]", e.Data);
                 };
                 proc.Exited += (_, __) => _log.LogWarning("[sidecar] 进程已退出");
 

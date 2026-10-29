@@ -244,13 +244,6 @@ namespace IcarusII
             CheckConfirmTimeout();
             TryApplyGameStyle();
 
-            if (_config.DebugLogGate && Time.frameCount % 60 == 0)
-            {
-                Log.LogInfo($"[诊断] 热键判定：{GameRefs.DescribeHotkeyGate()}");
-                Log.LogInfo($"[诊断] 窗口：{_chat.DescribeVisibility()}");
-                Log.LogInfo($"[诊断] 焦点：{_chat.DescribeFocus()}");
-            }
-
             // Esc：输入框（聊天框或标题框）聚焦时先取消焦点，否则关闭窗口。
             // 标题框可能抢先消费掉 Esc 并失焦，这种情况窗口要保持打开。
             if (_chat.IsOpen && _hotkey.EscapePressedThisFrame)
@@ -324,7 +317,7 @@ namespace IcarusII
                 var client = new SidecarClient(options);
                 client.StateChanged += OnClientStateChanged;
                 client.Received += OnClientMessage;
-                client.Log += msg => Log.LogInfo($"[client] {msg}");
+                client.Log += msg => Log.LogDebug($"[client] {msg}");
                 client.ConfigChanged += OnConfigChanged;
                 _client = client;
                 IcarusII.UI.ModelSettingsTab.Bind(client);   // 设置窗口的"模型"页签需要读写配置

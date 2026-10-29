@@ -15,7 +15,6 @@ namespace IcarusII.Config
         public bool HotkeyRequireNoBuildTool { get; private set; }
         public string Language { get; private set; }
         public bool Streaming { get; private set; }
-        public bool DebugLogGate { get; private set; }
         /// <summary>M4m：输入框 !tool 调试直调；需要 sidecar 同时用 --debug-tools 启动。</summary>
         public bool DebugToolConsole { get; private set; }
 
@@ -134,10 +133,6 @@ namespace IcarusII.Config
 
             Streaming = cfg.Bind("General", "Streaming", true,
                 "是否逐字显示流式回复。").Value;
-
-            DebugLogGate = cfg.Bind("General", "DebugLogGate", false,
-                "每秒输出一次热键判定依据与窗口可见性，用于排查「按 R 没反应」。\n" +
-                "排查完成后可关闭。").Value;
 
             DebugToolConsole = cfg.Bind("General", "DebugToolConsole", false,
                 "输入框调试直调：!tools 列工具，!tool <工具名> <JSON> 直接执行只读工具。\n" +

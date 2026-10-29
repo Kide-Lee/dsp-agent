@@ -257,7 +257,6 @@ namespace IcarusII.UI
                 // 供应商的 key/地址一起删掉，语义太危险；这里只克隆一个隐藏占位按钮。
                 var revertTemplate = FindRevertTemplate(srcGroup.transform);
 
-                Plugin.Log.LogInfo("[模型页] 步骤1：克隆页签按钮");
                 // 1) 按钮：克隆最后一个页签按钮，横移到下一格。
                 //
                 // 注意 x 的算法：原生按钮是 `20 + 160 * index`（第一个按钮左边留 20），
@@ -287,7 +286,6 @@ namespace IcarusII.UI
                         $"间距 {step:0.#} → 新按钮 x={btnRt.anchoredPosition.x:0.#}（滑块 x={TabWidth * count:0.#}）");
                 }
 
-                Plugin.Log.LogInfo("[模型页] 步骤2：处理页签文字");
                 // 2) 文字：原生 tabTexts[i] 就是 tabButtons[i] 的子物体（铺满按钮、居中），
                 // 所以克隆按钮会连文字一起拿到。如果哪天游戏改成独立节点，就克隆原生文字。
                 Text label = btn.GetComponentInChildren<Text>(true);
@@ -320,7 +318,6 @@ namespace IcarusII.UI
                     throw new InvalidOperationException("克隆的页签按钮里找不到 Text，放弃注入。");
                 }
 
-                Plugin.Log.LogInfo("[模型页] 步骤3：克隆内容根");
                 // 3) 内容根：克隆最后一个页签的内容组，清空子物体，保留 Tweener
                 var content = UnityEngine.Object.Instantiate(srcGroup.gameObject, srcGroup.transform.parent);
                 madeContent = content;
@@ -333,7 +330,6 @@ namespace IcarusII.UI
                 var tweener = content.GetComponent(tweenerType);
                 content.SetActive(false);
 
-                Plugin.Log.LogInfo("[模型页] 步骤4：扩展 tabButtons/tabTexts/tabTweeners 数组");
                 // 4) 数组各扩一位
                 var next = count + 1;
                 Array.Resize(ref window.tabButtons, next);
@@ -369,7 +365,6 @@ namespace IcarusII.UI
                 var target = count;
                 btn.onClick += _ => SwitchTo(window, target);
 
-                Plugin.Log.LogInfo("[模型页] 步骤5：构建页面控件");
                 var revertSlot = BuildPage(content.transform, window, revertTemplate);
 
                 // revertButtons 与 tabButtons 必须等长：原生 _OnUnregEvent 会
@@ -382,7 +377,6 @@ namespace IcarusII.UI
                     if (window.revertButtons.Length > count)
                         window.revertButtons[count] = revertSlot;
                 }
-                Plugin.Log.LogInfo("[模型页] 步骤6：完成");
 
                 _index = count;
                 _installed = true;
@@ -1435,7 +1429,7 @@ namespace IcarusII.UI
 
             try
             {
-                Plugin.Log.LogInfo(
+                Plugin.Log.LogDebug(
                     $"[模型页] {name}：font={(text.font != null ? text.font.name : "null")} " +
                     $"size={text.fontSize} color={ColorUtility.ToHtmlStringRGBA(text.color)} " +
                     $"mat={(text.material != null ? text.material.name : "null")} " +

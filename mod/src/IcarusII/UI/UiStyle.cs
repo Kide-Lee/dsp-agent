@@ -554,7 +554,7 @@ namespace IcarusII.UI
                     var c = reference.transform.GetChild(i);
                     sb.Append(c.name).Append('(').Append(c.gameObject.activeSelf ? '+' : '-').Append(") ");
                 }
-                log.LogInfo(sb.ToString());
+                log.LogDebug(sb.ToString());
 
                 var list = new List<(float area, string text)>();
                 foreach (var img in reference.GetComponentsInChildren<Image>(true))
@@ -570,8 +570,8 @@ namespace IcarusII.UI
                 }
                 list.Sort((x, y) => y.area.CompareTo(x.area));
 
-                log.LogInfo($"[样式] 候选贴图（按面积前 {Mathf.Min(8, list.Count)} 个）：");
-                for (int i = 0; i < list.Count && i < 8; i++) log.LogInfo("[样式]   " + list[i].text);
+                log.LogDebug($"[样式] 候选贴图（按面积前 {Mathf.Min(8, list.Count)} 个）：");
+                for (int i = 0; i < list.Count && i < 8; i++) log.LogDebug("[样式]   " + list[i].text);
             }
             catch (Exception ex)
             {
