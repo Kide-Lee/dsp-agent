@@ -275,15 +275,11 @@ export class ConfigStore {
 
     const provider = options.defaults?.provider ?? DEFAULT_PROVIDER;
     const model = options.defaults?.model ?? DEFAULT_MODEL;
-    const models =
-      provider === DEFAULT_PROVIDER
-        ? DEFAULT_DEEPSEEK_MODELS.map((m) => ({ ...m }))
-        : [{ id: model, name: model }];
-    if (!models.some((m) => m.id === model)) models.unshift({ id: model, name: model });
 
+    // 没有 key 时不给任何预置模型：列表保持为空，等玩家配好 key 再拉取。
     this.data = {
       providers: {
-        [provider]: { apiKey: null, baseUrl: null, models },
+        [provider]: { apiKey: null, baseUrl: null, models: [] as ModelEntry[] },
       },
       activeProvider: provider,
       activeModel: model,
@@ -359,11 +355,13 @@ export class ConfigStore {
       const model = typeof legacyModel === 'string' && legacyModel.length > 0
         ? legacyModel
         : this.data.activeModel;
-      const models =
-        provider === DEFAULT_PROVIDER
+      const hasLegacyKey = typeof legacyKey === 'string' && legacyKey.length > 0;
+      const models: ModelEntry[] = !hasLegacyKey
+        ? []
+        : provider === DEFAULT_PROVIDER
           ? DEFAULT_DEEPSEEK_MODELS.map((m) => ({ ...m }))
           : [{ id: model, name: model }];
-      if (!models.some((m) => m.id === model)) models.unshift({ id: model, name: model });
+      if (hasLegacyKey && !models.some((m) => m.id === model)) models.unshift({ id: model, name: model });
       providers[provider] = {
         apiKey: typeof legacyKey === 'string' && legacyKey.length > 0 ? legacyKey : null,
         baseUrl: typeof legacyBase === 'string' && legacyBase.length > 0 ? legacyBase : null,
@@ -437,9 +435,7 @@ export class ConfigStore {
         this.data.providers[providerId] = {
           apiKey: null,
           baseUrl: null,
-          models: (providerId === DEFAULT_PROVIDER
-            ? DEFAULT_DEEPSEEK_MODELS.map((m) => ({ ...m }))
-            : [{ id: this.data.activeModel, name: this.data.activeModel }]),
+          models: [] as ModelEntry[],
         };
       }
       this.data.activeProvider = providerId;
@@ -447,10 +443,8 @@ export class ConfigStore {
 
     const provider = this.data.providers[providerId];
     if (!provider) return;
-    if (provider.models.length === 0) {
-      const model = this.data.activeModel || DEFAULT_MODEL;
-      provider.models.push({ id: model, name: model });
-    }
+    // 空列表就是空列表：不能凭空补一个模型，否则没 key 的下拉框又会冒出不可用项。
+    if (provider.models.length === 0) return;
     if (!provider.models.some((m) => m.id === this.data.activeModel)) {
       const fallback = provider.models[0]?.id ?? DEFAULT_MODEL;
       // 旧格式可能给出一个目录里没有的自定义模型：保留它，名字用 id。
@@ -494,14 +488,18 @@ export class ConfigStore {
 
   /** 查询某个 provider 的显示名（不落盘，纯展示）。 */
   private viewProviders(): ProviderView[] {
-    return Object.entries(this.data.providers).map(([id, provider]) => ({
-      id,
-      name: providerDisplayName(id),
-      hasKey: typeof provider.apiKey === 'string' && provider.apiKey.length > 0,
-      baseUrl: provider.baseUrl,
-      models: provider.models.map((model) => ({ ...model })),
-      isActive: id === this.data.activeProvider,
-    }));
+    return Object.entries(this.data.providers).map(([id, provider]) => {
+      const hasKey = typeof provider.apiKey === 'string' && provider.apiKey.length > 0;
+      return {
+        id,
+        name: providerDisplayName(id),
+        hasKey,
+        baseUrl: provider.baseUrl,
+        // 没 key 时这些模型没法用，别让下拉框显示出来。
+        models: hasKey ? provider.models.map((model) => ({ ...model })) : [],
+        isActive: id === this.data.activeProvider,
+      };
+    });
   }
 
   /** 切换当前供应商；没有指定模型时优先保留原模型，否则用它自己的第一个。 */
@@ -568,9 +566,6 @@ export class ConfigStore {
     if (active) {
       if (patch.model !== undefined) {
         this.data.activeModel = patch.model;
-        if (!active.models.some((m) => m.id === patch.model)) {
-          active.models.push({ id: patch.model!, name: patch.model! });
-        }
       }
       if (patch.apiKey !== undefined) {
         active.apiKey = patch.apiKey.length > 0 ? patch.apiKey : null;
@@ -602,7 +597,7 @@ export class ConfigStore {
       this.data.providers[DEFAULT_PROVIDER] = {
         apiKey: null,
         baseUrl: null,
-        models: DEFAULT_DEEPSEEK_MODELS.map((m) => ({ ...m })),
+        models: [] as ModelEntry[],
       };
       this.data.activeProvider = DEFAULT_PROVIDER;
       this.data.activeModel = DEFAULT_MODEL;

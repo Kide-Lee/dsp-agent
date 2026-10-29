@@ -55,6 +55,7 @@ Linux 下文件权限为 `0600`，目录为 `0700`。
 
 ## 迁移
 
+- **不预置模型**：没有 key 时 `providers[].models` 保持为空，`config.state` 也不会返回缓存模型；先在设置页填 key，再用「获取可用模型」或手动添加。
 - 老的单条 `provider` / `model` / `apiKey` / `baseUrl` 会自动迁移成 `providers` 里的一条。
 - 缺少 `input` 的旧模型条目会按 DeepSeek 预设补 `text,image`，避免升级后截图被静默丢弃。
 - 损坏或结构非法的 `config.json` 按“未配置”处理，不会让 sidecar 启动失败。

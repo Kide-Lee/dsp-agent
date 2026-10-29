@@ -47,6 +47,11 @@ try {
       store.view().provider === DEFAULT_PROVIDER && store.view().model === DEFAULT_MODEL,
       `${store.view().provider}/${store.view().model}`,
     );
+    check(
+      '未配置 key ⇒ 模型列表为空',
+      store.view().providers.every((p) => p.models.length === 0),
+      JSON.stringify(store.view().providers.map((p) => p.models.length)),
+    );
   }
 
   // 2) 往返读写 + 权限
@@ -83,6 +88,24 @@ try {
     store.update({ apiKey: '' });
     check('apiKey: "" ⇒ 视为清除', store.hasKey() === false);
     check('清除 key 后 state = missing_key', store.view().state === 'missing_key');
+  }
+
+  // 3a2) 没 key 时即使配置里缓存了模型，视图也不返回
+  {
+    const dir2 = makeTempDir('icarus-ii-cfg-nokey-');
+    const path2 = join(dir2, CONFIG_FILE_NAME);
+    writeFileSync(
+      path2,
+      JSON.stringify({
+        providers: { deepseek: { apiKey: null, baseUrl: null, models: [{ id: 'cached-model', name: 'Cached' }] } },
+        active: { provider: 'deepseek', model: 'cached-model' },
+      }),
+      'utf8',
+    );
+    const store = new ConfigStore({ path: path2 });
+    check('无 key ⇒ view 隐藏缓存模型', store.view().providers[0]?.models.length === 0);
+    store.update({ apiKey: FAKE_KEY });
+    check('补上 key ⇒ view 恢复模型', store.view().providers[0]?.models.length === 1);
   }
 
   // 3b) 思考档位：默认 off、往返读写、非法值拒绝

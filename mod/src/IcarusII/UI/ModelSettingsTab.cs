@@ -2063,8 +2063,6 @@ namespace IcarusII.UI
                 HasKey = false,
                 BaseUrl = string.Empty,
             };
-            draft.Models.Add(new ModelDraft { Id = "deepseek-v4-flash", Name = "DeepSeek V4 Flash" });
-            draft.Models.Add(new ModelDraft { Id = "deepseek-v4-pro", Name = "DeepSeek V4 Pro" });
             _providers.Add(draft);
             _selectedProvider = DefaultProvider;
             _activeProvider = DefaultProvider;

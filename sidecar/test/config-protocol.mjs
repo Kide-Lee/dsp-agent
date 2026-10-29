@@ -101,8 +101,9 @@ async function piWithoutKey() {
       state?.payload?.providers?.find((p) => p.id === 'deepseek')?.hasKey === true,
     );
     check(
-      'config.state.providers 的 deepseek 有两个模型',
-      state?.payload?.providers?.find((p) => p.id === 'deepseek')?.models?.length === 2,
+      'config.state.providers 的 deepseek 不预置模型',
+      state?.payload?.providers?.find((p) => p.id === 'deepseek')?.models?.length === 0,
+      JSON.stringify(state?.payload?.providers?.find((p) => p.id === 'deepseek')?.models),
     );
     check(
       'config.state.active 指向 deepseek/flash',
