@@ -9,24 +9,12 @@
 
 | 项 | 说明 |
 | --- | --- |
-| 游戏 | Dyson Sphere Program —— **0.10.30.3100 已验证**，其它版本未测 |
-| 框架 | **BepInEx 5.4.17+**（r2modman 自动装；5.4.23.5 也验证通过） |
-| API Key | 你自己的 DeepSeek Key；或任意 OpenAI 兼容端点（Ollama / LM Studio / vLLM…） |
+| 游戏 | Dyson Sphere Program (0.10.30.3100) |
+| 框架 | BepInEx 5.4.17+ |
+| API Key | 任意 OpenAI 兼容端点（Ollama / LM Studio / vLLM…） |
 
 > DeepSeek Key 在 <https://platform.deepseek.com/> → 左侧 **API Keys** → 创建。
 > API 按量计费，和网页版聊天是两套计费；新账号如果没有赠送额度，需要先充值。
-
-### BepInEx 版本
-
-**5.4.17 就行**——就是 Thunderstore 社区包 `xiaoye97-BepInEx` 的版本，本 mod 已把它写成
-依赖，mod 管理器会自动装。**5.4.23.5 也实测通过**，用哪个都可以。
-
-> 网上流传"Unity 2022.3.62f3 必须用 5.4.23.5"——那是 BepInEx 5.4.23.5 changelog 里的一条
-> 修复，但它只影响"连 `Application.isBatchMode` 都取不到"的构建；本游戏的 UnityEngine
-> 里该 API 存在，所以 5.4.17 能正常加载（0.10.30.3100 已实测）。
-
-手动装 BepInEx 的话：[BepInEx 5.4.17](https://github.com/BepInEx/BepInEx/releases/tag/v5.4.17)
-→ `BepInEx_x64_5.4.17.0.zip`，解压到游戏根目录（和 `DSPGAME.exe` 同级）。
 
 ---
 
