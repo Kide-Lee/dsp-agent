@@ -235,6 +235,12 @@ namespace IcarusII.Tests
                 "game_get_power", JsonValue.Parse(@"{""planetId"": 1}"));
             Eq("tool_debug name", "game_get_power", debugPayload["name"].AsString());
             Eq("tool_debug args.planetId", 1L, debugPayload["args"]["planetId"].AsLong());
+            var huge = JsonValue.NewObject();
+            huge.Set("blob", new string('x', Protocol.ToolDebugArgsMaxBytes + 1));
+            var rejected = false;
+            try { Protocol.BuildToolDebug("game_get_power", huge); }
+            catch (ArgumentException) { rejected = true; }
+            Check("tool_debug 超过 64KiB 被拒绝", rejected);
 
             var debugInfo = ToolDebugResultInfo.Parse(JsonValue.Parse(
                 @"{
@@ -277,7 +283,7 @@ namespace IcarusII.Tests
             Eq("hello token", "tok", hello["token"].AsString());
             Eq("hello modVersion", "0.1.0", hello["modVersion"].AsString());
             Eq("hello capabilities[0]", "ui.chat", hello["capabilities"][0].AsString());
-            Check("saveKey 为 null 时不写入", !hello.Has("saveKey"));
+            Check("saveKey 为 null 时显式写 null", hello["saveKey"].IsNull);
 
             var withSave = Protocol.BuildHello("t", "1", "2", "zh", null, "abc123");
             Eq("saveKey 写入", "abc123", withSave["saveKey"].AsString());
@@ -305,6 +311,9 @@ namespace IcarusII.Tests
             Eq("config.set model", "deepseek-v4-flash", cfgSet["model"].AsString());
             Eq("config.set apiKey", "sk-secret", cfgSet["apiKey"].AsString());
             Check("config.set 未给出的 baseUrl 不写入", !cfgSet.Has("baseUrl"));
+            var cfgClearBase = Protocol.BuildConfigSet(null, null, null, null,
+                permissionLevel: null, clearBaseUrl: true);
+            Check("config.set clearBaseUrl 写 null", cfgClearBase["baseUrl"].IsNull);
 
             var keyOnly = Protocol.BuildConfigSet(null, null, "sk-x", null);
             Eq("只传 key 时字段数", 1, keyOnly.Count);
@@ -317,8 +326,11 @@ namespace IcarusII.Tests
 
             // ready.payload.config（附录 A.2）
             var ready = JsonValue.Parse(
-                "{\"protocol\":1,\"sessionId\":\"sess_1\",\"agent\":\"pi/deepseek-v4-flash\"," +
+                "{\"protocol\":1,\"sessionId\":\"sess_1\"," +
+                "\"agent\":{\"provider\":\"deepseek\",\"model\":\"deepseek-v4-flash\",\"available\":true}," +
                 "\"config\":{\"state\":\"missing_key\",\"provider\":\"deepseek\",\"model\":\"deepseek-v4-flash\"}}");
+            Check("ready.agent 必须是对象", ready["agent"].IsObject);
+            Eq("ready.agent.model", "deepseek-v4-flash", ready["agent"]["model"].AsString());
             var rc = ConfigState.Parse(ready["config"]);
             Eq("ready.config.state", "missing_key", rc.State);
             Eq("ready.config.provider", "deepseek", rc.Provider);
@@ -332,6 +344,13 @@ namespace IcarusII.Tests
             Check("ready 不需要录入", !cs.NeedsKey);
             Eq("config.state.model", "deepseek-v4-pro", cs.Model);
             Check("缺 thinkingLevel 时为 null", cs.ThinkingLevel == null);
+
+            var csActive = ConfigState.Parse(JsonValue.Parse(
+                "{\"state\":\"ready\",\"active\":{\"provider\":\"openai\",\"model\":\"gpt-4o\"}}"));
+            Eq("active 回填 provider", "openai", csActive.Provider);
+            Eq("active 回填 model", "gpt-4o", csActive.Model);
+            Eq("active.provider 保留", "openai", csActive.ActiveProvider);
+            Eq("active.model 保留", "gpt-4o", csActive.ActiveModel);
 
             var csThink = ConfigState.Parse(JsonValue.Parse(
                 "{\"state\":\"ready\",\"model\":\"deepseek-v4-pro\",\"thinkingLevel\":\"max\"}"));
@@ -365,6 +384,13 @@ namespace IcarusII.Tests
 
             var bad = ConfigState.Parse(JsonValue.Parse("{\"state\":\"invalid_key\"}"));
             Check("invalid_key 需要重新录入", bad.NeedsKey);
+
+            var unreachable = ConfigState.Parse(JsonValue.Parse(
+                "{\"state\":\"unreachable\",\"provider\":\"deepseek\"}"));
+            Check("unreachable 的 fallback hasKey=true", unreachable.Providers[0].HasKey);
+            var missing = ConfigState.Parse(JsonValue.Parse(
+                "{\"state\":\"missing_key\",\"provider\":\"deepseek\"}"));
+            Check("missing_key 的 fallback hasKey=false", !missing.Providers[0].HasKey);
 
             // 缺字段 / null 都必须有安全默认值，不能抛
             var dflt = ConfigState.Parse(null);

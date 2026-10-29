@@ -250,7 +250,7 @@ API Key 是外部服务凭证，mod 无从得知，**这一步不可自动化**�
 | 内置工具 | 全关（`noTools: "builtin"`） |
 | 网络工具 | 仅限 sidecar 侧的白名单 Wiki 抓取；不给模型通用 HTTP 工具 |
 | 写操作 | 权限档位决定是否确认（只读=全部确认，受限=risk 2 确认，接管=全部放行）+ 影响面预览 + 可撤销；**不做写前自动存档**（用户确认关闭） |
-| API Key | 只存 sidecar 侧（复用 pi 的 `auth.json` 或环境变量）；mod 不接触 |
+| API Key | 只存 sidecar 的 `config.json`；mod 不接触 |
 | 存档数据外发 | 脱敏：默认不上传存档名/账号名（可配置开启） |
 
 ---
@@ -1141,7 +1141,7 @@ function gameTool<T>(spec: {
 | --- | --- | --- |
 | Prompt Injection（Wiki 页面/物品描述里藏指令） | 模型被诱导执行恶意操作 | 外部数据显式标注为不可信；写操作强制人确认；工具白名单；不提供通用 HTTP/shell |
 | 模型误判导致破坏性操作 | 存档损坏、产线被拆 | L2 强制确认 + 影响面预览 + 撤销栈；**无自动存档兜底**（用户关闭），因此"不可撤销的 L2 工具默认不实现"是硬约束 |
-| API Key 泄露 | 经济损失 | Key 只在 sidecar；mod 配置不含 Key；支持环境变量注入 |
+| API Key 泄露 | 经济损失 | Key 只在 sidecar 的 `config.json`；mod 配置不含 Key |
 | 本地端口被其他进程接入 | 伪造工具调用 | 绑定 `127.0.0.1`；连接时握手校验 `instanceToken`（sidecar 启动时生成，写入 `runtime.json`，仅本机可读） |
 | 存档信息外泄 | 隐私 | 默认不发送存档名/账号名；**截图会进入模型上下文**（可能含画面里的存档名、布局、聊天），只在玩家显式要求或调用 `game_capture_view` 时产生；不落盘；明确文档说明哪些数据会离开本机 |
 | 游戏崩溃 | 玩家损失 | 所有网络/异常路径与游戏主循环隔离；写操作在主线程但做前置状态检查 |
@@ -1278,41 +1278,26 @@ icarus-ii/
 
 ## 13. 配置项一览
 
-见 §6.7（mod 侧）与下（sidecar 侧，`%APPDATA%\icarus-ii\config.json`）：
+mod 侧配置见 §6.7 与游戏目录下的 `BepInEx/config/icarus-ii.cfg`。
+
+sidecar 运行期配置只放在 `<data-dir>/config.json`，字段与迁移规则见
+[docs/config.md](docs/config.md)。当前落盘字段：
 
 ```jsonc
 {
-  "host": "127.0.0.1",
-  "port": 8765,
-  "dataDir": "%APPDATA%\\icarus-ii",   // 全部状态的根目录（§2.4）
-  "modelsPath": null,                   // 默认 <dataDir>/models.json
-  "authPath": null,                     // 默认 <dataDir>/auth.json（自持，不复用他处）
-  "provider": "deepseek",               // 默认 Provider（用户确认）
-  "defaultModel": "deepseek-v4-flash",  // 默认模型（需支持工具调用，见 §7.2）
-  "sessionsDir": "<dataDir>/sessions",
-  "kb": {
-    "sqlitePath": "<dataDir>/kb/ldb.sqlite",
-    "autoExportOnVersionChange": true
+  "providers": {
+    "deepseek": { "apiKey": null, "baseUrl": null, "models": [] }
   },
-  "wiki": {
-    "enabled": true,
-    "sites": {
-      "zh": "https://wiki.biligame.com/dsp/",
-      "en": "https://dsp-wiki.com/"
-    },
-    "cacheTtlHours": 168,
-    "maxPageBytes": 200000
-  },
-  "limits": {
-    "toolResultMaxChars": 24000,
-    "stateCacheTtlMs": 5000,
-    "confirmTimeoutMs": 60000
-  },
-  "logLevel": "info"
+  "active": { "provider": "deepseek", "model": "deepseek-v4-flash" },
+  "thinkingLevel": "high",
+  "permissionLevel": "limited",
+  "blueprintDir": null,
+  "wiki": { "zhApi": null, "enApi": null }
 }
 ```
 
----
+host/port/dataDir/token 由启动参数与 runtime.json 管理，不再写进 config.json；
+蓝图目录与 Wiki 端点不再用环境变量覆盖。
 
 ## 14. 错误处理与降级
 

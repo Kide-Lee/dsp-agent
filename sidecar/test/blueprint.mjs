@@ -6,13 +6,13 @@
  */
 
 import { createServer } from 'node:http';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { gzipSync } from 'node:zlib';
 import { BlueprintClient, createBlueprintTools, inspectBlueprintText, BLUEPRINT_TOOL_NAMES } from '../dist/blueprint/tools.js';
 import { BlueprintWorkspace } from '../dist/blueprint/workspace.js';
 import { DysonSphereBlueprintsClient } from '../dist/blueprint/site.js';
+import { makeTempDir } from './helpers.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -131,8 +131,7 @@ console.log('\n── 3. info 与失败 ──');
 
 console.log('\n── 4. 保存到游戏蓝图目录 ──');
 {
-  const dir = mkdtempSync(join(tmpdir(), 'icarus-bp-'));
-  process.env.ICARUS_BLUEPRINT_DIR = dir;
+  const dir = makeTempDir('icarus-bp-');
   const ws = new BlueprintWorkspace({ root: dir });
   const saveTools = createBlueprintTools(client, undefined, undefined, undefined, ws, fakeSite);
   const saveByName = Object.fromEntries(saveTools.map((tool) => [tool.name, tool]));
@@ -167,7 +166,6 @@ console.log('\n── 4. 保存到游戏蓝图目录 ──');
   check('坏蓝图不保存', bad.includes('[blueprint_invalid]'), bad.slice(0, 120));
 
   rmSync(dir, { recursive: true, force: true });
-  delete process.env.ICARUS_BLUEPRINT_DIR;
 }
 
 console.log('\n── 5. header/二进制元数据（卡片用） ──');
@@ -259,7 +257,7 @@ console.log('\n── 7. 网站结果进入 search/info/save ──');
   const info = JSON.parse((await webByName['blueprint_info'].execute('web_2', { url: webUrl })).content[0].text);
   check('网站 info 成功', info.valid === true && info.source === 'dysonsphereblueprints', JSON.stringify(info));
 
-  const dir = mkdtempSync(join(tmpdir(), 'icarus-bp-web-'));
+  const dir = makeTempDir('icarus-bp-web-');
   const ws = new BlueprintWorkspace({ root: dir });
   const saveTools = createBlueprintTools(client, undefined, undefined, undefined, ws, webSite);
   const saveByName = Object.fromEntries(saveTools.map((tool) => [tool.name, tool]));

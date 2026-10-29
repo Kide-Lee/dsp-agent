@@ -90,7 +90,7 @@ namespace IcarusII.Config
             if (!changed) return;
             try
             {
-                if (_thinkingLevelEntry != null) _thinkingLevelEntry.Value = level;
+                if (_thinkingLevelEntry is not null) _thinkingLevelEntry.Value = level;
                 _cfg?.Save();
             }
             catch (Exception ex)
@@ -109,7 +109,7 @@ namespace IcarusII.Config
             if (!changed) return;
             try
             {
-                if (_permissionLevelEntry != null) _permissionLevelEntry.Value = level;
+                if (_permissionLevelEntry is not null) _permissionLevelEntry.Value = level;
                 _cfg?.Save();
             }
             catch (Exception ex)
@@ -149,7 +149,7 @@ namespace IcarusII.Config
                 "connectOnly = 只连接，不拉起（需自行启动 sidecar）\n" +
                 "spawnNode = 开发用，拉起本机 node + dist/sidecar.cjs").Value;
 
-            SidecarHost = cfg.Bind("Sidecar", "Host", "127.0.0.1", "sidecar 监听地址。").Value;
+            SidecarHost = cfg.Bind("Sidecar", "Host", "127.0.0.1", "sidecar 监听地址（仅允许回环：127.0.0.1 / ::1 / localhost）。").Value;
             SidecarPort = cfg.Bind("Sidecar", "Port", 8765, "sidecar 监听端口。").Value;
             SidecarExePath = cfg.Bind("Sidecar", "ExePath", "",
                 "留空 = 使用插件目录下的 sidecar/icarus-ii-sidecar.exe。").Value;

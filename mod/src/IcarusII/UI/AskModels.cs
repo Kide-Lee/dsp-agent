@@ -48,7 +48,7 @@ namespace IcarusII.UI
         {
             questions = null;
             error = null;
-            if (args == null || args.IsNull || !args.IsObject)
+            if (args is null || args.IsNull || !args.IsObject)
             {
                 error = "args 必须是对象";
                 return false;
@@ -91,7 +91,7 @@ namespace IcarusII.UI
         {
             question = null;
             error = null;
-            if (value == null || value.IsNull || !value.IsObject)
+            if (value is null || value.IsNull || !value.IsObject)
             {
                 error = "questions[" + index + "] 必须是对象";
                 return false;
@@ -114,7 +114,7 @@ namespace IcarusII.UI
             };
 
             var options = value["options"];
-            if (options != null && options.IsArray)
+            if (options is not null && options.IsArray)
             {
                 if (options.Count > MaxOptions)
                 {
@@ -125,7 +125,7 @@ namespace IcarusII.UI
                 {
                     if (q.Options.Count >= MaxOptions) break;
                     var parsed = ParseOption(option);
-                    if (parsed != null && !string.IsNullOrWhiteSpace(parsed.Label)) q.Options.Add(parsed);
+                    if (parsed is not null && !string.IsNullOrWhiteSpace(parsed.Label)) q.Options.Add(parsed);
                 }
             }
 
@@ -141,7 +141,7 @@ namespace IcarusII.UI
 
         private static AskOption ParseOption(JsonValue value)
         {
-            if (value == null || value.IsNull) return null;
+            if (value is null || value.IsNull) return null;
 
             if (!value.IsObject)
             {

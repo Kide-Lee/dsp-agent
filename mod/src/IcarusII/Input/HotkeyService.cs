@@ -40,7 +40,7 @@ namespace IcarusII.Input
         ///
         /// 语义：R 是**开关**键（开也用它，关也用它）。
         ///
-        /// 与打字冲突的处理：当聊天输入框获得焦点时，R 必须当作字母「r」输入，
+        /// 与打字冲突的处理：当任一输入框（聊天框、标题框）获得焦点时，R 必须当作字母「r」输入，
         /// 否则中文拼音里 人/日/让/热 这类以 r 开头的词根本打不出来
         /// （按 R 关窗 → 再打开 → 再按又关，死循环）。
         /// 因此：**输入框聚焦时不响应开关**；此时用 Esc 关闭。
@@ -58,8 +58,8 @@ namespace IcarusII.Input
             // 2) 必须真的进入存档：开始菜单、载入中都不要开窗
             if (!GameRefs.IsInGame) { reason = "不在游戏内（开始菜单/载入中）"; return false; }
 
-            // 3) 焦点在聊天输入框上 → 让位给文字输入
-            if (inputFocused) { reason = "聊天输入框已聚焦（R 作为文字输入）"; return false; }
+            // 3) 焦点在输入框（聊天框/标题框）上 → 让位给文字输入
+            if (inputFocused) { reason = "输入框已聚焦（R 作为文字输入）"; return false; }
 
             // 4) 窗口已打开 → 关闭。
             //    必须在"输入/全屏/建造"这些门控之前返回：窗口开着时
@@ -96,7 +96,7 @@ namespace IcarusII.Input
 
             var note = _config.HotkeyRequireNoBuildTool
                 ? "建造模式下自动让位（HotkeyRequireNoBuildTool=true）。"
-                : "⚠ 已关闭建造模式让位，可能与「旋转建筑」冲突。";
+                : "[警告] 已关闭建造模式让位，可能与「旋转建筑」冲突。";
 
             return $"热键 {Key} 已被游戏绑定。{note} 如遇冲突可在配置中改键（可用 F8 等）。";
         }

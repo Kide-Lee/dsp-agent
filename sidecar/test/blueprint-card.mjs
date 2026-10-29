@@ -6,8 +6,7 @@
  * dir+fileName 拼路径、source 推断。协议见 docs/protocol-v1.md 附录 A.9。
  */
 
-import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   extractBlueprintCard,
@@ -18,6 +17,7 @@ import {
   BLUEPRINT_PRODUCING_TOOLS,
 } from '../dist/blueprint/card.js';
 import { buildBlueprintCardPayload } from '../dist/protocol.js';
+import { makeTempDir } from './helpers.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -181,7 +181,7 @@ console.log('\n── 6. 历史副本截断 ──');
 
 console.log('\n── 7. 生成后被删除的蓝图不发卡 ──');
 {
-  const dir = mkdtempSync(join(tmpdir(), 'icarus-card-'));
+  const dir = makeTempDir('icarus-card-');
   const path = join(dir, 'a.txt');
   writeFileSync(path, 'blueprint');
   check('文件存在时保留卡片', blueprintCardFileExists({ fileName: 'a.txt', path, source: 'generated' }));

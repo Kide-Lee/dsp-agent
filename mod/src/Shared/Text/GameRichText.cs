@@ -416,7 +416,7 @@ namespace IcarusII.Common.Text
                     if (i == 0 || !TryListItem(lines[i - 1], out _)) ctx.BlankLine();
                     var prefix = ListPrefix(item, ctx);
                     EmitRun(prefix, new Style(), ctx);
-                    if (item.CheckBox.HasValue) ctx.HasCheckBoxes = true;
+                    if (item.CheckBox is not null) ctx.HasCheckBoxes = true;
                     RenderInline(item.Content, 0, item.Content.Length, new Style(), ctx, null);
                     ctx.Newline();
                     if (i + 1 >= lines.Length || !TryListItem(lines[i + 1], out _)) ctx.BlankLine();
@@ -626,7 +626,7 @@ namespace IcarusII.Common.Text
 
                         if (tag.Closing)
                         {
-                            if (stopTag != null && tag.Name == stopTag)
+                            if (stopTag is not null && tag.Name == stopTag)
                             {
                                 pos = tag.End;
                                 return;
@@ -681,7 +681,7 @@ namespace IcarusII.Common.Text
                     {
                         Flush(text, style, ctx);
                         var inner = style;
-                        if (link.Url != null)
+                        if (link.Url is not null)
                         {
                             if (!TryApplyGameLink(link.Url, ref inner, ctx))
                             {
@@ -945,7 +945,7 @@ namespace IcarusII.Common.Text
                 {
                     // 真正的 HTML <link> 是 void 元素；带属性但没有游戏语法参数时
                     // 不要把它当游戏链接，避免把后面的正文整段吞成链接。
-                    if (tag.Attributes != null && tag.Attributes.Count > 0 &&
+                    if (tag.Attributes is not null && tag.Attributes.Count > 0 &&
                         string.IsNullOrEmpty(tag.GameArg))
                         return false;
 
@@ -986,7 +986,7 @@ namespace IcarusII.Common.Text
 
         private static string Attr(Tag tag, string name)
         {
-            if (tag.Attributes == null) return string.Empty;
+            if (tag.Attributes is null) return string.Empty;
             return tag.Attributes.TryGetValue(name, out var value) ? value : string.Empty;
         }
 
@@ -1001,7 +1001,7 @@ namespace IcarusII.Common.Text
                     return;
             }
 
-            var showName = tag.Attributes != null && tag.Attributes.ContainsKey("name");
+            var showName = tag.Attributes is not null && tag.Attributes.ContainsKey("name");
             var value = "\\" + name + (showName ? "-" : string.Empty) + ";";
             // 图标短码不能被转义，但外层样式（tint/size/color/sub…）要保留。
             EmitStyled(value, style, ctx, string.Empty, escape: false);
@@ -1039,9 +1039,9 @@ namespace IcarusII.Common.Text
             if (string.IsNullOrEmpty(text) || ctx.Truncated) return;
 
             var color = style.Color;
-            if (color == null && style.Strike) color = ctx.Options.QuoteColor;
+            if (color is null && style.Strike) color = ctx.Options.QuoteColor;
             // 链接色由游戏的 <link> 负责；粗体只在没有显式颜色/链接时补白色。
-            if (color == null && style.Bold && style.LinkId == 0) color = "#FFFFFF";
+            if (color is null && style.Bold && style.LinkId == 0) color = "#FFFFFF";
 
             // 预留标签和省略号的空间。截断只发生在文本上，保证标签仍然闭合。
             var remaining = ctx.Options.MaxLength - ctx.Rich.Length - 64;
@@ -1060,8 +1060,8 @@ namespace IcarusII.Common.Text
             var rich = new StringBuilder(plain.Length + 24);
 
             if (style.LinkId > 0) rich.Append("<link=").Append(style.LinkId).Append('>');
-            if (color != null) rich.Append("<color=").Append(color).Append('>');
-            if (style.Tint != null) rich.Append("<tint=").Append(style.Tint).Append('>');
+            if (color is not null) rich.Append("<color=").Append(color).Append('>');
+            if (style.Tint is not null) rich.Append("<tint=").Append(style.Tint).Append('>');
             if (style.Size > 0) rich.Append("<size=").Append(style.Size).Append('>');
 
             var levels = Math.Abs(style.Level);
@@ -1080,8 +1080,8 @@ namespace IcarusII.Common.Text
             for (var i = 0; i < levels; i++)
                 rich.Append(style.Level > 0 ? "</sup>" : "</sub>");
             if (style.Size > 0) rich.Append("</size>");
-            if (style.Tint != null) rich.Append("</tint>");
-            if (color != null) rich.Append("</color>");
+            if (style.Tint is not null) rich.Append("</tint>");
+            if (color is not null) rich.Append("</color>");
             if (style.LinkId > 0) rich.Append("</link>");
 
             ctx.AppendRich(rich.ToString());
@@ -1303,7 +1303,7 @@ namespace IcarusII.Common.Text
             else if (value.StartsWith(dspUrlPrefix, StringComparison.OrdinalIgnoreCase))
                 rest = value.Substring(dspUrlPrefix.Length);
 
-            if (rest == null) return false;
+            if (rest is null) return false;
             rest = rest.Trim().Trim('/');
             if (rest.Length == 0 || rest.Length > 48) return false;
             for (var i = 0; i < rest.Length; i++)
@@ -1379,7 +1379,7 @@ namespace IcarusII.Common.Text
         {
             if (string.IsNullOrEmpty(techKey)) return 0;
 
-            if (techTagResolver != null)
+            if (techTagResolver is not null)
             {
                 var resolved = techTagResolver(techKey);
                 if (RichTextLinkAllocator.IsTechLinkId(resolved)) return resolved;
@@ -1396,7 +1396,7 @@ namespace IcarusII.Common.Text
         {
             if (string.IsNullOrEmpty(recipeKey)) return 0;
 
-            if (recipeTagResolver != null)
+            if (recipeTagResolver is not null)
             {
                 var resolved = recipeTagResolver(recipeKey);
                 if (resolved >= 1 && resolved <= 9999) return resolved;
@@ -1413,7 +1413,7 @@ namespace IcarusII.Common.Text
         {
             if (string.IsNullOrEmpty(achievementKey)) return 0;
 
-            if (achievementKeyResolver != null)
+            if (achievementKeyResolver is not null)
             {
                 var resolved = achievementKeyResolver(achievementKey);
                 if (resolved >= 1 && resolved <= 1000) return resolved;
@@ -1639,9 +1639,9 @@ namespace IcarusII.Common.Text
         {
             var sb = new StringBuilder();
             sb.Append(' ', item.Indent);
-            if (item.CheckBox.HasValue)
+            if (item.CheckBox is bool checkedItem)
             {
-                sb.Append(item.CheckBox.Value ? "[*] " : "[/] ");
+                sb.Append(checkedItem ? "[*] " : "[/] ");
             }
             else if (item.Ordered)
             {

@@ -228,7 +228,8 @@ export function parseConfirmResultPayload(payload: JsonObject): ConfirmResultPay
 export interface ToolErrorPayload {
   code: string;
   message: string;
-  retryable: boolean;
+  /** 可选；缺省按 false 处理。 */
+  retryable?: boolean;
 }
 
 /** `tool_result.image`（mod → sidecar，M4a）：截图等二进制附件。 */
@@ -264,7 +265,7 @@ export interface ToolDebugPayload {
   args: JsonObject;
 }
 
-const MAX_DEBUG_ARGS_CHARS = 64 * 1024;
+const MAX_DEBUG_ARGS_BYTES = 64 * 1024;
 
 export function parseToolDebugPayload(payload: JsonObject): ToolDebugPayload | null {
   if (!isPlainObject(payload)) return null;
@@ -273,7 +274,7 @@ export function parseToolDebugPayload(payload: JsonObject): ToolDebugPayload | n
   const rawArgs = payload['args'] === undefined || payload['args'] === null ? {} : payload['args'];
   if (!isPlainObject(rawArgs)) return null;
   try {
-    if (JSON.stringify(rawArgs).length > MAX_DEBUG_ARGS_CHARS) return null;
+    if (Buffer.byteLength(JSON.stringify(rawArgs), 'utf8') > MAX_DEBUG_ARGS_BYTES) return null;
   } catch {
     return null;
   }
@@ -1618,12 +1619,13 @@ export function errorRetryable(code: ErrorCode): boolean {
   );
 }
 
-/** 是否是回环地址（非回环时 server.ts 会打警告）。 */
+/** 是否是回环地址（非回环时 server.ts 直接拒绝监听）。 */
 export function isLoopbackHost(host: string): boolean {
+  const value = host.trim().toLowerCase();
   return (
-    host === '127.0.0.1' ||
-    host === '::1' ||
-    host === 'localhost' ||
-    host.startsWith('127.')
+    value === '127.0.0.1' ||
+    value === '::1' ||
+    value === 'localhost' ||
+    value.startsWith('127.')
   );
 }

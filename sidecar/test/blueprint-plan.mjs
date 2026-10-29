@@ -10,13 +10,14 @@
  *   - 知识库缺失 / 物品不存在时返回明确错误
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KnowledgeStore } from '../dist/kb/store.js';
 import { createBlueprintTools } from '../dist/blueprint/tools.js';
+import { BlueprintWorkspace } from '../dist/blueprint/workspace.js';
 import { fromStr } from '../vendor/dsp-calc/src/blueprint/parser.js';
+import { makeTempDir } from './helpers.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -25,16 +26,16 @@ const fail = (name, detail) => { failed++; console.log(`  FAIL ${name}${detail ?
 const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
 
 const here = dirname(fileURLToPath(import.meta.url));
-const root = mkdtempSync(join(tmpdir(), 'icarus-ii-blueprint-plan-'));
+const root = makeTempDir('icarus-ii-blueprint-plan-');
 const dataDir = join(root, 'data');
 const blueprintDir = join(root, 'bp');
-process.env.ICARUS_BLUEPRINT_DIR = blueprintDir;
 
 const fixture = JSON.parse(readFileSync(join(here, 'fixtures', 'kb-blueprint.json'), 'utf8'));
 const store = new KnowledgeStore(dataDir);
 store.setData(fixture);
 
-const tools = createBlueprintTools(undefined, store);
+const workspace = new BlueprintWorkspace({ root: blueprintDir });
+const tools = createBlueprintTools(undefined, store, undefined, undefined, workspace);
 const generate = tools.find((tool) => tool.name === 'blueprint_generate');
 if (!generate) {
   console.error('缺少 blueprint_generate');
@@ -123,7 +124,7 @@ try {
         source: 'wiki',
         candidates: [],
       }),
-    });
+    }, undefined, workspace);
     const aliasGenerate = aliasTools.find((tool) => tool.name === 'blueprint_generate');
     const aliased = await aliasGenerate.execute('call-alias', { item: '绿马达', rate: 60 });
     check('别名解析到电磁涡轮', aliased.details.item === '电磁涡轮', JSON.stringify(aliased.details));

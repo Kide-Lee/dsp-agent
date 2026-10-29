@@ -87,9 +87,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const tools = options.tools ?? [];
 
   if (!isLoopbackHost(options.host)) {
-    logger.warn('正在非回环地址上监听：token 是唯一防线，请确认这是有意的', {
-      host: options.host,
-    });
+    throw new Error(`sidecar 只允许监听回环地址，收到 host=${options.host}`);
   }
 
   const httpServer: Server = createServer((req: IncomingMessage, res: ServerResponse) => {

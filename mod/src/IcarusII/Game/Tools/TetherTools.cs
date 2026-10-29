@@ -117,7 +117,7 @@ namespace IcarusII.Game.Tools
                 { error = "方位指示最多 " + MaxTargets + " 个，请先清除一些"; return false; }
                 Entries.Add(new Entry { Info = target });
                 _lastAdded = target;
-                try { Added?.Invoke(target); Changed?.Invoke(); } catch { }
+                NotifyTetherChanged(target);
                 return true;
             }
             catch (Exception ex) { error = ex.Message; return false; }
@@ -130,22 +130,8 @@ namespace IcarusII.Game.Tools
             {
                 if (GameMain.mainPlayer == null || GameMain.mainPlayer.navigation == null)
                 { error = "机甲导航尚未就绪"; return false; }
-                Sprite planetIcon = null;
-                try
-                {
-                    var theme = LDB.themes != null ? LDB.themes.Select(planet.theme) : null;
-                    if (theme != null && theme.uiIconSprite != null && theme.uiIconSprite.Length > 0)
-                        planetIcon = theme.uiIconSprite[planet.style % theme.uiIconSprite.Length];
-                }
-                catch { /* 主题资源未加载 */ }
-                string memo = null;
-                try
-                {
-                    var factory = planet.factory;
-                    if (factory != null && factory.digitalSystem != null && factory.digitalSystem.planetTodo != null)
-                        memo = factory.digitalSystem.planetTodo.content;
-                }
-                catch { /* 未初始化 */ }
+                var planetIcon = TryPlanetIcon(planet);
+                var memo = TryPlanetMemo(planet);
                 var target = new Target
                 {
                     Kind = "planet",
@@ -163,7 +149,7 @@ namespace IcarusII.Game.Tools
                 { error = "方位指示最多 " + MaxTargets + " 个，请先清除一些"; return false; }
                 Entries.Add(new Entry { Info = target });
                 _lastAdded = target;
-                try { Added?.Invoke(target); Changed?.Invoke(); } catch { }
+                NotifyTetherChanged(target);
                 return true;
             }
             catch (Exception ex) { error = ex.Message; return false; }
@@ -178,21 +164,7 @@ namespace IcarusII.Game.Tools
                 { error = "找不到建筑 #" + entityId.ToString(CultureInfo.InvariantCulture); return false; }
                 var entity = factory.entityPool[entityId];
                 if (entity.id != entityId) { error = "建筑已失效"; return false; }
-                Sprite buildingIcon = null;
-                Sprite recipeIcon = null;
-                try
-                {
-                    var item = LDB.items != null ? LDB.items.Select(entity.protoId) : null;
-                    if (item != null) buildingIcon = item.iconSprite;
-                    if (entity.assemblerId > 0 && factory.factorySystem != null &&
-                        entity.assemblerId < factory.factorySystem.assemblerPool.Length)
-                    {
-                        int recipeId = factory.factorySystem.assemblerPool[entity.assemblerId].recipeId;
-                        var recipe = recipeId > 0 && LDB.recipes != null ? LDB.recipes.Select(recipeId) : null;
-                        if (recipe != null) recipeIcon = recipe.iconSprite;
-                    }
-                }
-                catch { /* 图标资源未加载 */ }
+                var (buildingIcon, recipeIcon) = TryBuildingIcons(factory, entity);
                 var target = new Target
                 {
                     Kind = "building",
@@ -217,6 +189,56 @@ namespace IcarusII.Game.Tools
                 return true;
             }
             catch (Exception ex) { error = ex.Message; return false; }
+        }
+
+        private static Sprite TryPlanetIcon(PlanetData planet)
+        {
+            try
+            {
+                var theme = LDB.themes != null ? LDB.themes.Select(planet.theme) : null;
+                if (theme != null && theme.uiIconSprite != null && theme.uiIconSprite.Length > 0)
+                    return theme.uiIconSprite[planet.style % theme.uiIconSprite.Length];
+            }
+            catch { /* 主题资源未加载 */ }
+            return null;
+        }
+
+        private static string TryPlanetMemo(PlanetData planet)
+        {
+            try
+            {
+                var factory = planet.factory;
+                if (factory != null && factory.digitalSystem != null && factory.digitalSystem.planetTodo != null)
+                    return factory.digitalSystem.planetTodo.content;
+            }
+            catch { /* 未初始化 */ }
+            return null;
+        }
+
+        private static (Sprite Building, Sprite Recipe) TryBuildingIcons(
+            PlanetFactory factory, EntityData entity)
+        {
+            try
+            {
+                var item = LDB.items != null ? LDB.items.Select(entity.protoId) : null;
+                var buildingIcon = item != null ? item.iconSprite : null;
+                Sprite recipeIcon = null;
+                if (entity.assemblerId > 0 && factory.factorySystem != null &&
+                    entity.assemblerId < factory.factorySystem.assemblerPool.Length)
+                {
+                    int recipeId = factory.factorySystem.assemblerPool[entity.assemblerId].recipeId;
+                    var recipe = recipeId > 0 && LDB.recipes != null ? LDB.recipes.Select(recipeId) : null;
+                    if (recipe != null) recipeIcon = recipe.iconSprite;
+                }
+                return (buildingIcon, recipeIcon);
+            }
+            catch { /* 图标资源未加载 */ }
+            return (null, null);
+        }
+
+        private static void NotifyTetherChanged(Target target)
+        {
+            try { Added?.Invoke(target); Changed?.Invoke(); } catch { }
         }
 
         /// <summary>卡片按钮取消/重新连线用：记忆目标不需要先加载工厂。</summary>

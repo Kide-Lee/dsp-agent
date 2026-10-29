@@ -30,16 +30,15 @@ fi
 cp "$EXE" "$PLUGIN/sidecar/"
 
 # UI AssetBundle（Windows，由 scripts/build-ui-bundle.sh 生成）。
-# 这是可选的：拿不到时 mod 会回退到代码构建的界面，所以缺了只警告不失败。
+# 聊天窗不再有代码构建兜底，缺 bundle 直接拒绝打包。
 BUNDLE="$ROOT/dsp-game/Build/IcarusIIBundle/icarusii-ui"
-if [ -f "$BUNDLE" ]; then
-  cp "$BUNDLE" "$PLUGIN/ui/"
-  log "已打入 UI AssetBundle（$(($(stat -c%s "$BUNDLE")/1024)) KB）"
-else
-  log "警告：未找到 UI AssetBundle，将使用代码构建的界面"
-  log "     如需打包界面，先运行 scripts/build-ui-bundle.sh"
-  rmdir "$PLUGIN/ui" 2>/dev/null || true
-fi
+[ -f "$BUNDLE" ] || {
+  echo "缺少 UI AssetBundle：$BUNDLE" >&2
+  echo "请先运行 scripts/build-ui-bundle.sh（需要关闭 Unity）" >&2
+  exit 1
+}
+cp "$BUNDLE" "$PLUGIN/ui/"
+log "已打入 UI AssetBundle（$(($(stat -c%s "$BUNDLE")/1024)) KB）"
 
 log "复制文档与安装脚本"
 cp "$ROOT/scripts/install.sh" "$PKG/install.sh"

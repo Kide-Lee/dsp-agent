@@ -20,7 +20,6 @@ import type { PlanBlueprintMeta } from './planner.js';
 import type { LocalWriteConfirmRequest } from '../tools/host.js';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { Type } from 'typebox';
 // @ts-ignore vendored JS planner (no types)
 import { planBlueprint } from './planner.mjs';
@@ -231,14 +230,6 @@ function reply(payload: unknown, ok: boolean, code?: string): ToolReply {
 
 function describeError(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
-}
-
-/** 游戏读取蓝图的目录（Windows/Wine 下 Documents 被映射到前缀里）。 */
-export function resolveBlueprintDir(): string {
-  const override = process.env['ICARUS_BLUEPRINT_DIR'];
-  if (override && override.trim()) return override.trim();
-  const home = process.env['USERPROFILE'] || homedir();
-  return join(home, 'Documents', 'Dyson Sphere Program', 'Blueprint');
 }
 
 /** 文件名只保留安全字符；不允许路径分隔符与 ..，避免越出蓝图目录。 */

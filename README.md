@@ -8,39 +8,7 @@ DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）�
 游戏里按 **`R`** 打开聊天窗，可以问机制、要攻略、让 AI 读取你当前的存档状态给建议，
 也可以在**你确认之后**让 AI 执行游戏内操作。
 
-> 状态：**M4 已完成并通过实机验收**（2026-10-24）。
-> - M0 已完成并实机验证：插件加载 → 窗口开关（`R`）→ 与 sidecar 握手 → 消息回显。
-> - M1 已完成：sidecar 接入 [pi](https://github.com/earendil-works/pi) + DeepSeek，
->   mod 侧实现首次配置引导（指向右上角设置按钮）与配置上报。
-> - M2 已实现：`tool_call`/`tool_result` 协议、按连接路由的 ToolHost、六个只读工具
->   （overview / player / planet / power / research / production）、分帧采集与快照缓存、
->   聊天窗工具卡片、按存档隔离的对话 session（再次进入存档自动回放最近对话）、工具结果图标短码。
-> - M2.5 已实现：**思考档位**（输入栏右侧下拉框：关闭 / 低 / 高 / 极限）+ 输出区的
->   **可折叠思考块 / 工具块**（收起时显示摘要，点 header 展开）。
-> - 权限档位（输入栏右侧「权限」下拉框：只读 / 受限 / 接管）决定 AI 调写工具时
->   是否弹确认；只读全部要确认，受限只放行 risk 1，接管全部自动同意但保留一次性令牌校验。
-> - M2.6 已实现：**多供应商 / 多模型**设置页（供应商列表 + 密钥状态 + API 地址 +
->   模型增删），聊天窗「模型」下拉框即时切换；支持自定义 OpenAI 兼容端点。
-> - M2.7 已实现：左侧 **chat-index** 提问索引——每条用户提问一个可点击链接，点击定位到对应消息；
->   每行带删除按钮：同时删掉聊天窗显示、会话文件条目与模型上下文（`history.delete`）。
-> - M4a–M4j 已实现并通过实机验收：建筑详情/建筑列表/进度阶段/截图（含聊天窗缩略图）、
->   `kb_plan` 量化计算、`game_analyze_area` 区域产线、`run_script` 脚本沙箱（默认只读，写脚本需一次确认）、
->   Wiki/蓝图仓库、蓝图卡片，以及按知识库真实配方生成的**完整产线蓝图**。
-> - M4 写操作已实现并通过实机验收：复用 `choose` 的确认页（`question/explain` + 红拒绝/蓝同意）、
->   sidecar 确认钩子 + mod 一次性令牌（绑定 callId/tool/argsHash，60s 单次），
->   以及 `game_open_panel` / `game_set_research`
->   + `game_undo_last_write`。确认页崩溃、原生按钮动效、`explain` 垂直居中、建筑经纬度输出、
->   卡片点击聚焦和研究切换判定已修复。
->   当前状态与后续计划见 [docs/current-status.md](docs/current-status.md)。
-> - M3 已实现并随 M4 实机验收：**游戏本体知识库**——运行时从 LDB / Locale / Wiki 导出物品、配方、科技、
->   建筑、提示、教程、里程碑、指引与术语；`kb_search` / `kb_get` / `kb_recipe_tree` / `kb_plan`
->   由 sidecar 本地查询，配方原料树与机器数/电力不再靠模型心算。schema 与清洗规则见
->   [docs/kb-v1.md](docs/kb-v1.md)。
-> - 真实 DeepSeek 端点、KB 导出、工具调用、蓝图落盘与卡片已在实机跑通；
->   M4 验收已全部通过，验收用的临时清单已从仓库移除，结论保留在
->   [docs/current-status.md](docs/current-status.md)。
->
-> 设计与路线图见 [design.md](design.md)，当前状态与下一步见 [docs/current-status.md](docs/current-status.md)，待定想法见 [docs/ideas.md](docs/ideas.md)。
+> 完整功能与当前状态见 [docs/current-status.md](docs/current-status.md)。
 
 ---
 
@@ -57,7 +25,7 @@ DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）�
 └───────────────────────────────────────────┘
 ```
 
-## AI 能读什么（M2）
+## AI 能读什么
 
 | 工具 | 内容 |
 | --- | --- |
@@ -68,7 +36,7 @@ DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）�
 | `game_get_research` | 当前研究、进度、队列、已解锁数量 |
 | `game_get_production` | 按物品聚合的产量/消耗/库存（/min），缺料排序 |
 
-## AI 能看什么（M4a）
+## AI 能看什么
 
 | 工具 | 内容 |
 | --- | --- |
@@ -87,9 +55,9 @@ DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）�
 `ModelEntry.input` 已覆盖 pi 目录里"只收文本"的旧标注；老配置会读时兜底，不会静默丢图。
 图片不落盘、不混进 JSON 数据，只在调用 `game_capture_view` 时产生。
 
-上面的读工具只读；写工具（镜头/标记/面板/研究/撤销）在 M4 提供，执行前必须经过玩家确认。
+读工具只读；写操作执行前必须经过玩家确认。
 
-## AI 能查什么（M3）
+## AI 能查什么
 
 | 工具 | 内容 |
 | --- | --- |
@@ -98,7 +66,7 @@ DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）�
 | `kb_recipe_tree` | 递归展开主配方，算直接输入、原料总量、副产物（支持 `amount` / `rate` / `depth`） |
 | `kb_plan` | 按目标产量计算机器数、总功率、传送带，并给出原料与副产物（`rate` 必填） |
 
-## AI 能查/生成什么（M4d–M4j）
+## AI 能查/生成什么
 
 | 工具 | 内容 |
 | --- | --- |
@@ -109,7 +77,7 @@ DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）�
 | `blueprint_fs` | 在蓝图目录里 `ls/cd/pwd/cat/mkdir/write/rm/rmdir`；默认保存到 `IcarusII/`，不能越出蓝图根 |
 | `run_script` | 在 QuickJS-WASM 沙箱里跑脚本：`dsp.call` 同步调用 game_* 工具，可循环/筛选/求和；默认只读，含写工具时先弹一次脚本级确认，执行期凭租约最多写 10000 次；无 fs/net/process |
 
-## AI 能做什么写操作（M4/M5）
+## AI 能做什么写操作
 
 | 工具 | 说明 |
 | --- | --- |
@@ -353,6 +321,9 @@ MaxTranscriptLines = 500
 | `Hotkey` | 任意 Unity `KeyCode` 名 |
 | `DebugToolConsole=true` | 开启输入框 `!tools` / `!tool` 调试直调；只读白名单，不经过 AI。`spawnExe` 会自动给 sidecar 加 `--debug-tools`，`connectOnly` 需手动加 |
 
+sidecar 自己的运行期配置（供应商、模型、蓝图目录、Wiki 端点）在 `config.json`，
+字段见 [docs/config.md](docs/config.md)。
+
 ### 调试直调 `!tool`
 
 开发/排障用：不调用 AI，直接执行一个只读工具并显示原始返回值。
@@ -369,9 +340,9 @@ MaxTranscriptLines = 500
 - 只允许只读工具；`game_copy_blueprint`、`blueprint_save`、`blueprint_generate`、
   `blueprint_fs`、`run_script` 不在白名单内。
 
-原生 Linux 跑 `connectOnly` 时，sidecar 与游戏不在同一 Wine 环境，需用
-`ICARUS_BLUEPRINT_DIR` 指向 Proton prefix 里的 `Documents/Dyson Sphere Program/Blueprint`
-（否则 `blueprint_fs`/`blueprint_save` 会写到宿主 home 下）。
+原生 Linux 跑 `connectOnly` 时，sidecar 与游戏不在同一 Wine 环境，需在 sidecar 的
+`config.json` 里把 `blueprintDir` 指向 Proton prefix 里的 `Documents/Dyson Sphere Program/Blueprint`
+（否则 `blueprint_fs`/`blueprint_save` 会写到宿主 home 下）。字段见 [docs/config.md](docs/config.md)。
 
 ---
 
@@ -389,60 +360,10 @@ MaxTranscriptLines = 500
 
 ---
 
-## 从源码构建
-
-```bash
-scripts/fetch-deps.sh          # 拉取 BepInEx 参考程序集到 .deps/
-scripts/build-mod.sh           # 编译 IcarusII.dll
-
-# 可选：从本地游戏资源离线生成知识库（开发/离线测试用；运行时会自动导出）
-PYTHONPATH=.scratch/pylib python3 tools/build-kb.py \
-  --prototypes dsp-game/Assets/Resources/Prototypes \
-  --locale-dir dsp-game/Locale/2052 --tutorial-dir dsp-game/Wiki/Tutorial \
-  --locale zh-CN --game-version 0.10.30.3100 --out .scratch/kb/kb-zh.json
-
-cd sidecar && npm install      # 首次
-scripts/build-sidecar.sh       # 生成自包含的 icarus-ii-sidecar.exe
-
-scripts/install.sh --with-bepinex
-```
-
-### 运行测试
-
-```bash
-# JSON / 协议单测（无需游戏、无需 sidecar）
-dotnet run --project tests/ProtocolTests
-
-# 端到端：用与 mod 相同的协议实现去连真实 sidecar
-node sidecar/dist/index.js serve --port 8799 --token testtoken --agent echo &
-dotnet run --project tests/ProtocolTests -- e2e ws://127.0.0.1:8799 testtoken
-```
-
----
-
-## 仓库结构
-
-```
-design.md              设计文档（含已核实的游戏 API 证据）
-docs/protocol-v1.md    mod ↔ sidecar 通信协议（唯一契约）
-mod/                   C# BepInEx 插件
-  src/Shared/          协议/JSON/传输层（刻意 Unity-free，可独立测试）
-  src/IcarusII/        Unity 侧：UI、热键、游戏访问
-sidecar/               Node/TypeScript 本地服务
-  src/kb/              M3 知识库：导出编排 / 索引 / kb_* 工具
-  test/                离线回归（含 kb / kb-tools / kb-session）
-tests/ProtocolTests/   本机可跑的验证程序
-tools/MetaDump/        开发辅助：转储游戏程序集元数据
-tools/build-kb.py      开发辅助：从本地游戏资源离线生成知识库
-docs/kb-v1.md          知识库 schema、文本清洗与缓存
-docs/tools/            工具参考：提示词原文、参数、返回字段（生成物，勿手改）
-scripts/               构建 / 安装
-```
-
 ## 安全
 
 - **不向模型暴露 shell 与文件系统**：pi 的内置工具（`bash`/`read`/`write`/`edit`）全部关闭。
-- **写操作双重门禁**：sidecar 侧确认钩子 + mod 侧一次性令牌（M4 实现）。
+- **写操作双重门禁**：sidecar 侧确认钩子 + mod 侧一次性令牌。
 - **凭证**：API Key 只存在 sidecar 自己的数据目录，插件不接触。
 - sidecar 只监听 `127.0.0.1`，握手带 token。
 

@@ -195,7 +195,7 @@ console.log('\n── 5. 沙箱边界 ──');
 {
   const out = await run(
     tool,
-    `return { process: typeof process, require: typeof require, fetch: typeof fetch, globalThisProcess: typeof globalThis.process };`,
+    `return { process: typeof process, require: typeof require, fetch: typeof fetch, websocket: typeof WebSocket, globalThisProcess: typeof globalThis.process };`,
   );
   const value = JSON.parse(out.text).value;
   check(
@@ -203,6 +203,7 @@ console.log('\n── 5. 沙箱边界 ──');
     value.process === 'undefined' &&
       value.require === 'undefined' &&
       value.fetch === 'undefined' &&
+      value.websocket === 'undefined' &&
       value.globalThisProcess === 'undefined',
     JSON.stringify(value),
   );
@@ -211,6 +212,13 @@ console.log('\n── 5. 沙箱边界 ──');
 {
   const out = await run(tool, `return 1`, {});
   check('有宿主时正常执行', JSON.parse(out.text).value === 1);
+}
+
+{
+  const out = await run(tool, `return { now: Date.now(), random: Math.random() };`, {});
+  const value = JSON.parse(out.text).value;
+  check('Date.now 固定为 0', value.now === 0, JSON.stringify(value));
+  check('Math.random 固定为 0.5', value.random === 0.5, JSON.stringify(value));
 }
 
 {

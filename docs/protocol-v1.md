@@ -244,6 +244,7 @@
 | `tool_required` | `prompt.requiredTool` 指定的工具在本轮没有被调用（M4l） |
 | `debug_disabled` | `tool_debug` 未开启（sidecar 未带 `--debug-tools`，M4m） |
 | `debug_not_allowed` | 工具不在调试只读白名单（M4m） |
+| `config_required` | 尚未配置可用的 API Key，prompt 被拒绝（M1+） |
 | `confirmation_required` | 写工具缺少一次性确认令牌（M4） |
 | `confirmation_invalid` | 令牌无效/已使用/参数不匹配（M4） |
 | `confirmation_expired` | 确认令牌已过期（M4） |
@@ -544,6 +545,7 @@ mod                                   sidecar
 | `invalid_key` | 上游对凭证返回 401 / 403 |
 | `upstream_error` | 其它上游错误；`payload.message` 携带**已脱敏**的可读信息 |
 | `rate_limited` | 上游限流 |
+| `config_required` | 尚未配置可用的 API Key，prompt 被拒绝 |
 
 ### A.4 安全要求（实现必须满足）
 
@@ -1259,8 +1261,8 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 ## 附录 B：只读游戏工具（M2）与知识库工具（M3）
 
 M2 新增 `game.read.v1` 能力。mod 在 `hello.capabilities` 中声明该能力后，
-sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.tools` **只含 M3 的
-`kb_*` 本地工具**（它们不依赖 mod 能力）。
+sidecar 才会注册并广告 `game_get_*` 工具；未声明时 `ready.payload.tools` **只含
+sidecar 本地工具**（`kb_*`、`wiki_*`、`blueprint_*`、`run_script`，它们不依赖 mod 能力）。
 
 ### B.1 工具名
 
@@ -1544,7 +1546,7 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 }
 ```
 
-- `ok=false` 时 `data` 为 `null`，`error` 为 `{code, message}`。
+- `ok=false` 时 `data` 为 `null`，`error` 为 `{code, message, retryable?}`；`retryable` 可选，缺省 false。
 - `meta` 必带 `gameTick`、`saveKey`、`tickAtStart`、`tickAtEnd`；列表截断时带
   `truncated:true` 与 `nextOffset`。
 - 错误码：`tool_not_found`、`tool_unavailable`、`not_in_game`、`invalid_args`、

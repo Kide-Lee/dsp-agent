@@ -45,11 +45,31 @@ namespace IcarusII.Game
             {
                 var inGameDir = Path.Combine(GameConfig.blueprintFolder, name);
                 if (File.Exists(inGameDir)) return inGameDir;
-                if (!string.IsNullOrEmpty(card.Path) && File.Exists(card.Path)) return card.Path;
+                if (!string.IsNullOrEmpty(card.Path) && File.Exists(card.Path)
+                    && IsInsideBlueprintRoot(card.Path)) return card.Path;
                 return inGameDir;   // 交给调用方报"文件不存在"，路径也更有意义
             }
 
-            return string.IsNullOrEmpty(card.Path) ? null : card.Path;
+            return !string.IsNullOrEmpty(card.Path) && IsInsideBlueprintRoot(card.Path)
+                ? card.Path : null;
+        }
+
+        /// <summary>只允许读取蓝图根内的文件；sidecar 传来的 path 也要过这道门。</summary>
+        private static bool IsInsideBlueprintRoot(string path)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(GameConfig.blueprintFolder)) return false;
+                var root = Path.GetFullPath(GameConfig.blueprintFolder)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                var full = Path.GetFullPath(path);
+                if (string.Equals(full, root, StringComparison.OrdinalIgnoreCase)) return true;
+                return full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         public static bool TryInspect(BlueprintCardInfo card, out string error)

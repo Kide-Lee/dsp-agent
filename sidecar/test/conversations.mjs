@@ -7,12 +7,12 @@
  *   node test/conversations.mjs
  */
 
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Session } from '../dist/session.js';
 import { PiAgent, normalizeConversationRename, normalizeConversationTitle } from '../dist/agent.js';
 import { MessageType, buildConversationUpdatedPayload } from '../dist/protocol.js';
+import { makeTempDir } from './helpers.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -199,7 +199,7 @@ console.log('── 1. Session 消息 ──');
 // ---- 2. PiAgent 落盘 ----
 console.log('── 2. PiAgent 会话文件 ──');
 {
-  const dataDir = mkdtempSync(join(tmpdir(), 'icarus-conv-'));
+  const dataDir = makeTempDir('icarus-conv-');
   const sessionDir = join(dataDir, 'sessions', 'saveA');
   try {
     const pi = await import('@earendil-works/pi-coding-agent');
@@ -214,7 +214,7 @@ console.log('── 2. PiAgent 会话文件 ──');
     const noop = { info() {}, warn() {}, error() {}, debug() {} };
     const agent = new PiAgent({
       dataDir,
-      store: { get: () => ({}), hasKey: () => false },
+      store: { get: () => ({}), hasKey: () => false, blueprintRoot: () => null, wikiEndpoint: () => null },
       host: {},
       logger: { child: () => noop },
       loadSdk: () => import('@earendil-works/pi-coding-agent'),
@@ -269,7 +269,7 @@ console.log('── 2. PiAgent 会话文件 ──');
     check('空会话标题写入 active.json', activeDraft.title === '空会话标题');
     const restoredAgent = new PiAgent({
       dataDir,
-      store: { get: () => ({}), hasKey: () => false },
+      store: { get: () => ({}), hasKey: () => false, blueprintRoot: () => null, wikiEndpoint: () => null },
       host: {},
       logger: { child: () => noop },
       loadSdk: () => import('@earendil-works/pi-coding-agent'),

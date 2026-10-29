@@ -563,10 +563,10 @@ namespace IcarusII.UI
                     var r = img.rectTransform.rect;
                     float area = Mathf.Abs(r.width * r.height);
                     var b = img.sprite.border;
-                    list.Add((area, string.Format(
-                        "{0} | sprite={1} {2:0}x{3:0} border=({4:0},{5:0},{6:0},{7:0}) type={8} color={9}",
-                        Path(img.transform, reference.transform), img.sprite.name,
-                        r.width, r.height, b.x, b.y, b.z, b.w, img.type, Fmt(img.color))));
+                    list.Add((area,
+                        $"{Path(img.transform, reference.transform)} | sprite={img.sprite.name} " +
+                        $"{r.width:0}x{r.height:0} border=({b.x:0},{b.y:0},{b.z:0},{b.w:0}) " +
+                        $"type={img.type} color={Fmt(img.color)}"));
                 }
                 list.Sort((x, y) => y.area.CompareTo(x.area));
 

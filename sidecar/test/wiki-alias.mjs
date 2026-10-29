@@ -11,11 +11,11 @@
  *   - Wiki 不可用时不阻断（返回 none）
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { KnowledgeBase, parseKbData } from '../dist/kb/knowledge.js';
 import { AliasResolver, normalizeAlias, parseWikiAliases } from '../dist/wiki/aliases.js';
+import { makeTempDir } from './helpers.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -84,7 +84,7 @@ class FakeWiki {
   }
 }
 
-const root = mkdtempSync(join(tmpdir(), 'icarus-ii-alias-'));
+const root = makeTempDir('icarus-ii-alias-');
 const cacheFile = join(root, 'wiki-aliases.json');
 
 console.log('── 1. 解析工具函数 ──');

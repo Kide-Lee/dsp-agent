@@ -69,12 +69,9 @@ function isWindows(): boolean {
   return process.platform === 'win32';
 }
 
-/** 蓝图根目录；与旧 `resolveBlueprintDir()` 同一口径。 */
+/** 系统默认的蓝图根目录；实际根目录可由 config.json 的 blueprintDir 覆盖。 */
 export function resolveBlueprintRoot(): string {
-  const override = process.env['ICARUS_BLUEPRINT_DIR'];
-  if (override && override.trim()) return resolve(override.trim());
-  const home = process.env['USERPROFILE'] || homedir();
-  return resolve(join(home, 'Documents', 'Dyson Sphere Program', 'Blueprint'));
+  return resolve(join(homedir(), 'Documents', 'Dyson Sphere Program', 'Blueprint'));
 }
 
 function sanitizeSegment(segment: string): string {
@@ -142,11 +139,7 @@ export class BlueprintWorkspace {
     for (const segment of raw.split('/')) {
       if (!segment || segment === '.') continue;
       if (segment === '..') {
-        if (parts.length === 0) {
-          throw new BlueprintPathError('path_escape', '路径不能超出蓝图目录');
-        }
-        parts.pop();
-        continue;
+        throw new BlueprintPathError('invalid_path', '路径不能包含 ..');
       }
       parts.push(sanitizeSegment(segment));
     }

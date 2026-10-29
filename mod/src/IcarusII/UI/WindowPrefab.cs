@@ -18,8 +18,8 @@ namespace IcarusII.UI
     /// 平台不符时 `AssetBundle.LoadFromFile` 返回 null——这里会明确记一条警告，
     /// 而不是静默失败。
     ///
-    /// 拿不到 bundle 时返回 null，调用方回退到代码构建的界面，
-    /// 保证"少了一个资源文件"不会让窗口整个消失。
+    /// 拿不到 bundle 时返回 null；聊天窗不再代码构建兜底，而是明确报错，
+    /// 避免运行期出现与 Prefab 不一致的第二套界面。
     /// </summary>
     internal static class WindowPrefab
     {

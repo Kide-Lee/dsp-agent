@@ -6,13 +6,13 @@
  * 永久删除、符号链接拒绝、write 的格式校验与卡片提取。
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { BlueprintWorkspace } from '../dist/blueprint/workspace.js';
 import { createBlueprintTools } from '../dist/blueprint/tools.js';
 import { extractBlueprintCard } from '../dist/blueprint/card.js';
+import { makeTempDir } from './helpers.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -20,7 +20,7 @@ const ok = (name) => { passed++; console.log(`  ok   ${name}`); };
 const fail = (name, detail) => { failed++; console.log(`  FAIL ${name}${detail ? `：${detail}` : ''}`); };
 const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
 
-const root = mkdtempSync(join(tmpdir(), 'icarus-ii-fs-'));
+const root = makeTempDir('icarus-ii-fs-');
 const workspace = new BlueprintWorkspace({ root });
 const tools = createBlueprintTools(undefined, undefined, undefined, undefined, workspace);
 const fsTool = tools.find((tool) => tool.name === 'blueprint_fs');
@@ -101,7 +101,7 @@ try {
   {
     await run({ op: 'cd', path: '/' });
     const escape = await run({ op: 'cat', path: '..' });
-    check('.. 逃逸被拒绝', escape.content[0].text.includes('[path_escape]'), escape.content[0].text.slice(0, 100));
+    check('.. 被拒绝', escape.content[0].text.includes('[invalid_path]'), escape.content[0].text.slice(0, 100));
 
     const abs = await run({ op: 'cat', path: '/etc/passwd' });
     check('绝对路径按虚拟根处理', abs.content[0].text.includes('[not_found]'), abs.content[0].text.slice(0, 100));

@@ -1426,7 +1426,7 @@ export class Session {
 
     let token: string | undefined = options.confirmToken;
     let argsHash: string | undefined = options.confirmArgsHash;
-    if (!token && risk > 0 && options.internal !== true) {
+    if (!token && risk > 0) {
       const approved = await this.requestConfirmation(callId, name, args, risk, options.signal);
       if (!approved) {
         return toolFailure('confirmation_denied', '玩家拒绝了这次写操作，未执行');

@@ -11,11 +11,11 @@
  */
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
+import { makeTempDir } from './helpers.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ENTRY = join(HERE, '..', 'dist', 'index.js');
@@ -31,7 +31,7 @@ function check(name, cond, detail) { cond ? ok(name) : fail(name, detail); }
 /** 启动 sidecar，等它打印 READY，返回 { proc, port, stop() }。 */
 function startSidecar() {
   return new Promise((resolve, reject) => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'icarus-ii-neg-'));
+    const dataDir = makeTempDir('icarus-ii-neg-');
     const proc = spawn(process.execPath, [ENTRY, 'serve', '--port', '0', '--token', TOKEN, '--data-dir', dataDir], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -202,6 +202,19 @@ async function main() {
     }
   } finally {
     server.stop();
+  }
+
+  // 6) 非回环地址必须在启动阶段被拒绝
+  {
+    const dataDir = makeTempDir('icarus-ii-host-');
+    const proc = spawn(process.execPath, [
+      ENTRY, 'serve', '--host', '0.0.0.0', '--port', '0', '--token', TOKEN, '--data-dir', dataDir,
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    const code = await new Promise((resolve) => proc.on('exit', resolve));
+    check('非回环 --host 被拒绝', code === 2, `code=${code} stderr=${stderr.trim()}`);
+    try { rmSync(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 
   console.log();

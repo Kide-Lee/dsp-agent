@@ -8,13 +8,19 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 
 export const HERE = dirname(fileURLToPath(import.meta.url));
+const TEST_TMP_ROOT = join(HERE, '..', '.test-tmp');
+
+/** 测试临时目录固定在项目内，避免把运行期文件写到 /tmp。 */
+export function makeTempDir(prefix = 'case') {
+  mkdirSync(TEST_TMP_ROOT, { recursive: true });
+  return mkdtempSync(join(TEST_TMP_ROOT, prefix));
+}
 export const ENTRY = join(HERE, '..', 'dist', 'index.js');
 
 export function assertBuilt() {
@@ -45,7 +51,7 @@ export function cleanEnv(extra = {}) {
  */
 export function startSidecar({ agent = 'pi', token = 'test-token', dataDir, extraArgs = [] } = {}) {
   return new Promise((resolve, reject) => {
-    const dir = dataDir ?? mkdtempSync(join(tmpdir(), 'icarus-ii-test-'));
+    const dir = dataDir ?? makeTempDir('icarus-ii-test-');
     const ownsDir = dataDir === undefined;
     const args = [
       ENTRY,

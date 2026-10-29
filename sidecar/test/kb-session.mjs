@@ -5,14 +5,14 @@
  *   node test/kb-session.mjs
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Session } from '../dist/session.js';
 import { KnowledgeStore } from '../dist/kb/store.js';
 import { KnowledgeManager } from '../dist/kb/manager.js';
 import { toolNamesForCapabilities } from '../dist/tools/registry.js';
+import { makeTempDir } from './helpers.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -23,7 +23,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = JSON.parse(readFileSync(join(here, 'fixtures', 'kb-test.json'), 'utf8'));
-const temp = mkdtempSync(join(tmpdir(), 'icarus-kb-session-'));
+const temp = makeTempDir('icarus-kb-session-');
 
 class FakeSocket {
   constructor() {

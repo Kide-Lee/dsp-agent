@@ -355,7 +355,7 @@ export function createKbTools(store: KnowledgeStore): ToolDefinition[] {
           `最大单路输入：${result.belts.maxSingleInputPerMin.toFixed(1)}/min` +
             `（${result.belts.itemsPerSec}/s 的带 → ${result.belts.maxBelts} 条）`,
           ...result.assumptions.map((line) => `· ${line}`),
-          ...result.warnings.map((line) => `⚠ ${line}`),
+          ...result.warnings.map((line) => `[警告] ${line}`),
         ]
           .filter((line) => line.length > 0)
           .join('\n');

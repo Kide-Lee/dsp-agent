@@ -1205,12 +1205,17 @@ export class PiAgent implements AgentRunner {
     this.store = options.store;
     this.host = options.host;
     this.kb = options.kb ?? null;
-    this.wiki = new WikiClient();
+    this.wiki = new WikiClient({
+      zhApi: this.store.wikiEndpoint('zh') ?? undefined,
+      enApi: this.store.wikiEndpoint('en') ?? undefined,
+    });
     this.aliases = new AliasResolver({
       wiki: this.wiki,
       cacheFile: join(this.dataDir, 'wiki-aliases.json'),
     });
-    this.blueprintWorkspace = new BlueprintWorkspace();
+    this.blueprintWorkspace = new BlueprintWorkspace({
+      root: this.store.blueprintRoot() ?? undefined,
+    });
     this.logger = (options.logger ?? rootLog).child({ component: 'pi-agent' });
     this.loadSdk =
       options.loadSdk ?? (() => import('@earendil-works/pi-coding-agent') as Promise<PiSdk>);

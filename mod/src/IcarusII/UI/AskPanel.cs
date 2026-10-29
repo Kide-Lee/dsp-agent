@@ -402,8 +402,8 @@ namespace IcarusII.UI
             _confirmMode = false;
             _optionRoot.gameObject.SetActive(false);
             _explainRoot.SetActive(true);
-            _questionText.text = "请确认你的回答";
-            if (_numberText != null) _numberText.text = "确认";
+            _questionText.text = Strings.Get("ask.review.title");
+            if (_numberText != null) _numberText.text = Strings.Get("confirm.step");
             if (_submitLabel != null) _submitLabel.text = Strings.Get("ask.submit");
             if (_submitButton != null) _submitButton.gameObject.SetActive(true);
             if (_skipButton != null) _skipButton.gameObject.SetActive(false);

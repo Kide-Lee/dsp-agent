@@ -10,12 +10,13 @@
  *   - 低档分拣器给出明确 warning。
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseSaveBindPayload, parseBlueprintTiers } from '../dist/protocol.js';
 import { KnowledgeStore } from '../dist/kb/store.js';
 import { createBlueprintTools } from '../dist/blueprint/tools.js';
+import { BlueprintWorkspace } from '../dist/blueprint/workspace.js';
+import { makeTempDir } from './helpers.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -24,9 +25,9 @@ const fail = (name, detail) => { failed++; console.log(`  FAIL ${name}${detail ?
 const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/kb-blueprint.json', import.meta.url), 'utf8'));
-const root = mkdtempSync(join(tmpdir(), 'icarus-ii-tiers-'));
-process.env.ICARUS_BLUEPRINT_DIR = join(root, 'bp');
+const root = makeTempDir('icarus-ii-tiers-');
 const store = new KnowledgeStore(join(root, 'data'));
+const workspace = new BlueprintWorkspace({ root: join(root, 'bp') });
 store.setData(fixture);
 
 console.log('── 1. 解析与裁剪 ──');
@@ -50,7 +51,7 @@ console.log('── 1. 解析与裁剪 ──');
 }
 
 async function generate(tiers, params = {}) {
-  const tools = createBlueprintTools(undefined, store, undefined, () => tiers);
+  const tools = createBlueprintTools(undefined, store, undefined, () => tiers, workspace);
   const tool = tools.find((item) => item.name === 'blueprint_generate');
   return (await tool.execute('call-1', { item: '电磁涡轮', rate: 60, ...params })).details;
 }

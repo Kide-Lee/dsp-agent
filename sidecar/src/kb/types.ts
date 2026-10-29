@@ -187,7 +187,6 @@ export interface KbSearchHit {
   name: string;
   summary?: string;
   iconTag?: string;
-  score: number;
 }
 
 export interface KbGetResult {

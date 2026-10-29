@@ -21,7 +21,7 @@ namespace IcarusII.Core
         /// <summary>投递一个主线程任务。可从任意线程调用。</summary>
         public void Post(Action action)
         {
-            if (action != null) _queue.Enqueue(action);
+            if (action is not null) _queue.Enqueue(action);
         }
 
         /// <summary>

@@ -5,7 +5,7 @@ namespace IcarusII.UI
 {
     /// <summary>
     /// 运行时构建 UGUI 的小工具集。
-    /// 游戏界面是用代码+预制体搭的，我们只能用代码搭，所以把这些样板集中起来。
+    /// 聊天窗必须走 Prefab；本工具只服务设置页等尚未迁移到 Prefab 的动态页面。
     /// </summary>
     internal static class UiFactory
     {

@@ -62,6 +62,13 @@ namespace IcarusII.Core
             options = null;
             error = null;
 
+            if (!IcarusII.Common.Protocol.Protocol.IsLoopbackHost(_config.SidecarHost))
+            {
+                error = $"Sidecar Host={_config.SidecarHost} 不是回环地址；只允许 127.0.0.1 / ::1 / localhost。";
+                _log.LogError(error);
+                return false;
+            }
+
             var dataDir = DataDir;
             try
             {
@@ -213,7 +220,7 @@ namespace IcarusII.Core
         {
             return new SidecarOptions
             {
-                Host = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host,
+                Host = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host.Trim(),
                 Port = port,
                 Token = token,
                 ModVersion = Plugin.PluginVersion,

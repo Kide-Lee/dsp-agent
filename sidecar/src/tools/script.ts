@@ -18,7 +18,7 @@
  * - Asyncify 的异步宿主函数在 await 之后创建句柄会踩 WASM 内存（实测 memory access out of bounds）；
  * - 同步变体更小更快，代价是脚本里的 `dsp.call` 只能同步调用（本来就是本地数据，够用）；
  * - 异步工具调用用"抛出挂起 → 宿主执行 → 从头重放并命中 memo"实现，
- *   调用次数上限 50，重放成本可接受。
+ *   调用次数默认 100、最高 10000，重放成本可接受。
  */
 
 import { createHash } from 'node:crypto';
@@ -233,6 +233,18 @@ async function runScript(
       handles.push(consoleObj, logFn);
       ctx.setProp(consoleObj, 'log', logFn);
       ctx.setProp(ctx.global, 'console', consoleObj);
+
+      // 固定时间与随机源，保证脚本重放得到相同结果。
+      const bootstrap = ctx.evalCode(
+        'Date.now = () => 0; Math.random = () => 0.5;',
+        'bootstrap.js',
+      );
+      if (bootstrap.error) {
+        const dumped = ctx.dump(bootstrap.error);
+        bootstrap.error.dispose();
+        return fail('script_error', `沙箱初始化失败：${typeof dumped === 'string' ? dumped : JSON.stringify(dumped)}`);
+      }
+      bootstrap.value.dispose();
 
       // 用户代码放在函数里，允许顶层 return。
       const evalResult = ctx.evalCode(`(function () {\n${code}\n})()`, 'script.js');

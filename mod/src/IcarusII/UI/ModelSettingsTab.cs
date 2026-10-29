@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using IcarusII.I18n;
 using IcarusII.Common.Json;
 using IcarusII.Common.Protocol;
 using IcarusII.Common.Transport;
@@ -23,7 +24,6 @@ namespace IcarusII.UI
     /// </summary>
     internal static class ModelSettingsTab
     {
-        private const string TabLabel = "模型";
         private const float TabWidth = 160f;
 
         // ---- 原生设置页的排版基准（从 DSPGame.unity 的 Option Window 量的）----
@@ -35,7 +35,6 @@ namespace IcarusII.UI
 
         // 预设下拉框的第一项永远是「自定义…」：目录没拉到、目录里没有玩家要的供应商，
         // 都还有一条明确的出口（手填 ID / API 地址）。它的 ItemsData 用 -1 区分目录项。
-        private const string CustomPresetLabel = "自定义…";
         private const int CustomPresetData = -1;
 
         private static readonly List<ProviderCatalogEntry> _presetProviders = new List<ProviderCatalogEntry>();
@@ -309,7 +308,7 @@ namespace IcarusII.UI
                 }
                 if (label != null)
                 {
-                    label.text = TabLabel;
+                    label.text = Strings.Get("model.label");
                     Plugin.Log.LogInfo(
                         $"[模型页] 页签文字对象 = {label.name}（parent={label.transform.parent?.name}、" +
                         $"是按钮子物体={label.transform.IsChildOf(btn.transform)}）");
@@ -352,7 +351,7 @@ namespace IcarusII.UI
                 // 上面那条路若拿到的是别的 Text，页签就会显示成"杂项"（踩过）。
                 if (window.tabTexts != null && window.tabTexts.Length > count && window.tabTexts[count] != null)
                 {
-                    window.tabTexts[count].text = TabLabel;
+                    window.tabTexts[count].text = Strings.Get("model.label");
                     Plugin.Log.LogInfo("[模型页] 页签文字 = " + window.tabTexts[count].text);
                 }
                 else
@@ -515,7 +514,7 @@ namespace IcarusII.UI
 
             var head = UiFactory.Node("page-head", root);
             head.gameObject.AddComponent<LayoutElement>().preferredHeight = 32f;
-            var title = AddText(head, "供应商与模型", 18, LabelColor, TextAnchor.MiddleLeft);
+            var title = AddText(head, Strings.Get("model.page.title"), 18, LabelColor, TextAnchor.MiddleLeft);
             UiFactory.Stretch(title.rectTransform, 0f, 0f, 0f, 0f);
 
             var body = UiFactory.Node("page-body", root);
@@ -568,19 +567,19 @@ namespace IcarusII.UI
 
             var head = UiFactory.Node("provider-head", pane);
             head.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
-            var label = AddText(head, "供应商", 15, DimColor, TextAnchor.MiddleLeft);
+            var label = AddText(head, Strings.Get("model.provider.title"), 15, DimColor, TextAnchor.MiddleLeft);
             UiFactory.Stretch(label.rectTransform, 0f, 0f, 0f, 0f);
 
             _providerList = AddScrollList(pane, "provider-list", 80f);
 
-            var presetLabel = AddText(pane, "预设供应商", 12, DimColor, TextAnchor.MiddleLeft);
+            var presetLabel = AddText(pane, Strings.Get("model.provider.preset"), 12, DimColor, TextAnchor.MiddleLeft);
             presetLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 20f;
             var presetRow = AddRow(pane, "provider-preset-row", 28f, 0f);
             _presetCombo = CreatePresetCombo(window, presetRow);
             EnsureProviderCatalog();
 
             var addRow = AddRow(pane, "add-provider-row", 28f, 0f);
-            _addProviderField = AddInput(addRow, "供应商 ID", false, 26f, 0f);
+            _addProviderField = AddInput(addRow, Strings.Get("model.provider.id.placeholder"), false, 26f, 0f);
             _addProviderField.text = DefaultProvider;
             AddButton(addRow, "+", OnAddProvider, 28f, 26f, 16);
 
@@ -673,7 +672,7 @@ namespace IcarusII.UI
 
             combo.Items.Clear();
             combo.ItemsData.Clear();
-            combo.Items.Add(CustomPresetLabel);
+            combo.Items.Add(Strings.Get("model.provider.custom"));
             combo.ItemsData.Add(CustomPresetData);
             for (var i = 0; i < _presetProviders.Count; i++)
             {
@@ -697,7 +696,7 @@ namespace IcarusII.UI
                     _addProviderField.text = string.Empty;
                     _addProviderField.ActivateInputField();
                 }
-                SetEditorHint("自定义供应商：填供应商 ID 和 API 地址后点 + 添加", false);
+                SetEditorHint(Strings.Get("model.provider.custom_hint"), false);
                 return;
             }
 
@@ -707,11 +706,11 @@ namespace IcarusII.UI
             if (existing != null)
             {
                 SelectProvider(id);
-                SetEditorHint("「" + existing.Name + "」已在列表中", false);
+                SetEditorHint(Strings.Get("model.provider.exists", existing.Name), false);
             }
             else
             {
-                SetEditorHint("已选择 " + _presetProviders[data].Name + "；点 + 添加", false);
+                SetEditorHint(Strings.Get("model.provider.picked", _presetProviders[data].Name), false);
             }
         }
 
@@ -736,13 +735,13 @@ namespace IcarusII.UI
             _keyDot = AddDot(head, KeyMissingColor);
             _editorTitle = AddText(head, string.Empty, 18, LabelColor, TextAnchor.MiddleLeft);
             _editorTitle.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
-            AddButton(head, "删除", OnDeleteProvider, 46f, 24f, 14);
+            AddButton(head, Strings.Get("model.provider.delete"), OnDeleteProvider, 46f, 24f, 14);
 
             var keyRow = AddRow(pane, "api-key-row", 30f, 0f);
-            AddFixedLabel(keyRow, "API 密钥", 70f);
-            _apiKeyField = AddInput(keyRow, "粘贴 API 密钥", true, 28f, 0f);
+            AddFixedLabel(keyRow, Strings.Get("model.api_key.label"), 70f);
+            _apiKeyField = AddInput(keyRow, Strings.Get("model.api_key.placeholder"), true, 28f, 0f);
             _apiKeyField.onValueChanged.AddListener(OnApiKeyChanged);
-            _testKeyButton = AddButton(keyRow, "检测", OnTestKey, 52f, 28f, 13);
+            _testKeyButton = AddButton(keyRow, Strings.Get("model.test.button"), OnTestKey, 52f, 28f, 13);
             _testKeyButtonLabel = _testKeyButton != null
                 ? _testKeyButton.GetComponentInChildren<Text>(true)
                 : null;
@@ -754,12 +753,12 @@ namespace IcarusII.UI
             _keyTestStatus = keyStatus;
 
             var urlRow = AddRow(pane, "base-url-row", 30f, 0f);
-            AddFixedLabel(urlRow, "API 地址", 70f);
-            _baseUrlField = AddInput(urlRow, "留空使用默认地址", false, 28f, 0f);
+            AddFixedLabel(urlRow, Strings.Get("model.base_url.label"), 70f);
+            _baseUrlField = AddInput(urlRow, Strings.Get("model.base_url.placeholder"), false, 28f, 0f);
             _baseUrlField.onValueChanged.AddListener(OnBaseUrlChanged);
 
             var modelsHead = AddRow(pane, "models-head", 26f, 0f);
-            var modelsLabel = AddText(modelsHead, "模型", 15, DimColor, TextAnchor.MiddleLeft);
+            var modelsLabel = AddText(modelsHead, Strings.Get("model.label"), 15, DimColor, TextAnchor.MiddleLeft);
             modelsLabel.gameObject.AddComponent<LayoutElement>().preferredWidth = 52f;
             _modelCount = AddText(modelsHead, string.Empty, 13, DimColor, TextAnchor.MiddleRight);
             _modelCount.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
@@ -767,9 +766,9 @@ namespace IcarusII.UI
             _modelList = AddScrollList(pane, "model-list", 90f);
 
             var addModelRow = AddRow(pane, "add-model-row", 28f, 0f);
-            _addModelField = AddInput(addModelRow, "模型 ID", false, 26f, 300f);
+            _addModelField = AddInput(addModelRow, Strings.Get("model.id.placeholder"), false, 26f, 300f);
             AddButton(addModelRow, "+", OnAddModel, 28f, 26f, 16);
-            _catalogButton = AddButton(addModelRow, "获取可用模型", OnFetchModels, 112f, 26f, 13);
+            _catalogButton = AddButton(addModelRow, Strings.Get("model.catalog.button"), OnFetchModels, 112f, 26f, 13);
             _catalogButtonLabel = _catalogButton != null
                 ? _catalogButton.GetComponentInChildren<Text>(true)
                 : null;
@@ -812,7 +811,7 @@ namespace IcarusII.UI
             hlg.childForceExpandHeight = false;
             hlg.childAlignment = TextAnchor.MiddleLeft;
 
-            _catalogTitle = AddText(head, "可用模型", 18, LabelColor, TextAnchor.MiddleLeft);
+            _catalogTitle = AddText(head, Strings.Get("model.catalog.title"), 18, LabelColor, TextAnchor.MiddleLeft);
             _catalogTitle.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
             AddButton(head, "×", () =>
             {
@@ -849,12 +848,12 @@ namespace IcarusII.UI
 
             if (_client == null || _client.State != ConnectionState.Ready)
             {
-                SetEditorHint("连接 sidecar 后才能获取可用模型", true);
+                SetEditorHint(Strings.Get("model.catalog.offline"), true);
                 return;
             }
             if (!IsKnownProvider(draft.Id) && string.IsNullOrEmpty((draft.BaseUrl ?? string.Empty).Trim()))
             {
-                SetEditorHint("未知供应商需要先填写 API 地址，才能获取模型列表", true);
+                SetEditorHint(Strings.Get("model.catalog.need_base_url"), true);
                 return;
             }
 
@@ -864,7 +863,7 @@ namespace IcarusII.UI
                 string.IsNullOrEmpty(draft.ApiKey) ? null : draft.ApiKey.Trim());
             if (string.IsNullOrEmpty(requestId))
             {
-                SetEditorHint("连接未就绪，暂时无法获取模型列表", true);
+                SetEditorHint(Strings.Get("model.catalog.not_ready"), true);
                 return;
             }
 
@@ -874,7 +873,7 @@ namespace IcarusII.UI
             _catalogPending = true;
             _catalogRequestedAt = Time.realtimeSinceStartup;
             SetCatalogButtonBusy(true);
-            SetEditorHint("正在获取「" + draft.Name + "」的可用模型…", false);
+            SetEditorHint(Strings.Get("model.catalog.loading", draft.Name), false);
         }
 
         /// <summary>接收线程：只解析并存结果，绝不碰 UnityEngine 对象。</summary>
@@ -973,7 +972,7 @@ namespace IcarusII.UI
             {
                 _catalogPending = false;
                 SetCatalogButtonBusy(false);
-                SetEditorHint("获取可用模型超时，请检查 sidecar/网络后重试", true);
+                SetEditorHint(Strings.Get("model.catalog.timeout"), true);
                 return;
             }
 
@@ -995,15 +994,15 @@ namespace IcarusII.UI
             {
                 // 有些中转的 /models 不可用（404/限流/挂住），但聊天接口正常；
                 // 提示玩家可以直接手填模型 ID，不要卡在弹层里。
-                SetEditorHint("获取可用模型失败：" + result.Error + "；可在「模型 ID」手动填写后点 +", true);
+                SetEditorHint(Strings.Get("model.catalog.failed", result.Error), true);
             }
             else
             {
                 var fixedBase = ApplyResolvedBaseUrl(result.ResolvedBaseUrl);
                 SetEditorHint(
                     fixedBase != null
-                        ? "已获取 " + result.Models.Count + " 个可用模型；API 地址已补全为 " + fixedBase
-                        : "已获取 " + result.Models.Count + " 个可用模型；点「+ 添加」加入当前供应商",
+                        ? Strings.Get("model.catalog.done_base_url", result.Models.Count, fixedBase)
+                        : Strings.Get("model.catalog.done", result.Models.Count),
                     false);
             }
         }
@@ -1016,17 +1015,17 @@ namespace IcarusII.UI
 
             if (_client == null || _client.State != ConnectionState.Ready)
             {
-                SetKeyTestStatus("连接 sidecar 后才能检测 Key", true);
+                SetKeyTestStatus(Strings.Get("model.test.offline"), true);
                 return;
             }
             if (string.IsNullOrEmpty(draft.ApiKey) && !draft.HasKey)
             {
-                SetKeyTestStatus("先填写 API Key", true);
+                SetKeyTestStatus(Strings.Get("model.test.need_key"), true);
                 return;
             }
             if (!IsKnownProvider(draft.Id) && string.IsNullOrEmpty((draft.BaseUrl ?? string.Empty).Trim()))
             {
-                SetKeyTestStatus("未知供应商需要先填写 API 地址", true);
+                SetKeyTestStatus(Strings.Get("model.test.need_base_url"), true);
                 return;
             }
 
@@ -1036,7 +1035,7 @@ namespace IcarusII.UI
                 string.IsNullOrEmpty(draft.ApiKey) ? null : draft.ApiKey.Trim());
             if (string.IsNullOrEmpty(requestId))
             {
-                SetKeyTestStatus("连接未就绪，暂时无法检测", true);
+                SetKeyTestStatus(Strings.Get("model.test.not_ready"), true);
                 return;
             }
 
@@ -1046,7 +1045,7 @@ namespace IcarusII.UI
             _testKeyPending = true;
             _testKeyRequestedAt = Time.realtimeSinceStartup;
             SetTestButtonBusy(true);
-            SetKeyTestStatus("正在检测 Key…", false);
+            SetKeyTestStatus(Strings.Get("model.test.loading"), false);
         }
 
         private static void ConsumeTestKeyResult()
@@ -1055,7 +1054,7 @@ namespace IcarusII.UI
             {
                 _testKeyPending = false;
                 SetTestButtonBusy(false);
-                SetKeyTestStatus("检测超时，请检查网络后重试", true);
+                SetKeyTestStatus(Strings.Get("model.test.timeout"), true);
                 return;
             }
 
@@ -1074,12 +1073,12 @@ namespace IcarusII.UI
             if (result.Ok)
             {
                 ApplyResolvedBaseUrl(result.ResolvedBaseUrl);
-                SetKeyTestStatus("Key 可用 · " + Mathf.Max(0, result.LatencyMs) + " ms", false);
+                SetKeyTestStatus(Strings.Get("model.test.ok", Mathf.Max(0, result.LatencyMs)), false);
                 if (_keyDot != null) _keyDot.color = KeyOkColor;
             }
             else
             {
-                SetKeyTestStatus(string.IsNullOrEmpty(result.Message) ? "检测失败" : result.Message, true);
+                SetKeyTestStatus(string.IsNullOrEmpty(result.Message) ? Strings.Get("model.test.failed") : result.Message, true);
                 if (_keyDot != null) _keyDot.color = KeyMissingColor;
             }
         }
@@ -1119,7 +1118,7 @@ namespace IcarusII.UI
         {
             if (_testKeyButton != null) _testKeyButton.interactable = !busy;
             if (_testKeyButtonLabel != null)
-                _testKeyButtonLabel.text = busy ? "检测中…" : "检测";
+                _testKeyButtonLabel.text = busy ? Strings.Get("model.test.busy") : Strings.Get("model.test.button");
         }
 
         private static void SetKeyTestStatus(string text, bool warn)
@@ -1133,7 +1132,7 @@ namespace IcarusII.UI
         {
             if (_catalogButton != null) _catalogButton.interactable = !busy;
             if (_catalogButtonLabel != null)
-                _catalogButtonLabel.text = busy ? "获取中…" : "获取可用模型";
+                _catalogButtonLabel.text = busy ? Strings.Get("model.catalog.busy") : Strings.Get("model.catalog.button");
         }
 
         private static void ShowCatalog(ModelCatalogResult result)
@@ -1145,7 +1144,8 @@ namespace IcarusII.UI
                 if (model != null && !string.IsNullOrEmpty(model.Id)) _catalogModels.Add(model);
 
             var draft = _providers.Find((p) => p.Id == _catalogProviderId) ?? SelectedDraft;
-            _catalogTitle.text = "可用模型 · " + (draft != null ? draft.Name : (result.Provider ?? string.Empty));
+            _catalogTitle.text = Strings.Get("model.catalog.title_with",
+                draft != null ? draft.Name : (result.Provider ?? string.Empty));
             _catalogPopup.gameObject.SetActive(true);
             _catalogPopup.SetAsLastSibling();
 
@@ -1159,8 +1159,8 @@ namespace IcarusII.UI
 
             _catalogHint.color = HintColor;
             _catalogHint.text = _catalogModels.Count == 0
-                ? "没有获取到模型，检查 API 地址/密钥后重试"
-                : "共 " + _catalogModels.Count + " 个 · 点击「+ 添加」加入当前供应商";
+                ? Strings.Get("model.catalog.empty_hint")
+                : Strings.Get("model.catalog.count_hint", _catalogModels.Count);
             RebuildCatalogRows();
         }
 
@@ -1172,7 +1172,7 @@ namespace IcarusII.UI
 
             if (_catalogModels.Count == 0)
             {
-                var empty = AddText(_catalogList, "没有可用模型", 14, DimColor, TextAnchor.MiddleLeft);
+                var empty = AddText(_catalogList, Strings.Get("model.catalog.empty"), 14, DimColor, TextAnchor.MiddleLeft);
                 empty.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
                 return;
             }
@@ -1194,12 +1194,12 @@ namespace IcarusII.UI
                 var exists = draft != null && draft.Models.Exists((m) => m.Id == item.Id);
                 if (exists)
                 {
-                    var added = AddText(row, "已添加", 12, DimColor, TextAnchor.MiddleRight);
+                    var added = AddText(row, Strings.Get("model.catalog.added"), 12, DimColor, TextAnchor.MiddleRight);
                     added.gameObject.AddComponent<LayoutElement>().preferredWidth = 52f;
                 }
                 else
                 {
-                    AddButton(row, "+ 添加", () => AddCatalogModel(item), 64f, 24f, 13);
+                    AddButton(row, Strings.Get("model.catalog.add"), () => AddCatalogModel(item), 64f, 24f, 13);
                 }
             }
         }
@@ -1216,8 +1216,8 @@ namespace IcarusII.UI
             RebuildProviderList();
             if (SelectedDraft != null && SelectedDraft.Id == draft.Id) RebuildModelList();
             RebuildCatalogRows();
-            SetEditorHint("已添加「" + (string.IsNullOrEmpty(model.Name) ? model.Id : model.Name) +
-                "」；点「应用设置」保存", false);
+            SetEditorHint(Strings.Get("model.catalog.model_added",
+                string.IsNullOrEmpty(model.Name) ? model.Id : model.Name), false);
         }
 
         private static void AddFixedLabel(Transform parent, string text, float width)
@@ -1542,7 +1542,7 @@ namespace IcarusII.UI
             if (cfg == null)
             {
                 if (_providers.Count == 0) SeedDefaults();
-                SetHint("未连接 sidecar（编辑器预览）", false);
+                SetHint(Strings.Get("model.status.offline"), false);
                 RebuildAll();
                 return;
             }
@@ -1612,8 +1612,8 @@ namespace IcarusII.UI
             RebuildAll();
 
             var hint = cfg.IsReady
-                ? $"已连接 sidecar · {_providers.Count} 个供应商"
-                : (string.IsNullOrEmpty(cfg.Message) ? "尚未配置 API 密钥" : cfg.Message);
+                ? Strings.Get("model.status.ready", _providers.Count)
+                : (string.IsNullOrEmpty(cfg.Message) ? Strings.Get("model.status.need_key") : cfg.Message);
             SetHint(hint, cfg.IsReady);
         }
 
@@ -1630,7 +1630,7 @@ namespace IcarusII.UI
             ClearChildren(_providerList);
             if (_providers.Count == 0)
             {
-                var empty = AddText(_providerList, "还没有供应商", 14, DimColor, TextAnchor.MiddleLeft);
+                var empty = AddText(_providerList, Strings.Get("model.provider.empty"), 14, DimColor, TextAnchor.MiddleLeft);
                 empty.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
                 return;
             }
@@ -1677,14 +1677,14 @@ namespace IcarusII.UI
             var draft = SelectedDraft;
             if (draft == null)
             {
-                var empty = AddText(_modelList, "先添加一个供应商", 14, DimColor, TextAnchor.MiddleLeft);
+                var empty = AddText(_modelList, Strings.Get("model.provider.missing"), 14, DimColor, TextAnchor.MiddleLeft);
                 empty.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
                 return;
             }
 
             if (draft.Models.Count == 0)
             {
-                var empty = AddText(_modelList, "还没有模型，请在下方添加", 14, DimColor, TextAnchor.MiddleLeft);
+                var empty = AddText(_modelList, Strings.Get("model.empty"), 14, DimColor, TextAnchor.MiddleLeft);
                 empty.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
             }
 
@@ -1719,7 +1719,7 @@ namespace IcarusII.UI
 
                 if (active)
                 {
-                    var badge = AddText(row, "当前", 12, KeyOkColor, TextAnchor.MiddleRight);
+                    var badge = AddText(row, Strings.Get("model.current"), 12, KeyOkColor, TextAnchor.MiddleRight);
                     badge.gameObject.AddComponent<LayoutElement>().preferredWidth = 28f;
                 }
 
@@ -1727,7 +1727,7 @@ namespace IcarusII.UI
             }
 
             if (_modelCount != null)
-                _modelCount.text = draft.Models.Count + " 个";
+                _modelCount.text = Strings.Get("model.count", draft.Models.Count);
         }
 
         private static void RefreshEditor(bool resetInputs)
@@ -1736,7 +1736,7 @@ namespace IcarusII.UI
             var has = draft != null;
 
             if (_editorTitle != null)
-                _editorTitle.text = has ? draft.Name : "没有供应商";
+                _editorTitle.text = has ? draft.Name : Strings.Get("model.provider.none");
 
             if (_presetCombo != null)
             {
@@ -1763,7 +1763,9 @@ namespace IcarusII.UI
                 var place = _apiKeyField.placeholder as Text;
                 if (place != null)
                 {
-                    place.text = has && draft.HasKey ? "已配置，留空不修改" : "粘贴 API 密钥";
+                    place.text = has && draft.HasKey
+                        ? Strings.Get("model.api_key.placeholder_set")
+                        : Strings.Get("model.api_key.placeholder");
                     place.color = PlaceholderColor;
                 }
                 if (resetInputs)
@@ -1785,28 +1787,28 @@ namespace IcarusII.UI
             }
 
             if (_modelCount != null)
-                _modelCount.text = has ? draft.Models.Count + " 个" : string.Empty;
+                _modelCount.text = has ? Strings.Get("model.count", draft.Models.Count) : string.Empty;
 
             if (_editorHint != null)
             {
                 if (!has)
                 {
-                    _editorHint.text = "先添加一个供应商";
+                    _editorHint.text = Strings.Get("model.provider.missing");
                     _editorHint.color = HintWarnColor;
                 }
                 else if (draft.Models.Count == 0)
                 {
-                    _editorHint.text = "至少添加一个模型，否则无法选择";
+                    _editorHint.text = Strings.Get("model.none_hint");
                     _editorHint.color = HintWarnColor;
                 }
                 else if (_dirty)
                 {
-                    _editorHint.text = "点「应用设置」保存修改";
+                    _editorHint.text = Strings.Get("model.hint.save");
                     _editorHint.color = HintColor;
                 }
                 else
                 {
-                    _editorHint.text = "点模型行设为当前模型";
+                    _editorHint.text = Strings.Get("model.hint.select");
                     _editorHint.color = DimColor;
                 }
             }
@@ -1825,19 +1827,19 @@ namespace IcarusII.UI
             var id = (Trim(_addProviderField) ?? string.Empty).ToLowerInvariant();
             if (string.IsNullOrEmpty(id))
             {
-                SetEditorHint("请输入供应商 ID（如 openai）", true);
+                SetEditorHint(Strings.Get("model.provider.id_required"), true);
                 return;
             }
             if (!IsValidProviderId(id))
             {
-                SetEditorHint("供应商 ID 只能包含字母、数字、点、下划线和短横线", true);
+                SetEditorHint(Strings.Get("model.provider.id_invalid"), true);
                 return;
             }
             foreach (var provider in _providers)
             {
                 if (provider.Id != id) continue;
                 SelectProvider(id);
-                SetEditorHint("这个供应商已经存在", true);
+                SetEditorHint(Strings.Get("model.provider.duplicate"), true);
                 return;
             }
 
@@ -1854,7 +1856,7 @@ namespace IcarusII.UI
             _dirty = true;
             if (_addProviderField != null) _addProviderField.text = string.Empty;
             RebuildAll();
-            SetEditorHint("已添加：填写 API 密钥，再添加至少一个模型", false);
+            SetEditorHint(Strings.Get("model.provider.added"), false);
         }
 
         private static void OnDeleteProvider()
@@ -1863,7 +1865,7 @@ namespace IcarusII.UI
             if (draft == null) return;
             if (_providers.Count <= 1)
             {
-                SetEditorHint("至少保留一个供应商", true);
+                SetEditorHint(Strings.Get("model.provider.keep_one"), true);
                 return;
             }
 
@@ -1877,7 +1879,7 @@ namespace IcarusII.UI
             _selectedProvider = _providers[0].Id;
             _dirty = true;
             RebuildAll();
-            SetHint("已删除供应商，点「应用设置」生效", false);
+            SetHint(Strings.Get("model.provider.deleted"), false);
         }
 
         private static void OnAddModel()
@@ -1888,13 +1890,13 @@ namespace IcarusII.UI
             var id = Trim(_addModelField);
             if (string.IsNullOrEmpty(id))
             {
-                SetEditorHint("请输入模型 ID（如 gpt-4o）", true);
+                SetEditorHint(Strings.Get("model.id.required"), true);
                 return;
             }
             foreach (var model in draft.Models)
             {
                 if (model.Id != id) continue;
-                SetEditorHint("这个模型已经存在", true);
+                SetEditorHint(Strings.Get("model.duplicate"), true);
                 return;
             }
 
@@ -1905,7 +1907,7 @@ namespace IcarusII.UI
             if (_addModelField != null) _addModelField.text = string.Empty;
             RebuildModelList();
             RefreshEditor(resetInputs: false);
-            SetEditorHint("已添加模型，点模型行设为当前", false);
+            SetEditorHint(Strings.Get("model.added"), false);
         }
 
         private static void RemoveModel(string providerId, string modelId)
@@ -1935,7 +1937,7 @@ namespace IcarusII.UI
             RebuildProviderList();
             RebuildModelList();
             RefreshEditor(resetInputs: false);
-            SetHint("当前模型已选，点「应用设置」生效", false);
+            SetHint(Strings.Get("model.active"), false);
         }
 
         private static void OnApiKeyChanged(string value)
@@ -1974,12 +1976,12 @@ namespace IcarusII.UI
         {
             if (_client == null)
             {
-                SetHint("sidecar 未连接", false);
+                SetHint(Strings.Get("model.save.offline"), false);
                 return;
             }
             if (_providers.Count == 0)
             {
-                SetHint("没有可保存的供应商", false);
+                SetHint(Strings.Get("model.save.no_provider"), false);
                 return;
             }
 
@@ -1988,7 +1990,7 @@ namespace IcarusII.UI
                 if (provider.Models.Count > 0) continue;
                 _selectedProvider = provider.Id;
                 SelectProvider(provider.Id);
-                SetEditorHint("供应商「" + provider.Name + "」还没有模型，先添加至少一个", true);
+                SetEditorHint(Strings.Get("model.save.provider_no_model", provider.Name), true);
                 return;
             }
             foreach (var provider in _providers)
@@ -1997,7 +1999,7 @@ namespace IcarusII.UI
                 if (!string.IsNullOrEmpty((provider.BaseUrl ?? string.Empty).Trim())) continue;
                 _selectedProvider = provider.Id;
                 SelectProvider(provider.Id);
-                SetEditorHint("未知供应商「" + provider.Name + "」需要填写 API 地址", true);
+                SetEditorHint(Strings.Get("model.save.provider_no_url", provider.Name), true);
                 return;
             }
 
@@ -2038,7 +2040,7 @@ namespace IcarusII.UI
 
             if (string.IsNullOrEmpty(envId))
             {
-                SetHint("sidecar 未连接，配置未发送", false);
+                SetHint(Strings.Get("model.save.not_sent"), false);
                 Plugin.Log.LogWarning("[模型页] 配置未发送（客户端未就绪）。");
                 return;
             }
@@ -2052,7 +2054,7 @@ namespace IcarusII.UI
             try { if (_apiKeyField != null) _apiKeyField.text = string.Empty; }
             finally { _suppressFieldEvents = false; }
             _dirty = false;
-            SetHint("已提交，等待 sidecar 确认…", true);
+            SetHint(Strings.Get("model.save.submitted"), true);
             Plugin.Log.LogInfo(
                 $"[模型页] 已提交 {_providers.Count} 个供应商，当前 {_activeProvider}/{_activeModel}。");
         }

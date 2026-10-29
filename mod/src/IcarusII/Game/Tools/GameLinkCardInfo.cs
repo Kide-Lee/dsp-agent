@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using IcarusII.I18n;
 using System.Text;
 
 namespace IcarusII.Game.Tools
@@ -41,12 +42,12 @@ namespace IcarusII.Game.Tools
                     case "silo": return Silo(factory, entity);
                     case "lab": return Lab(factory, entity);
                     case "fractionator": return Fractionator(factory, entity);
-                    default: return "建筑 #" + entity.id.ToString(CultureInfo.InvariantCulture);
+                    default: return Strings.Get("link.card.building", entity.id.ToString(CultureInfo.InvariantCulture));
                 }
             }
             catch (Exception)
             {
-                return "建筑 #" + entity.id.ToString(CultureInfo.InvariantCulture);
+                return Strings.Get("link.card.building", entity.id.ToString(CultureInfo.InvariantCulture));
             }
         }
 
@@ -209,7 +210,7 @@ namespace IcarusII.Game.Tools
             long served = 0;
             if (factory.powerSystem != null && pcId > 0 && pcId < factory.powerSystem.consumerPool.Length)
                 served = (long)(factory.powerSystem.consumerPool[pcId].requiredEnergy * 60L * ratio + 0.5);
-            return ratio <= PowerSystem.kOffPower ? "未供电" : Watt(served) + "|" + Pct(ratio);
+            return ratio <= PowerSystem.kOffPower ? Strings.Get("link.card.no_power") : Watt(served) + "|" + Pct(ratio);
         }
 
         private static string Pct(float ratio) => ((int)(ratio * 100f)).ToString(CultureInfo.InvariantCulture) + "%";
@@ -251,20 +252,19 @@ namespace IcarusII.Game.Tools
             double inc = 0;
             if (a.speed > 0) inc = productive ? (double)(a.extraSpeed * 10.0) / a.speed : (double)(a.speedOverride * 100.0) / a.speed - 100.0;
             string status;
-            if (a.replicating) status = ratio == 1f ? "正常运转" : ratio > PowerSystem.kOffPower ? "电力不足" : "停止运转";
-            else if (a.time >= a.recipeExecuteData.timeSpend) status = "产物堆积";
+            if (a.replicating) status = ratio == 1f ? Strings.Get("link.card.status.working") : ratio > PowerSystem.kOffPower ? Strings.Get("link.card.status.low_power") : Strings.Get("link.card.status.stopped");
+            else if (a.time >= a.recipeExecuteData.timeSpend) status = Strings.Get("link.card.status.output_full");
             else
             {
                 bool lack = false;
                 var needs = a.recipeExecuteData.requireCounts;
                 for (int i = 0; i < needs.Length; i++)
                     if (i >= a.served.Length || a.served[i] < needs[i]) { lack = true; break; }
-                status = lack ? "缺少原材料" : ratio == 1f ? "待机" : ratio > PowerSystem.kOffPower ? "电力不足" : "停止运转";
+                status = lack ? Strings.Get("link.card.status.no_input") : ratio == 1f ? Strings.Get("link.card.status.idle") : ratio > PowerSystem.kOffPower ? Strings.Get("link.card.status.low_power") : Strings.Get("link.card.status.stopped");
             }
-            string power = ratio <= PowerSystem.kOffPower ? "未供电" : Watt(served) + "|" + Pct(ratio);
-            return string.Format(CultureInfo.InvariantCulture,
-                "生产速度: {0:0.0}/min\n电力: {1}\n增产效果: +{2:0.0}% {3}\n状态: {4}",
-                perMin, power, inc, productive ? "额外产出" : "加速生产", status);
+            string power = ratio <= PowerSystem.kOffPower ? Strings.Get("link.card.no_power") : Watt(served) + "|" + Pct(ratio);
+            return Strings.GetInvariant("link.card.assembler",
+                perMin, power, inc, productive ? Strings.Get("link.card.productive") : Strings.Get("link.card.speedup"), status);
         }
 
         private static string Miner(PlanetFactory factory, EntityData entity)
@@ -279,11 +279,10 @@ namespace IcarusII.Game.Tools
             if (m.type == EMinerType.Vein) speed *= m.veinCount;
             if (m.workstate <= 0 || ratio < PowerSystem.kOffPower) speed = 0f;
             perMin *= speed;
-            string status = m.workstate <= 0 ? "待机" : ratio < PowerSystem.kOffPower ? "电力不足" : "正常运转";
-            if (m.veinCount <= 0) status = "缺少矿脉";
+            string status = m.workstate <= 0 ? Strings.Get("link.card.status.idle") : ratio < PowerSystem.kOffPower ? Strings.Get("link.card.status.low_power") : Strings.Get("link.card.status.working");
+            if (m.veinCount <= 0) status = Strings.Get("link.card.status.no_vein");
             string power = PowerLine(factory, m.pcId, out _);
-            return string.Format(CultureInfo.InvariantCulture,
-                "生产速度: {0:0.0}/min\n电力: {1}\n状态: {2}", perMin, power, status);
+            return Strings.GetInvariant("link.card.production", perMin, power, status);
         }
 
         private static string Belt(PlanetFactory factory, EntityData entity)
@@ -299,8 +298,7 @@ namespace IcarusII.Game.Tools
                     if (path.buffer[i] == CargoPath.kCargoHead) { cargoCount++; i += CargoPath.kCargoLength - 1; }
             }
             int pivot = belt.segIndex + belt.segPivotOffset;
-            return string.Format(CultureInfo.InvariantCulture,
-                "线路: #{0}\n线路节点数: {1}\n线路货物数: {2}\n区间: [{3},{4}]@{5}",
+            return Strings.GetInvariant("link.card.belt",
                 belt.segPathId, nodes, cargoCount, belt.segIndex, belt.segIndex + belt.segLength - 1, pivot);
         }
 
@@ -312,21 +310,20 @@ namespace IcarusII.Game.Tools
             string status;
             switch (ins.stage)
             {
-                case EInserterStage.Picking: status = ins.careNeeds ? "等待货物" : "待机中"; break;
-                case EInserterStage.Sending: status = "运送中"; break;
-                case EInserterStage.Inserting: status = "等待卸货"; break;
-                case EInserterStage.Returning: status = ins.bidirectional ? "运送中" : "返回中"; break;
-                default: status = "待机中"; break;
+                case EInserterStage.Picking: status = ins.careNeeds ? Strings.Get("link.card.status.waiting_cargo") : Strings.Get("link.card.status.idle_inserter"); break;
+                case EInserterStage.Sending: status = Strings.Get("link.card.status.sending"); break;
+                case EInserterStage.Inserting: status = Strings.Get("link.card.status.waiting_unload"); break;
+                case EInserterStage.Returning: status = ins.bidirectional ? Strings.Get("link.card.status.sending") : Strings.Get("link.card.status.returning"); break;
+                default: status = Strings.Get("link.card.status.idle_inserter"); break;
             }
-            if (ins.pickTarget == 0 && ins.insertTarget != 0) status = "输入端失效";
-            else if (ins.insertTarget == 0 && ins.pickTarget != 0) status = "输出端失效";
-            else if (ins.insertTarget == 0 && ins.pickTarget == 0) status = "连接失效";
+            if (ins.pickTarget == 0 && ins.insertTarget != 0) status = Strings.Get("link.card.status.pick_broken");
+            else if (ins.insertTarget == 0 && ins.pickTarget != 0) status = Strings.Get("link.card.status.insert_broken");
+            else if (ins.insertTarget == 0 && ins.pickTarget == 0) status = Strings.Get("link.card.status.link_broken");
             var proto = LDB.items != null ? LDB.items.Select(entity.protoId) : null;
             int stt = proto != null && proto.prefabDesc != null && proto.prefabDesc.inserterSTT > 0 ? proto.prefabDesc.inserterSTT : 200000;
             double length = (double)ins.stt / stt;
             double rtt = ins.stt > 0 ? 300000.0 / ins.stt : 0.0;
-            return string.Format(CultureInfo.InvariantCulture,
-                "电力: {0}\n状态: {1}\n长度: {2:0.#}格\n速度: {3:0.00}往返/秒",
+            return Strings.GetInvariant("link.card.inserter",
                 power, status, length, rtt);
         }
 
@@ -341,11 +338,11 @@ namespace IcarusII.Game.Tools
             {
                 bool input = inputs[i] > 0;
                 bool output = outputs[i] > 0;
-                string kind = input && output ? "输入/输出" : input ? "输入" : output ? "输出" : "未连接";
-                if (input && sp.inPriority) kind = "输入优先";
-                else if (output && sp.outPriority) kind = "输出优先";
+                string kind = input && output ? Strings.Get("link.card.splitter.inout") : input ? Strings.Get("link.card.splitter.in") : output ? Strings.Get("link.card.splitter.out") : Strings.Get("link.card.splitter.none");
+                if (input && sp.inPriority) kind = Strings.Get("link.card.splitter.in_priority");
+                else if (output && sp.outPriority) kind = Strings.Get("link.card.splitter.out_priority");
                 if (i > 0) sb.Append('\n');
-                sb.Append(i + 1).Append("号接口. ").Append(kind);
+                sb.Append(Strings.Get("link.card.port", i + 1, kind));
             }
             return sb.ToString();
         }
@@ -355,9 +352,8 @@ namespace IcarusII.Game.Tools
             if (entity.monitorId <= 0 || factory.cargoTraffic == null) return string.Empty;
             ref var mo = ref factory.cargoTraffic.monitorPool[entity.monitorId];
             double flow = mo.cargoFlow;
-            string condition = mo.targetCargoBytes > 0 && flow >= mo.targetCargoBytes ? "满足" : "不满足";
-            return string.Format(CultureInfo.InvariantCulture,
-                "每分钟流量: {0:0.0}\n目标流量: {1:0.0} 个\n监测条件: {2}",
+            string condition = mo.targetCargoBytes > 0 && flow >= mo.targetCargoBytes ? Strings.Get("link.card.status.meet") : Strings.Get("link.card.status.not_meet");
+            return Strings.GetInvariant("link.card.monitor",
                 flow, mo.targetCargoBytes, condition);
         }
 
@@ -366,9 +362,8 @@ namespace IcarusII.Game.Tools
             if (entity.spraycoaterId <= 0 || factory.cargoTraffic == null) return string.Empty;
             ref var sp = ref factory.cargoTraffic.spraycoaterPool[entity.spraycoaterId];
             string power = PowerLine(factory, sp.pcId, out float ratio);
-            string status = ratio < PowerSystem.kOffPower ? "电力不足" : sp.incCount > 0 ? "正常运转" : "缺少增产剂";
-            return string.Format(CultureInfo.InvariantCulture,
-                "电力: {0}\n状态: {1}\n储量: {2}", power, status, sp.incCount);
+            string status = ratio < PowerSystem.kOffPower ? Strings.Get("link.card.status.low_power") : sp.incCount > 0 ? Strings.Get("link.card.status.working") : Strings.Get("link.card.status.no_spray");
+            return Strings.GetInvariant("link.card.spray", power, status, sp.incCount);
         }
 
         private static string Storage(PlanetFactory factory, EntityData entity)
@@ -388,7 +383,7 @@ namespace IcarusII.Game.Tools
                 sb.Append(proto.iconTagString).Append("<sub>").Append(st.grids[i].count).Append("</sub>");
                 shown++;
             }
-            if (shown == 0) return "空栏位";
+            if (shown == 0) return Strings.Get("link.card.empty_slot");
             return sb.ToString();
         }
 
@@ -399,8 +394,7 @@ namespace IcarusII.Game.Tools
             var proto = LDB.items != null ? LDB.items.Select(entity.protoId) : null;
             string power = Energy(d.energy) + "|" + Watt(d.energyPerTick * 60L);
             int maxCourier = d.workCourierDatas != null ? d.workCourierDatas.Length : 0;
-            return string.Format(CultureInfo.InvariantCulture,
-                "向伊卡洛斯回收 - 回收所有类型\n电力: {0}\n配送运输机数量: {1}/{2}",
+            return Strings.GetInvariant("link.card.dispenser",
                 power, d.idleCourierCount + d.workCourierCount, maxCourier);
         }
 
@@ -414,18 +408,18 @@ namespace IcarusII.Game.Tools
             for (int i = 0; i < st.storage.Length && shown < 4; i++)
             {
                 var s = st.storage[i];
-                if (s.itemId <= 0) { if (i == 0) sb.Append("空栏位\n"); continue; }
+                if (s.itemId <= 0) { if (i == 0) sb.Append(Strings.Get("link.card.empty_slot")).Append('\n'); continue; }
                 var proto = LDB.items != null ? LDB.items.Select(s.itemId) : null;
                 if (proto == null) continue;
                 if (shown > 0) sb.Append('\n');
                 sb.Append(proto.iconTagString).Append(' ').Append(s.count).Append('/').Append(s.max);
-                if (s.localLogic == ELogisticStorage.Demand) sb.Append(" 本地需求");
-                else if (s.localLogic == ELogisticStorage.Supply) sb.Append(" 本地供应");
-                if (s.remoteLogic == ELogisticStorage.Supply) sb.Append(" 星际供应");
-                else if (s.remoteLogic == ELogisticStorage.Demand) sb.Append(" 星际需求");
+                if (s.localLogic == ELogisticStorage.Demand) sb.Append(' ').Append(Strings.Get("link.card.storage.local_demand"));
+                else if (s.localLogic == ELogisticStorage.Supply) sb.Append(' ').Append(Strings.Get("link.card.storage.local_supply"));
+                if (s.remoteLogic == ELogisticStorage.Supply) sb.Append(' ').Append(Strings.Get("link.card.storage.remote_supply"));
+                else if (s.remoteLogic == ELogisticStorage.Demand) sb.Append(' ').Append(Strings.Get("link.card.storage.remote_demand"));
                 shown++;
             }
-            if (shown == 0) return "空栏位";
+            if (shown == 0) return Strings.Get("link.card.empty_slot");
             return sb.ToString();
         }
 
@@ -440,11 +434,11 @@ namespace IcarusII.Game.Tools
             {
                 var net = factory.powerSystem.netPool[g.networkId];
                 double use = net.consumerRatio == 1 ? net.generaterRatio : net.consumerRatio > 0.1 ? 1 / net.consumerRatio : 10;
-                load = use >= 10 ? "无法负荷" : ((int)(use * 100)).ToString(CultureInfo.InvariantCulture) + "%";
+                load = use >= 10 ? Strings.Get("link.card.status.overload") : ((int)(use * 100)).ToString(CultureInfo.InvariantCulture) + "%";
             }
             else load = "0%";
-            string status = g.useFuelPerTick > 0 && g.curFuelId == 0 && g.fuelEnergy == 0 && g.fuelId == 0 ? "需要燃料" : "正常运转";
-            return string.Format(CultureInfo.InvariantCulture, "功率: {0}\n电网负荷: {1}\n状态: {2}", Watt(outW), load, status);
+            string status = g.useFuelPerTick > 0 && g.curFuelId == 0 && g.fuelEnergy == 0 && g.fuelId == 0 ? Strings.Get("link.card.status.no_fuel") : Strings.Get("link.card.status.working");
+            return Strings.GetInvariant("link.card.powergen", Watt(outW), load, status);
         }
 
         private static string PowerNode(PlanetFactory factory, EntityData entity)
@@ -464,11 +458,10 @@ namespace IcarusII.Game.Tools
                 netId = factory.powerSystem.accPool[entity.powerAccId].networkId;
             else if (entity.powerExcId > 0 && entity.powerExcId < factory.powerSystem.excPool.Length)
                 netId = factory.powerSystem.excPool[entity.powerExcId].networkId;
-            if (netId <= 0 || netId >= factory.powerSystem.netPool.Length) return "电网 #0";
+            if (netId <= 0 || netId >= factory.powerSystem.netPool.Length) return Strings.Get("link.card.powernode.id", 0);
             var net = factory.powerSystem.netPool[netId];
-            if (net == null) return "电网 #" + netId.ToString(CultureInfo.InvariantCulture);
-            return string.Format(CultureInfo.InvariantCulture,
-                "电网 #{0}\n发电性能: {1}\n耗电需求: {2}\n实际发电: {3}",
+            if (net == null) return Strings.Get("link.card.powernode.id", netId.ToString(CultureInfo.InvariantCulture));
+            return Strings.GetInvariant("link.card.powernode",
                 netId, Watt(net.energyCapacity * 60), Watt(net.energyRequired * 60), Watt(net.energyServed * 60));
         }
 
@@ -479,7 +472,7 @@ namespace IcarusII.Game.Tools
             float ratio = PowerRatio(factory, turret.pcId);
             string power = PowerLine(factory, turret.pcId, out _);
             string status = turret.itemCount == 0 && turret.bulletCount == 0 && turret.itemBulletCount == 0
-                ? "缺少弹药" : ratio < PowerSystem.kOffPower ? "电力不足" : turret.isWorking ? "交战中" : "待机";
+                ? Strings.Get("link.card.status.no_ammo") : ratio < PowerSystem.kOffPower ? Strings.Get("link.card.status.low_power") : turret.isWorking ? Strings.Get("link.card.status.fighting") : Strings.Get("link.card.status.idle");
             double rate = 0;
             var proto = LDB.items != null ? LDB.items.Select(entity.protoId) : null;
             if (proto != null && proto.prefabDesc != null)
@@ -488,8 +481,7 @@ namespace IcarusII.Game.Tools
                 double denom = p.turretRoundInterval + p.turretMuzzleInterval * (p.turretMuzzleCount - 1f);
                 if (denom > 0) rate = p.turretROF * p.turretMuzzleCount * 60.0 / denom;
             }
-            return string.Format(CultureInfo.InvariantCulture,
-                "电力: {0}\n状态: {1}\n射速: {2:0.##}/s", power, status, rate);
+            return Strings.GetInvariant("link.card.turret", power, status, rate);
         }
 
         private static string FieldGenerator(PlanetFactory factory, EntityData entity)
@@ -499,8 +491,7 @@ namespace IcarusII.Game.Tools
             string power = PowerLine(factory, f.pcId, out _);
             double holding = f.fieldHolding * 100.0;
             double fill = factory.planetATField != null ? factory.planetATField.globeFillRatio * 100.0 : holding;
-            return string.Format(CultureInfo.InvariantCulture,
-                "电力: {0}\n支撑力: {1:0.00}%\n全球填充度: {2:0.00}%", power, holding, fill);
+            return Strings.GetInvariant("link.card.field", power, holding, fill);
         }
 
         private static string Ejector(PlanetFactory factory, EntityData entity)
@@ -508,11 +499,11 @@ namespace IcarusII.Game.Tools
             if (entity.ejectorId <= 0 || factory.factorySystem == null) return string.Empty;
             ref var e = ref factory.factorySystem.ejectorPool[entity.ejectorId];
             string power = PowerLine(factory, e.pcId, out float ratio);
-            string status = e.runtimeOrbitId == 0 ? "无可用轨道" : e.bulletCount == 0 ? "缺少弹射物" : ratio < PowerSystem.kOffPower ? "电力不足" : e.direction != 0 ? "发射中" : "待机";
+            string status = e.runtimeOrbitId == 0 ? Strings.Get("link.card.status.no_orbit") : e.bulletCount == 0 ? Strings.Get("link.card.status.no_bullet") : ratio < PowerSystem.kOffPower ? Strings.Get("link.card.status.low_power") : e.direction != 0 ? Strings.Get("link.card.status.firing") : Strings.Get("link.card.status.idle");
             double perMin = e.chargeSpend + e.coldSpend > 0 ? 60.0 / (e.chargeSpend + e.coldSpend) * 600000.0 : 0;
             perMin *= Cargo.accTableMilli[e.incLevel] + 1.0;
             if (e.boost) perMin *= EjectorComponent.BOOST_SCALE;
-            return string.Format(CultureInfo.InvariantCulture, "电力: {0}\n状态: {1}\n射速: {2:0.0}/分钟", power, status, perMin);
+            return Strings.GetInvariant("link.card.rate_per_min", power, status, perMin);
         }
 
         private static string Silo(PlanetFactory factory, EntityData entity)
@@ -520,11 +511,11 @@ namespace IcarusII.Game.Tools
             if (entity.siloId <= 0 || factory.factorySystem == null) return string.Empty;
             ref var s = ref factory.factorySystem.siloPool[entity.siloId];
             string power = PowerLine(factory, s.pcId, out float ratio);
-            string status = !s.hasNode ? "无可用轨道" : s.bulletCount == 0 ? "缺少火箭" : ratio < PowerSystem.kOffPower ? "电力不足" : s.direction != 0 ? (s.direction > 0 ? "充能中" : "冷却中") : "待机";
+            string status = !s.hasNode ? Strings.Get("link.card.status.no_orbit") : s.bulletCount == 0 ? Strings.Get("link.card.status.no_rocket") : ratio < PowerSystem.kOffPower ? Strings.Get("link.card.status.low_power") : s.direction != 0 ? (s.direction > 0 ? Strings.Get("link.card.status.charging") : Strings.Get("link.card.status.cooling")) : Strings.Get("link.card.status.idle");
             double perMin = s.chargeSpend + s.coldSpend > 0 ? 60.0 / (s.chargeSpend + s.coldSpend) * 600000.0 : 0;
             perMin *= Cargo.accTableMilli[s.incLevel] + 1.0;
             if (s.boost) perMin *= SiloComponent.BOOST_SCALE;
-            return string.Format(CultureInfo.InvariantCulture, "电力: {0}\n状态: {1}\n射速: {2:0.0}/分钟", power, status, perMin);
+            return Strings.GetInvariant("link.card.rate_per_min", power, status, perMin);
         }
 
         private static string Piler(PlanetFactory factory, EntityData entity)
@@ -532,8 +523,8 @@ namespace IcarusII.Game.Tools
             if (entity.pilerId <= 0 || factory.cargoTraffic == null) return string.Empty;
             ref var p = ref factory.cargoTraffic.pilerPool[entity.pilerId];
             string power = PowerLine(factory, p.pcId, out float ratio);
-            string status = ratio < PowerSystem.kOffPower ? "电力不足" : p.isWorkForward ? "堆叠中" : "拆包中";
-            return string.Format(CultureInfo.InvariantCulture, "电力: {0}\n状态: {1}", power, status);
+            string status = ratio < PowerSystem.kOffPower ? Strings.Get("link.card.status.low_power") : p.isWorkForward ? Strings.Get("link.card.status.stacking") : Strings.Get("link.card.status.unstacking");
+            return Strings.GetInvariant("link.card.piler", power, status);
         }
 
         private static string Tank(PlanetFactory factory, EntityData entity)
@@ -541,9 +532,8 @@ namespace IcarusII.Game.Tools
             if (entity.tankId <= 0 || factory.factoryStorage == null) return string.Empty;
             ref var t = ref factory.factoryStorage.tankPool[entity.tankId];
             var proto = t.fluidId > 0 && LDB.items != null ? LDB.items.Select(t.fluidId) : null;
-            string label = proto != null ? proto.iconTagString + proto.name : "空";
-            return string.Format(CultureInfo.InvariantCulture,
-                "{0} 储量: {1}/{2}", label, t.fluidCount, t.fluidCapacity);
+            string label = proto != null ? proto.iconTagString + proto.name : Strings.Get("link.card.empty");
+            return Strings.GetInvariant("link.card.tank", label, t.fluidCount, t.fluidCapacity);
         }
 
         private static string Lab(PlanetFactory factory, EntityData entity)
@@ -559,8 +549,8 @@ namespace IcarusII.Game.Tools
                 double period = recipe.TimeSpend / 600000.0;
                 perMin = 60.0 / period * (0.0001 * l.speed * ratio) * (1 + l.extraSpeed * 0.1 / Math.Max(1, l.speed));
             }
-            string status = ratio < PowerSystem.kOffPower ? "电力不足" : l.replicating ? "正常运转" : "待机";
-            return string.Format(CultureInfo.InvariantCulture, "生产速度: {0:0.0}/min\n电力: {1}\n状态: {2}", perMin, power, status);
+            string status = ratio < PowerSystem.kOffPower ? Strings.Get("link.card.status.low_power") : l.replicating ? Strings.Get("link.card.status.working") : Strings.Get("link.card.status.idle");
+            return Strings.GetInvariant("link.card.production", perMin, power, status);
         }
 
         private static string Fractionator(PlanetFactory factory, EntityData entity)
@@ -568,9 +558,9 @@ namespace IcarusII.Game.Tools
             if (entity.fractionatorId <= 0 || factory.factorySystem == null) return string.Empty;
             ref var f = ref factory.factorySystem.fractionatorPool[entity.fractionatorId];
             string power = PowerLine(factory, f.pcId, out float ratio);
-            string status = ratio < PowerSystem.kOffPower ? "电力不足" : f.isWorking ? "正常运转" : "待机";
-            string product = f.productId > 0 ? GameToolFormat.ItemName(f.productId) : "无";
-            return string.Format(CultureInfo.InvariantCulture, "电力: {0}\n状态: {1}\n产物: {2}", power, status, product);
+            string status = ratio < PowerSystem.kOffPower ? Strings.Get("link.card.status.low_power") : f.isWorking ? Strings.Get("link.card.status.working") : Strings.Get("link.card.status.idle");
+            string product = f.productId > 0 ? GameToolFormat.ItemName(f.productId) : Strings.Get("link.card.fractionator.none");
+            return Strings.GetInvariant("link.card.fractionator", power, status, product);
         }
     }
 }

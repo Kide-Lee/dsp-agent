@@ -10,8 +10,7 @@
  * 不联网、不启动 sidecar。
  */
 
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   CONFIG_FILE_NAME,
@@ -22,9 +21,9 @@ import {
   redactSecrets,
 } from '../dist/config.js';
 import { classifyUpstreamError } from '../dist/agent.js';
-import { FAKE_KEY, check, summary } from './helpers.mjs';
+import { FAKE_KEY, check, summary, makeTempDir } from './helpers.mjs';
 
-const dir = mkdtempSync(join(tmpdir(), 'icarus-ii-cfg-'));
+const dir = makeTempDir('icarus-ii-cfg-');
 const configPath = join(dir, CONFIG_FILE_NAME);
 
 function fresh() {
@@ -189,6 +188,37 @@ try {
     check('自定义供应商 hasKey', store.hasKey() === true);
   }
 
+  // 3f) 运行期路径 / Wiki 端点只从 config.json 读取
+  {
+    writeRaw(
+      JSON.stringify({
+        providers: {
+          deepseek: { apiKey: FAKE_KEY, baseUrl: null, models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }] },
+        },
+        active: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+        blueprintDir: '/tmp/icarus-blueprint',
+        wiki: { zhApi: 'https://zh.example/api.php', enApi: 'https://en.example/api.php' },
+      }),
+    );
+    const store = fresh();
+    check('config.json blueprintDir 被读取', store.blueprintRoot() === '/tmp/icarus-blueprint');
+    check('config.json wiki.zhApi 被读取', store.wikiEndpoint('zh') === 'https://zh.example/api.php');
+    check('config.json wiki.enApi 被读取', store.wikiEndpoint('en') === 'https://en.example/api.php');
+
+    store.update({ thinkingLevel: 'low' });
+    const onDisk = JSON.parse(readFileSync(configPath, 'utf8'));
+    check('blueprintDir 落盘保留', onDisk.blueprintDir === '/tmp/icarus-blueprint');
+    check('wiki.zhApi 落盘保留', onDisk.wiki?.zhApi === 'https://zh.example/api.php');
+    check('wiki.enApi 落盘保留', onDisk.wiki?.enApi === 'https://en.example/api.php');
+  }
+  {
+    writeRaw(JSON.stringify({ blueprintDir: 42, wiki: { zhApi: [], enApi: null } }));
+    const store = fresh();
+    check('非法 blueprintDir 被忽略', store.blueprintRoot() === null);
+    check('非法 wiki.zhApi 被忽略', store.wikiEndpoint('zh') === null);
+    check('非法 wiki.enApi 被忽略', store.wikiEndpoint('en') === null);
+  }
+
   // 4) 损坏 / 非法 JSON 容错
   {
     writeRaw('{ this is not json');
@@ -295,7 +325,7 @@ try {
     );
     check(
       '落盘文件不含多余字段',
-      Object.keys(onDisk).sort().join(',') === 'active,permissionLevel,providers,thinkingLevel',
+      Object.keys(onDisk).sort().join(',') === 'active,blueprintDir,permissionLevel,providers,thinkingLevel,wiki',
       Object.keys(onDisk).join(','),
     );
     check(

@@ -45,7 +45,15 @@ namespace IcarusII.Common.Transport
         /// <summary>连续多少个 ping 周期没收到 pong 就判定链路已死。</summary>
         public int PingMissLimit = 2;
 
-        public string Uri => $"ws://{Host}:{Port}/";
+        public string Uri
+        {
+            get
+            {
+                var host = Host is not null && Host.Contains(":") && !Host.StartsWith("[")
+                    ? $"[{Host}]" : Host;
+                return $"ws://{host}:{Port}/";
+            }
+        }
 
         public SidecarOptions Clone() => (SidecarOptions)MemberwiseClone();
     }
@@ -112,7 +120,7 @@ namespace IcarusII.Common.Transport
 
         public void Start()
         {
-            if (_runner != null) return;
+            if (_runner is not null) return;
             _cts = new CancellationTokenSource();
             _runner = Task.Run(() => RunAsync(_cts.Token));
         }
@@ -120,11 +128,11 @@ namespace IcarusII.Common.Transport
         public void Stop()
         {
             var cts = _cts;
-            if (cts == null) return;
+            if (cts is null) return;
             try { cts.Cancel(); } catch { /* ignore */ }
 
             var ws = _ws;
-            if (ws != null)
+            if (ws is not null)
             {
                 // 尽力优雅关闭；失败无所谓，RunAsync 的 finally 会兜底释放。
                 try
@@ -165,14 +173,15 @@ namespace IcarusII.Common.Transport
             string apiKey = null, string baseUrl = null, string thinkingLevel = null,
             JsonValue providerConfig = null, JsonValue removeProviders = null,
             string activeProvider = null, string activeModel = null,
-            string permissionLevel = null)
+            string permissionLevel = null, bool clearBaseUrl = false)
         {
             if (_state != ConnectionState.Ready) return null;
 
             var env = Protocol.Protocol.Envelope(
                 Protocol.Protocol.ConfigSet,
                 Protocol.Protocol.BuildConfigSet(provider, model, apiKey, baseUrl, thinkingLevel,
-                    providerConfig, removeProviders, activeProvider, activeModel, permissionLevel),
+                    providerConfig, removeProviders, activeProvider, activeModel, permissionLevel,
+                    clearBaseUrl),
                 NextId(), null);
 
             _sendQueue.Enqueue(env);
@@ -369,7 +378,7 @@ namespace IcarusII.Common.Transport
 
         private void UpdateConfig(Protocol.ConfigState next)
         {
-            if (next == null) return;
+            if (next is null) return;
             _config = next;
             try { ConfigChanged?.Invoke(next); } catch (Exception ex) { EmitLog($"配置回调异常：{ex.Message}"); }
         }
@@ -512,7 +521,7 @@ namespace IcarusII.Common.Transport
         {
             var ws = _ws;
             _ws = null;
-            if (ws != null)
+            if (ws is not null)
             {
                 try { ws.Dispose(); } catch { /* ignore */ }
             }
@@ -537,7 +546,7 @@ namespace IcarusII.Common.Transport
         private async Task SendRawAsync(JsonValue env, CancellationToken ct)
         {
             var ws = _ws;
-            if (ws == null || ws.State != WebSocketState.Open) return;
+            if (ws is null || ws.State != WebSocketState.Open) return;
 
             var bytes = Encoding.UTF8.GetBytes(env.ToJson());
             await _sendLock.WaitAsync(ct).ConfigureAwait(false);

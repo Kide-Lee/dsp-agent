@@ -5,8 +5,7 @@
  *   node test/kb-tools.mjs
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KnowledgeStore } from '../dist/kb/store.js';
@@ -14,6 +13,7 @@ import { KnowledgeManager } from '../dist/kb/manager.js';
 import { createKbTools, KB_TOOL_NAMES } from '../dist/kb/tools.js';
 import { toolNamesForCapabilities } from '../dist/tools/registry.js';
 import { buildToolCallPayload } from '../dist/protocol.js';
+import { makeTempDir } from './helpers.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -23,7 +23,7 @@ const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = JSON.parse(readFileSync(join(here, 'fixtures', 'kb-test.json'), 'utf8'));
-const temp = mkdtempSync(join(tmpdir(), 'icarus-kb-'));
+const temp = makeTempDir('icarus-kb-');
 
 function tool(tools, name) {
   return tools.find((item) => item.name === name);

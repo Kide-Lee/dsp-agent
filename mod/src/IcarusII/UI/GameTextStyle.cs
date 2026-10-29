@@ -45,12 +45,26 @@ namespace IcarusII.UI
         /// 游戏原生 UI 用 5x + 锐化来保证可读性，但长时间看大段白字时泛光偏大；
         /// 2x 亮度 + 更硬的 alpha 边缘在深色面板上足够清晰，也不容易糊成一团。
         /// </summary>
-        public static Material SoftMaterial =>
-            Soften(IconBaseMaterial ?? Material, ref _softNormal, 2.0f, 0.4f);
+        public static Material SoftMaterial
+        {
+            get
+            {
+                var (material, cache) = Soften(IconBaseMaterial ?? Material, _softNormal, 2.0f, 0.4f);
+                _softNormal = cache;
+                return material;
+            }
+        }
 
         /// <summary>输入框的柔化版本；比正文略厚，保留原生输入框观感。</summary>
-        public static Material SoftThickMaterial =>
-            Soften(IconBaseMaterial ?? ThickMaterial, ref _softThick, 2.0f, 0.5f);
+        public static Material SoftThickMaterial
+        {
+            get
+            {
+                var (material, cache) = Soften(IconBaseMaterial ?? ThickMaterial, _softThick, 2.0f, 0.5f);
+                _softThick = cache;
+                return material;
+            }
+        }
 
         /// <summary>
         /// 原生图文材质。它的图标分支带 `_Sharp=0`（shader 内钳到 0.4），
@@ -146,28 +160,28 @@ namespace IcarusII.UI
         }
 
         /// <summary>复制一份材质并压低亮度；不修改游戏共享材质。</summary>
-        private static Material Soften(Material source, ref Material cache, float multiplier, float sharp)
+        private static (Material Result, Material Cache) Soften(
+            Material source, Material cache, float multiplier, float sharp)
         {
             if (cache != null && source != null &&
                 cache.shader == source.shader &&
                 cache.name == source.name + "-icarus-soft")
             {
-                return cache;
+                return (cache, cache);
             }
-            if (source == null) return cache;
+            if (source == null) return (cache, cache);
             try
             {
                 var material = new Material(source);
                 material.name = source.name + "-icarus-soft";
                 if (material.HasProperty("_Multiplier")) material.SetFloat("_Multiplier", multiplier);
                 if (material.HasProperty("_Sharp")) material.SetFloat("_Sharp", sharp);
-                cache = material;
-                return material;
+                return (material, material);
             }
             catch (System.Exception ex)
             {
                 Plugin.Log.LogWarning($"[UI] 复制文字材质失败，退回原材质：{ex.Message}");
-                return source;
+                return (source, cache);
             }
         }
     }

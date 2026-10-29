@@ -333,40 +333,43 @@ export class KnowledgeBase {
     const allowed = kinds && kinds.length > 0 ? new Set(kinds) : null;
     const spoilerRank = { none: 0, low: 1, story: 2 } as const;
     const maxRank = spoilerRank[maxSpoiler];
-    const best = new Map<string, KbSearchHit>();
+    const best = new Map<string, KbSearchHit & { rank: number }>();
 
     for (const entry of this.entries) {
       if (allowed && !allowed.has(entry.kind)) continue;
       if (spoilerRank[entry.spoiler ?? 'none'] > maxRank) continue;
-      let score = 0;
-      if (entry.idText === q) score += 80;
-      if (entry.norm === q) score += 100;
-      else if (entry.norm.startsWith(q)) score += 50;
-      else if (entry.norm.includes(q)) score += 30;
-      if (tokens.length > 1 && tokens.every((token) => entry.norm.includes(token))) score += 20;
-      if (entry.sidNorm && entry.sidNorm.includes(q)) score += 40;
-      if (entry.summary && normalize(entry.summary).includes(q)) score += 10;
-      if (entry.bodyNorm && entry.bodyNorm.includes(q)) score += 10;
-      if (score <= 0) continue;
+      // 固定的匹配优先级：精确 > 前缀 > 包含 > token 全含 > SID/摘要/正文命中。
+      // 这是确定性排序键，不是给模型看的置信度。
+      let rank = 0;
+      if (entry.idText === q) rank += 80;
+      if (entry.norm === q) rank += 100;
+      else if (entry.norm.startsWith(q)) rank += 50;
+      else if (entry.norm.includes(q)) rank += 30;
+      if (tokens.length > 1 && tokens.every((token) => entry.norm.includes(token))) rank += 20;
+      if (entry.sidNorm && entry.sidNorm.includes(q)) rank += 40;
+      if (entry.summary && normalize(entry.summary).includes(q)) rank += 10;
+      if (entry.bodyNorm && entry.bodyNorm.includes(q)) rank += 10;
+      if (rank <= 0) continue;
 
       const key = `${entry.kind}:${String(entry.id)}`;
       const previous = best.get(key);
-      if (previous && previous.score >= score) continue;
+      if (previous && previous.rank >= rank) continue;
       best.set(key, {
         kind: entry.kind,
         id: entry.id,
         name: entry.name,
         summary: entry.summary,
         iconTag: entry.iconTag,
-        score,
+        rank,
       });
     }
 
     return [...best.values()]
       .sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score;
+        if (b.rank !== a.rank) return b.rank - a.rank;
         return a.name.length - b.name.length || a.name.localeCompare(b.name);
       })
+      .map(({ rank: _rank, ...hit }) => hit)
       .slice(0, Math.max(1, Math.min(limit, 50)));
   }
 

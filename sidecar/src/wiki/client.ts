@@ -96,8 +96,8 @@ export class WikiClient {
   constructor(options: WikiClientOptions = {}) {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.apis = {
-      zh: options.zhApi ?? process.env['ICARUS_WIKI_ZH_API'] ?? DEFAULTS.zhApi,
-      en: options.enApi ?? process.env['ICARUS_WIKI_EN_API'] ?? DEFAULTS.enApi,
+      zh: options.zhApi ?? DEFAULTS.zhApi,
+      en: options.enApi ?? DEFAULTS.enApi,
     };
     this.bases = {
       zh: this.apis.zh.replace(/\/api\.php$/, ''),

@@ -31,3 +31,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 dsp-game/
+
+# test temp dirs (must stay inside repo)
+sidecar/.test-tmp/

@@ -17,6 +17,7 @@ import { DEBUG_TOOL_NAMES, isDebugToolAllowed } from '../dist/tools/debug.js';
 import { GameToolHost } from '../dist/tools/host.js';
 import { PiAgent } from '../dist/agent.js';
 import '../dist/tools/registry.js';
+import { makeTempDir } from './helpers.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -232,10 +233,12 @@ console.log('\n── 5. PiAgent.debugTool 实际执行 ──');
     get: () => ({ apiKey: null, provider: 'test', model: 'test', thinkingLevel: 'high' }),
     hasKey: () => false,
     maskedApiKey: null,
+    blueprintRoot: () => null,
+    wikiEndpoint: () => null,
   };
   const host = new GameToolHost();
   host.setCapabilities(['game.read.v1', 'game.entity.v1', 'game.view.v1']);
-  const agent = new PiAgent({ dataDir: '/tmp/icarus-debug-test', store, host });
+  const agent = new PiAgent({ dataDir: makeTempDir('icarus-debug-'), store, host });
   const emit = {
     isActive: () => true,
     callTool: async (name, args) => ({

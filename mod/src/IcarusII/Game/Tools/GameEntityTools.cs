@@ -803,7 +803,7 @@ namespace IcarusII.Game.Tools
                 if (required > 0) text += " · 需电 " + GameToolFormat.PowerDisplay(required);
             }
 
-            if (data["stale"].AsBool(false)) text += " · ⚠ id 已回收";
+            if (data["stale"].AsBool(false)) text += " · [警告] id 已回收";
             return text;
         }
     }
@@ -1161,15 +1161,12 @@ namespace IcarusII.Game.Tools
                 // 否则非 16:9 的截图里编号框会整体偏斜。
                 cam.aspect = (float)width / height;
 
-                try
-                {
-                    GameCamera.CaptureScreenshot(width, height);
-                }
-                catch (Exception ex)
+                var captureError = TryCaptureScreenshot(width, height);
+                if (captureError != null)
                 {
                     data.Set("available", false);
                     data.Set("reason", "capture_failed");
-                    data.Set("display", "截图失败：" + ex.Message);
+                    data.Set("display", "截图失败：" + captureError);
                     return new GameToolJobResult { Data = data };
                 }
 
@@ -1191,27 +1188,17 @@ namespace IcarusII.Game.Tools
                     ? CollectMarks(gameData, width, height)
                     : new List<VisibleMark>();
 
-                Texture2D tile = null;
-                try
+                var encoded = EncodeJpeg(png, annotate, marks, width, height);
+                if (encoded.Error != null)
                 {
-                    if (!TryDecodePng(png, out tile))
-                    {
-                        data.Set("available", false);
-                        data.Set("reason", "encode_failed");
-                        data.Set("display", "画面解码失败");
-                        return new GameToolJobResult { Data = data };
-                    }
-
-                    if (annotate && marks.Count > 0) DrawMarks(tile, marks, width, height);
-                    tile.Apply(false, false);
-                    jpeg = tile.EncodeToJPG(JpegQuality);
-                    outWidth = tile.width;
-                    outHeight = tile.height;
+                    data.Set("available", false);
+                    data.Set("reason", "encode_failed");
+                    data.Set("display", encoded.Error);
+                    return new GameToolJobResult { Data = data };
                 }
-                finally
-                {
-                    if (tile != null) UnityEngine.Object.Destroy(tile);
-                }
+                jpeg = encoded.Jpeg;
+                outWidth = encoded.Width;
+                outHeight = encoded.Height;
             }
             finally
             {
@@ -1266,6 +1253,37 @@ namespace IcarusII.Game.Tools
                 + (jpeg.Length / 1024) + " KiB）");
 
             return new GameToolJobResult { Data = data, Image = image };
+        }
+
+        private static string TryCaptureScreenshot(int width, int height)
+        {
+            try
+            {
+                GameCamera.CaptureScreenshot(width, height);
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
+        }
+
+        private static (byte[] Jpeg, int Width, int Height, string Error) EncodeJpeg(
+            byte[] png, bool annotate, List<VisibleMark> marks, int width, int height)
+        {
+            Texture2D tile = null;
+            try
+            {
+                if (!TryDecodePng(png, out tile)) return (null, 0, 0, "画面解码失败");
+                if (annotate && marks.Count > 0) DrawMarks(tile, marks, width, height);
+                tile.Apply(false, false);
+                var jpeg = tile.EncodeToJPG(JpegQuality);
+                return (jpeg, tile.width, tile.height, null);
+            }
+            finally
+            {
+                if (tile != null) UnityEngine.Object.Destroy(tile);
+            }
         }
 
         private static string NormalizeView(string view)
@@ -2139,6 +2157,8 @@ namespace IcarusII.Game.Tools
     /// </summary>
     internal sealed class CopyBlueprintTool : IGameToolHandler
     {
+        private const int MaxBlueprintNameSuffix = 999;
+
         public string Name => "game_copy_blueprint";
         public int TimeoutMs => 20000;
 
@@ -2225,8 +2245,15 @@ namespace IcarusII.Game.Tools
 
             var fileName = baseName + ".txt";
             var path = System.IO.Path.Combine(dir, fileName);
-            for (int i = 2; i < 50 && System.IO.File.Exists(path); i++)
+            for (int i = 2; System.IO.File.Exists(path); i++)
             {
+                if (i > MaxBlueprintNameSuffix)
+                {
+                    data.Set("saved", false);
+                    data.Set("error", "too_many_duplicates");
+                    data.Set("display", "同名蓝图过多；请换一个名字或目录");
+                    return new GameToolJobResult { Data = data };
+                }
                 fileName = baseName + " (" + i.ToString(CultureInfo.InvariantCulture) + ").txt";
                 path = System.IO.Path.Combine(dir, fileName);
             }

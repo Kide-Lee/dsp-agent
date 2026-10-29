@@ -47,6 +47,9 @@ namespace IcarusII.UI
     {
         private const int MaxTranscriptChars = 120000;
 
+        /// <summary>盖在游戏 UI 之上的 Canvas 排序值。</summary>
+        private const int CanvasSortingOrder = 30000;
+
         /// <summary>气泡最大宽度；超出就封顶换行（与 prefab 里 example-user-1 一致）。</summary>
         private const float MaxBubbleWidth = 260f;
 
@@ -92,17 +95,11 @@ namespace IcarusII.UI
         /// prefab 已经把机甲信息窗的外框与信标窗的输入框**烘焙**进去了，
         /// 所以这条路径下 `ApplyStyle` 不再重绘外观，只补字体与正文配色。
         /// </summary>
-        private bool _fromPrefab;
 
         /// <summary>窗口当前是否可见。</summary>
         private bool ViewVisible => _root != null && _root.activeSelf;
         private RectTransform _panel;
         private RectTransform _content;
-        private Image _panelImage;
-        private Image _frameImage;
-        private Image _glassImage;
-        private Image _headerImage;
-        private Image _inputImage;
         private Text _statusText;
         private Text _titleText;
         /// <summary>标题文字来自 prefab（设计稿）：字体/字号/材质/颜色都不许运行期改。</summary>
@@ -604,6 +601,9 @@ namespace IcarusII.UI
         private InputField _conversationTitleInput;
         private Text _conversationTitleOver;
         private ConversationTitleDisplay _conversationTitleDisplay;
+
+        /// <summary>标题编辑结束的帧号：同一帧不要再把焦点抢回聊天输入框（见 Tick）。</summary>
+        private int _titleEditEndFrame = -1;
         private readonly List<ConversationInfo> _conversations = new List<ConversationInfo>();
         private readonly List<ConversationView> _conversationViews = new List<ConversationView>();
         private readonly Dictionary<string, bool> _conversationExpanded =
@@ -701,8 +701,32 @@ namespace IcarusII.UI
         /// <summary>窗口打开期间需要持续压制游戏输入（见 Plugin.LateUpdate）。</summary>
         public bool WantsInputSuppressed => IsOpen;
 
-        /// <summary>聊天输入框是否获得焦点。R 开关与 Esc 的行为都依赖它。</summary>
+        /// <summary>聊天输入框是否获得焦点。</summary>
         public bool InputFocused => _input != null && _input.isFocused;
+
+        /// <summary>右栏会话标题输入框是否正在编辑。</summary>
+        /// <remarks>
+        /// 除了 isFocused，还要看 EventSystem 的选中对象。
+        /// 点下去到真正激活之间有一帧 m_AllowInput 仍是 false，只认 isFocused 会被 Tick 的焦点重申抢回去。
+        /// </remarks>
+        public bool TitleEditing
+        {
+            get
+            {
+                if (_conversationTitleInput == null) return false;
+                if (_conversationTitleInput.isFocused) return true;
+                var es = UnityEngine.EventSystems.EventSystem.current;
+                return es != null && es.currentSelectedGameObject == _conversationTitleInput.gameObject;
+            }
+        }
+
+        /// <summary>任一输入框（聊天框或标题框）正在编辑。</summary>
+        /// <remarks>热键让位与 Esc 都看这个，否则在标题框里打字时按 R 会直接关窗。</remarks>
+        public bool AnyInputFocused => InputFocused || TitleEditing;
+
+        /// <summary>本帧标题编辑是否刚刚结束。</summary>
+        /// <remarks>游戏 InputField 自己消费 Esc 时不会留下聚焦状态，Plugin 靠这个避免顺手把窗口关掉。</remarks>
+        public bool TitleEditEndedThisFrame => Time.frameCount == _titleEditEndFrame;
 
         /// <summary>
         /// 聚焦输入框（按 Enter 或点击窗口时调用）。
@@ -728,6 +752,32 @@ namespace IcarusII.UI
             _input.DeactivateInputField();
             var es = UnityEngine.EventSystems.EventSystem.current;
             if (es != null && es.currentSelectedGameObject == _input.gameObject)
+                es.SetSelectedGameObject(null);
+        }
+
+        /// <summary>取消当前正在编辑的那个输入框（标题优先），热键与 Esc 让位时用。</summary>
+        public void BlurActiveInput()
+        {
+            if (TitleEditing)
+            {
+                CancelTitleEditing();
+                return;
+            }
+            BlurInput();
+        }
+
+        /// <summary>
+        /// 退出标题编辑并还原成已保存的标题。
+        /// 先还原再失焦：InputField 失焦会抛出 onEndEdit，文本与当前标题相同才不会当成改名提交。
+        /// </summary>
+        public void CancelTitleEditing()
+        {
+            if (_conversationTitleInput == null) return;
+            _wantInputFocus = false;
+            RefreshConversationTitle();
+            _conversationTitleInput.DeactivateInputField();
+            var es = UnityEngine.EventSystems.EventSystem.current;
+            if (es != null && es.currentSelectedGameObject == _conversationTitleInput.gameObject)
                 es.SetSelectedGameObject(null);
         }
 
@@ -798,6 +848,7 @@ namespace IcarusII.UI
                 ? es.currentSelectedGameObject.name
                 : "null";
             return $"want={_wantInputFocus} isFocused={(_input != null && _input.isFocused)} " +
+                   $"title={TitleEditing} " +
                    $"interactable={(_input != null && _input.interactable)} " +
                    $"eventSystem={(es != null ? es.name : "NULL")} selected={selected}";
         }
@@ -854,7 +905,6 @@ namespace IcarusII.UI
             _transcript = null;
             _scroll = null;
             _input = null;
-            _fromPrefab = false;
             _lines.Clear();
             _items.Clear();
             _linkTargets.Clear();
@@ -884,6 +934,7 @@ namespace IcarusII.UI
             _conversationTitleInput = null;
             _conversationTitleOver = null;
             _conversationTitleDisplay = null;
+            _titleEditEndFrame = -1;
             _activeConversationId = null;
             _pendingFocusConversationId = null;
             _pendingFocusText = null;
@@ -953,23 +1004,16 @@ namespace IcarusII.UI
             // 这里把提示容器抬到窗口之上，提示才不会出现"从中间被切断"的观感。
             NativeTipLayer.Ensure(uiRoot);
 
-            // 优先用随 mod 分发的 prefab（可在 Unity 里可视化编辑，见 mod/unity）。
-            // 拿不到、或结构不完整时退回代码构建——"少一个资源文件"不该让窗口整个消失。
             var prefabPanel = WindowPrefab.Instantiate(rootRt);
-            if (prefabPanel != null && TryWireFromPrefab(prefabPanel, config, font))
+            if (prefabPanel == null || !TryWireFromPrefab(prefabPanel, config, font))
             {
-                Plugin.Log.LogInfo($"[UI] 窗口来自 prefab（{WindowPrefab.Status}）");
+                if (prefabPanel != null) UnityEngine.Object.Destroy(prefabPanel);
+                Plugin.Log.LogError("[UI] 无法加载 ChatWindow prefab；请确认 ui/icarusii-ui 已随插件安装。");
+                UnityEngine.Object.Destroy(rootRt.gameObject);
+                _root = null;
+                return;
             }
-            else
-            {
-                if (prefabPanel != null)
-                {
-                    // 结构不完整：销毁半成品，避免留下一个残缺窗口
-                    UnityEngine.Object.Destroy(prefabPanel);
-                    Plugin.Log.LogWarning("[UI] prefab 结构不完整，回退到代码构建");
-                }
-                BuildUiInCode(rootRt, config, font);
-            }
+            Plugin.Log.LogInfo($"[UI] 窗口来自 prefab（{WindowPrefab.Status}）");
 
             ApplyHostScaleAndLayer();
             EnsureChatIndex();
@@ -1029,7 +1073,7 @@ namespace IcarusII.UI
                 rootRt.localScale = Vector3.one;
 
                 canvas.overrideSorting = true;
-                canvas.sortingOrder = 30000;      // 盖在游戏 UI 之上
+                canvas.sortingOrder = CanvasSortingOrder;
                 // 文字/图标的 UV1 等额外通道必须跟宿主一致，否则游戏字体材质会花
                 canvas.additionalShaderChannels = host.additionalShaderChannels;
 
@@ -1044,7 +1088,7 @@ namespace IcarusII.UI
                 Plugin.Log.LogWarning("[UI] 拿不到游戏的 Overlay Canvas，退回顶层 Overlay 画布。");
                 UnityEngine.Object.DontDestroyOnLoad(rootRt.gameObject);
                 canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-                canvas.sortingOrder = 30000;
+                canvas.sortingOrder = CanvasSortingOrder;
                 var scaler = rootRt.gameObject.AddComponent<CanvasScaler>();
                 CopyScalerSettings(scaler, uiRoot);
                 _canvasScale = 1f;
@@ -1087,35 +1131,6 @@ namespace IcarusII.UI
             for (int i = 0; i < t.childCount; i++) SetLayerRecursively(t.GetChild(i), layer);
         }
 
-        /// <summary>代码构建整棵面板子树（原路径，也是 prefab 缺失时的兜底）。</summary>
-        private void BuildUiInCode(RectTransform rootRt, PluginConfig config, Font font)
-        {
-            _fromPrefab = false;
-
-            // 面板：默认屏幕正中
-            _panel = UiFactory.Node("Panel", rootRt);
-            ApplyPanelPlacement(_panel, config);
-            _panelImage = UiFactory.AddPanel(_panel, DefaultPanelBg);
-
-            // 装饰边框与玻璃高光：必须紧跟在底衬之后创建，
-            // 这样它们是靠前的同级子物体（先绘制），不会盖住正文与输入框。
-            // 机体信息窗就是「底衬 + border + glass」三层叠加出来的观感。
-            var frameRt = UiFactory.Node("Frame", _panel);
-            UiFactory.Stretch(frameRt);
-            _frameImage = frameRt.gameObject.AddComponent<Image>();
-            _frameImage.raycastTarget = false;   // 不抢点击
-
-            var glassRt = UiFactory.Node("Glass", _panel);
-            UiFactory.Stretch(glassRt);
-            _glassImage = glassRt.gameObject.AddComponent<Image>();
-            _glassImage.raycastTarget = false;
-            // 点击窗口任意处即可开始输入（比"必须先点输入框"更顺手）
-            _panel.gameObject.AddComponent<ClickToFocus>().Target = this;
-
-            BuildHeader(font);
-            BuildTranscript(font);
-            BuildInputBar(font);
-        }
 
         /// <summary>
         /// 把 prefab 实例接到本类的字段上。
@@ -1149,7 +1164,6 @@ namespace IcarusII.UI
 
             var frame = FindImage(panel, "panel-bg/border", "border", "Frame");
             var glass = FindImage(panel, "panel-bg/glass", "glass", "Glass");
-            var header = FindImage(panel, "Header");
             var status = FindText(panel, "Header/Status",
                 "Header/title-status", "panel-bg/status-text", "status-text", "Status");
 
@@ -1189,7 +1203,6 @@ namespace IcarusII.UI
                     break;
                 }
             }
-            var inputImage = input != null ? input.GetComponent<Image>() : null;
 
             // 输入区的位置/大小完全由 prefab 决定；运行期只查 input 节点，不碰 scroll-view。
 
@@ -1212,18 +1225,12 @@ namespace IcarusII.UI
                 scroll = content.GetComponentInParent<ScrollRect>();
             }
 
-            _fromPrefab = true;
             _panel = panel;
-            _panelImage = panelImage;
-            _frameImage = frame;
-            _glassImage = glass;
-            _headerImage = header;
             _statusText = status;
             _scroll = scroll;
             _content = content;
             _transcript = transcript;
             _input = input;
-            _inputImage = inputImage;
 
             // 消息模板：content 里的 example-* 就是样式样板，运行期克隆它们。
             CaptureTemplates(content);
@@ -1299,7 +1306,7 @@ namespace IcarusII.UI
             //    `<color=#FFFFFF28>…`，再乘上 Text.color 的 0.322 → 约 5% alpha，
             //    配上 widget-text-alpha-5x-thick（_Sharp=0.5）就是"字确实塞进去了但什么都看不见"。
             //
-            //    ⚠️ 只在这里种一次是不够的：`InputField.OnDisable` 里有
+            //    注意：只在这里种一次是不够的：`InputField.OnDisable` 里有
             //    `Array.Clear(m_CharColors, 0, len)`，而聊天窗是 SetActive 开关的，
             //    所以**每次关窗都会把整张表清成 0**。因此开窗时（ApplyOpenState）要重种一次。
             SeedInputCharColors(input, "建窗");
@@ -1443,169 +1450,9 @@ namespace IcarusII.UI
             }
         }
 
-        private void BuildHeader(Font font)
-        {
-            var header = UiFactory.Node("Header", _panel);
-            UiFactory.TopBar(header, 34f);
-            _headerImage = UiFactory.AddPanel(header, DefaultHeaderBg);
 
-            var titleRt = UiFactory.Node("Title", header);
-            UiFactory.Stretch(titleRt, left: 12f, top: 0f, right: 260f, bottom: 0f);
-            var title = UiFactory.AddLabel(titleRt, font, _fontSize + 2, _accent, TextAnchor.MiddleLeft);
-            title.text = Strings.Get("title");
 
-            var statusRt = UiFactory.Node("Status", header);
-            UiFactory.Stretch(statusRt, left: 200f, top: 0f, right: 12f, bottom: 0f);
-            _statusText = UiFactory.AddLabel(statusRt, font, _fontSize - 1, _textDim, TextAnchor.MiddleRight);
-            _statusText.text = string.Empty;
-        }
 
-        private void BuildTranscript(Font font)
-        {
-            CreateTranscript(_panel, font, autoFit: false);
-        }
-
-        /// <summary>
-        /// 建正文区：`Scroll` → `Viewport`(RectMask2D) → `Content`(Text + ContentSizeFitter)。
-        /// 代码构建路径与"prefab 没给正文节点"的运行期补齐都走这里。
-        ///
-        /// <paramref name="autoFit"/>=true 时按窗口里**已有的**标题与输入框实际位置把正文夹在中间，
-        /// 这样你在 Unity 里排好的版面会被尊重，而不是套一组写死的边距。
-        /// </summary>
-        private void CreateTranscript(RectTransform parent, Font font, bool autoFit)
-        {
-            var scrollRt = UiFactory.Node("Scroll", parent);
-            if (autoFit)
-            {
-                UiFactory.Stretch(scrollRt, left: 20f, top: 64f, right: 20f, bottom: 110f);
-                AutoFitTranscript(scrollRt, parent);
-            }
-            else
-            {
-                UiFactory.Stretch(scrollRt, left: 8f, top: 34f + 6f, right: 8f, bottom: 38f + 6f);
-            }
-
-            _scroll = scrollRt.gameObject.AddComponent<ScrollRect>();
-            _scroll.horizontal = false;
-            _scroll.vertical = true;
-            _scroll.movementType = ScrollRect.MovementType.Clamped;
-            _scroll.scrollSensitivity = 30f;
-
-            var viewport = UiFactory.Node("Viewport", scrollRt);
-            UiFactory.Stretch(viewport);
-            // RectMask2D 比 Mask 轻，且不需要额外材质
-            viewport.gameObject.AddComponent<RectMask2D>();
-            // 滚轮/拖拽需要一块 raycast 目标：正文 Text 是 raycastTarget=false，
-            // 视口又只有 RectMask2D（不是图形）→ ScrollRect 收不到事件，正文就"滚不动"。
-            // 补一块全透明 Image 当命中区（原生待办框的 viewport 也是这个套路）。
-            var viewportHit = viewport.gameObject.AddComponent<Image>();
-            viewportHit.color = new Color(0f, 0f, 0f, 0f);
-            viewportHit.raycastTarget = true;
-
-            _content = UiFactory.Node("Content", viewport);
-            _content.anchorMin = new Vector2(0f, 1f);
-            _content.anchorMax = new Vector2(1f, 1f);
-            _content.pivot = new Vector2(0.5f, 1f);
-            _content.anchoredPosition = new Vector2(0f, -4f);
-            _content.sizeDelta = new Vector2(-20f, 100f);
-
-            // 代码兜底路径也用"消息条目"模型：容器挂 VLG + CSF，消息由 CreateItem 逐个创建
-            var vlg = _content.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
-            vlg.spacing = 8f;
-            vlg.padding = new RectOffset(4, 4, 4, 4);
-
-            var fitter = _content.gameObject.AddComponent<ContentSizeFitter>();
-            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
-            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-            _scroll.viewport = viewport;
-            _scroll.content = _content;
-        }
-
-        /// <summary>
-        /// 用现有节点实测位置收紧正文区：上边贴标题下沿、下边贴输入框上沿。
-        /// 量不到就保留调用方给的兜底边距（所以不会把版面弄崩）。
-        /// </summary>
-        private static void AutoFitTranscript(RectTransform scrollRt, RectTransform panel)
-        {
-            try
-            {
-                Canvas.ForceUpdateCanvases();
-
-                var panelTop = panel.rect.yMax;
-                var panelBottom = panel.rect.yMin;
-
-                var top = panelTop - 64f;          // 兜底：让开标题
-                var bottom = panelBottom + 110f;   // 兜底：让开输入区
-
-                foreach (var t in panel.GetComponentsInChildren<Text>(true))
-                {
-                    if (t.gameObject.name.ToLowerInvariant().IndexOf("title") < 0) continue;
-                    var bounds = RectTransformUtility.CalculateRelativeRectTransformBounds(panel, t.rectTransform);
-                    top = bounds.min.y - 8f;
-                    break;
-                }
-
-                var field = panel.GetComponentInChildren<InputField>(true);
-                if (field != null)
-                {
-                    var bounds = RectTransformUtility.CalculateRelativeRectTransformBounds(panel, field.transform as RectTransform);
-                    bottom = bounds.max.y + 8f;
-                }
-
-                if (top - bottom < 40f)   // 量出来太扁（比如还没布局）→ 回兜底
-                {
-                    top = panelTop - 64f;
-                    bottom = panelBottom + 110f;
-                }
-
-                // offsetMax.y 取负表示"距父级上沿的距离"，offsetMin.y 表示"距父级下沿的距离"
-                scrollRt.offsetMax = new Vector2(scrollRt.offsetMax.x, -(panelTop - top));
-                scrollRt.offsetMin = new Vector2(scrollRt.offsetMin.x, bottom - panelBottom);
-
-                Plugin.Log.LogInfo($"[UI] 正文区自动贴合：高 {scrollRt.rect.height:0}px。");
-            }
-            catch (Exception ex)
-            {
-                Plugin.Log.LogWarning($"正文区自动贴合失败，使用兜底边距：{ex.Message}");
-            }
-        }
-
-        private void BuildInputBar(Font font)
-        {
-            var bar = UiFactory.Node("InputBar", _panel);
-            UiFactory.BottomBar(bar, 38f);
-
-            var inputRt = UiFactory.Node("Input", bar);
-            UiFactory.Stretch(inputRt, left: 8f, top: 3f, right: 8f, bottom: 5f);
-            _inputImage = UiFactory.AddPanel(inputRt, DefaultInputBg);
-            var bg = _inputImage;
-
-            var textRt = UiFactory.Node("Text", inputRt);
-            UiFactory.Stretch(textRt, left: 8f, top: 0f, right: 8f, bottom: 0f);
-            var text = UiFactory.AddLabel(textRt, font, _fontSize, _textMain, TextAnchor.MiddleLeft);
-            text.supportRichText = false;
-            text.horizontalOverflow = HorizontalWrapMode.Overflow;
-
-            var placeholderRt = UiFactory.Node("Placeholder", inputRt);
-            UiFactory.Stretch(placeholderRt, left: 8f, top: 0f, right: 8f, bottom: 0f);
-            var placeholder = UiFactory.AddLabel(placeholderRt, font, _fontSize, _textDim, TextAnchor.MiddleLeft);
-            placeholder.supportRichText = false;
-            placeholder.horizontalOverflow = HorizontalWrapMode.Overflow;
-            placeholder.text = Strings.Get("input.placeholder");
-
-            _input = inputRt.gameObject.AddComponent<InputField>();
-            _input.textComponent = text;
-            _input.placeholder = placeholder;
-            _input.targetGraphic = bg;
-            _input.lineType = InputField.LineType.SingleLine;
-            _input.characterLimit = 2000;
-            _input.onEndEdit.AddListener(OnInputEndEdit);
-        }
 
         /// <summary>
         /// 套用从游戏窗口捕获到的样式。
@@ -1660,25 +1507,6 @@ namespace IcarusII.UI
             if (_chatIndexEmpty != null) _chatIndexEmpty.color = _textDim;
             RefreshIndexSelection();
 
-            if (_fromPrefab)
-            {
-                return;
-            }
-
-            // ---- 以下只服务代码构建的兜底界面 ----
-            if (_panelImage != null) style.ApplyPanel(_panelImage);
-            if (_frameImage != null) style.ApplyFrame(_frameImage);
-            if (_glassImage != null) style.ApplyGlass(_glassImage);
-            if (_headerImage != null) UiStyle.ApplyHeader(_headerImage);
-            if (_inputImage != null) style.ApplyInput(_inputImage);
-
-            // 文本控件也要跟着换颜色（它们是创建时就定色的）
-            foreach (var t in _root.GetComponentsInChildren<Text>(true))
-            {
-                if (t == null || t == _transcript || t == _statusText) continue;
-                // 输入框的占位文字用暗色，其余用主色
-                t.color = t.gameObject.name == "Placeholder" ? _textDim : _textMain;
-            }
         }
 
         // ---------------------------------------------------------------- 开关
@@ -2641,219 +2469,35 @@ namespace IcarusII.UI
             return view;
         }
 
-        /// <summary>
-        /// 建一张蓝图卡片：
-        ///
-        ///   blueprint-card      VerticalLayoutGroup + 淡底色 + 左侧强调条
-        ///   ├── header          图标 + 标题/文件名 + 来源角标
-        ///   ├── meta            产量 / 建筑数 / 占地 / 作者 / 版本
-        ///   ├── description     蓝图介绍（最多两行）
-        ///   └── actions         查看详情 / 粘贴铺设
-        /// </summary>
+        /// <summary>建一张蓝图卡片：只克隆 prefab 里的 blueprint-card 模板。</summary>
         private GameObject CreateBlueprintCard(BlueprintCardInfo card)
         {
             if (_content == null || card == null) return null;
-
-            // 卡片是数据驱动的运行期 UI：任何一条卡片失败都只该少一张卡片，
-            // 不能把调用方（历史回放 / 消息分发 / 建窗补建）整段打断。
-            var before = _content.childCount;
-            try
+            var template = _replyTemplate != null
+                ? _replyTemplate.Find("blueprint-cards/blueprint-card") as RectTransform
+                : null;
+            if (template == null && _replyTemplate != null)
+                template = _replyTemplate.Find("blueprint-card") as RectTransform;
+            if (template == null)
             {
-                return BuildBlueprintCard(card);
-            }
-            catch (Exception ex)
-            {
-                Plugin.Log.LogWarning($"[UI] 蓝图卡片创建失败（{card.FileName}）：{ex}");
-                // 清掉半成品，避免内容区里留下一个空白块。
-                for (var i = _content.childCount - 1; i >= before; i--)
-                {
-                    var child = _content.GetChild(i);
-                    if (child != null) UnityEngine.Object.Destroy(child.gameObject);
-                }
+                Plugin.Log.LogError("[UI] prefab 缺少 blueprint-card 模板，无法创建蓝图卡片");
                 return null;
             }
+            var go = UnityEngine.Object.Instantiate(template.gameObject, _content, false);
+            go.name = "blueprint-card-" + (++_itemSeq);
+            go.SetActive(true);
+            var view = BindCardView(go);
+            if (view == null)
+            {
+                UnityEngine.Object.Destroy(go);
+                return null;
+            }
+            view.Card = card;
+            ApplyCard(view, card);
+            return go;
         }
 
-        private GameObject BuildBlueprintCard(BlueprintCardInfo card)
-        {
-            var root = UiFactory.Node("blueprint-card-" + (++_itemSeq), _content);
-            root.anchorMin = new Vector2(0f, 1f);
-            root.anchorMax = new Vector2(1f, 1f);
-            root.pivot = new Vector2(0.5f, 1f);
-            root.anchoredPosition = Vector2.zero;
-            root.sizeDelta = Vector2.zero;
 
-            var bg = root.gameObject.AddComponent<Image>();
-            bg.color = new Color(0.38f, 0.85f, 1f, 0.07f);
-            bg.raycastTarget = false;
-
-            var vlg = root.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(10, 10, 8, 8);
-            vlg.spacing = 5f;
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
-            vlg.childAlignment = TextAnchor.UpperLeft;
-
-            // 左侧强调条：ignoreLayout，不参与纵向堆叠。
-            var accentRt = UiFactory.Node("accent", root);
-            accentRt.anchorMin = new Vector2(0f, 0f);
-            accentRt.anchorMax = new Vector2(0f, 1f);
-            accentRt.pivot = new Vector2(0f, 0.5f);
-            accentRt.sizeDelta = new Vector2(2f, 0f);
-            accentRt.anchoredPosition = Vector2.zero;
-            var accent = accentRt.gameObject.AddComponent<Image>();
-            accent.color = new Color(_accent.r, _accent.g, _accent.b, 0.55f);
-            accent.raycastTarget = false;
-            accentRt.gameObject.AddComponent<LayoutElement>().ignoreLayout = true;
-
-            var headerRt = UiFactory.Node("header", root);
-            var headerLe = headerRt.gameObject.AddComponent<LayoutElement>();
-            headerLe.minHeight = 40f;
-            headerLe.preferredHeight = 40f;
-            var headerLayout = headerRt.gameObject.AddComponent<HorizontalLayoutGroup>();
-            headerLayout.padding = new RectOffset(0, 0, 0, 0);
-            headerLayout.spacing = 8f;
-            headerLayout.childControlWidth = true;
-            headerLayout.childControlHeight = true;
-            headerLayout.childForceExpandWidth = false;
-            headerLayout.childForceExpandHeight = false;
-            headerLayout.childAlignment = TextAnchor.MiddleLeft;
-
-            var iconRt = UiFactory.Node("icon", headerRt);
-            var iconLe = iconRt.gameObject.AddComponent<LayoutElement>();
-            iconLe.minWidth = 40f;
-            iconLe.preferredWidth = 40f;
-            iconLe.minHeight = 40f;
-            iconLe.preferredHeight = 40f;
-            var iconImage = iconRt.gameObject.AddComponent<Image>();
-            iconImage.raycastTarget = false;
-            iconImage.preserveAspect = true;
-            var icon = ResolveBlueprintIcon(card);
-            if (icon != null) iconImage.sprite = icon;
-            else iconRt.gameObject.SetActive(false);   // 没有图标时不要留 40px 空白
-
-            var textsRt = UiFactory.Node("texts", headerRt);
-            var textsLe = textsRt.gameObject.AddComponent<LayoutElement>();
-            textsLe.flexibleWidth = 1f;
-            var textsLayout = textsRt.gameObject.AddComponent<VerticalLayoutGroup>();
-            textsLayout.padding = new RectOffset(0, 0, 0, 0);
-            textsLayout.spacing = 1f;
-            textsLayout.childControlWidth = true;
-            textsLayout.childControlHeight = true;
-            textsLayout.childForceExpandWidth = true;
-            textsLayout.childForceExpandHeight = false;
-            textsLayout.childAlignment = TextAnchor.MiddleLeft;
-
-            var titleRt = UiFactory.Node("title", textsRt);
-            var titleLe = titleRt.gameObject.AddComponent<LayoutElement>();
-            titleLe.minHeight = Mathf.Max(16f, _fontSize + 3f);
-            titleLe.preferredHeight = Mathf.Max(16f, _fontSize + 3f);
-            var title = UiFactory.AddLabel(titleRt, _bodyFont, Mathf.Max(11, _fontSize),
-                _textMain, TextAnchor.MiddleLeft);
-            title.text = FormatInline(card.DisplayTitle);
-            // 标题/文件名只占一行：Wrap + Truncate 不会像 Overflow 那样盖到来源角标上。
-            title.horizontalOverflow = HorizontalWrapMode.Wrap;
-            title.verticalOverflow = VerticalWrapMode.Truncate;
-            title.wideCharSpacing = 1f;
-
-            var fileRt = UiFactory.Node("file", textsRt);
-            var fileLe = fileRt.gameObject.AddComponent<LayoutElement>();
-            fileLe.minHeight = Mathf.Max(14f, _fontSize);
-            fileLe.preferredHeight = Mathf.Max(14f, _fontSize);
-            var file = UiFactory.AddLabel(fileRt, _bodyFont, Mathf.Max(9, _fontSize - 2),
-                _textDim, TextAnchor.MiddleLeft);
-            file.text = FormatInline(string.IsNullOrEmpty(card.FileName) ? card.DisplayTitle : card.FileName);
-            file.horizontalOverflow = HorizontalWrapMode.Wrap;
-            file.verticalOverflow = VerticalWrapMode.Truncate;
-
-            var source = SourceLabel(card.Source);
-            if (!string.IsNullOrEmpty(source))
-            {
-                var badgeRt = UiFactory.Node("source", headerRt);
-                var badgeLe = badgeRt.gameObject.AddComponent<LayoutElement>();
-                badgeLe.minWidth = 42f;
-                badgeLe.preferredWidth = 44f;
-                badgeLe.minHeight = 20f;
-                badgeLe.preferredHeight = 20f;
-                var badgeImage = badgeRt.gameObject.AddComponent<Image>();
-                badgeImage.color = new Color(_accent.r, _accent.g, _accent.b, 0.16f);
-                badgeImage.raycastTarget = false;
-                // 同一个 GameObject 只能挂一个 Graphic（uGUI 的 DisallowMultipleComponent）：
-                // 直接在 badgeRt（已有 Image）上加 Text 会被 Unity 拒绝，AddComponent 返回 null，
-                // 紧接着 text.font 就 NRE——历史回放会因为这个异常整段中断。
-                var badgeLabelRt = UiFactory.Node("label", badgeRt);
-                UiFactory.Stretch(badgeLabelRt);
-                var badge = UiFactory.AddLabel(badgeLabelRt, _bodyFont, Mathf.Max(9, _fontSize - 3),
-                    _accent, TextAnchor.MiddleCenter);
-                if (badge != null)
-                {
-                    badge.text = source;
-                    badge.horizontalOverflow = HorizontalWrapMode.Overflow;
-                    badge.verticalOverflow = VerticalWrapMode.Truncate;
-                }
-            }
-
-            var metaText = BuildBlueprintMeta(card);
-            if (!string.IsNullOrEmpty(metaText))
-            {
-                var metaRt = UiFactory.Node("meta", root);
-                var metaLe = metaRt.gameObject.AddComponent<LayoutElement>();
-                metaLe.minHeight = Mathf.Max(28f, _fontSize * 2f);
-                metaLe.preferredHeight = Mathf.Max(28f, _fontSize * 2f);
-                var meta = UiFactory.AddLabel(metaRt, _bodyFont, Mathf.Max(9, _fontSize - 2),
-                    _textDim, TextAnchor.UpperLeft);
-                meta.text = metaText;
-                meta.horizontalOverflow = HorizontalWrapMode.Wrap;
-                meta.verticalOverflow = VerticalWrapMode.Truncate;
-                meta.wideCharSpacing = 1f;
-            }
-
-            if (!string.IsNullOrEmpty(card.Description))
-            {
-                var descRt = UiFactory.Node("description", root);
-                var descLe = descRt.gameObject.AddComponent<LayoutElement>();
-                descLe.minHeight = 16f;
-                descLe.preferredHeight = Mathf.Max(30f, _fontSize * 2f + 2f);
-                var desc = UiFactory.AddLabel(descRt, _bodyFont, Mathf.Max(9, _fontSize - 2),
-                    new Color(_textDim.r, _textDim.g, _textDim.b, 0.95f), TextAnchor.UpperLeft);
-                desc.text = FormatInline(card.Description);
-                desc.horizontalOverflow = HorizontalWrapMode.Wrap;
-                desc.verticalOverflow = VerticalWrapMode.Truncate;
-                desc.wideCharSpacing = 1f;
-            }
-
-            var actionsRt = UiFactory.Node("actions", root);
-            var actionsLe = actionsRt.gameObject.AddComponent<LayoutElement>();
-            actionsLe.minHeight = 26f;
-            actionsLe.preferredHeight = 26f;
-            var actionsLayout = actionsRt.gameObject.AddComponent<HorizontalLayoutGroup>();
-            actionsLayout.padding = new RectOffset(0, 0, 0, 0);
-            actionsLayout.spacing = 6f;
-            actionsLayout.childControlWidth = true;
-            actionsLayout.childControlHeight = true;
-            actionsLayout.childForceExpandWidth = false;
-            actionsLayout.childForceExpandHeight = false;
-            actionsLayout.childAlignment = TextAnchor.MiddleRight;
-
-            CreateCardButton(actionsRt, Strings.Get("blueprint.card.view"),
-                new Color(0.38f, 0.85f, 1f, 0.16f),
-                () => RequestCardAction(card, BlueprintCardAction.Inspect));
-            CreateCardButton(actionsRt, Strings.Get("blueprint.card.paste"),
-                new Color(0.38f, 0.85f, 1f, 0.30f),
-                () => RequestCardAction(card, BlueprintCardAction.Paste));
-
-            _items.Add(new Item
-            {
-                Go = root.gameObject,
-                Label = null,
-                Kind = LineKind.Blueprint,
-                TurnId = _currentTurnId,
-                FromPrefab = false,
-            });
-            return root.gameObject;
-        }
 
         private void CreateCardButton(RectTransform parent, string labelText, Color background, Action onClick)
         {
@@ -3516,8 +3160,8 @@ namespace IcarusII.UI
         // ---------------------------------------------------------------- 折叠块实现
 
         /// <summary>
-        /// 在输出区创建一个折叠块。样式与 prefab 里的气泡同一个色系：
-        /// 极淡的青色底 + 左侧 2px 强调条 + 一行 header + 展开后的正文。
+        /// 在输出区创建一个折叠块，必须传入 prefab 里的 tool-template/thinking-block。
+        /// 样式由模板决定，不再在代码里拼一套。
         /// </summary>
         private Block CreateBlock(string name, string title, string summary, string body,
             bool expanded, Color titleColor, RectTransform parent = null, GameObject template = null,
@@ -3921,7 +3565,6 @@ namespace IcarusII.UI
 
             SetThinkingLevel(_thinkingLevel, notify: false);
             combo.onItemIndexChange.AddListener(OnThinkingLevelComboChanged);
-            FlipComboDropdownUp(combo);
 
             Plugin.Log.LogInfo($"[UI] 已接上「思考等级」下拉框（当前 {_thinkingLevel}）。");
         }
@@ -4029,7 +3672,6 @@ namespace IcarusII.UI
 
             SetPermissionLevel(_permissionLevel, notify: false);
             combo.onItemIndexChange.AddListener(OnPermissionLevelComboChanged);
-            FlipComboDropdownUp(combo);
 
             Plugin.Log.LogInfo($"[UI] 已接上「权限」下拉框（当前 {_permissionLevel}）。");
         }
@@ -4096,21 +3738,6 @@ namespace IcarusII.UI
             finally { _suppressPermissionEvent = false; }
         }
 
-        /// <summary>
-        /// 下拉列表方向：prefab 里默认朝下（会伸出窗口底部）。运行期统一改成朝上，
-        /// 位置/尺寸仍由 UIComboBox.SetState 负责。
-        /// </summary>
-        private static void FlipComboDropdownUp(UIComboBox combo)
-        {
-            if (combo == null) return;
-            var comboRt = combo.transform as RectTransform;
-            var dropDown = combo.transform.Find("Dropdown List ScrollBox") as RectTransform;
-            if (dropDown == null) return;
-            dropDown.anchorMin = new Vector2(0f, 0f);
-            dropDown.anchorMax = new Vector2(0f, 0f);
-            dropDown.pivot = new Vector2(0f, 0f);
-            dropDown.anchoredPosition = new Vector2(0f, comboRt != null ? comboRt.sizeDelta.y : 24f);
-        }
 
         // ---------------------------------------------------------------- 模型选择
 
@@ -4289,7 +3916,10 @@ namespace IcarusII.UI
 
                 var thinking = bar.Find("thinking-group") as RectTransform;
                 if (thinking == null)
-                    return BuildRuntimeModelGroup(bar, bar.Find("thinking-level") as RectTransform);
+                {
+                    Plugin.Log.LogError("[UI] prefab 缺少 thinking-group，无法克隆模型下拉组");
+                    return null;
+                }
 
                 clone = UnityEngine.Object.Instantiate(thinking.gameObject, bar, false);
                 clone.name = "model-group";
@@ -4338,63 +3968,6 @@ namespace IcarusII.UI
             }
         }
 
-        /// <summary>
-        /// 更老的 bundle：thinking-level 直接挂在 tool-bar 下（没有 thinking-group）。
-        /// 这时手工拼一个 model-group：右侧锚点、40px 标签 + 100px 下拉框。
-        /// </summary>
-        private UIComboBox BuildRuntimeModelGroup(RectTransform bar, RectTransform thinkingCombo)
-        {
-            if (bar == null || thinkingCombo == null) return null;
-
-            var groupGo = new GameObject("model-group", typeof(RectTransform));
-            var group = (RectTransform)groupGo.transform;
-            group.SetParent(bar, false);
-            group.anchorMin = new Vector2(1f, 0.5f);
-            group.anchorMax = new Vector2(1f, 0.5f);
-            group.pivot = new Vector2(0f, 0.5f);
-            group.sizeDelta = new Vector2(146f, 24f);
-            group.anchoredPosition = new Vector2(
-                thinkingCombo.anchoredPosition.x - group.sizeDelta.x - 6f,
-                thinkingCombo.anchoredPosition.y);
-            group.SetSiblingIndex(thinkingCombo.GetSiblingIndex());
-
-            var labelRt = UiFactory.Node("model-label", group);
-            labelRt.anchorMin = new Vector2(0f, 0.5f);
-            labelRt.anchorMax = new Vector2(0f, 0.5f);
-            labelRt.pivot = new Vector2(0f, 0.5f);
-            labelRt.anchoredPosition = Vector2.zero;
-            labelRt.sizeDelta = new Vector2(40f, 24f);
-            var label = UiFactory.AddLabel(labelRt, _bodyFont, Mathf.Max(10, _fontSize - 1),
-                _textDim, TextAnchor.MiddleLeft);
-            label.text = Strings.Get("model.label");
-            label.horizontalOverflow = HorizontalWrapMode.Overflow;
-            label.raycastTarget = false;
-
-            var clone = UnityEngine.Object.Instantiate(thinkingCombo.gameObject, group, false);
-            clone.name = "model-level";
-            var comboRt = (RectTransform)clone.transform;
-            comboRt.anchorMin = new Vector2(0f, 0.5f);
-            comboRt.anchorMax = new Vector2(0f, 0.5f);
-            comboRt.pivot = new Vector2(0f, 0.5f);
-            comboRt.anchoredPosition = new Vector2(46f, 0f);
-            comboRt.sizeDelta = new Vector2(100f, 24f);
-
-            var combo = clone.GetComponent<UIComboBox>();
-            if (combo == null)
-            {
-                UnityEngine.Object.Destroy(clone);
-                UnityEngine.Object.Destroy(groupGo);
-                return null;
-            }
-
-            combo.Items.Clear();
-            combo.ItemsData.Clear();
-            combo.Items.Add(Strings.Get("model.none"));
-            combo.ItemsData.Add(0);
-            clone.SetActive(true);
-            Plugin.Log.LogInfo("[UI] 老 prefab/bundle 没有 model-group，已在运行期拼出「模型」下拉框。");
-            return combo;
-        }
 
         private void ConfigureModelCombo(RectTransform panel, UIComboBox combo)
         {
@@ -4862,8 +4435,8 @@ namespace IcarusII.UI
             var item = _items[index];
             if (item.Go == null || item.Label == null || string.IsNullOrEmpty(rawText)) return;
 
-            var footer = "\n<size=16><color=#8FA3B8>游戏时间 " + GameClock()
-                + " · 点击复制</color></size>";
+            var footer = "\n<size=16><color=#8FA3B8>" + Strings.Get("reply.time", GameClock())
+                + " · " + Strings.Get("reply.footer.copy") + "</color></size>";
             ApplyRichText(item.Label, rawText, RichOptions14, RichTextProfile.Body);
             item.Label.text = item.Label.text + footer;
 
@@ -5355,7 +4928,7 @@ namespace IcarusII.UI
             if (conversation == null)
             {
                 // 老 sidecar 没有 conversations：用当前对话构造一个兼容分组。
-                conversation = ConversationInfo.Create("legacy", "当前会话");
+                conversation = ConversationInfo.Create("legacy", Strings.Get("chat.conversation.current"));
                 _conversations.Add(conversation);
                 _activeConversationId = conversation.Id;
             }
@@ -5378,7 +4951,7 @@ namespace IcarusII.UI
         private static string ConversationTitle(string text)
         {
             var value = (text ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
-            if (value.Length == 0) return "新会话";
+            if (value.Length == 0) return Strings.Get("chat.conversation.new");
             return value.Length <= 18 ? value : value.Substring(0, 18) + "…";
         }
 
@@ -5628,8 +5201,8 @@ namespace IcarusII.UI
             if (view == null) return;
             if (view.Title != null)
                 view.Title.text = HeaderTitleLabel(
-                    string.IsNullOrEmpty(view.Info.Title) ? "新会话" : view.Info.Title);
-            if (view.Count != null) view.Count.text = view.Info.RecordCount + " 条";
+                    string.IsNullOrEmpty(view.Info.Title) ? Strings.Get("chat.conversation.new") : view.Info.Title);
+            if (view.Count != null) view.Count.text = Strings.Get("chat.index.count", view.Info.RecordCount);
             if (view.Chevron != null) view.Chevron.text = view.Expanded ? "▾" : "▸";
             if (view.ActiveBar != null) view.ActiveBar.SetActive(view.Id == _activeConversationId);
             if (view.Records != null) view.Records.gameObject.SetActive(view.Expanded);
@@ -5695,7 +5268,7 @@ namespace IcarusII.UI
                 more.SetActive(true);
                 var moreText = more.transform.Find("label")?.GetComponent<Text>();
                 if (moreText != null)
-                    moreText.text = "展开其余 " + (count - visible) + " 条记录";
+                    moreText.text = Strings.Get("chat.index.expand_more", count - visible);
                 var moreButton = more.GetComponent<Button>();
                 if (moreButton != null)
                 {
@@ -5952,6 +5525,7 @@ namespace IcarusII.UI
 
         private void OnConversationTitleEndEdit(string value)
         {
+            _titleEditEndFrame = Time.frameCount;
             var conversationId = _activeConversationId;
             var conversation = FindConversation(conversationId);
             if (conversation == null)
@@ -6011,7 +5585,7 @@ namespace IcarusII.UI
             var conversation = FindConversation(_activeConversationId);
             if (conversation == null) return;
             if (!conversation.RemoveRecord(text, timestampMs)) return;
-            if (conversation.RecordCount == 0) conversation.SetTitle("新会话");
+            if (conversation.RecordCount == 0) conversation.SetTitle(Strings.Get("chat.conversation.new"));
             conversation.MarkUpdated(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         }
 
@@ -6285,7 +5859,7 @@ namespace IcarusII.UI
         /// （`example-user-*` → 气泡，`example-assistant-*` → 裸文本）。
         ///
         /// 这样样式只在 prefab 里定义一次：在 Unity 里改气泡，运行期自动跟着变，
-        /// 不用在 C# 里再抄一份颜色/贴图。prefab 没带模板时退化成裸文本。
+        /// 不用在 C# 里再抄一份颜色/贴图。
         /// </summary>
         private int CreateItem(LineKind kind)
         {
@@ -6294,7 +5868,7 @@ namespace IcarusII.UI
                 ? _userTemplate
                 : kind == LineKind.Assistant
                     ? (replyTemplate != null ? replyTemplate : _assistantTemplate)
-                    : null;
+                    : _assistantTemplate;
 
             GameObject go;
             ReplyView reply = null;
@@ -6308,7 +5882,8 @@ namespace IcarusII.UI
             }
             else
             {
-                go = BuildPlainItem(kind);
+                Plugin.Log.LogError("[UI] prefab 缺少消息模板，无法创建消息");
+                return -1;
             }
 
             var fromPrefab = template != null && _content != null;
@@ -6355,13 +5930,13 @@ namespace IcarusII.UI
                 FromPrefab = fromPrefab,
                 Reply = reply,
             };
-            if (kind == LineKind.User && fromPrefab) BindUserFooter(ref item, go);
+            if (kind == LineKind.User && fromPrefab) BindUserFooter(item, go);
             _items.Add(item);
             return _items.Count - 1;
         }
 
         /// <summary>绑定用户气泡下的 footer：只有时间 + 复制按钮。</summary>
-        private void BindUserFooter(ref Item item, GameObject go)
+        private void BindUserFooter(Item item, GameObject go)
         {
             if (go == null) return;
             var footer = go.transform.Find("footer");
@@ -6567,22 +6142,6 @@ namespace IcarusII.UI
             return t != null ? t.GetComponent<Text>() : null;
         }
 
-        private GameObject BuildPlainItem(LineKind kind)
-        {
-            var rt = UiFactory.Node("msg-" + (++_itemSeq), _content);
-            var label = rt.gameObject.AddComponent<Text>();
-            label.font = _bodyFont;
-            label.fontSize = _fontSize;
-            label.color = kind == LineKind.System ? _textDim : _textMain;
-            label.alignment = TextAnchor.UpperLeft;
-            label.horizontalOverflow = HorizontalWrapMode.Wrap;
-            label.verticalOverflow = VerticalWrapMode.Overflow;
-            label.supportRichText = true;
-            label.raycastTarget = false;
-            AssignIconMapping(label, TryGetPreferredIconMapping());
-            GameTextStyle.Apply(label);
-            return rt.gameObject;
-        }
 
         /// <summary>
         /// 正文默认用游戏的**正文字体**（prefab 里 Arial 只是占位）。
@@ -7170,8 +6729,8 @@ namespace IcarusII.UI
             if (_assistantTemplate != null) _assistantTemplate.gameObject.SetActive(false);
             if (_replyTemplate != null) _replyTemplate.gameObject.SetActive(false);
 
-            Plugin.Log.LogInfo($"[UI] 消息模板：用户={( _userTemplate != null ? _userTemplate.name : "无（退化为裸文本）")}，"
-                               + $"助手={(_replyTemplate != null ? _replyTemplate.name : _assistantTemplate != null ? _assistantTemplate.name : "无（退化为裸文本）")}");
+            Plugin.Log.LogInfo($"[UI] 消息模板：用户={(_userTemplate != null ? _userTemplate.name : "无")}，"
+                               + $"助手={(_replyTemplate != null ? _replyTemplate.name : _assistantTemplate != null ? _assistantTemplate.name : "无")}");
         }
 
         /// <summary>插件卸载时清理（Canvas 是顶层对象，不会被场景切换自动带走）。</summary>
@@ -7244,12 +6803,26 @@ namespace IcarusII.UI
             if (IsOpen) EnsureThinkingComboText();
             if (IsOpen) EnsureModelComboText();
 
+            // 标题框正在编辑时键盘归它：清掉"期望聚焦"，避免下一行把焦点抢回聊天框。
+            // 点过窗口任意位置后 _wantInputFocus 就是 true，不清理的话点标题会立刻被抢回去。
+            if (TitleEditing)
+            {
+                _wantInputFocus = false;
+                // 标题刚被选中时聊天框可能还挂着一次待激活，放着不管下一帧会把焦点抢回来。
+                if (_input != null) _input.m_ShouldActivateNextUpdate = false;
+            }
+
             // Enter 进入输入状态（此时 R 才让位给打字）；ask 时回车由 AskPanel 处理。
-            if (IsOpen && !AskShowing && !InputFocused && UnityEngine.Input.GetKeyDown(KeyCode.Return))
+            // 标题框里按 Enter 是在提交改名，不能再顺手把焦点切到聊天框；
+            // 若本帧标题编辑刚好结束（事件顺序不定），用帧号兜住。
+            if (IsOpen && !AskShowing && !InputFocused && !TitleEditing
+                && Time.frameCount != _titleEditEndFrame
+                && UnityEngine.Input.GetKeyDown(KeyCode.Return))
                 FocusInput();
 
             // 期望聚焦但实际没聚焦 → 重申（游戏可能清空了 EventSystem 的选中对象）
-            if (IsOpen && !AskShowing && _wantInputFocus && _input != null && !_input.isFocused)
+            if (IsOpen && !AskShowing && _wantInputFocus && !TitleEditing
+                && _input != null && !_input.isFocused)
                 ApplyFocus();
 
             // 焦点有了但游戏 InputField 的 Caret 可能还没创建/绑定材质。
@@ -8137,7 +7710,7 @@ namespace IcarusII.UI
 
         /// <summary>选择器弹窗关掉后把键盘焦点还给输入框。
         ///
-        /// ⚠️ 不要用 FocusInput()/ActivateInputField()：那会重排光标，
+        /// 注意：不要用 FocusInput()/ActivateInputField()：那会重排光标，
         /// 而游戏的 InputField 在**任何光标移动**里都会把 m_BrushColor 重置成 -2
         /// （语义是"复制前一个字符的颜色"）——刚在取色器里选的画笔色就白选了。
         /// 直接把 EventSystem 的选中对象指回输入框即可（isFocused 就是看这个），
@@ -8499,22 +8072,19 @@ namespace IcarusII.UI
             RichTextLinkAllocator linkAllocator = null,
             List<RichTextLink> links = null)
         {
-            var ignored = false;
-            return FormatInline(s, linkAllocator, links, ref ignored, null);
+            return FormatInline(s, linkAllocator, links, null).Rich;
         }
 
-        private static string FormatInline(
+        private static (string Rich, bool HasGameLinks) FormatInline(
             string s,
             RichTextLinkAllocator linkAllocator,
             List<RichTextLink> links,
-            ref bool hasGameLinks,
             RichTextLinkResolvers linkResolvers)
         {
             var result = FormatRichText(
                 s, RichOptions14, RichTextProfile.Inline, linkAllocator, linkResolvers);
             if (links != null) links.AddRange(result.Links);
-            hasGameLinks |= result.HasGameLinks;
-            return result.Rich;
+            return (result.Rich, result.HasGameLinks);
         }
 
         /// <summary>复制按钮用的纯文本：去掉 Markdown/HTML 标记，保留正文与代码。</summary>
@@ -8945,53 +8515,55 @@ namespace IcarusII.UI
             var links = new List<RichTextLink>();
             var hasGameLinks = false;
             var sb = new StringBuilder();
-            AppendTableRow(sb, table.Headers, columns, header: true, allocator, links, ref hasGameLinks);
+            hasGameLinks |= AppendTableRow(sb, table.Headers, columns, header: true, allocator, links);
             for (var i = 0; i < rowCount; i++)
-                AppendTableRow(sb, table.Rows[i], columns, header: false, allocator, links, ref hasGameLinks);
+                hasGameLinks |= AppendTableRow(sb, table.Rows[i], columns, header: false, allocator, links);
             if (table.Rows.Count > rowCount)
             {
                 var truncated = new List<string>(columns);
                 for (var i = 0; i < columns; i++) truncated.Add(i == 0 ? "…" : string.Empty);
-                AppendTableRow(sb, truncated, columns, header: false, allocator, links, ref hasGameLinks);
+                hasGameLinks |= AppendTableRow(sb, truncated, columns, header: false, allocator, links);
             }
             text.text = sb.ToString().TrimEnd('\n');
             RegisterLinkTargets(text, links, hasGameLinks);
             return text;
         }
 
-        private static void AppendTableRow(
+        private static bool AppendTableRow(
             StringBuilder sb,
             List<string> cells,
             int columns,
             bool header,
             RichTextLinkAllocator allocator,
-            List<RichTextLink> links,
-            ref bool hasGameLinks)
+            List<RichTextLink> links)
         {
+            var hasGameLinks = false;
             for (var i = 0; i < columns; i++)
             {
                 if (i > 0) sb.Append('\t');
                 var cell = cells != null && i < cells.Count ? cells[i] : string.Empty;
-                sb.Append(FormatTableCell(cell, header, allocator, links, ref hasGameLinks));
+                var (formatted, cellHasGameLinks) = FormatTableCell(cell, header, allocator, links);
+                sb.Append(formatted);
+                hasGameLinks |= cellHasGameLinks;
             }
             sb.Append('\n');
+            return hasGameLinks;
         }
 
-        private static string FormatTableCell(
+        private static (string Text, bool HasGameLinks) FormatTableCell(
             string cell,
             bool header,
             RichTextLinkAllocator allocator,
-            List<RichTextLink> links,
-            ref bool hasGameLinks)
+            List<RichTextLink> links)
         {
-            var formatted = FormatInline(
-                cell ?? string.Empty, allocator, links, ref hasGameLinks, LinkResolvers);
+            var (formatted, hasGameLinks) = FormatInline(
+                cell ?? string.Empty, allocator, links, LinkResolvers);
             if (header && formatted.Length > 0)
                 formatted = "<color=#FFFFFF>" + formatted + "</color>";
-            return formatted
+            return (formatted
                 .Replace("\r", string.Empty)
                 .Replace("\n", "↲")
-                .Replace("\t", "↹");
+                .Replace("\t", "↹"), hasGameLinks);
         }
 
         private static string Escape(string s)
@@ -9021,7 +8593,7 @@ namespace IcarusII.UI
         {
             if (Input == null || Over == null || Input.isFocused) return;
             var title = Input.text ?? string.Empty;
-            var display = title.Length == 0 ? "会话标题" : ChatWindow.FitLabel(title, 16, 210f);
+            var display = title.Length == 0 ? Strings.Get("chat.index.title_placeholder") : ChatWindow.FitLabel(title, 16, 210f);
             if (Over.text != display) Over.text = display;
         }
     }

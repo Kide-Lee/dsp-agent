@@ -116,7 +116,7 @@ export class GameToolHost {
 
   /** 本地蓝图写确认；老 transport 没有该能力时放行（保持旧行为）。 */
   async confirmLocalWrite(request: LocalWriteConfirmRequest): Promise<boolean> {
-    if (!this.transport?.confirmLocalWrite) return true;
+    if (!this.transport?.confirmLocalWrite) return false;
     return this.transport.confirmLocalWrite(request);
   }
 

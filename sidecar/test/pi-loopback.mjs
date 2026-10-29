@@ -31,8 +31,7 @@
  */
 
 import { createServer } from 'node:http';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { maskSecret } from '../dist/config.js';
 import { ICARUS_II_PERSONA_NAME, ICARUS_II_SYSTEM_PROMPT } from '../dist/persona.js';
@@ -46,6 +45,7 @@ import {
   startSidecar,
   summary,
 } from './helpers.mjs';
+import { makeTempDir } from './helpers.mjs';
 
 const KEY = FAKE_KEY;
 const PROVIDER = 'deepseek';
@@ -333,7 +333,7 @@ async function configure(id, payload) {
 async function main() {
   assertBuilt();
 
-  dataDir = mkdtempSync(join(tmpdir(), 'icarus-ii-loopback-'));
+  dataDir = makeTempDir('icarus-ii-loopback-');
   // 把 pi 的重试压到最小：provider 层不重试，agent 层重试 1 次（10ms）。
   // 这样 429 场景既覆盖 status{retrying}，又不会因为退避把测试拖到几十秒。
   mkdirSync(join(dataDir, 'agent'), { recursive: true });

@@ -22,7 +22,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { DEFAULT_PORT, PROTOCOL_VERSION } from './protocol.js';
+import { DEFAULT_PORT, PROTOCOL_VERSION, isLoopbackHost } from './protocol.js';
 import { EchoAgent, PiAgent, type AgentRunner } from './agent.js';
 import { CONFIG_FILE_NAME, ConfigStore, DEFAULT_MODEL, DEFAULT_PROVIDER } from './config.js';
 import { errorFields, log, setLevel } from './log.js';
@@ -71,19 +71,18 @@ function usage(): string {
     `  --provider <id>   模型提供方（默认 ${DEFAULT_PROVIDER}）`,
     `  --model <id>      模型 id（默认 ${DEFAULT_MODEL}）`,
     `  --port <n>        监听端口（默认 ${DEFAULT_PORT}，0 = 随机端口）`,
-    `  --host <addr>     监听地址（默认 ${DEFAULT_HOST}）`,
+    `  --host <addr>     监听地址（仅允许 ${DEFAULT_HOST} / ::1 / localhost / 127.*）`,
     `  --data-dir <path> 数据目录（默认 ~/${DEFAULT_DATA_DIR_NAME}）；写 runtime.json 与 config.json`,
     '  --token <token>   握手 token（默认随机 32 字节 hex）',
     '  --system-prompt-file <path>',
     '                    用文件整份替换内置人格（仅调试/评测；启动时读一次，文件缺失直接报错）',
     '  --debug-tools     开启 !tool 调试直调（只读白名单；默认关闭）',
-    '  --log-level <l>   debug | info | warn | error（默认 info，也可用 ICARUS_II_LOG_LEVEL）',
+    '  --log-level <l>   debug | info | warn | error（默认 info）',
     '  -h, --help        显示本帮助',
     '  -v, --version     显示版本号',
     '      --selfcheck   打印版本号并退出（发布流水线冒烟自检；不联网、不需要密钥）',
     '',
     '环境变量:',
-    '  ICARUS_II_LOG_LEVEL   同 --log-level',
     '',
     'API Key 通过 config.set（mod）或 <data-dir>/config.json 提供，不从命令行读取。',
   ].join('\n');
@@ -438,6 +437,11 @@ async function main(argv: string[]): Promise<void> {
 
   const dataDir = expandHome(values['data-dir'] ?? join(homedir(), DEFAULT_DATA_DIR_NAME));
   const host = values['host'] ?? DEFAULT_HOST;
+  if (!isLoopbackHost(host)) {
+    process.stderr.write(`sidecar 只允许监听回环地址，收到 --host=${host}\n`);
+    process.exit(2);
+    return;
+  }
   const token = values['token'] ?? newToken();
 
   if (token.length === 0) {

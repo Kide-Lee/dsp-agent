@@ -12,8 +12,7 @@
  */
 
 import { createServer } from 'node:http';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KB_CACHE_REVISION } from '../dist/kb/store.js';
@@ -26,6 +25,7 @@ import {
   startSidecar,
   summary,
 } from './helpers.mjs';
+import { makeTempDir } from './helpers.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const MODEL = 'deepseek-v4-flash';
@@ -184,7 +184,6 @@ function cleanup() {
   }
   if (blueprintDir) {
     try { rmSync(blueprintDir, { recursive: true, force: true }); } catch {}
-    delete process.env.ICARUS_BLUEPRINT_DIR;
   }
 }
 
@@ -204,10 +203,10 @@ async function main() {
   // A.13 标题生成是主回答之外的辅助请求；测试只关心主 agent 请求。
   const isTitleRequest = (request) => String(request?.raw ?? '').includes('生成一个短标题');
   const mainRequests = () => upstream.requests.filter((request) => !isTitleRequest(request));
-  dataDir = mkdtempSync(join(tmpdir(), 'icarus-ii-pi-tools-'));
-  blueprintDir = mkdtempSync(join(tmpdir(), 'icarus-ii-pi-tools-bp-'));
+  dataDir = makeTempDir('icarus-ii-pi-tools-');
+  blueprintDir = makeTempDir('icarus-ii-pi-tools-bp-');
   // 本用例会真的跑 blueprint_generate；把落盘目录指到临时目录，避免污染玩家蓝图。
-  process.env.ICARUS_BLUEPRINT_DIR = blueprintDir;
+  writeFileSync(join(dataDir, 'config.json'), `${JSON.stringify({ blueprintDir }, null, 2)}\n`, 'utf8');
   mkdirSync(join(dataDir, 'agent'), { recursive: true });
   // blueprint_generate 依赖知识库。把最小 fixture 放到 hello 的版本/语言对应的缓存路径，
   // sidecar 在 hello 时直接加载，不需要假 mod 走 export_prototypes。
@@ -320,6 +319,9 @@ async function main() {
   const toolNames = (firstBody.tools ?? []).map((t) => t?.function?.name);
   check('上游请求里包含 game_get_overview', toolNames.includes('game_get_overview'), JSON.stringify(toolNames));
   check('上游请求里包含 game_get_production', toolNames.includes('game_get_production'));
+  for (const builtin of ['bash', 'read', 'write', 'edit']) {
+    check(`pi 内置工具 ${builtin} 未注册`, !toolNames.includes(builtin), JSON.stringify(toolNames));
+  }
 
   const systemMessage = (firstBody.messages ?? []).find((m) => m?.role === 'system');
   const systemText = typeof systemMessage?.content === 'string'

@@ -315,6 +315,15 @@ namespace IcarusII.Common.Protocol
             return false;
         }
 
+        /// <summary>sidecar 只允许监听回环地址；主机名/IP 必须落在这个集合内。</summary>
+        public static bool IsLoopbackHost(string host)
+        {
+            if (string.IsNullOrWhiteSpace(host)) return false;
+            var value = host.Trim().ToLowerInvariant();
+            return value == "127.0.0.1" || value == "::1" || value == "localhost"
+                || value.StartsWith("127.", StringComparison.Ordinal);
+        }
+
         /// <summary>确认请求默认有效期（设计 §9.3）。</summary>
         public const int ConfirmTimeoutMs = 60000;
 
@@ -437,11 +446,11 @@ namespace IcarusII.Common.Protocol
             p.Set("gameLanguage", gameLanguage ?? "unknown");
 
             var caps = JsonValue.NewArray();
-            if (capabilities != null) foreach (var c in capabilities) caps.Add(c);
+            if (capabilities is not null) foreach (var c in capabilities) caps.Add(c);
             p.Set("capabilities", caps);
 
-            // saveKey 允许为 null（尚未进入存档）
-            if (saveKey != null) p.Set("saveKey", saveKey);
+            // saveKey 允许为 null（尚未进入存档）；显式写出 null，避免“缺字段”与“解绑”两种语义。
+            p.Set("saveKey", saveKey is null ? JsonValue.Null : JsonValue.Of(saveKey));
 
             return p;
         }
@@ -464,16 +473,17 @@ namespace IcarusII.Common.Protocol
             string baseUrl, string thinkingLevel = null,
             JsonValue providerConfig = null, JsonValue removeProviders = null,
             string activeProvider = null, string activeModel = null,
-            string permissionLevel = null)
+            string permissionLevel = null, bool clearBaseUrl = false)
         {
             var p = JsonValue.NewObject();
             if (!string.IsNullOrEmpty(provider)) p.Set("provider", provider);
             if (!string.IsNullOrEmpty(model)) p.Set("model", model);
             if (!string.IsNullOrEmpty(apiKey)) p.Set("apiKey", apiKey);
             if (!string.IsNullOrEmpty(baseUrl)) p.Set("baseUrl", baseUrl);
+            else if (clearBaseUrl) p.Set("baseUrl", JsonValue.Null);
             if (!string.IsNullOrEmpty(thinkingLevel)) p.Set("thinkingLevel", thinkingLevel);
-            if (providerConfig != null && !providerConfig.IsNull) p.Set("providerConfig", providerConfig);
-            if (removeProviders != null && !removeProviders.IsNull) p.Set("removeProviders", removeProviders);
+            if (providerConfig is not null && !providerConfig.IsNull) p.Set("providerConfig", providerConfig);
+            if (removeProviders is not null && !removeProviders.IsNull) p.Set("removeProviders", removeProviders);
             if (!string.IsNullOrEmpty(activeProvider)) p.Set("activeProvider", activeProvider);
             if (!string.IsNullOrEmpty(activeModel)) p.Set("activeModel", activeModel);
             if (!string.IsNullOrEmpty(permissionLevel)) p.Set("permissionLevel", permissionLevel);
@@ -489,10 +499,10 @@ namespace IcarusII.Common.Protocol
             JsonValue blueprintTiers = null, bool? sandbox = null)
         {
             var p = JsonValue.NewObject();
-            p.Set("saveKey", saveKey == null ? JsonValue.Null : JsonValue.Of(saveKey));
+            p.Set("saveKey", saveKey is null ? JsonValue.Null : JsonValue.Of(saveKey));
             if (!string.IsNullOrEmpty(saveName)) p.Set("saveName", saveName);
-            if (blueprintTiers != null && !blueprintTiers.IsNull) p.Set("blueprintTiers", blueprintTiers);
-            if (sandbox.HasValue) p.Set("sandbox", sandbox.Value);
+            if (blueprintTiers is not null && !blueprintTiers.IsNull) p.Set("blueprintTiers", blueprintTiers);
+            if (sandbox is bool sandboxValue) p.Set("sandbox", sandboxValue);
             return p;
         }
 
@@ -522,11 +532,17 @@ namespace IcarusII.Common.Protocol
         }
 
         /// <summary>构造 tool_debug 载荷（M4m）。参数必须是 JSON 对象。</summary>
+        public const int ToolDebugArgsMaxBytes = 64 * 1024;
+
         public static JsonValue BuildToolDebug(string name, JsonValue args)
         {
+            var payload = args ?? JsonValue.NewObject();
+            var bytes = System.Text.Encoding.UTF8.GetByteCount(payload.ToJson());
+            if (bytes > ToolDebugArgsMaxBytes)
+                throw new ArgumentException($"tool_debug args 超过 {ToolDebugArgsMaxBytes} 字节：{bytes}");
             var p = JsonValue.NewObject();
             p.Set("name", name ?? string.Empty);
-            p.Set("args", args ?? JsonValue.NewObject());
+            p.Set("args", payload);
             return p;
         }
 
@@ -597,7 +613,7 @@ namespace IcarusII.Common.Protocol
             }
 
             // 附件只在成功时出现；失败结果带图会让模型对"成功了什么"产生错觉。
-            if (ok && image != null && !image.IsNull) p.Set("image", image);
+            if (ok && image is not null && !image.IsNull) p.Set("image", image);
 
             p.Set("meta", meta ?? JsonValue.NewObject());
             return p;
@@ -631,7 +647,7 @@ namespace IcarusII.Common.Protocol
         public static ToolActivityInfo Parse(JsonValue payload)
         {
             var r = new ToolActivityInfo();
-            if (payload == null || payload.IsNull) return r;
+            if (payload is null || payload.IsNull) return r;
             r.CallId = payload["callId"].AsString(null);
             r.Phase = payload["phase"].AsString("end");
             r.Name = payload["name"].AsString(string.Empty);
@@ -663,14 +679,14 @@ namespace IcarusII.Common.Protocol
 
         public string DetailsText()
         {
-            if (Details == null || Details.IsNull) return "null";
+            if (Details is null || Details.IsNull) return "null";
             return Details.IsString ? Details.AsString() : Details.ToJson();
         }
 
         public static ToolDebugResultInfo Parse(JsonValue payload)
         {
             var r = new ToolDebugResultInfo();
-            if (payload == null || payload.IsNull) return r;
+            if (payload is null || payload.IsNull) return r;
             r.Ok = payload["ok"].AsBool(false);
             r.Tool = payload["tool"].AsString(string.Empty);
             r.Source = payload["source"].AsString("unknown");
@@ -680,14 +696,14 @@ namespace IcarusII.Common.Protocol
             r.Truncated = payload["truncated"].AsBool(false);
 
             var error = payload["error"];
-            if (error != null && error.IsObject)
+            if (error is not null && error.IsObject)
             {
                 r.ErrorCode = error["code"].AsString(null);
                 r.ErrorMessage = error["message"].AsString(null);
             }
 
             var image = payload["image"];
-            if (image != null && image.IsObject)
+            if (image is not null && image.IsObject)
             {
                 r.ImageMimeType = image["mimeType"].AsString(null);
                 r.ImageWidth = image["width"].AsInt(0);
@@ -745,7 +761,7 @@ namespace IcarusII.Common.Protocol
         public static BlueprintCardInfo Parse(JsonValue payload)
         {
             var r = new BlueprintCardInfo();
-            if (payload == null || payload.IsNull) return r;
+            if (payload is null || payload.IsNull) return r;
             r.Path = payload["path"].AsString(null);
             r.RelPath = payload["relPath"].AsString(null);
             r.FileName = payload["fileName"].AsString(null);
@@ -779,7 +795,7 @@ namespace IcarusII.Common.Protocol
         public static HistoryDeletedInfo Parse(JsonValue payload)
         {
             var r = new HistoryDeletedInfo();
-            if (payload == null || payload.IsNull) return r;
+            if (payload is null || payload.IsNull) return r;
             r.SaveKey = payload["saveKey"].AsString(null);
             r.Text = payload["text"].AsString(string.Empty);
             r.Ok = payload["ok"].AsBool(false);
@@ -801,7 +817,7 @@ namespace IcarusII.Common.Protocol
 
         public static ContextCompactedInfo Parse(JsonValue payload)
         {
-            if (payload == null || payload.IsNull) return null;
+            if (payload is null || payload.IsNull) return null;
             var summary = payload["summary"].AsString(null);
             if (string.IsNullOrEmpty(summary)) return null;
             var r = new ContextCompactedInfo
@@ -830,7 +846,7 @@ namespace IcarusII.Common.Protocol
         public static HistoryCompactionUndoneInfo Parse(JsonValue payload)
         {
             var r = new HistoryCompactionUndoneInfo();
-            if (payload == null || payload.IsNull) return r;
+            if (payload is null || payload.IsNull) return r;
             r.SaveKey = payload["saveKey"].AsString(null);
             r.CompactionId = payload["compactionId"].AsString(null);
             r.Ok = payload["ok"].AsBool(false);
@@ -867,7 +883,7 @@ namespace IcarusII.Common.Protocol
 
         public static HistoryStepInfo Parse(JsonValue value)
         {
-            if (value == null || !value.IsObject) return null;
+            if (value is null || !value.IsObject) return null;
             var kind = value["kind"].AsString(null);
             if (kind == "thinking")
             {
@@ -880,7 +896,7 @@ namespace IcarusII.Common.Protocol
                 var name = value["name"].AsString(null);
                 if (string.IsNullOrEmpty(name)) return null;
                 var rawOk = value["ok"];
-                var ok = rawOk != null && !rawOk.IsNull ? (bool?)rawOk.AsBool(false) : null;
+                var ok = rawOk is not null && !rawOk.IsNull ? (bool?)rawOk.AsBool(false) : null;
                 return new HistoryStepInfo
                 {
                     Kind = kind,
@@ -909,7 +925,7 @@ namespace IcarusII.Common.Protocol
 
         public static LinkCardInfo Parse(JsonValue payload)
         {
-            if (payload == null || payload.IsNull) return null;
+            if (payload is null || payload.IsNull) return null;
             var r = new LinkCardInfo
             {
                 Kind = payload["kind"].AsString(null),
@@ -960,7 +976,7 @@ namespace IcarusII.Common.Protocol
         /// <summary>解析 save.bound / conversation.* 共用的 history 数组。</summary>
         public static void ParseList(JsonValue history, List<HistoryMessageInfo> target)
         {
-            if (history == null || target == null || history.Count <= 0) return;
+            if (history is null || target is null || history.Count <= 0) return;
             for (int i = 0; i < history.Count; i++)
             {
                 var item = history[i];
@@ -980,32 +996,32 @@ namespace IcarusII.Common.Protocol
                     EstimatedTokensAfter = item["estimatedTokensAfter"].AsInt(0),
                 };
                 var cards = item["cards"];
-                if (cards != null && cards.Count > 0)
+                if (cards is not null && cards.Count > 0)
                 {
                     for (int c = 0; c < cards.Count; c++)
                     {
                         var card = BlueprintCardInfo.Parse(cards[c]);
-                        if (card != null && (!string.IsNullOrEmpty(card.FileName) || !string.IsNullOrEmpty(card.Path)))
+                        if (card is not null && (!string.IsNullOrEmpty(card.FileName) || !string.IsNullOrEmpty(card.Path)))
                             info.Cards.Add(card);
                     }
                 }
                 var linkCards = item["linkCards"];
-                if (linkCards != null && linkCards.Count > 0)
+                if (linkCards is not null && linkCards.Count > 0)
                 {
                     for (int c = 0; c < linkCards.Count; c++)
                     {
                         var card = LinkCardInfo.Parse(linkCards[c]);
-                        if (card != null) info.LinkCards.Add(card);
+                        if (card is not null) info.LinkCards.Add(card);
                     }
                 }
                 // 思考/工具步骤：老 sidecar 不发送，空数组即可。
                 var steps = item["steps"];
-                if (steps != null && steps.Count > 0)
+                if (steps is not null && steps.Count > 0)
                 {
                     for (int s = 0; s < steps.Count; s++)
                     {
                         var step = HistoryStepInfo.Parse(steps[s]);
-                        if (step != null) info.Steps.Add(step);
+                        if (step is not null) info.Steps.Add(step);
                     }
                 }
                 target.Add(info);
@@ -1022,7 +1038,7 @@ namespace IcarusII.Common.Protocol
 
         public static ConversationRecordInfo Parse(JsonValue value)
         {
-            if (value == null || value.IsNull) return null;
+            if (value is null || value.IsNull) return null;
             var text = value["text"].AsString(null);
             if (string.IsNullOrEmpty(text)) return null;
             return new ConversationRecordInfo
@@ -1070,7 +1086,7 @@ namespace IcarusII.Common.Protocol
         /// <summary>把一条新的用户提问追加到索引（本机实时提问用）。</summary>
         public void AddRecord(ConversationRecordInfo record)
         {
-            if (record == null || string.IsNullOrEmpty(record.Text)) return;
+            if (record is null || string.IsNullOrEmpty(record.Text)) return;
             Records.Add(record);
             RecordCount = Records.Count;
         }
@@ -1082,7 +1098,7 @@ namespace IcarusII.Common.Protocol
             for (int i = Records.Count - 1; i >= 0; i--)
             {
                 var record = Records[i];
-                if (record == null || record.Text != text) continue;
+                if (record is null || record.Text != text) continue;
                 if (timestamp > 0 && record.Timestamp > 0 && record.Timestamp != timestamp) continue;
                 Records.RemoveAt(i);
                 RecordCount = Records.Count;
@@ -1103,7 +1119,7 @@ namespace IcarusII.Common.Protocol
 
         public static ConversationInfo Parse(JsonValue value)
         {
-            if (value == null || value.IsNull) return null;
+            if (value is null || value.IsNull) return null;
             var id = value["id"].AsString(null);
             if (string.IsNullOrEmpty(id)) return null;
             var info = new ConversationInfo
@@ -1115,12 +1131,12 @@ namespace IcarusII.Common.Protocol
                 RecordCount = value["recordCount"].AsInt(0),
             };
             var records = value["records"];
-            if (records != null && records.Count > 0)
+            if (records is not null && records.Count > 0)
             {
                 for (int i = 0; i < records.Count; i++)
                 {
                     var record = ConversationRecordInfo.Parse(records[i]);
-                    if (record != null) info.Records.Add(record);
+                    if (record is not null) info.Records.Add(record);
                 }
             }
             if (info.RecordCount <= 0) info.RecordCount = info.Records.Count;
@@ -1149,7 +1165,7 @@ namespace IcarusII.Common.Protocol
         public static ConversationEventInfo Parse(JsonValue payload)
         {
             var r = new ConversationEventInfo();
-            if (payload == null || payload.IsNull) return r;
+            if (payload is null || payload.IsNull) return r;
             r.SaveKey = payload["saveKey"].AsString(null);
             r.ConversationId = payload["conversationId"].AsString(null);
             r.ActiveConversationId = payload["activeConversationId"].AsString(null);
@@ -1159,16 +1175,16 @@ namespace IcarusII.Common.Protocol
             r.Existed = payload["existed"].AsBool(false);
             r.MessageCount = payload["messageCount"].AsInt(0);
             r.Conversation = ConversationInfo.Parse(payload["conversation"]);
-            if (string.IsNullOrEmpty(r.ConversationId) && r.Conversation != null)
+            if (string.IsNullOrEmpty(r.ConversationId) && r.Conversation is not null)
                 r.ConversationId = r.Conversation.Id;
 
             var conversations = payload["conversations"];
-            if (conversations != null && conversations.Count > 0)
+            if (conversations is not null && conversations.Count > 0)
             {
                 for (int i = 0; i < conversations.Count; i++)
                 {
                     var info = ConversationInfo.Parse(conversations[i]);
-                    if (info != null) r.Conversations.Add(info);
+                    if (info is not null) r.Conversations.Add(info);
                 }
             }
             HistoryMessageInfo.ParseList(payload["history"], r.History);
@@ -1195,7 +1211,7 @@ namespace IcarusII.Common.Protocol
         public static SaveBoundInfo Parse(JsonValue payload)
         {
             var r = new SaveBoundInfo();
-            if (payload == null || payload.IsNull) return r;
+            if (payload is null || payload.IsNull) return r;
             r.SaveKey = payload["saveKey"].AsString(null);
             r.SaveName = payload["saveName"].AsString(null);
             r.Existed = payload["existed"].AsBool(false);
@@ -1203,12 +1219,12 @@ namespace IcarusII.Common.Protocol
             r.ActiveConversationId = payload["activeConversationId"].AsString(null);
 
             var conversations = payload["conversations"];
-            if (conversations != null && conversations.Count > 0)
+            if (conversations is not null && conversations.Count > 0)
             {
                 for (int i = 0; i < conversations.Count; i++)
                 {
                     var info = ConversationInfo.Parse(conversations[i]);
-                    if (info != null) r.Conversations.Add(info);
+                    if (info is not null) r.Conversations.Add(info);
                 }
             }
             HistoryMessageInfo.ParseList(payload["history"], r.History);
@@ -1233,7 +1249,7 @@ namespace IcarusII.Common.Protocol
 
         public static ModelInfo Parse(JsonValue value)
         {
-            if (value == null || !value.IsObject) return null;
+            if (value is null || !value.IsObject) return null;
             var id = value["id"].AsString(null);
             if (string.IsNullOrEmpty(id)) return null;
             return new ModelInfo
@@ -1269,19 +1285,19 @@ namespace IcarusII.Common.Protocol
         public static ModelCatalogResult Parse(JsonValue value)
         {
             var result = new ModelCatalogResult();
-            if (value == null || !value.IsObject) return result;
+            if (value is null || !value.IsObject) return result;
             result.Provider = value["provider"].AsString(null);
             result.Source = value["source"].AsString(null);
             result.Error = value["error"].AsString(null);
             result.ResolvedBaseUrl = value["resolvedBaseUrl"].AsString(null);
 
             var models = value["models"];
-            if (models != null && models.IsArray)
+            if (models is not null && models.IsArray)
             {
                 foreach (var item in models.Items)
                 {
                     var model = ModelInfo.Parse(item);
-                    if (model != null) result.Models.Add(model);
+                    if (model is not null) result.Models.Add(model);
                 }
             }
             return result;
@@ -1296,7 +1312,7 @@ namespace IcarusII.Common.Protocol
 
         public static ProviderCatalogEntry Parse(JsonValue value)
         {
-            if (value == null || !value.IsObject) return null;
+            if (value is null || !value.IsObject) return null;
             var id = value["id"].AsString(null);
             if (string.IsNullOrEmpty(id)) return null;
             return new ProviderCatalogEntry
@@ -1324,17 +1340,17 @@ namespace IcarusII.Common.Protocol
         public static ProviderCatalogResult Parse(JsonValue value)
         {
             var result = new ProviderCatalogResult();
-            if (value == null || !value.IsObject) return result;
+            if (value is null || !value.IsObject) return result;
             result.Source = value["source"].AsString(null);
             result.Error = value["error"].AsString(null);
 
             var providers = value["providers"];
-            if (providers != null && providers.IsArray)
+            if (providers is not null && providers.IsArray)
             {
                 foreach (var item in providers.Items)
                 {
                     var entry = ProviderCatalogEntry.Parse(item);
-                    if (entry != null) result.Providers.Add(entry);
+                    if (entry is not null) result.Providers.Add(entry);
                 }
             }
             return result;
@@ -1356,7 +1372,7 @@ namespace IcarusII.Common.Protocol
         public static ProviderTestResult Parse(JsonValue value)
         {
             var result = new ProviderTestResult();
-            if (value == null || !value.IsObject) return result;
+            if (value is null || !value.IsObject) return result;
             result.Provider = value["provider"].AsString(null);
             result.Ok = value["ok"].AsBool(false);
             result.Status = value["status"].AsInt(0);
@@ -1379,7 +1395,7 @@ namespace IcarusII.Common.Protocol
 
         public static ProviderInfo Parse(JsonValue value)
         {
-            if (value == null || !value.IsObject) return null;
+            if (value is null || !value.IsObject) return null;
             var id = value["id"].AsString(null);
             if (string.IsNullOrEmpty(id)) return null;
 
@@ -1393,12 +1409,12 @@ namespace IcarusII.Common.Protocol
                 Models = new List<ModelInfo>(),
             };
             var models = value["models"];
-            if (models != null && models.IsArray)
+            if (models is not null && models.IsArray)
             {
                 foreach (var item in models.Items)
                 {
                     var model = ModelInfo.Parse(item);
-                    if (model != null) provider.Models.Add(model);
+                    if (model is not null) provider.Models.Add(model);
                 }
             }
             return provider;
@@ -1424,6 +1440,12 @@ namespace IcarusII.Common.Protocol
         public string State { get; private set; }
         public string Provider { get; private set; }
         public string Model { get; private set; }
+
+        /// <summary>当前选中的供应商（协议附录 A.1 的 active.provider，可选）。</summary>
+        public string ActiveProvider { get; private set; }
+
+        /// <summary>当前选中的模型（协议附录 A.1 的 active.model，可选）。</summary>
+        public string ActiveModel { get; private set; }
 
         /// <summary>
         /// 多供应商列表（M3）。老服务端不返回时为空，调用方回退到
@@ -1475,31 +1497,39 @@ namespace IcarusII.Common.Protocol
         public static ConfigState Parse(JsonValue payload)
         {
             var result = new ConfigState();
-            if (payload == null || payload.IsNull) return result;
+            if (payload is null || payload.IsNull) return result;
 
             var state = payload["state"].AsString(null);
             if (!string.IsNullOrEmpty(state)) result.State = state;
 
+            var active = payload["active"];
+            if (active is not null && active.IsObject)
+            {
+                result.ActiveProvider = active["provider"].AsString(null);
+                result.ActiveModel = active["model"].AsString(null);
+            }
             result.Provider = payload["provider"].AsString(null);
             result.Model = payload["model"].AsString(null);
+            if (string.IsNullOrEmpty(result.Provider)) result.Provider = result.ActiveProvider;
+            if (string.IsNullOrEmpty(result.Model)) result.Model = result.ActiveModel;
             result.ThinkingLevel = payload["thinkingLevel"].AsString(null);
             result.PermissionLevel = payload["permissionLevel"].AsString(null);
             result.Message = payload["message"].AsString(null);
 
             var providers = payload["providers"];
-            if (providers != null && providers.IsArray)
+            if (providers is not null && providers.IsArray)
             {
                 foreach (var item in providers.Items)
                 {
                     var provider = ProviderInfo.Parse(item);
-                    if (provider != null) result.Providers.Add(provider);
+                    if (provider is not null) result.Providers.Add(provider);
                 }
             }
 
             // 老服务端只返回 provider/model：合成为一条，UI 仍能显示"模型"下拉框。
             if (result.Providers.Count == 0 && !string.IsNullOrEmpty(result.Provider))
             {
-                var fallback = ProviderInfo.Create(result.Provider, result.Provider, result.IsReady, true);
+                var fallback = ProviderInfo.Create(result.Provider, result.Provider, !result.NeedsKey, true);
                 if (!string.IsNullOrEmpty(result.Model))
                     fallback.Models.Add(ModelInfo.Create(result.Model));
                 result.Providers.Add(fallback);
@@ -1534,7 +1564,7 @@ namespace IcarusII.Common.Protocol
 
         public static ToolCallInfo Parse(JsonValue payload, string replyTo)
         {
-            if (payload == null || payload.IsNull || !payload.IsObject) return null;
+            if (payload is null || payload.IsNull || !payload.IsObject) return null;
 
             var name = payload["name"].AsString(null);
             if (string.IsNullOrEmpty(name)) return null;
@@ -1586,7 +1616,7 @@ namespace IcarusII.Common.Protocol
 
         public static ConfirmRequestInfo Parse(JsonValue payload)
         {
-            if (payload == null || !payload.IsObject) return null;
+            if (payload is null || !payload.IsObject) return null;
             var requestId = payload["requestId"].AsString(null);
             var callId = payload["callId"].AsString(null);
             var tool = payload["tool"].AsString(null);
@@ -1610,7 +1640,7 @@ namespace IcarusII.Common.Protocol
                 MaxWrites = Math.Max(0, Math.Min(10000, payload["maxWrites"].AsInt(0))),
             };
             var writeNames = payload["writeNames"];
-            if (writeNames != null && writeNames.IsArray)
+            if (writeNames is not null && writeNames.IsArray)
             {
                 for (int i = 0; i < writeNames.Count; i++)
                 {

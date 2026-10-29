@@ -65,7 +65,7 @@ namespace IcarusII.Common.Json
         public static JsonValue Of(double v) => new JsonValue(v);
         public static JsonValue Of(int v) => new JsonValue((double)v);
         public static JsonValue Of(long v) => new JsonValue((double)v);
-        public static JsonValue Of(string v) => v == null ? NullValue : new JsonValue(v);
+        public static JsonValue Of(string v) => v is null ? NullValue : new JsonValue(v);
         public static JsonValue NewArray() => new JsonValue(JsonKind.Array);
         public static JsonValue NewObject() => new JsonValue(JsonKind.Object);
 
@@ -83,21 +83,21 @@ namespace IcarusII.Common.Json
         {
             get
             {
-                if (_kind != JsonKind.Object || key == null) return NullValue;
+                if (_kind != JsonKind.Object || key is null) return NullValue;
                 return _memberIndex.TryGetValue(key, out var v) ? v : NullValue;
             }
         }
 
         public bool Has(string key)
         {
-            return _kind == JsonKind.Object && key != null && _memberIndex.ContainsKey(key);
+            return _kind == JsonKind.Object && key is not null && _memberIndex.ContainsKey(key);
         }
 
         /// <summary>设置对象成员；重复 key 覆盖原值但保留原位置。</summary>
         public JsonValue Set(string key, JsonValue value)
         {
             RequireKind(JsonKind.Object);
-            if (key == null) throw new ArgumentNullException(nameof(key));
+            if (key is null) throw new ArgumentNullException(nameof(key));
             value = value ?? NullValue;
             if (_memberIndex.ContainsKey(key))
             {
@@ -127,7 +127,7 @@ namespace IcarusII.Common.Json
         /// <summary>仅在值非空时设置（避免写入 null 污染协议）。</summary>
         public JsonValue SetIfNotNull(string key, string value)
         {
-            if (value != null) Set(key, Of(value));
+            if (value is not null) Set(key, Of(value));
             return this;
         }
 
@@ -318,14 +318,19 @@ namespace IcarusII.Common.Json
 
         // ---------------------------------------------------------------- 解析
 
+        private sealed class ParserState
+        {
+            public int Index;
+        }
+
         public static JsonValue Parse(string json)
         {
-            if (json == null) throw new JsonParseException("输入为 null");
-            int pos = 0;
-            var v = ParseValue(json, ref pos, 0);
-            SkipWhitespace(json, ref pos);
-            if (pos != json.Length)
-                throw new JsonParseException($"第 {pos} 个字符后存在多余内容");
+            if (json is null) throw new JsonParseException("输入为 null");
+            var state = new ParserState();
+            var v = ParseValue(json, state, 0);
+            SkipWhitespace(json, state);
+            if (state.Index != json.Length)
+                throw new JsonParseException($"第 {state.Index} 个字符后存在多余内容");
             return v;
         }
 
@@ -343,86 +348,86 @@ namespace IcarusII.Common.Json
             }
         }
 
-        private static JsonValue ParseValue(string s, ref int i, int depth)
+        private static JsonValue ParseValue(string s, ParserState state, int depth)
         {
             if (depth > MaxDepth) throw new JsonParseException("嵌套层级过深");
-            SkipWhitespace(s, ref i);
-            if (i >= s.Length) throw new JsonParseException("内容意外结束");
+            SkipWhitespace(s, state);
+            if (state.Index >= s.Length) throw new JsonParseException("内容意外结束");
 
-            char c = s[i];
+            char c = s[state.Index];
             switch (c)
             {
-                case '{': return ParseObject(s, ref i, depth);
-                case '[': return ParseArray(s, ref i, depth);
-                case '"': return Of(ParseString(s, ref i));
-                case 't': Expect(s, ref i, "true"); return Of(true);
-                case 'f': Expect(s, ref i, "false"); return Of(false);
-                case 'n': Expect(s, ref i, "null"); return NullValue;
-                default: return Of(ParseNumber(s, ref i));
+                case '{': return ParseObject(s, state, depth);
+                case '[': return ParseArray(s, state, depth);
+                case '"': return Of(ParseString(s, state));
+                case 't': Expect(s, state, "true"); return Of(true);
+                case 'f': Expect(s, state, "false"); return Of(false);
+                case 'n': Expect(s, state, "null"); return NullValue;
+                default: return Of(ParseNumber(s, state));
             }
         }
 
-        private static JsonValue ParseObject(string s, ref int i, int depth)
+        private static JsonValue ParseObject(string s, ParserState state, int depth)
         {
             var obj = NewObject();
-            i++; // '{'
-            SkipWhitespace(s, ref i);
-            if (i < s.Length && s[i] == '}') { i++; return obj; }
+            state.Index++; // '{'
+            SkipWhitespace(s, state);
+            if (state.Index < s.Length && s[state.Index] == '}') { state.Index++; return obj; }
 
             while (true)
             {
-                SkipWhitespace(s, ref i);
-                if (i >= s.Length || s[i] != '"')
-                    throw new JsonParseException($"第 {i} 个字符处期望对象键（字符串）");
-                string key = ParseString(s, ref i);
+                SkipWhitespace(s, state);
+                if (state.Index >= s.Length || s[state.Index] != '"')
+                    throw new JsonParseException($"第 {state.Index} 个字符处期望对象键（字符串）");
+                string key = ParseString(s, state);
 
-                SkipWhitespace(s, ref i);
-                if (i >= s.Length || s[i] != ':')
-                    throw new JsonParseException($"第 {i} 个字符处期望 ':'");
-                i++;
+                SkipWhitespace(s, state);
+                if (state.Index >= s.Length || s[state.Index] != ':')
+                    throw new JsonParseException($"第 {state.Index} 个字符处期望 ':'");
+                state.Index++;
 
-                var val = ParseValue(s, ref i, depth + 1);
+                var val = ParseValue(s, state, depth + 1);
                 obj.Set(key, val);
 
-                SkipWhitespace(s, ref i);
-                if (i >= s.Length) throw new JsonParseException("对象未闭合");
-                if (s[i] == ',') { i++; continue; }
-                if (s[i] == '}') { i++; return obj; }
-                throw new JsonParseException($"第 {i} 个字符处期望 ',' 或 '}}'");
+                SkipWhitespace(s, state);
+                if (state.Index >= s.Length) throw new JsonParseException("对象未闭合");
+                if (s[state.Index] == ',') { state.Index++; continue; }
+                if (s[state.Index] == '}') { state.Index++; return obj; }
+                throw new JsonParseException($"第 {state.Index} 个字符处期望 ',' 或 '}}'");
             }
         }
 
-        private static JsonValue ParseArray(string s, ref int i, int depth)
+        private static JsonValue ParseArray(string s, ParserState state, int depth)
         {
             var arr = NewArray();
-            i++; // '['
-            SkipWhitespace(s, ref i);
-            if (i < s.Length && s[i] == ']') { i++; return arr; }
+            state.Index++; // '['
+            SkipWhitespace(s, state);
+            if (state.Index < s.Length && s[state.Index] == ']') { state.Index++; return arr; }
 
             while (true)
             {
-                arr.Add(ParseValue(s, ref i, depth + 1));
-                SkipWhitespace(s, ref i);
-                if (i >= s.Length) throw new JsonParseException("数组未闭合");
-                if (s[i] == ',') { i++; continue; }
-                if (s[i] == ']') { i++; return arr; }
-                throw new JsonParseException($"第 {i} 个字符处期望 ',' 或 ']'");
+                arr.Add(ParseValue(s, state, depth + 1));
+                SkipWhitespace(s, state);
+                if (state.Index >= s.Length) throw new JsonParseException("数组未闭合");
+                if (s[state.Index] == ',') { state.Index++; continue; }
+                if (s[state.Index] == ']') { state.Index++; return arr; }
+                throw new JsonParseException($"第 {state.Index} 个字符处期望 ',' 或 ']'");
             }
         }
 
-        private static string ParseString(string s, ref int i)
+        private static string ParseString(string s, ParserState state)
         {
-            i++; // 开引号
+            state.Index++; // 开引号
             var sb = new StringBuilder(32);
             while (true)
             {
-                if (i >= s.Length) throw new JsonParseException("字符串未闭合");
-                char c = s[i++];
+                if (state.Index >= s.Length) throw new JsonParseException("字符串未闭合");
+                char c = s[state.Index++];
                 if (c == '"') return sb.ToString();
                 if (c != '\\') { sb.Append(c); continue; }
 
-                if (i >= s.Length) throw new JsonParseException("转义序列不完整");
-                char e = s[i++];
+                if (state.Index >= s.Length) throw new JsonParseException("转义序列不完整");
+                char e = s[state.Index++];
                 switch (e)
                 {
                     case '"': sb.Append('"'); break;
@@ -434,15 +439,15 @@ namespace IcarusII.Common.Json
                     case 'r': sb.Append('\r'); break;
                     case 't': sb.Append('\t'); break;
                     case 'u':
-                        if (i + 4 > s.Length) throw new JsonParseException("\\u 转义不完整");
+                        if (state.Index + 4 > s.Length) throw new JsonParseException("\\u 转义不完整");
                         int code = 0;
                         for (int k = 0; k < 4; k++)
                         {
-                            int d = HexDigit(s[i + k]);
-                            if (d < 0) throw new JsonParseException($"\\u 转义含非法十六进制字符 '{s[i + k]}'");
+                            int d = HexDigit(s[state.Index + k]);
+                            if (d < 0) throw new JsonParseException($"\\u 转义含非法十六进制字符 '{s[state.Index + k]}'");
                             code = (code << 4) | d;
                         }
-                        i += 4;
+                        state.Index += 4;
                         // 直接 Append((char)code)：.NET 字符串是 UTF-16，
                         // 代理对会被两个连续 \u 转义自然拼出，无需特殊处理。
                         sb.Append((char)code);
@@ -461,35 +466,37 @@ namespace IcarusII.Common.Json
             return -1;
         }
 
-        private static double ParseNumber(string s, ref int i)
+        private static double ParseNumber(string s, ParserState state)
         {
-            int start = i;
-            if (i < s.Length && (s[i] == '-' || s[i] == '+')) i++;
-            while (i < s.Length && (char.IsDigit(s[i]) || s[i] == '.' || s[i] == 'e' || s[i] == 'E' ||
-                                    ((s[i] == '-' || s[i] == '+') &&
-                                     (s[i - 1] == 'e' || s[i - 1] == 'E'))))
-                i++;
+            int start = state.Index;
+            if (state.Index < s.Length && (s[state.Index] == '-' || s[state.Index] == '+')) state.Index++;
+            while (state.Index < s.Length && (char.IsDigit(s[state.Index]) || s[state.Index] == '.'
+                || s[state.Index] == 'e' || s[state.Index] == 'E'
+                || ((s[state.Index] == '-' || s[state.Index] == '+')
+                    && (s[state.Index - 1] == 'e' || s[state.Index - 1] == 'E'))))
+                state.Index++;
 
-            string token = s.Substring(start, i - start);
+            string token = s.Substring(start, state.Index - start);
             if (token.Length == 0 ||
                 !double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
                 throw new JsonParseException($"第 {start} 个字符处不是合法数字：'{token}'");
             return value;
         }
 
-        private static void Expect(string s, ref int i, string literal)
+        private static void Expect(string s, ParserState state, string literal)
         {
-            if (i + literal.Length > s.Length || string.CompareOrdinal(s, i, literal, 0, literal.Length) != 0)
-                throw new JsonParseException($"第 {i} 个字符处期望 '{literal}'");
-            i += literal.Length;
+            if (state.Index + literal.Length > s.Length
+                || string.CompareOrdinal(s, state.Index, literal, 0, literal.Length) != 0)
+                throw new JsonParseException($"第 {state.Index} 个字符处期望 '{literal}'");
+            state.Index += literal.Length;
         }
 
-        private static void SkipWhitespace(string s, ref int i)
+        private static void SkipWhitespace(string s, ParserState state)
         {
-            while (i < s.Length)
+            while (state.Index < s.Length)
             {
-                char c = s[i];
-                if (c == ' ' || c == '\t' || c == '\n' || c == '\r') i++;
+                char c = s[state.Index];
+                if (c == ' ' || c == '\t' || c == '\n' || c == '\r') state.Index++;
                 else break;
             }
         }

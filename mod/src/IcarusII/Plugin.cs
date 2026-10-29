@@ -251,16 +251,17 @@ namespace IcarusII
                 Log.LogInfo($"[诊断] 焦点：{_chat.DescribeFocus()}");
             }
 
-            // Esc：输入框聚焦时先取消焦点（把键盘交还窗口），否则关闭窗口
+            // Esc：输入框（聊天框或标题框）聚焦时先取消焦点，否则关闭窗口。
+            // 标题框可能抢先消费掉 Esc 并失焦，这种情况窗口要保持打开。
             if (_chat.IsOpen && _hotkey.EscapePressedThisFrame)
             {
-                if (_chat.InputFocused) _chat.BlurInput();
-                else _chat.SetOpen(false);
+                if (_chat.AnyInputFocused) _chat.BlurActiveInput();
+                else if (!_chat.TitleEditEndedThisFrame) _chat.SetOpen(false);
                 return;
             }
 
             // R：开关窗口（输入框聚焦时让位给文字输入）
-            if (_hotkey.ShouldToggle(_chat.IsOpen, _chat.InputFocused, out var blockedBy))
+            if (_hotkey.ShouldToggle(_chat.IsOpen, _chat.AnyInputFocused, out var blockedBy))
             {
                 var opening = !_chat.IsOpen;
                 _chat.SetOpen(opening);
@@ -332,7 +333,7 @@ namespace IcarusII
             catch (Exception ex)
             {
                 Log.LogError($"准备 sidecar 时异常：{ex}");
-                Post(() => ShowHint($"准备 sidecar 失败：{ex.Message}"));
+                Post(() => ShowHint(Strings.Get("plugin.hint.launch_failed", ex.Message)));
             }
         }
 
@@ -396,7 +397,7 @@ namespace IcarusII
                     var model = payload["agent"]["model"].AsString("?");
                     var session = payload["sessionId"].AsString("?");
                     ApplyToolCatalog(payload);
-                    _chat.AppendSystem($"已连接 sidecar（会话 {Short(session)}，模型 {model}）");
+                    _chat.AppendSystem(Strings.Get("plugin.connected", Short(session), model));
                     break;
                 }
 
@@ -427,7 +428,7 @@ namespace IcarusII
                         // 重试意味着上一条助手消息作废：把它的思考块收尾，
                         // 重试产生的推理另起一块，避免两段推理混在同一个块里。
                         _chat.EndThinking();
-                        _chat.SetStatus("重试中…", WarnColor);
+                        _chat.SetStatus(Strings.Get("plugin.status.retrying"), WarnColor);
                     }
                     else if (state == Protocol.StateCompacting)
                     {
@@ -505,8 +506,10 @@ namespace IcarusII
                         _regenerateDeleteId.Remove(replyTo);
                         if (info == null || !info.Ok)
                         {
-                            var reason = info == null || string.IsNullOrEmpty(info.Error) ? "未知错误" : info.Error;
-                            _chat.AppendSystem("重新推理失败（无法删除旧回答：" + reason + "）。");
+                            var reason = info == null || string.IsNullOrEmpty(info.Error)
+                                ? Strings.Get("plugin.error.unknown")
+                                : info.Error;
+                            _chat.AppendSystem(Strings.Get("plugin.regenerate.failed_delete", reason));
                             _chat.SetStatus(Strings.Get("status.ready"), OkColor);
                             break;
                         }
@@ -517,7 +520,7 @@ namespace IcarusII
                             : null;
                         if (regenerateId == null)
                         {
-                            _chat.AppendSystem("重新推理失败（连接未就绪）。");
+                            _chat.AppendSystem(Strings.Get("plugin.regenerate.offline"));
                             _chat.SetStatus(Strings.Get("status.ready"), OkColor);
                             break;
                         }
@@ -529,8 +532,8 @@ namespace IcarusII
 
                     if (info != null && !info.Ok)
                     {
-                        var reason = string.IsNullOrEmpty(info.Error) ? "未知错误" : info.Error;
-                        _chat.AppendSystem("删除未写入会话（" + reason + "）；重进存档可能仍会出现这条对话。");
+                        var reason = string.IsNullOrEmpty(info.Error) ? Strings.Get("plugin.error.unknown") : info.Error;
+                        _chat.AppendSystem(Strings.Get("plugin.delete.failed", reason));
                     }
                     break;
                 }
@@ -565,7 +568,7 @@ namespace IcarusII
                     else
                     {
                         var reason = info == null || string.IsNullOrEmpty(info.Error)
-                            ? "未知错误"
+                            ? Strings.Get("plugin.error.unknown")
                             : info.Error;
                         _chat.AppendSystem(Strings.Get("chat.compaction.failed", reason));
                         _chat.SetStatus(Strings.Get("status.ready"), OkColor);
@@ -676,14 +679,14 @@ namespace IcarusII
                         && _debugById.TryGetValue(replyTo, out var debug))
                     {
                         _debugById.Remove(replyTo);
-                        _chat.AppendDebugResult($"[调试] {debug.Name}\n错误：[{code}] {message}");
+                        _chat.AppendDebugResult(Strings.Get("plugin.debug.call_failed", debug.Name, code, message));
                         _chat.SetStatus(Strings.Get("status.ready"), WarnColor);
                         break;
                     }
 
                     _chat.EndThinking(finalize: true);
                     _chat.FinishTurn();
-                    _chat.AppendSystem($"⚠ 错误 [{code}] {message}");
+                    _chat.AppendSystem(Strings.Get("plugin.error", code, message));
                     if (_streaming)
                     {
                         _chat.EndStream();
@@ -740,7 +743,7 @@ namespace IcarusII
             }
             else
             {
-                _chat?.SetStatus("正在读取" + ToolLabel(call.Name) + "…", AccentColor);
+                _chat?.SetStatus(Strings.Get("plugin.status.reading", ToolLabel(call.Name)), AccentColor);
                 if (_chat != null && _chat.Created)
                     _chat.BeginToolCard(call.CallId, ToolLabel(call.Name), ToolArgsText(call.Args));
             }
@@ -748,10 +751,10 @@ namespace IcarusII
             if (_tools == null)
             {
                 _client?.SendToolResult(call.CallId, false, JsonValue.Null,
-                    Protocol.CodeToolUnavailable, "工具执行器尚未初始化", null);
+                    Protocol.CodeToolUnavailable, Strings.Get("plugin.tool.not_ready"), null);
                 _internalCalls.Remove(call.CallId);
                 if (!call.Internal && _chat != null && _chat.Created)
-                    _chat.FinishToolCard(call.CallId, ToolLabel(call.Name), false, "工具执行器尚未初始化");
+                    _chat.FinishToolCard(call.CallId, ToolLabel(call.Name), false, Strings.Get("plugin.tool.not_ready"));
                 return;
             }
 
@@ -1003,7 +1006,7 @@ namespace IcarusII
             var label = ToolLabel(outcome.Name);
             if (outcome.Ok)
             {
-                var summary = string.IsNullOrEmpty(outcome.Summary) ? "完成" : outcome.Summary;
+                var summary = string.IsNullOrEmpty(outcome.Summary) ? Strings.Get("plugin.tool.done") : outcome.Summary;
                 if (_chat != null && _chat.Created)
                 {
                     _chat.FinishToolCard(outcome.CallId, label, true, summary, outcome.Summary);
@@ -1014,7 +1017,7 @@ namespace IcarusII
             }
             else
             {
-                var message = outcome.ErrorMessage ?? outcome.ErrorCode ?? "未知错误";
+                var message = outcome.ErrorMessage ?? outcome.ErrorCode ?? Strings.Get("plugin.error.unknown");
                 if (_chat != null && _chat.Created)
                     _chat.FinishToolCard(outcome.CallId, label, false, message, message);
                 _chat?.SetStatus(Strings.Get("status.ready"), WarnColor);
@@ -1184,7 +1187,7 @@ namespace IcarusII
             var id = _client.SendHistoryDelete(saveKey, text, timestampMs);
             if (id == null)
             {
-                _chat.AppendSystem("删除未同步到会话（连接未就绪）；重进存档可能仍会出现这条对话。");
+                _chat.AppendSystem(Strings.Get("plugin.delete.offline"));
                 return;
             }
             Log.LogInfo($"[索引] 已请求 sidecar 删除回合：{id}");
@@ -1198,14 +1201,14 @@ namespace IcarusII
         {
             if (_client == null || _client.State != ConnectionState.Ready)
             {
-                _chat.AppendSystem("撤销压缩失败（连接未就绪）。");
+                _chat.AppendSystem(Strings.Get("plugin.compaction_undo.offline"));
                 return;
             }
             var saveKey = GameRefs.CurrentSaveKey();
             var id = _client.SendHistoryUndoCompaction(saveKey, compactionId);
             if (id == null)
             {
-                _chat.AppendSystem("撤销压缩失败（连接状态已变化）。");
+                _chat.AppendSystem(Strings.Get("plugin.compaction_undo.changed"));
                 return;
             }
             _chat.SetStatus(Strings.Get("status.undoing"), WarnColor);
@@ -1221,7 +1224,7 @@ namespace IcarusII
             if (string.IsNullOrEmpty(text)) return;
             if (_client == null || _client.State != ConnectionState.Ready)
             {
-                _chat.AppendSystem("重新推理失败（连接未就绪）。");
+                _chat.AppendSystem(Strings.Get("plugin.regenerate.offline"));
                 return;
             }
 
@@ -1229,7 +1232,7 @@ namespace IcarusII
             var id = _client.SendHistoryDelete(saveKey, text, timestampMs);
             if (id == null)
             {
-                _chat.AppendSystem("重新推理失败（连接状态已变化）。");
+                _chat.AppendSystem(Strings.Get("plugin.regenerate.changed"));
                 return;
             }
             _regenerateDeleteId[id] = text;
@@ -1295,7 +1298,7 @@ namespace IcarusII
 
             if (_client == null || _client.State != ConnectionState.Ready)
             {
-                _chat?.SetStatus("sidecar 未连接，模型选择未生效", WarnColor);
+                _chat?.SetStatus(Strings.Get("plugin.model.offline"), WarnColor);
                 Log.LogInfo($"[配置] 模型 → {provider}/{model}（连接未就绪，未发送）");
                 return;
             }
@@ -1303,7 +1306,7 @@ namespace IcarusII
             var id = _client.SendConfigSet(activeProvider: provider, activeModel: model);
             if (id == null)
             {
-                _chat?.SetStatus("模型选择发送失败", WarnColor);
+                _chat?.SetStatus(Strings.Get("plugin.model.failed"), WarnColor);
                 Log.LogWarning($"[配置] 模型 → {provider}/{model}（config.set 发送失败）");
                 return;
             }
@@ -1540,7 +1543,7 @@ namespace IcarusII
         private static List<ConversationInfo> BuildConversations(SaveBoundInfo info)
         {
             if (info.Conversations.Count > 0) return info.Conversations;
-            var conversation = ConversationInfo.Create("legacy", "当前会话");
+            var conversation = ConversationInfo.Create("legacy", Strings.Get("chat.conversation.current"));
             if (info.History != null)
             {
                 foreach (var message in info.History)
@@ -1561,7 +1564,7 @@ namespace IcarusII
         private static string ShortConversationTitle(string text)
         {
             var value = (text ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
-            if (value.Length == 0) return "新会话";
+            if (value.Length == 0) return Strings.Get("chat.conversation.new");
             return value.Length <= 18 ? value : value.Substring(0, 18) + "…";
         }
 
@@ -1975,11 +1978,7 @@ namespace IcarusII
             var rest = trimmed.Length > 5 ? trimmed.Substring(5).Trim() : string.Empty;
             if (rest.Length == 0)
             {
-                _chat.AppendDebugResult(
-                    "[调试] 用法：\n" +
-                    "  !tools\n" +
-                    "  !tool <工具名> <JSON 参数>\n" +
-                    "例如：!tool game_get_power {}");
+                _chat.AppendDebugResult(Strings.Get("plugin.debug.usage"));
                 return true;
             }
 
@@ -2000,43 +1999,43 @@ namespace IcarusII
             if (name.StartsWith("/", StringComparison.Ordinal)) name = name.Substring(1);
             if (string.IsNullOrEmpty(name) || name.Length > 128)
             {
-                _chat.AppendDebugResult("[调试] 工具名不能为空，且不能超过 128 个字符。");
+                _chat.AppendDebugResult(Strings.Get("plugin.debug.name_required"));
                 return true;
             }
 
             JsonValue args;
             if (!JsonValue.TryParse(argsText, out args) || args == null || !args.IsObject)
             {
-                _chat.AppendDebugResult($"[调试] 参数必须是 JSON 对象：\n{argsText}");
+                _chat.AppendDebugResult(Strings.Get("plugin.debug.args_invalid", argsText));
                 return true;
             }
 
             if (_client == null || _client.State != ConnectionState.Ready)
             {
-                _chat.AppendDebugResult("[调试] 尚未连接到 sidecar，请求未发送。");
+                _chat.AppendDebugResult(Strings.Get("plugin.debug.offline"));
                 return true;
             }
             if (_promptById.Count > 0 || _streaming)
             {
-                _chat.AppendDebugResult("[调试] 当前正在回答，等本轮结束后再执行。");
+                _chat.AppendDebugResult(Strings.Get("plugin.debug.busy_stream"));
                 return true;
             }
             if (_debugById.Count > 0)
             {
-                _chat.AppendDebugResult("[调试] 已有一个调试请求在跑，等它返回后再执行。");
+                _chat.AppendDebugResult(Strings.Get("plugin.debug.busy_request"));
                 return true;
             }
 
             var id = _client.SendToolDebug(name, args);
             if (id == null)
             {
-                _chat.AppendDebugResult("[调试] 发送失败（连接状态已变化）。");
+                _chat.AppendDebugResult(Strings.Get("plugin.debug.send_failed"));
                 return true;
             }
 
             _debugById[id] = new DebugRequest { Name = name, Args = args.ToJson() };
-            _chat.AppendDebugResult($"[调试] {name}\n参数：{args.ToJson()}\n等待返回…");
-            _chat.SetStatus("调试中…", AccentColor);
+            _chat.AppendDebugResult(Strings.Get("plugin.debug.sent", name, args.ToJson()));
+            _chat.SetStatus(Strings.Get("plugin.status.debugging"), AccentColor);
             return true;
         }
 
@@ -2044,17 +2043,17 @@ namespace IcarusII
         {
             var items = _chat != null ? _chat.GetToolCatalog() : new List<ToolMenuItem>();
             var sb = new StringBuilder();
-            sb.AppendLine($"[调试] 工具目录（{items.Count}）");
+            sb.AppendLine(Strings.Get("plugin.debug.catalog", items.Count));
             if (items.Count == 0)
             {
-                sb.AppendLine("（尚未收到 ready.payload.toolCatalog；连接成功后会自动刷新）");
+                sb.AppendLine(Strings.Get("plugin.debug.catalog_pending"));
             }
             else
             {
                 foreach (var item in items)
                 {
                     sb.Append(item.Name).Append(" — ").Append(item.Label);
-                    if (!item.Debuggable) sb.Append("（不可调试）");
+                    if (!item.Debuggable) sb.Append(Strings.Get("plugin.debug.not_debuggable"));
                     sb.AppendLine();
                 }
             }
@@ -2066,7 +2065,7 @@ namespace IcarusII
             var info = ToolDebugResultInfo.Parse(payload);
             if (info == null)
             {
-                _chat.AppendDebugResult("[调试] 收到无法解析的 tool_debug_result。");
+                _chat.AppendDebugResult(Strings.Get("plugin.debug.bad_result"));
                 return;
             }
 
@@ -2078,26 +2077,24 @@ namespace IcarusII
                 ? (request != null ? request.Name : "?")
                 : info.Tool;
             var sb = new StringBuilder();
-            sb.Append("[调试] ").Append(tool)
-                .Append(" · ").Append(info.DurationMs).Append("ms · ")
-                .Append(info.Ok ? "成功" : "失败");
+            sb.Append(Strings.Get("plugin.debug.head", tool, info.DurationMs,
+                info.Ok ? Strings.Get("plugin.debug.ok") : Strings.Get("plugin.debug.fail")));
             if (!string.IsNullOrEmpty(info.Source) && info.Source != "unknown")
-                sb.Append(" · ").Append(info.Source == "game" ? "游戏侧" : "sidecar");
+                sb.Append(" · ").Append(info.Source == "game" ? Strings.Get("plugin.debug.game") : "sidecar");
             sb.AppendLine();
 
             if (request != null && !string.IsNullOrEmpty(request.Args))
-                sb.Append("参数：").Append(Clip(request.Args, 2000)).AppendLine();
+                sb.Append(Strings.Get("plugin.debug.args", Clip(request.Args, 2000))).AppendLine();
 
             if (!string.IsNullOrEmpty(info.ErrorCode) || !string.IsNullOrEmpty(info.ErrorMessage))
             {
-                sb.Append("错误：[")
-                    .Append(string.IsNullOrEmpty(info.ErrorCode) ? "unknown" : info.ErrorCode)
-                    .Append("] ")
-                    .Append(Clip(info.ErrorMessage ?? string.Empty, 2000))
+                sb.Append(Strings.Get("plugin.debug.error",
+                        string.IsNullOrEmpty(info.ErrorCode) ? "unknown" : info.ErrorCode,
+                        Clip(info.ErrorMessage ?? string.Empty, 2000)))
                     .AppendLine();
             }
 
-            sb.AppendLine("返回值：");
+            sb.AppendLine(Strings.Get("plugin.debug.result"));
             var detailsText = info.Details != null && (info.Details.IsObject || info.Details.IsArray)
                 ? PrettyJson(info.Details, 0)
                 : info.DetailsText();
@@ -2105,27 +2102,26 @@ namespace IcarusII
 
             if (!string.IsNullOrEmpty(info.Content))
             {
-                sb.AppendLine("模型可见：");
+                sb.AppendLine(Strings.Get("plugin.debug.visible"));
                 sb.AppendLine(Clip(info.Content, 4000));
             }
 
             if (info.ImageBytes > 0)
             {
-                sb.Append("图片：").Append(info.ImageMimeType ?? "image")
-                    .Append(" ").Append(info.ImageWidth).Append("×").Append(info.ImageHeight)
-                    .Append(" · ").Append(info.ImageBytes).AppendLine(" bytes（base64 已省略）");
+                sb.Append(Strings.Get("plugin.debug.image", info.ImageMimeType ?? "image",
+                    info.ImageWidth, info.ImageHeight, info.ImageBytes)).AppendLine();
             }
 
-            if (info.Truncated) sb.AppendLine("（结果已截断）");
+            if (info.Truncated) sb.AppendLine(Strings.Get("plugin.debug.truncated"));
 
             _chat.AppendDebugResult(sb.ToString().TrimEnd());
-            _chat.SetStatus(info.Ok ? Strings.Get("status.ready") : "调试失败", info.Ok ? OkColor : WarnColor);
+            _chat.SetStatus(info.Ok ? Strings.Get("status.ready") : Strings.Get("plugin.status.debug_failed"), info.Ok ? OkColor : WarnColor);
         }
 
         private static string Clip(string value, int max)
         {
             if (string.IsNullOrEmpty(value)) return string.Empty;
-            return value.Length <= max ? value : value.Substring(0, max) + "…（截断）";
+            return value.Length <= max ? value : value.Substring(0, max) + Strings.Get("plugin.debug.clip");
         }
 
         /// <summary>
@@ -2182,7 +2178,7 @@ namespace IcarusII
         {
             if (_debugById.Count == 0) return;
             _debugById.Clear();
-            _chat?.AppendDebugResult("[调试] 连接断开，未完成的调试请求已取消。");
+            _chat?.AppendDebugResult(Strings.Get("plugin.debug.cancelled"));
         }
 
         private void OnUserSubmitted(string text)
@@ -2207,7 +2203,7 @@ namespace IcarusII
 
             if (_client == null || _client.State != ConnectionState.Ready)
             {
-                _chat.AppendSystem("尚未连接到 sidecar，消息未发送。");
+                _chat.AppendSystem(Strings.Get("plugin.send.offline"));
                 return;
             }
 
@@ -2216,7 +2212,7 @@ namespace IcarusII
             var id = _client.SendPrompt(text, _chat.ActiveConversationId, requiredTool);
             if (id == null)
             {
-                _chat.AppendSystem("发送失败（连接状态已变化）。");
+                _chat.AppendSystem(Strings.Get("plugin.send.changed"));
                 return;
             }
             _promptById[id] = text;

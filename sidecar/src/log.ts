@@ -24,12 +24,7 @@ function isLevel(value: string): value is LogLevel {
   return value === 'debug' || value === 'info' || value === 'warn' || value === 'error';
 }
 
-function initialLevel(): LogLevel {
-  const raw = (process.env['ICARUS_II_LOG_LEVEL'] ?? '').toLowerCase();
-  return isLevel(raw) ? raw : 'info';
-}
-
-let currentLevel: LogLevel = initialLevel();
+let currentLevel: LogLevel = 'info';
 
 /** 调整日志级别（CLI `--log-level` 用）。非法值会被忽略并返回 false。 */
 export function setLevel(level: string): boolean {

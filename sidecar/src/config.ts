@@ -134,10 +134,16 @@ export interface ConfigData {
   providers: Record<string, ProviderData>;
   activeProvider: string;
   activeModel: string;
-  /** 思考档位；`off` = 不请求思考（默认，控制成本）。 */
+  /** 思考档位；`off` = 不请求思考，默认 `high`。 */
   thinkingLevel: ThinkingLevelName;
   /** 权限档位；`limited`（受限）= risk 1 放行、risk 2 确认，默认。 */
   permissionLevel: PermissionLevel;
+  /** 蓝图根目录；null = 使用系统默认的 Documents/Dyson Sphere Program/Blueprint。 */
+  blueprintDir: string | null;
+  /** 中文 Wiki API 端点；null = 使用内置默认值。 */
+  wikiZhApi: string | null;
+  /** 英文 Wiki API 端点；null = 使用内置默认值。 */
+  wikiEnApi: string | null;
 }
 
 /**
@@ -283,6 +289,9 @@ export class ConfigStore {
       activeModel: model,
       thinkingLevel: DEFAULT_THINKING_LEVEL,
       permissionLevel: DEFAULT_PERMISSION_LEVEL,
+      blueprintDir: null,
+      wikiZhApi: null,
+      wikiEnApi: null,
     };
     this.load();
     this.ensureActive();
@@ -390,6 +399,18 @@ export class ConfigStore {
     const permissionLevel = parsed['permissionLevel'];
     if (isPermissionLevel(permissionLevel)) this.data.permissionLevel = permissionLevel;
 
+    const blueprintDir = parsed['blueprintDir'];
+    if (typeof blueprintDir === 'string' && blueprintDir.trim().length > 0) {
+      this.data.blueprintDir = blueprintDir.trim();
+    }
+    const wiki = parsed['wiki'];
+    if (isPlainObject(wiki)) {
+      const zh = wiki['zhApi'];
+      const en = wiki['enApi'];
+      if (typeof zh === 'string' && zh.trim().length > 0) this.data.wikiZhApi = zh.trim();
+      if (typeof en === 'string' && en.trim().length > 0) this.data.wikiEnApi = en.trim();
+    }
+
     this.ensureActive();
 
     this.logger.debug('已加载 config.json', {
@@ -455,6 +476,9 @@ export class ConfigStore {
       providers: cloneProviders(this.data.providers),
       activeProvider: this.data.activeProvider,
       activeModel: this.data.activeModel,
+      blueprintDir: this.data.blueprintDir,
+      wikiZhApi: this.data.wikiZhApi,
+      wikiEnApi: this.data.wikiEnApi,
     };
   }
 
@@ -632,6 +656,16 @@ export class ConfigStore {
     return this.view();
   }
 
+  /** 蓝图根目录；null 表示用系统默认目录。 */
+  blueprintRoot(): string | null {
+    return this.data.blueprintDir;
+  }
+
+  /** Wiki API 端点；null 表示用内置默认值。 */
+  wikiEndpoint(lang: 'zh' | 'en'): string | null {
+    return lang === 'zh' ? this.data.wikiZhApi : this.data.wikiEnApi;
+  }
+
   /** 当前对外可见的配置状态（**不含 apiKey**，附录 A.1）。 */
   view(): ConfigView {
     this.ensureActive();
@@ -670,6 +704,8 @@ export class ConfigStore {
       baseUrl: this.active()?.baseUrl ?? null,
       thinkingLevel: this.data.thinkingLevel,
       permissionLevel: this.data.permissionLevel,
+      blueprintDir: this.data.blueprintDir,
+      wiki: { zhApi: this.data.wikiZhApi, enApi: this.data.wikiEnApi },
     };
   }
 
@@ -682,6 +718,8 @@ export class ConfigStore {
       active: { provider: this.data.activeProvider, model: this.data.activeModel },
       thinkingLevel: this.data.thinkingLevel,
       permissionLevel: this.data.permissionLevel,
+      blueprintDir: this.data.blueprintDir,
+      wiki: { zhApi: this.data.wikiZhApi, enApi: this.data.wikiEnApi },
     };
     writeFileSync(tmp, `${JSON.stringify(onDisk, null, 2)}\n`, {
       encoding: 'utf8',

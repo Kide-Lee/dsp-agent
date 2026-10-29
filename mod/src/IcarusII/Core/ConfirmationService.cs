@@ -58,12 +58,12 @@ namespace IcarusII.Core
         public bool TryRegister(ConfirmRequestInfo request, out string error)
         {
             error = null;
-            if (request == null)
+            if (request is null)
             {
                 error = "invalid_args";
                 return false;
             }
-            if (Current != null || _pending.Count > 0)
+            if (Current is not null || _pending.Count > 0)
             {
                 error = "busy";
                 return false;
@@ -96,7 +96,7 @@ namespace IcarusII.Core
                 // 空 writeNames 曾经等于“放行全部写工具”，这里直接拒绝。
                 if (!string.Equals(request.Tool, Protocol.ToolRunScript, StringComparison.Ordinal) ||
                     string.IsNullOrWhiteSpace(request.ArgsHash) ||
-                    request.WriteNames == null || request.WriteNames.Count == 0)
+                    request.WriteNames is null || request.WriteNames.Count == 0)
                     return false;
                 foreach (var name in request.WriteNames)
                     if (!Protocol.IsWriteTool(name)) return false;
@@ -130,7 +130,7 @@ namespace IcarusII.Core
         public bool TryConsume(ToolCallInfo call, out string error)
         {
             error = null;
-            if (call == null) return true;
+            if (call is null) return true;
             if (string.IsNullOrEmpty(call.ConfirmToken))
             {
                 error = Protocol.CodeConfirmationRequired;
