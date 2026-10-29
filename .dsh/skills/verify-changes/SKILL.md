@@ -1,11 +1,11 @@
 ---
 name: verify-changes
-description: Run the IcarusII verification matrix — mod build, sidecar offline tests, C# protocol tests, optional protocol e2e — scoped to what changed. Use before committing, or when asked to run tests / verify a change still builds.
+description: 运行 IcarusII 的验证矩阵 —— mod 构建、sidecar 离线测试、C# 协议测试、可选的协议端到端 —— 按改动范围裁剪。提交前使用，或被要求跑测试 / 确认改动仍可构建时使用。
 ---
 
-# Verify IcarusII changes
+# 验证 IcarusII 改动
 
-One script, scoped to what you touched:
+一个脚本，按你实际改过的范围跑：
 
 ```bash
 .dsh/skills/verify-changes/scripts/verify.sh              # mod + sidecar + protocol
@@ -16,7 +16,7 @@ One script, scoped to what you touched:
 .dsh/skills/verify-changes/scripts/verify.sh all          # mod + sidecar + protocol
 ```
 
-## Which scope for which change
+## 改动对应跑哪个范围
 
 | 改动 | 必跑 |
 | --- | --- |

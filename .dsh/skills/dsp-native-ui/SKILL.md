@@ -1,6 +1,6 @@
 ---
 name: dsp-native-ui
-description: Use Dyson Sphere Program's own UI building blocks (UIButton, UIComboBox, Localizer, UIToggle/UISwitch, UIInputField) the way the game does — component sets, event wiring, localization and the pitfalls measured from DSPGame.unity. Use when adding or restyling IcarusII UI, picking a native widget, or when a native control looks or behaves wrong.
+description: 按游戏自己的方式使用《戴森球计划》的原生 UI 组件（UIButton、UIComboBox、Localizer、UIToggle/UISwitch、UIInputField）—— 组件套装、事件连线、本地化，以及从 DSPGame.unity 实测出的坑。在新增或改造 IcarusII 界面、挑选原生控件，或某个原生控件外观/行为不对时使用。
 ---
 
 # 用游戏原生 UI 组件

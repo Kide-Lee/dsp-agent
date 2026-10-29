@@ -60,7 +60,7 @@ class Scene:
         env = UnityPy.load(path)
         objs = {o.path_id: o for o in env.objects}
 
-        self.go = {}            # go pid -> (name, [labels], [(label, fields)])
+        self.go = {}            # go pid -> (名字, [标签], [(标签, 字段)])
         for pid, o in objs.items():
             if o.type.name != "GameObject":
                 continue
@@ -79,7 +79,7 @@ class Scene:
                     labels.append(co.type.name)
             self.go[pid] = (data.m_Name, labels, sigs)
 
-        self.tchildren = {}     # transform pid -> [child transform pid]
+        self.tchildren = {}     # transform pid -> [子 transform pid]
         self.t2g = {}           # transform pid -> gameobject pid
         self.g2t = {}           # gameobject pid -> transform pid
         for pid, o in objs.items():

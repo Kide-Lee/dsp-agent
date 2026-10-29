@@ -1,67 +1,67 @@
 ---
 name: update-steam-mod
-description: Safely update the IcarusII BepInEx mod in the Steam/Proton Dyson Sphere Program install from dist/pkg, with backup, SHA-256 verification, config-preservation and legacy-config migration checks. Use when asked to update/install/deploy the mod to Steam, or when testing whether the packaged build matches the installed game.
+description: 从 dist/pkg 安全更新 Steam/Proton 版《戴森球计划》里的 IcarusII BepInEx mod，含备份、SHA-256 校验、配置保留与旧配置迁移检查。被要求更新/安装/部署 mod 到 Steam，或验证打包产物与已安装游戏是否一致时使用。
 ---
 
-# Update IcarusII in the Steam/Proton DSP install
+# 更新 Steam/Proton 版 DSP 里的 IcarusII
 
-Use this when the user asks to **update the Steam mod**, deploy the packaged build, or verify the installed game is current.
+在用户要求**更新 Steam 上的 mod**、部署打包好的构建，或核实已安装的游戏是最新构建时使用。
 
-The one-command path is:
+一条命令的路径是：
 
 ```bash
 .dsh/skills/update-steam-mod/scripts/update-steam-mod.sh
 ```
 
-Always run `--dry-run` first when the installed state is unknown:
+不确定已安装状态时，一律先跑 `--dry-run`：
 
 ```bash
 .dsh/skills/update-steam-mod/scripts/update-steam-mod.sh --dry-run
 ```
 
-The script only copies four files, backs up the old ones, verifies hashes, and checks that the existing sidecar `config.json` still migrates with its key intact. It **never** writes the game config or sidecar data.
+脚本只复制四个文件，先备份旧文件、校验哈希，再确认现有 sidecar `config.json` 仍能带着 key 迁移。它**绝不**写游戏配置或 sidecar 数据。
 
-## What gets updated
+## 更新哪些文件
 
-From `dist/pkg/IcarusII/BepInEx/plugins/IcarusII/`:
+来源：`dist/pkg/IcarusII/BepInEx/plugins/IcarusII/`
 
-| File | Purpose |
+| 文件 | 用途 |
 |------|---------|
-| `IcarusII.dll` | BepInEx plugin |
-| `IcarusII.pdb` | stack traces / debugging |
-| `sidecar/icarus-ii-sidecar.exe` | Windows sidecar (Proton runs this) |
-| `ui/icarusii-ui` | chat-window AssetBundle |
+| `IcarusII.dll` | BepInEx 插件 |
+| `IcarusII.pdb` | 堆栈 / 调试 |
+| `sidecar/icarus-ii-sidecar.exe` | Windows sidecar（Proton 下运行的就是它） |
+| `ui/icarusii-ui` | 聊天窗 AssetBundle |
 
-Destination: `<DSP>/BepInEx/plugins/IcarusII/`.
+目标位置：`<DSP>/BepInEx/plugins/IcarusII/`。
 
-## Never touch
+## 绝不触碰
 
-- `<DSP>/BepInEx/config/icarus-ii.cfg` — player settings
-- `.../compatdata/1366540/pfx/drive_c/users/<user>/AppData/Roaming/icarus-ii/config.json` — keys/providers
-- `.../icarus-ii/runtime.json` — handshake token
-- `.../icarus-ii/agent/` and `.../sessions/` — history
+- `<DSP>/BepInEx/config/icarus-ii.cfg` —— 玩家设置
+- `.../compatdata/1366540/pfx/drive_c/users/<user>/AppData/Roaming/icarus-ii/config.json` —— key/供应商
+- `.../icarus-ii/runtime.json` —— 握手令牌
+- `.../icarus-ii/agent/` 与 `.../sessions/` —— 历史记录
 
-Do **not** run `install.sh --uninstall` or replace the whole plugin directory. Preserve `.bak-*` and `.backup-*`.
+**不要**跑 `install.sh --uninstall`，也不要整体替换插件目录。保留 `.bak-*` 和 `.backup-*`。
 
-## Before running
+## 运行前
 
-1. Ensure the packaged artifacts are current:
+1. 确认打包产物是最新的：
 
    ```bash
-   ./scripts/build-mod.sh                 # if mod source changed
-   ./scripts/build-sidecar.sh windows-x64 # if sidecar source changed
-   ./scripts/build-ui-bundle.sh           # if prefab/UI changed; needs Unity editor
+   ./scripts/build-mod.sh                 # mod 源码改过才需要
+   ./scripts/build-sidecar.sh windows-x64 # sidecar 源码改过才需要
+   ./scripts/build-ui-bundle.sh           # prefab/UI 改过才需要；要 Unity 编辑器
    ```
 
-   `build-ui-bundle.sh` refuses while Unity owns the project. If Unity is open, build the bundle from the editor or close it first.
+   Unity 占用工程时 `build-ui-bundle.sh` 会拒绝执行。若 Unity 开着，要么在编辑器里打 bundle，要么先关掉。
 
-2. Quit DSP. The script refuses if `DSPGAME.exe` is running.
-3. Confirm `BepInEx/core/BepInEx.dll` exists.
-4. For Proton, the prefix should already contain the `winhttp` override; the script checks and warns but does not edit the registry.
+2. 退出 DSP。`DSPGAME.exe` 在跑时脚本会拒绝执行。
+3. 确认 `BepInEx/core/BepInEx.dll` 存在。
+4. Proton 下 prefix 里应已有 `winhttp` 覆盖；脚本只检查并告警，不改注册表。
 
-## Manual fallback
+## 手工兜底
 
-If the script cannot be used:
+脚本用不了时：
 
 ```bash
 DSP="$HOME/.local/share/Steam/steamapps/common/Dyson Sphere Program"
@@ -79,10 +79,10 @@ cp -f "$SRC/ui/icarusii-ui" "$PLUGIN/ui/icarusii-ui"
 sha256sum "$SRC/IcarusII.dll" "$PLUGIN/IcarusII.dll"
 ```
 
-## Verification
+## 验证
 
-- Every copied file's SHA-256 matches the source package. The script enforces this.
-- Legacy sidecar config still loads: run the script's migration check, or:
+- 每个被复制文件的 SHA-256 与源包一致。脚本会强制校验。
+- 旧版 sidecar 配置仍能加载：跑脚本的迁移检查，或：
 
   ```bash
   node --input-type=module - <<'NODE'
@@ -93,33 +93,33 @@ sha256sum "$SRC/IcarusII.dll" "$PLUGIN/IcarusII.dll"
   NODE
   ```
 
-  Expect `state: "ready"`, the old provider/model active, and `hasKey: true`. Do not print the key.
-- Proton prefix `user.reg` has:
+  期望看到 `state: "ready"`、旧的 provider/model 仍为 active、`hasKey: true`。不要打印 key。
+- Proton prefix 的 `user.reg` 里有：
 
   ```
   [Software\\Wine\\AppDefaults\\DSPGAME.exe\\DllOverrides]
   "winhttp"="native,builtin"
   ```
 
-- Launch the game and press `R`; the log is `<DSP>/BepInEx/LogOutput.log`.
+- 启动游戏按 `R`；日志在 `<DSP>/BepInEx/LogOutput.log`。
 
-## Rollback
+## 回滚
 
-Copy the four files from the newest `BepInEx/plugins/IcarusII/.backup-<timestamp>/` back into place. The sidecar/config data is untouched, so rollback does not lose keys or history.
+把最新的 `BepInEx/plugins/IcarusII/.backup-<timestamp>/` 里那四个文件拷回原位。sidecar/配置数据未被触碰，所以回滚不会丢 key 或历史。
 
-## Common failures
+## 常见故障
 
-| Symptom | Cause / fix |
+| 现象 | 原因 / 处理 |
 |---------|-------------|
-| `DSPGAME 正在运行` | Quit the game, then rerun. |
-| hash mismatch | Copy was interrupted; rerun; check disk/permissions. |
-| BepInEx not loading | Missing Proton `winhttp` override; add it while no Wine process is running. |
-| UI still old | `ui/icarusii-ui` was not rebuilt after prefab changes; rebuild the bundle. |
-| Old key missing | Check the migration output; the new sidecar should migrate `provider/model/apiKey` to `providers.deepseek`. Never delete `config.json`. |
-| `wineserver` warning | Copying files is still safe; only registry edits need Wine stopped. |
+| `DSPGAME 正在运行` | 退出游戏后重跑。 |
+| 哈希不一致 | 复制被中断；重跑；检查磁盘/权限。 |
+| BepInEx 没加载 | 缺 Proton `winhttp` 覆盖；在没有 Wine 进程运行时补上。 |
+| 界面还是旧的 | prefab 改完没有重打 `ui/icarusii-ui`；重打 bundle。 |
+| 旧 key 丢了 | 看迁移输出；新 sidecar 应把 `provider/model/apiKey` 迁移到 `providers.deepseek`。绝不删 `config.json`。 |
+| `wineserver` 告警 | 复制文件仍然安全；只有改注册表才需要停 Wine。 |
 
-## Notes
+## 备注
 
-- Steam library may be outside `~/.local/share/Steam`; the script reads `libraryfolders.vdf`. Use `--game-dir` if detection fails.
-- The app id is `1366540`; the Proton prefix is `steamapps/compatdata/1366540/pfx`.
-- If the game runs natively on Windows, skip the Proton registry check and use `%APPDATA%\icarus-ii`.
+- Steam 库可能在 `~/.local/share/Steam` 之外；脚本会读 `libraryfolders.vdf`。自动定位失败时用 `--game-dir`。
+- app id 是 `1366540`；Proton prefix 是 `steamapps/compatdata/1366540/pfx`。
+- 游戏在 Windows 上原生运行时，跳过 Proton 注册表检查，改用 `%APPDATA%\icarus-ii`。

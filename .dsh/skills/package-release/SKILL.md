@@ -1,9 +1,9 @@
 ---
 name: package-release
-description: Build and package the IcarusII release into dist/pkg (Steam/manual install) and optionally the Thunderstore zip, reusing existing artifacts where safe. Use when preparing a release or before deploying to Steam.
+description: 构建并打包 IcarusII 发布产物到 dist/pkg（Steam/手动安装），可选再打 Thunderstore zip，能安全复用已有产物。准备发布或部署到 Steam 之前使用。
 ---
 
-# Package an IcarusII release
+# 打包 IcarusII 发布版
 
 ```bash
 .dsh/skills/package-release/scripts/package-release.sh                    # 完整包
@@ -11,32 +11,32 @@ description: Build and package the IcarusII release into dist/pkg (Steam/manual 
 .dsh/skills/package-release/scripts/package-release.sh --with-thunderstore
 ```
 
-Output: `dist/pkg/IcarusII/` (layout used by `update-steam-mod` and `install.sh`), plus `dist/IcarusII-<version>.zip` with `--with-thunderstore`.
+产物：`dist/pkg/IcarusII/`（`update-steam-mod` 和 `install.sh` 使用的目录结构），加 `--with-thunderstore` 时另有 `dist/IcarusII-<version>.zip`。
 
-## What `package.sh` does
+## `package.sh` 做了什么
 
-1. `scripts/build-mod.sh` → copies `IcarusII.dll` + `.pdb`.
-2. Reuses `dist/icarus-ii-sidecar.exe` when it exists **and** `SKIP_SIDECAR=1`; otherwise runs `scripts/build-sidecar.sh windows-x64`.
-3. Copies `dsp-game/Build/IcarusIIBundle/icarusii-ui` if present — a missing bundle only warns, the mod then falls back to the code-built UI.
-4. Copies `scripts/install.sh`, the Thunderstore README, `docs/protocol-v1.md`, `LICENSE`, `THIRD-PARTY.md`.
+1. `scripts/build-mod.sh` → 复制 `IcarusII.dll` + `.pdb`。
+2. 当 `dist/icarus-ii-sidecar.exe` 存在**且** `SKIP_SIDECAR=1` 时直接复用；否则跑 `scripts/build-sidecar.sh windows-x64`。
+3. 存在 `dsp-game/Build/IcarusIIBundle/icarusii-ui` 就复制 —— 缺 resource bundle 只告警，游戏会回退到代码构建的界面。
+4. 复制 `scripts/install.sh`、Thunderstore 的 README、`docs/protocol-v1.md`、`LICENSE`、`THIRD-PARTY.md`。
 
-## Flags
+## 参数
 
-| Flag | Effect |
+| 参数 | 作用 |
 | --- | --- |
-| `--skip-sidecar` | `SKIP_SIDECAR=1`: reuse the existing exe instead of rebuilding it |
-| `--with-thunderstore` | also run `scripts/package-thunderstore.sh` (reuses this build) |
-| `--skip-ui` | Thunderstore zip excludes `ui/icarusii-ui` (no game art redistribution) |
-| `--skip-build` | pass `SKIP_BUILD=1` to the Thunderstore stage |
+| `--skip-sidecar` | `SKIP_SIDECAR=1`：复用已有的 exe，不重新构建 |
+| `--with-thunderstore` | 额外跑 `scripts/package-thunderstore.sh`（复用本次构建） |
+| `--skip-ui` | Thunderstore zip 里不含 `ui/icarusii-ui`（不二次分发游戏美术资源） |
+| `--skip-build` | 给 Thunderstore 阶段传 `SKIP_BUILD=1` |
 
-## Before packaging
+## 打包前
 
-- Run the `verify-changes` skill for whatever changed; do not package a failing tree.
-- Prefab/UI changes need the `rebuild-ui-bundle` skill **first**, otherwise the package silently ships the old window.
-- Version bumps live in `packaging/thunderstore/manifest.json` (and the csproj `ModVersion`); check them before a release.
+- 按改动范围跑 `verify-changes` 技能；不要打包一个测试失败的树。
+- prefab/UI 改动要**先**跑 `rebuild-ui-bundle` 技能，否则包会悄悄带上旧窗口。
+- 版本号在 `packaging/thunderstore/manifest.json`（以及 csproj 的 `ModVersion`）；发布前核对。
 
-## After packaging
+## 打包后
 
-- Deploy: `update-steam-mod` skill (`--dry-run` first). Quit the game beforehand.
-- Thunderstore upload: see `docs/publishing.md`; never hand-edit `dist/`.
-- The script prints the file list and total size; confirm the sidecar exe and the UI bundle are both present before releasing.
+- 部署：用 `update-steam-mod` 技能（先 `--dry-run`）。提前退出游戏。
+- Thunderstore 上传：见 `docs/publishing.md`；不要手改 `dist/`。
+- 脚本会打印文件清单和总大小；发布前确认 sidecar exe 与 UI bundle 都在。

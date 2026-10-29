@@ -1,276 +1,276 @@
 ---
 name: ui-ugui
-description: Understands, edits, and generates Unity uGUI Canvas hierarchies, RectTransforms, Layout Groups, and prefab UI. Use for requests involving Canvas, uGUI, RectTransform, or prefab UI files.
+description: 理解、修改并生成 Unity uGUI 的 Canvas 层级、RectTransform、Layout Group 与 prefab UI。遇到 Canvas、uGUI、RectTransform 或 prefab UI 文件相关的请求时使用。
 ---
 
-Understand existing Unity uGUI, make targeted edits, and generate new Canvas-based hierarchies.
+理解现有的 Unity uGUI，做定点修改，并生成新的基于 Canvas 的层级。
 
-When working with ScrollRect/ScrollView, read the reference file:
-- [references/scrollview-setup.md](references/scrollview-setup.md) — Required hierarchy, setup rules, and common failures
+处理 ScrollRect/ScrollView 时，先读参考文件：
+- [references/scrollview-setup.md](references/scrollview-setup.md) —— 必需的层级、配置规则与常见故障
 
-## Scope
+## 适用范围
 
-Determine what the user is asking for:
+先判断用户在要什么：
 
-| Request Type | Action |
+| 请求类型 | 动作 |
 |--------------|--------|
-| Question about UI | **Understand** — analyze hierarchy, explain structure |
-| Change specific element | **Edit** — targeted modification only |
-| Create new UI | **Generate** — create new hierarchy |
-| Fix/improve existing UI | **Edit** — modify existing, don't rebuild |
+| 关于 UI 的提问 | **理解** —— 分析层级，解释结构 |
+| 修改某个具体元素 | **编辑** —— 只做定点修改 |
+| 新建 UI | **生成** —— 创建新层级 |
+| 修复/改进现有 UI | **编辑** —— 改现有结构，不要重建 |
 
-**Generate only what is requested:**
+**只做被要求的东西：**
 
-| Request | Output |
+| 请求 | 产出 |
 |---------|--------|
-| UI layout | Prefab or scene hierarchy only |
-| "with code" / "with logic" / "functional" | Hierarchy + scripts |
+| UI 布局 | 仅 prefab 或场景层级 |
+| "带代码" / "带逻辑" / "要能用" | 层级 + 脚本 |
 
-**These do NOT imply scripts:**
-- "proper buttons" → well-configured Button components
-- "working UI" → valid hierarchy that renders
-- "menu screen" → visual layout only
+**以下说法都不代表要写脚本：**
+- "正规的按钮" → 配置正确的 Button 组件
+- "能用的 UI" → 能正常渲染的合法层级
+- "菜单界面" → 只要视觉布局
 
-## Critical Rules
+## 硬性规则
 
-**Namespace disambiguation:**
-- Always use fully qualified type names when creating or referencing UI components
-- `UnityEngine.UI.Image`, not `Image`
-- `UnityEngine.UI.Button`, not `Button`
-- Other namespaces in the project can cause ambiguous type errors
+**命名空间歧义：**
+- 创建或引用 UI 组件时，一律使用全限定类型名
+- 写 `UnityEngine.UI.Image`，不写 `Image`
+- 写 `UnityEngine.UI.Button`，不写 `Button`
+- 项目里其他命名空间会让简写产生类型歧义错误
 
-**Verify before modifying:**
-- Always check what currently exists before making changes
-- Confirm parent objects exist before adding children
-- Verify components are present before modifying properties
-- Never assume hierarchy state — query it first
+**改之前先核实：**
+- 动手前一律先查当前已有的东西
+- 加子节点前确认父对象存在
+- 改属性前确认组件已挂上
+- 绝不假设层级状态 —— 先查
 
-**Incremental fixes over rebuilds:**
-- When fixing issues, make targeted corrections
-- Never destroy and recreate entire hierarchies to fix problems — destroyed objects cause null reference cascades
-- Prefer identifying the specific broken property and fixing only that over rewriting large sections
-- **When a fix fails, revert the change** before trying an alternative approach
+**增量修复优于重建：**
+- 修问题时做定点修正
+- 绝不为了修问题而销毁并重建整个层级 —— 被销毁的对象会引发空引用连锁
+- 优先定位具体坏掉的属性、只改那一处，而不是重写大段结构
+- **某次修复失败时，先回退这次改动**，再试别的方案
 
-**One change at a time:**
-- Make a single change, then verify the result
-- Do not batch multiple unrelated modifications
-- Be careful not to inadvertently modify or remove adjacent elements when editing a specific one
-- If something fails, understand why before trying alternatives
-- Avoid "shotgun debugging" with multiple simultaneous changes
+**一次只改一处：**
+- 改一处，验证结果
+- 不要把多个不相关的修改攒成一批
+- 改某个元素时注意别顺手改坏或删掉相邻元素
+- 出问题先弄清原因，再试替代方案
+- 避免同时改多处、说不清是哪处起作用的"霰弹式调试"
 
-**Color and visibility:**
-- **Ensure text is readable by default:** When choosing colors, ensure text contrasts with its background — but respect intentional low-contrast uses (disabled states, placeholder text, decorative elements)
-- **Check visibility for new elements:** After creating UI elements, verify they have non-zero size and are within parent bounds. Elements intentionally created hidden (for later toggling, animation, etc.) are fine
+**颜色与可见性：**
+- **默认保证文字可读：** 选颜色时确保文字与背景有对比 —— 但要尊重有意为之的低对比用法（禁用态、占位文本、装饰元素）
+- **检查新元素可见性：** 建完 UI 元素后确认尺寸非零且落在父级范围内。有意先隐藏（之后切换显示、做动画等）的元素不算问题
 
-**Specification adherence:**
-- **Honor user specifications exactly:** When the user provides pixel dimensions, hex colors, positions, spacing, or other exact values, apply them precisely — do not approximate or substitute
-- **Minimize unrelated changes:** When editing, avoid changing properties the user didn't ask about unless a related adjustment is necessary for the fix to work
+**遵守规格：**
+- **精确执行用户给的规格：** 用户给出像素尺寸、十六进制颜色、坐标、间距等精确值时，原样应用 —— 不要近似或替换
+- **尽量减少无关改动：** 编辑时不要动用户没提的属性，除非修复本身必须配套调整
 
-## Conventions
+## 约定
 
-**Follow project patterns first.** Search existing files before applying defaults.
+**先沿用项目既有模式。** 套默认值之前先搜现有文件。
 
-| Type | Convention | Good | Bad |
+| 类型 | 约定 | 好 | 差 |
 |------|------------|------|-----|
-| GameObject names | PascalCase | `SubmitButton` | `submit-button` |
-| Prefab paths | Feature folders | `Assets/UI/Inventory/` | `Assets/Prefabs/UI/` |
+| GameObject 命名 | 大驼峰 | `SubmitButton` | `submit-button` |
+| Prefab 路径 | 按功能分目录 | `Assets/UI/Inventory/` | `Assets/Prefabs/UI/` |
 
-## Workflow
+## 工作流
 
-1. **Verify state** — Check what exists in the scene/hierarchy before any action.
-2. **Analyze** — Determine exactly what's needed. No extras.
-3. **Search** — Find existing prefabs, canvases, assets. Don't assume paths.
-4. **Follow project patterns** — Match folder structure and naming.
-5. **Create or edit** — Build structure with proper anchoring, or make targeted edits.
-6. **Confirm result** — Verify the change worked before moving on.
+1. **核实状态** —— 动手前先查场景/层级里已有什么。
+2. **分析** —— 明确到底需要什么，不要多加。
+3. **搜索** —— 找已有的 prefab、canvas、资源，不要凭空猜路径。
+4. **沿用项目模式** —— 与目录结构和命名保持一致。
+5. **创建或编辑** —— 用正确的锚点搭结构，或做定点修改。
+6. **确认结果** —— 验证改动生效后再进行下一步。
 
-## Canvas Setup
+## Canvas 搭建
 
-Every UI needs a Canvas:
+每个 UI 都需要 Canvas：
 
 ```
-Canvas (Screen Space - Overlay or Camera)
-├── CanvasScaler (Scale With Screen Size recommended)
+Canvas (Screen Space - Overlay 或 Camera)
+├── CanvasScaler（推荐 Scale With Screen Size）
 ├── GraphicRaycaster
-└── [UI Content]
+└── [UI 内容]
 ```
 
-**CanvasScaler settings:**
-- Default to UI Scale Mode "Scale With Screen Size" unless the project has a specific reason for "Constant Pixel Size" (e.g., pixel-art, fixed-resolution targets)
-- Reference Resolution: Match project standards (e.g., 1920x1080)
-- When creating a Canvas with Screen Space - Camera, **read the camera's reference resolution** first
-- Match Width Or Height: 0.5 (balanced)
-- If an existing Canvas uses "Constant Pixel Size", flag it and ask the user before changing
-- Prefer anchors and Layout Groups over absolute pixel positions for layout
+**CanvasScaler 设置：**
+- 除非项目有明确理由用 "Constant Pixel Size"（例如像素风美术、固定分辨率目标），默认用 UI Scale Mode "Scale With Screen Size"
+- Reference Resolution：跟随项目标准（例如 1920x1080）
+- 用 Screen Space - Camera 建 Canvas 时，**先读相机的参考分辨率**
+- Match Width Or Height：0.5（均衡）
+- 若已有 Canvas 用 "Constant Pixel Size"，先指出来并询问用户，再决定是否改
+- 布局优先用锚点和 Layout Group，而不是绝对像素坐标
 
-## Layout Components
+## 布局组件
 
-**Layout Groups control child sizing:**
-- When a parent has a Layout Group, it manages child RectTransforms
-- Children's anchors and sizeDelta may be overridden by the parent
-- Understand whether the parent or child controls size before setting values
+**Layout Group 控制子级尺寸：**
+- 父级挂了 Layout Group，就由它管理子级 RectTransform
+- 子级的锚点和 sizeDelta 可能被父级覆盖
+- 设值前先弄清尺寸由父级还是子级决定
 
-**Vertical/Horizontal Layout Groups:**
-- Control Child Size: determines if parent sets child dimensions
-- Child Force Expand: determines if children stretch to fill space
-- If Control Child Size is off, children must have explicit sizes
+**Vertical/Horizontal Layout Group：**
+- Control Child Size：决定父级是否设定子级尺寸
+- Child Force Expand：决定子级是否拉伸填满空间
+- Control Child Size 关闭时，子级必须给出明确尺寸
 
-**Avoiding layout conflicts:**
-- Do not manually set child anchors/size when parent controls them
-- Do not add Layout Group to an element that should have fixed size
-- Nested Layout Groups require careful configuration of each level
-- When layout is wrong, check parent settings before modifying child
-- ContentSizeFitter on the **same** object as a Layout Group that has Control Child Size enabled = conflict
-- ContentSizeFitter on a child whose parent has Control Child Size enabled = ContentSizeFitter is overridden (wasted)
-- When using ContentSizeFitter with a Layout Group parent, disable Control Child Size on the parent for the relevant axis
-- Common pattern: ScrollView Content should have ContentSizeFitter + VerticalLayoutGroup where VLG controls children but ContentSizeFitter sizes the Content itself
+**避免布局冲突：**
+- 父级已经在控制时，不要再手设子级锚点/sizeDelta
+- 不要给应保持固定尺寸的元素挂 Layout Group
+- 嵌套 Layout Group 时每一层都要仔细配置
+- 布局不对时先看父级设置，再改子级
+- ContentSizeFitter 与开了 Control Child Size 的 Layout Group 挂在**同一个**对象上 = 冲突
+- 子级挂 ContentSizeFitter、而父级开了 Control Child Size = ContentSizeFitter 被覆盖（白挂）
+- Layout Group 父级配 ContentSizeFitter 时，在对应轴上关掉父级的 Control Child Size
+- 常见组合：ScrollView 的 Content 挂 ContentSizeFitter + VerticalLayoutGroup，由 VLG 管子级、由 ContentSizeFitter 决定 Content 自身尺寸
 
-**Grid Layout Group:**
-- For inventory grids, card layouts
-- Cell Size must be set explicitly — children are sized to match
-- Constraint controls row/column limits
+**Grid Layout Group：**
+- 用于背包网格、卡片布局
+- Cell Size 必须显式设定 —— 子级按它定尺寸
+- Constraint 控制行/列上限
 
-**Content Size Fitter:**
-- Horizontal/Vertical Fit: Preferred Size
-- Use on containers that should size to their content
-- Requires a layout element or text component to provide preferred size
+**Content Size Fitter：**
+- Horizontal/Vertical Fit：Preferred Size
+- 用在需要"按内容撑开"的容器上
+- 需要 Layout Element 或文本组件提供 preferred size
 
-## RectTransform Anchoring
+## RectTransform 锚点
 
-**Elements must have non-zero size to be visible:**
-- Set explicit width/height via sizeDelta, or
-- Use stretch anchors with proper offsets, or
-- Let a parent Layout Group control size (with Control Child Size enabled)
+**元素要有非零尺寸才可见：**
+- 用 sizeDelta 显式设宽高，或
+- 用拉伸锚点配正确的 offset，或
+- 交给已开 Control Child Size 的父级 Layout Group 控制
 
-**Anchor configuration order:**
-1. Set anchor preset first (corner, edge, or stretch)
-2. Then set position/offset values
-3. Verify the resulting size is non-zero
+**锚点配置顺序：**
+1. 先设锚点预设（贴角、贴边或拉伸）
+2. 再设位置/偏移值
+3. 最后确认结果尺寸非零
 
-**Common patterns:**
-- **Stretch anchors** — for responsive elements that fill available space
-- **Corner anchors** — for fixed-position, fixed-size elements
-- **Edge anchors** — for elements that stretch in one direction only
+**常见模式：**
+- **拉伸锚点** —— 用于填满可用空间的自适应元素
+- **贴角锚点** —— 用于固定位置、固定尺寸的元素
+- **贴边锚点** —— 用于只沿一个方向拉伸的元素
 
-**Positioning from natural language descriptions:**
-When the user describes a position (e.g., "top right", "bottom bar", "left side"):
-1. Determine if it's a **corner** (fixed point), an **edge** (stretch along one axis), or **fill** (stretch both axes)
-2. Set anchor min and anchor max — for corners these are the same point; for edges/fill they span a range
-3. **Set pivot to match the anchor point** — pivot must align with where the element is anchored, not left at the default (0.5, 0.5). A "top right" element needs pivot at the top-right corner; a "top bar" needs pivot at the top edge center
-4. Set position/offset values **after** anchors and pivot are configured
+**按自然语言描述定位：**
+用户描述位置时（例如"右上角""底部条""左侧"）：
+1. 判断它是**贴角**（固定点）、**贴边**（沿一轴拉伸）还是**填满**（两轴都拉伸）
+2. 设 anchorMin 与 anchorMax —— 贴角时两者同点；贴边/填满时是一个区间
+3. **pivot 与锚点对齐** —— pivot 必须和元素被锚定的位置一致，不能停留在默认的 (0.5, 0.5)。"右上角"元素的 pivot 要在右上角；"顶部条"的 pivot 要在上边中点
+4. 锚点和 pivot 都配好**之后**，再设位置/偏移值
 
-**Visibility checklist:**
-- Width and height are both greater than zero
-- Element is within parent bounds
-- Element is not obscured by siblings (check hierarchy order)
-- Image component has a sprite or color with alpha > 0
+**可见性检查表：**
+- 宽和高都大于零
+- 元素落在父级范围内
+- 元素没有被同级元素挡住（检查层级顺序）
+- Image 组件有 sprite，或颜色 alpha > 0
 
-## Common Components
+## 常用组件
 
-| Component | Use Case |
+| 组件 | 用途 |
 |-----------|----------|
-| `Image` | Backgrounds, icons |
-| `RawImage` | Render textures, videos |
-| `Text (TMP)` | All text (use TextMeshPro) |
-| `Button` | Clickable elements |
-| `Toggle` | Checkboxes, radio buttons |
-| `Slider` | Value ranges |
-| `ScrollRect` | Scrollable content |
-| `InputField (TMP)` | Text input |
+| `Image` | 底图、图标 |
+| `RawImage` | Render Texture、视频 |
+| `Text (TMP)` | 所有文本（用 TextMeshPro） |
+| `Button` | 可点击元素 |
+| `Toggle` | 复选框、单选框 |
+| `Slider` | 数值区间 |
+| `ScrollRect` | 可滚动内容 |
+| `InputField (TMP)` | 文本输入 |
 
-## Best Practices
+## 最佳实践
 
-- Use TextMeshPro for all text (not legacy Text)
-- WorldSpace UI that have text should also use Text Mesh Pro, be sure to review the project and import the TMP essentials if they are not present in the project
-- If the TextMeshPro Essentials were imported be sure to close the TMP Importer Windows and the Import Unity Package Window once the assets are imported
-- Organize hierarchy logically (Header, Content, Footer)
-- Use Layout Groups instead of manual positioning where possible
-- Set Raycast Target = false on non-interactive images
-- Use sprite atlases for performance
+- 所有文本用 TextMeshPro（不用旧版 Text）
+- 带文字的 WorldSpace UI 也要用 TextMeshPro；先检查项目，缺少 TMP Essentials 时导入
+- 若导入了 TextMeshPro Essentials，资源导入完成后务必关掉 TMP Importer 窗口和 Import Unity Package 窗口
+- 层级按逻辑组织（Header、Content、Footer）
+- 能用 Layout Group 就别手工定位
+- 非交互图片设 Raycast Target = false
+- 用 sprite 图集提升性能
 
-**Never use** `EditorApplication.ExecuteMenuItem("Window/TextMeshPro/Import TMP Essential Resources")`, unless the user asks for an interactive TMP Essentials installation. It opens a modal dialog that blocks whatever invoked it until a human dismisses it.
+**绝不要用** `EditorApplication.ExecuteMenuItem("Window/TextMeshPro/Import TMP Essential Resources")`，除非用户明确要求交互式安装 TMP Essentials。它会弹出模态对话框，把调用它的流程一直阻塞到有人手动点掉。
 
-**Do not use** `AssetDatabase.ImportPackage()` for TMP resources, instead `TMP_PackageResourceImporter.ImportResources()` is the canonical non-interactive API.
+**不要用** `AssetDatabase.ImportPackage()` 导入 TMP 资源，应该用 `TMP_PackageResourceImporter.ImportResources()` 这个规范的非交互 API。
 
-## Interaction Readiness
+## 交互可用性
 
-Before completing any UI that contains interactive elements, verify:
+凡是带交互元素的 UI，完成前必须确认：
 
-1. **EventSystem** must exist in the scene (exactly one)
-2. **GraphicRaycaster** must be on the Canvas
-3. **Raycast Target = true** on interactive elements (and false on non-interactive ones to avoid blocking)
-4. **Button.onClick should be wired** (via inspector or script) — only when scripts or logic were requested
+1. 场景里存在 **EventSystem**（且只有一个）
+2. Canvas 上挂了 **GraphicRaycaster**
+3. 交互元素的 **Raycast Target = true**，非交互元素为 false 以免挡点击
+4. **Button.onClick 已连线**（通过 Inspector 或脚本）—— 仅在要求了脚本或逻辑时才需要
 
-If the first three are missing, interactive elements will exist visually but fail silently.
+前三条缺失时，交互元素看起来在、点起来却毫无反应。
 
-## Understanding
+## 理解现有 UI
 
-When the user asks questions about existing UI:
+用户对现有 UI 提问时：
 
-**Read the hierarchy first.** Don't assume — always inspect the scene or prefab before answering.
+**先读层级。** 不要猜 —— 回答前一律先检查场景或 prefab。
 
-**Analyze structure:**
-- Identify the Canvas and its render mode
-- Map the parent-child relationships
-- Identify which Layout Groups control which children
-- Check RectTransform anchor configurations
+**分析结构：**
+- 找出 Canvas 及其渲染模式
+- 理清父子关系
+- 判断哪些 Layout Group 控制哪些子级
+- 检查 RectTransform 的锚点配置
 
-**Answer questions about:**
-- "What does this button do?" → Explain component, hierarchy position, event wiring
-- "How is this laid out?" → Describe Layout Groups, anchoring, hierarchy
-- "Why is this invisible?" → Check size, anchors, parent bounds, component state
-- "What controls this element's size?" → Trace Layout Group settings or anchors
+**可以回答的问题：**
+- "这个按钮做什么？" → 说明组件、层级位置、事件连线
+- "这里是怎样布局的？" → 说明 Layout Group、锚点、层级
+- "为什么它不可见？" → 检查尺寸、锚点、父级范围、组件状态
+- "这个元素的尺寸由什么决定？" → 追 Layout Group 设置或锚点
 
-## Editing
+## 编辑
 
-For targeted changes to existing UI:
+针对现有 UI 做定点修改：
 
-**Read before editing.** Always inspect the current state first.
+**改之前先读。** 一律先检查当前状态。
 
-**Edit workflow:**
-1. Verify the target object exists
-2. Identify the specific property or component to change
-3. Make the minimal change required
-4. Verify the result before proceeding
+**编辑工作流：**
+1. 确认目标对象存在
+2. 找出要改的具体属性或组件
+3. 只做必需的最小改动
+4. 验证结果后再继续
 
-**Never destroy to fix:**
-- Destroying objects cascades to null references elsewhere
-- Fix properties in place rather than recreating
-- If an element must be removed, update all references first
+**绝不靠销毁来修：**
+- 销毁对象会连锁引发别处的空引用
+- 就地改属性，而不是重建
+- 真要移除元素，先把所有引用更新掉
 
-## C# (Only When Requested)
+## C#（仅在要求时）
 
-- Use fully qualified UI types to avoid namespace conflicts
-- Use `[SerializeField]` for inspector references
-- Cache component references in Awake()
-- Use events/delegates for button callbacks
-- Place scripts in same folder as prefabs (follow project patterns)
+- 用全限定 UI 类型名，避免命名空间冲突
+- Inspector 引用用 `[SerializeField]`
+- 在 Awake() 里缓存组件引用
+- 按钮回调用事件/委托
+- 脚本放在 prefab 同目录（沿用项目模式）
 
-**Component references:**
-- Verify referenced objects exist before accessing them
-- Handle cases where serialized references may be null
-- When wiring up references, confirm the target component is present
+**组件引用：**
+- 访问前先确认被引用的对象存在
+- 处理序列化引用可能为 null 的情况
+- 连线时确认目标组件已挂上
 
-## Error Recovery
+## 出错处理
 
-When something goes wrong:
+出问题时：
 
-**Stop and diagnose:**
-- Identify the exact error or symptom
-- Determine the root cause before attempting fixes
-- Do not make speculative changes
+**停下来诊断：**
+- 找出确切的报错或现象
+- 查清根因再动手
+- 不要做猜测性修改
 
-**Fix incrementally:**
-- Address one issue at a time
-- Verify each fix before moving to the next
-- Keep track of what was changed
+**增量修复：**
+- 一次只解决一个问题
+- 每修一个先验证，再进行下一个
+- 记录改过什么
 
-**Avoid destructive patterns:**
-- "Start fresh" strategies destroy working elements along with broken ones
-- Rebuilding entire hierarchies creates more problems than it solves
-- Prefer surgical fixes to wholesale replacements
+**避免破坏性做法：**
+- "推倒重来"会把能用的元素和坏掉的一起毁掉
+- 重建整个层级制造的问题比解决的更多
+- 优先外科手术式修改，而非整体替换
 
-**When stuck:**
-- Re-verify the current state of the hierarchy
-- Check if previous changes were actually applied
-- Consider if the approach itself is wrong rather than the implementation
+**卡住时：**
+- 重新核实层级当前状态
+- 确认之前的改动是否真的生效
+- 想想是不是方向本来就错了，而不是实现细节错了
