@@ -69,6 +69,11 @@ namespace IcarusII.UI
         private static readonly Color DefaultTextDim = new Color(0.596f, 0.678f, 0.757f, 1f);
         private static readonly Color DefaultAccent = new Color(0.353f, 0.749f, 1f, 1f);
 
+        /// <summary>UIButton.onClick 是 event，外部只能 +=/-=；这里用它清理游戏自己的订阅。</summary>
+        private static readonly System.Reflection.FieldInfo UiButtonOnClickField =
+            typeof(UIButton).GetField("onClick",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
         // 运行时实际使用的文本颜色（ApplyStyle 时按游戏窗口调整）
         private Color _textMain = DefaultTextMain;
         private Color _textDim = DefaultTextDim;
@@ -599,6 +604,9 @@ namespace IcarusII.UI
         private ScrollRect _chatIndexScroll;
         private Text _chatIndexEmpty;
         private Button _newConversationButton;
+        private int _titleIconCaret;
+        private int _titleIconAnchor;
+
         private InputField _conversationTitleInput;
         private Text _conversationTitleOver;
         private ConversationTitleDisplay _conversationTitleDisplay;
@@ -1532,6 +1540,7 @@ namespace IcarusII.UI
             {
                 EnsureIconMappings();
                 RefreshLinkCardInfos();
+                BindTitleIconButton();
             }
         }
 
@@ -5567,6 +5576,71 @@ namespace IcarusII.UI
             if (titleUi != null)
                 titleUi.calcIconPickerPopupPos = PickerPositionBelowTitleInput;
             AssignTitleIconMapping(TryGetPreferredIconMapping());
+            BindTitleIconButton();
+        }
+
+        /// <summary>
+        /// 接管标题框的图标按钮。游戏的 UIInputField 在返回值时会检查输入框是否仍聚焦，
+        /// 而选择器一被点击焦点就丢了，于是什么都不插；这里自己弹选择器并恢复光标插入。
+        /// </summary>
+        private void BindTitleIconButton()
+        {
+            var ui = _conversationTitleInput != null ? _conversationTitleInput.GetComponent<UIInputField>() : null;
+            if (ui == null || ui.iconSelectBtn == null || UiButtonOnClickField == null) return;
+            try
+            {
+                UiButtonOnClickField.SetValue(ui.iconSelectBtn, null);
+                ui.iconSelectBtn.onClick += OnTitleIconClicked;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning("接管标题图标按钮失败：" + ex.Message);
+            }
+        }
+
+        private void OnTitleIconClicked(int data)
+        {
+            if (_conversationTitleInput == null) return;
+            try
+            {
+                if (UISignalTagPicker.isOpened)
+                {
+                    UISignalTagPicker.Close();
+                    return;
+                }
+
+                _titleIconCaret = _conversationTitleInput.caretPosition;
+                _titleIconAnchor = _conversationTitleInput.selectionAnchorPosition;
+
+                var pickerTrans = UISignalTagPicker._PickerTrans;
+                BoostPickerAboveWindow(pickerTrans, "标题图标");
+                UISignalTagPicker.Popup(PickerPositionBelowTitleInput(), OnTitleIconPicked);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning("打开标题图标选择器失败：" + ex.Message);
+            }
+        }
+
+        private void OnTitleIconPicked(int signalId)
+        {
+            if (signalId == 0 || _conversationTitleInput == null) return;
+            try
+            {
+                var tag = LDB.signals.IconTag(signalId);
+                if (string.IsNullOrEmpty(tag)) return;
+
+                _conversationTitleInput.caretPosition = _titleIconCaret;
+                _conversationTitleInput.selectionAnchorPosition = _titleIconAnchor;
+                _conversationTitleInput.InsertGeneralString(tag, true);
+                _conversationTitleInput.ForceLabelUpdate();
+                _conversationTitleInput.ActivateInputField();
+                Plugin.Log.LogInfo($"[标题] 插入图标 tag='{tag}' → '{_conversationTitleInput.text}'");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning("插入标题图标失败：" + ex.Message);
+            }
         }
 
         /// <summary>标题相关的 Text（输入框、overText、左栏每一行）共用游戏图标表。</summary>
