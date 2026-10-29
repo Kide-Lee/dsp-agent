@@ -5301,18 +5301,8 @@ namespace IcarusII.UI
                 return;
             }
 
-            // 已经是当前会话：展开记录并滚到最新；收起仍由 chevron 负责。
-            if (!view.Expanded)
-            {
-                view.Expanded = true;
-                _conversationExpanded[view.Id] = true;
-                if (view.Visible <= 0) view.Visible = 5;
-                BuildConversationRecords(view);
-                UpdateConversationHeader(view);
-                LinkTurnsToConversationRows();
-                RefreshIndexSelection();
-            }
-            ScrollToBottom();
+            // 已经是当前会话：和 chevron 一样展开/收起。
+            ToggleConversation(conversationId);
         }
 
         private void ToggleConversation(string conversationId)
