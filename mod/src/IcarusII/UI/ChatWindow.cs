@@ -230,6 +230,7 @@ namespace IcarusII.UI
             public Text Title;
             public Text Count;
             public Image Chevron;
+            public ChevronSpin ChevronSpin;
             public GameObject ExpandMore;
             public Text ExpandMoreText;
             public bool Expanded;
@@ -5198,8 +5199,8 @@ namespace IcarusII.UI
             if (view.Count != null) view.Count.text = Strings.Get("chat.index.count", view.Info.RecordCount);
             if (view.Chevron != null)
             {
-                view.Chevron.rectTransform.localRotation =
-                    view.Expanded ? Quaternion.Euler(0f, 0f, -90f) : Quaternion.identity;
+                view.ChevronSpin ??= view.Chevron.gameObject.AddComponent<ChevronSpin>();
+                view.ChevronSpin.SetAngle(view.Expanded ? -90f : 0f, true);
                 view.Chevron.color = view.Id == _activeConversationId ? _accent : Color.white;
             }
             if (view.Records != null) view.Records.gameObject.SetActive(view.Expanded);
