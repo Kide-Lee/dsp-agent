@@ -33,7 +33,7 @@ namespace IcarusII
     {
         public const string Guid = "icarus-ii";
         public const string PluginName = "Icarus II";
-        public const string PluginVersion = "0.4.0";
+        public const string PluginVersion = "1.0.0";
 
         /// <summary>每帧用于处理后台线程回调的时间预算（毫秒）。</summary>
         private const int MainThreadBudgetMs = 4;
