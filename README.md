@@ -358,6 +358,13 @@ sidecar 自己的运行期配置（供应商、模型、蓝图目录、Wiki 端�
 | BepInEx 完全没加载 | 用 r2modman 时先确认是 `Start modded`；手动安装 + Proton 下多半是 `winhttp` 覆盖没生效 |
 | 建造时按 R 弹窗 | 检查 `HotkeyRequireNoBuildTool` 是否为 `true` |
 
+### 遇到问题？加群讨论
+
+QQ 群 **1091497260**（伊卡洛斯二号研发中心）。提问时带上现象描述和
+`BepInEx/LogOutput.log` 里对应的报错，能更快定位。
+
+<img src="docs/assets/qq-group.png" alt="QQ 群二维码：1091497260" width="260" />
+
 ---
 
 ## 安全
