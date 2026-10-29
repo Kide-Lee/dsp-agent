@@ -5204,18 +5204,6 @@ namespace IcarusII.UI
                 view.Chevron.color = view.Id == _activeConversationId ? _accent : Color.white;
             }
             if (view.Records != null) view.Records.gameObject.SetActive(view.Expanded);
-
-            var headerImage = view.Header != null ? view.Header.GetComponent<Image>() : null;
-            if (headerImage != null)
-            {
-                bool active = view.Id == _activeConversationId;
-                if (active)
-                    headerImage.color = new Color(0.353f, 0.749f, 1f, view.Expanded ? 0.12f : 0.08f);
-                else
-                    headerImage.color = view.Expanded
-                        ? new Color(0.353f, 0.749f, 1f, 0.06f)
-                        : Color.clear;
-            }
         }
 
         private void BuildConversationRecords(ConversationView view)
@@ -5303,7 +5291,17 @@ namespace IcarusII.UI
                 return;
             }
 
-            // 已经是当前会话：只滚到最新一条，展开/收起交给 chevron。
+            // 已经是当前会话：展开记录并滚到最新；收起仍由 chevron 负责。
+            if (!view.Expanded)
+            {
+                view.Expanded = true;
+                _conversationExpanded[view.Id] = true;
+                if (view.Visible <= 0) view.Visible = 5;
+                BuildConversationRecords(view);
+                UpdateConversationHeader(view);
+                LinkTurnsToConversationRows();
+                RefreshIndexSelection();
+            }
             ScrollToBottom();
         }
 
