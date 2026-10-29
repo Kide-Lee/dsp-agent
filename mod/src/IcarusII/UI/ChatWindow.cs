@@ -4975,7 +4975,6 @@ namespace IcarusII.UI
             _activeConversationId = activeId;
             if (string.IsNullOrEmpty(_activeConversationId) && _conversations.Count > 0)
                 _activeConversationId = _conversations[0].Id;
-            RememberActiveConversation();
             RebuildConversationIndex();
         }
 
@@ -4995,7 +4994,6 @@ namespace IcarusII.UI
             if (index >= 0) _conversations[index] = conversation;
             else _conversations.Insert(0, conversation);
             if (makeActive) _activeConversationId = conversation.Id;
-            RememberActiveConversation();
             RebuildConversationIndex();
         }
 
@@ -5024,7 +5022,6 @@ namespace IcarusII.UI
         public void SetActiveConversation(string conversationId)
         {
             _activeConversationId = conversationId;
-            RememberActiveConversation();
             RebuildConversationIndex();
         }
 
@@ -5070,14 +5067,6 @@ namespace IcarusII.UI
             ClearConversationGroups();
             RefreshIndexEmpty();
             RefreshConversationTitle();
-        }
-
-        private void RememberActiveConversation()
-        {
-            if (string.IsNullOrEmpty(_activeConversationId)) return;
-            _conversationExpanded[_activeConversationId] = true;
-            if (!_conversationVisible.TryGetValue(_activeConversationId, out var visible) || visible < 5)
-                _conversationVisible[_activeConversationId] = 5;
         }
 
         private void RebuildConversationIndex()
@@ -5162,12 +5151,18 @@ namespace IcarusII.UI
                 Chevron = header.Find("chevron")?.GetComponent<Text>(),
                 ActiveBar = header.Find("active-bar")?.gameObject,
             };
-            view.Expanded = _conversationExpanded.TryGetValue(info.Id, out var expanded)
-                ? expanded
-                : info.Id == _activeConversationId;
+            // 展开状态只由标题左侧的 chevron 改变；首次出现时只有当前会话默认展开，
+            // 并把这次默认写进状态，之后切走再切回不会被重新展开。
+            if (!_conversationExpanded.TryGetValue(info.Id, out var expanded))
+            {
+                expanded = info.Id == _activeConversationId;
+                _conversationExpanded[info.Id] = expanded;
+            }
+            view.Expanded = expanded;
             view.Visible = _conversationVisible.TryGetValue(info.Id, out var visible)
                 ? visible
                 : 5;
+            AssignIconMapping(view.Title, TryGetPreferredIconMapping(), restyle: false);
             _conversationViews.Add(view);
 
             var headerButton = header.GetComponent<Button>();
@@ -5282,7 +5277,7 @@ namespace IcarusII.UI
             view.Records.gameObject.SetActive(view.Expanded);
         }
 
-        /// <summary>点会话标题：打开该会话并滚到最新；点 chevron 只负责展开/收起。</summary>
+        /// <summary>点会话标题：只切换/滚到该会话，不改变展开状态；展开/收起由标题左侧的 chevron 负责。</summary>
         private void OnConversationHeaderClicked(string conversationId)
         {
             var view = FindConversationView(conversationId);
@@ -5290,9 +5285,6 @@ namespace IcarusII.UI
 
             if (conversationId != _activeConversationId)
             {
-                _conversationExpanded[conversationId] = true;
-                if (!_conversationVisible.TryGetValue(conversationId, out var visible) || visible < 5)
-                    _conversationVisible[conversationId] = 5;
                 _pendingScrollBottomConversationId = conversationId;
                 _pendingFocusConversationId = null;
                 _pendingFocusText = null;
@@ -5308,14 +5300,7 @@ namespace IcarusII.UI
                 return;
             }
 
-            // 已经是当前会话：强制展开，并滚到最新一条。
-            _conversationExpanded[conversationId] = true;
-            if (view.Visible <= 0) view.Visible = 5;
-            view.Expanded = true;
-            BuildConversationRecords(view);
-            UpdateConversationHeader(view);
-            LinkTurnsToConversationRows();
-            RefreshIndexSelection();
+            // 已经是当前会话：只滚到最新一条，展开/收起交给 chevron。
             ScrollToBottom();
         }
 
@@ -5469,15 +5454,56 @@ namespace IcarusII.UI
             return new string(chars);
         }
 
+        /// <summary>
+        /// 标题截断：图标标签 `\tag;` 作为整体参与宽度估算和截断。
+        /// 把标签切成半截时 Text 会把残余字符当普通文字画出来。
+        /// </summary>
         internal static string FitLabel(string text, int fontSize, float maxWidth)
         {
             var s = (text ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
             if (s.Length == 0) return string.Empty;
             maxWidth = Mathf.Max(20f, maxWidth);
             if (EstimateTextWidth(s, fontSize) <= maxWidth) return s;
-            while (s.Length > 0 && EstimateTextWidth(s + "…", fontSize) > maxWidth)
-                s = s.Substring(0, s.Length - 1);
-            return s + "…";
+
+            var ellipsis = fontSize * 0.55f;
+            var width = 0f;
+            var sb = new StringBuilder(s.Length);
+            for (int i = 0; i < s.Length; )
+            {
+                var end = i + 1;
+                var tokenWidth = s[i] > 0x2E80 ? fontSize : fontSize * 0.55f;
+                if (TryReadIconTag(s, i, out var tagEnd))
+                {
+                    end = tagEnd;
+                    tokenWidth = fontSize;
+                }
+                if (width + tokenWidth + ellipsis > maxWidth) break;
+                sb.Append(s, i, end - i);
+                width += tokenWidth;
+                i = end;
+            }
+            return sb.ToString().TrimEnd() + "…";
+        }
+
+        /// <summary>读一个图标标签 `\tag;`（tag 只含字母/数字/-/_）；不是标签时返回 false。</summary>
+        private static bool TryReadIconTag(string text, int start, out int end)
+        {
+            end = start;
+            if (text == null || start < 0 || start >= text.Length || text[start] != '\\') return false;
+            var limit = Mathf.Min(text.Length, start + 24);
+            for (int i = start + 1; i < limit; i++)
+            {
+                var c = text[i];
+                if (c == ';')
+                {
+                    end = i + 1;
+                    return i > start + 1;
+                }
+                var ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                         || (c >= '0' && c <= '9') || c == '-' || c == '_';
+                if (!ok) return false;
+            }
+            return false;
         }
 
         /// <summary>左栏会话标题：最多 144px，超出用省略号，避免压到“# 条”和删除按钮。</summary>
@@ -5507,6 +5533,26 @@ namespace IcarusII.UI
                 display.Input = _conversationTitleInput;
                 display.Over = _conversationTitleOver;
                 _conversationTitleDisplay = display;
+            }
+
+            // 标题框旁边的图标按钮复用游戏自己的 UIInputField：它点开 UISignalTagPicker，
+            // 返回时把 `\tag;` 插进输入框。位置/层级要我们自己给，否则弹窗在窗口后面。
+            var titleUi = input.GetComponent<UIInputField>();
+            if (titleUi != null)
+                titleUi.calcIconPickerPopupPos = PickerPositionBelowTitleInput;
+            AssignTitleIconMapping(TryGetPreferredIconMapping());
+        }
+
+        /// <summary>标题相关的 Text（输入框、overText、左栏每一行）共用游戏图标表。</summary>
+        private void AssignTitleIconMapping(UnityEngine.UI.Youthcat.TextIconMapping mapping)
+        {
+            if (mapping == null) return;
+            if (_conversationTitleInput != null)
+                AssignIconMapping(_conversationTitleInput.textComponent, mapping, restyle: false);
+            AssignIconMapping(_conversationTitleOver, mapping, restyle: false);
+            foreach (var view in _conversationViews)
+            {
+                if (view != null) AssignIconMapping(view.Title, mapping, restyle: false);
             }
         }
 
@@ -6236,13 +6282,17 @@ namespace IcarusII.UI
         /// 给 Text 挂上图标表。不能只在创建时挂：主菜单早期表还没建好，
         /// 而且输入框那份表不一定包含全部物品 tag。
         /// </summary>
-        private static void AssignIconMapping(Text label, UnityEngine.UI.Youthcat.TextIconMapping mapping)
+        private static void AssignIconMapping(
+            Text label,
+            UnityEngine.UI.Youthcat.TextIconMapping mapping,
+            bool restyle = true)
         {
             if (label == null || mapping == null) return;
             label.supportRichText = true;
             // 图标不是普通字符：`UI Ex/Text Alpha` 用 UV1>=2 去全局图标图集采样。
             // prefab 里 assistant 正文可能只挂了默认 UI 材质，图标会变成白块。
-            GameTextStyle.Apply(label);
+            // 标题框/左栏标题沿用 prefab 自己的字体与材质，所以只挂映射、不重套样式。
+            if (restyle) GameTextStyle.Apply(label);
             if (ReferenceEquals(label.iconMapping, mapping)) return;
             label.iconMapping = mapping;
             label.SetVerticesDirty();
@@ -6259,6 +6309,7 @@ namespace IcarusII.UI
                 return;
             }
             var icons = general;
+            AssignTitleIconMapping(icons);
 
             var valid = GetValidIconTags();
             if (valid == null || valid.Count == 0)
@@ -6495,15 +6546,24 @@ namespace IcarusII.UI
 
             var widest = 0f;
             var line = 0f;
-            foreach (var c in text)
+            for (int i = 0; i < text.Length; )
             {
+                var c = text[i];
                 if (c == '\n')
                 {
                     if (line > widest) widest = line;
                     line = 0f;
+                    i++;
+                    continue;
+                }
+                if (TryReadIconTag(text, i, out var tagEnd))
+                {
+                    line += fontSize;   // 图标按一个字宽估
+                    i = tagEnd;
                     continue;
                 }
                 line += c > 0x2E80 ? fontSize : fontSize * 0.55f;   // 汉字按全角估
+                i++;
             }
             return line > widest ? line : widest;
         }
@@ -7935,30 +7995,86 @@ namespace IcarusII.UI
                 var pickerH = pickerTrans.rect.height * Mathf.Abs(pickerScale.y);
                 if (pickerW <= 0f || pickerH <= 0f) return fallback;
                 var pivot = pickerTrans.pivot;
-                var halfW = parent.rect.width * 0.5f;
-                var halfH = parent.rect.height * 0.5f;
 
                 // 把 picker 的左下角贴到锚点；pivot 通常是 (0,1)。
                 var pos = new Vector2(
                     local.x + pickerW * pivot.x,
                     local.y + pickerH * pivot.y);
-
-                // 按 picker 实际占位夹取，避免右侧/顶部出屏。
-                var xMin = -halfW + 8f + pickerW * pivot.x;
-                var xMax = halfW - 8f - pickerW * (1f - pivot.x);
-                var yMin = -halfH + 8f + pickerH * pivot.y;
-                var yMax = halfH - 8f - pickerH * (1f - pivot.y);
-                if (xMin > xMax) xMin = xMax;
-                if (yMin > yMax) yMin = yMax;
-
-                pos.x = Mathf.Clamp(pos.x, xMin, xMax);
-                pos.y = Mathf.Clamp(pos.y, yMin, yMax);
-                return new Vector2(Mathf.Round(pos.x), Mathf.Round(pos.y));
+                return ClampPickerToParent(pickerTrans, parent, pos);
             }
             catch
             {
                 return fallback;
             }
+        }
+
+        /// <summary>
+        /// 标题输入框的图标弹窗位置：贴住标题输入框左下角、向下展开。
+        /// 标题在窗口顶部，按工具条那样向上弹会出屏。
+        /// </summary>
+        private Vector2 PickerPositionBelowTitleInput()
+        {
+            var fallback = new Vector2(-206f, 194f);
+            var pickerTrans = UISignalTagPicker._PickerTrans;
+            BoostPickerAboveWindow(pickerTrans, "标题图标");
+            var anchorRt = _conversationTitleInput != null
+                ? _conversationTitleInput.transform as RectTransform
+                : null;
+            if (pickerTrans == null || anchorRt == null) return fallback;
+
+            try
+            {
+                var parent = pickerTrans.parent as RectTransform;
+                if (parent == null || parent.rect.width <= 0f || parent.rect.height <= 0f)
+                    return fallback;
+
+                var corners = new Vector3[4];
+                anchorRt.GetWorldCorners(corners); // 0=左下 1=左上 2=右上 3=右下
+                var centerOffset = new Vector2(
+                    (0.5f - parent.pivot.x) * parent.rect.width,
+                    (0.5f - parent.pivot.y) * parent.rect.height);
+                var local = (Vector2)parent.InverseTransformPoint(corners[0]) - centerOffset;
+
+                var pickerW = pickerTrans.rect.width * Mathf.Abs(pickerTrans.localScale.x);
+                var pickerH = pickerTrans.rect.height * Mathf.Abs(pickerTrans.localScale.y);
+                if (pickerW <= 0f || pickerH <= 0f) return fallback;
+                var pivot = pickerTrans.pivot;
+
+                // pivot 通常是 (0,1)：让弹窗左上角贴在标题输入框左下角。
+                var pos = new Vector2(
+                    local.x + pickerW * pivot.x,
+                    local.y - pickerH * (1f - pivot.y));
+                return ClampPickerToParent(pickerTrans, parent, pos);
+            }
+            catch
+            {
+                return fallback;
+            }
+        }
+
+        /// <summary>把 picker 的 anchoredPosition 夹在父级可见区域内，避免出屏。</summary>
+        private static Vector2 ClampPickerToParent(
+            RectTransform pickerTrans,
+            RectTransform parent,
+            Vector2 pos)
+        {
+            var pickerW = pickerTrans.rect.width * Mathf.Abs(pickerTrans.localScale.x);
+            var pickerH = pickerTrans.rect.height * Mathf.Abs(pickerTrans.localScale.y);
+            if (pickerW <= 0f || pickerH <= 0f) return pos;
+
+            var pivot = pickerTrans.pivot;
+            var halfW = parent.rect.width * 0.5f;
+            var halfH = parent.rect.height * 0.5f;
+            var xMin = -halfW + 8f + pickerW * pivot.x;
+            var xMax = halfW - 8f - pickerW * (1f - pivot.x);
+            var yMin = -halfH + 8f + pickerH * pivot.y;
+            var yMax = halfH - 8f - pickerH * (1f - pivot.y);
+            if (xMin > xMax) xMin = xMax;
+            if (yMin > yMax) yMin = yMax;
+
+            pos.x = Mathf.Clamp(pos.x, xMin, xMax);
+            pos.y = Mathf.Clamp(pos.y, yMin, yMax);
+            return new Vector2(Mathf.Round(pos.x), Mathf.Round(pos.y));
         }
 
         /// <summary>

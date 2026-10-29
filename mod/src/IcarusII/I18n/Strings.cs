@@ -59,7 +59,6 @@ namespace IcarusII.I18n
             ["chat.index.empty"] = "暂无提问",
             ["chat.index.delete.tip"] = "删除",
             ["chat.conversation.created"] = "已新建会话。",
-            ["chat.conversation.switched"] = "已切换到会话「{0}」。",
             ["chat.conversation.deleted"] = "已删除会话。",
             ["chat.conversation.busy"] = "正在回答当前问题，结束后再操作会话。",
             ["chat.conversation.failed"] = "会话操作失败：{0}",

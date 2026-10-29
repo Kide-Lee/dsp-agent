@@ -1720,7 +1720,6 @@ namespace IcarusII
                 _chat.UpsertConversation(info.Conversation, true);
                 ReplayHistory(info.History);
                 _historyReplayedFor = ReplayKey(info.SaveKey ?? _saveKey, info.Conversation.Id);
-                _chat.AppendSystem(Strings.Get("chat.conversation.switched", info.Conversation.Title));
                 _chat.SetStatus(Strings.Get("status.ready"), OkColor);
             });
         }
