@@ -34,6 +34,19 @@ description: 构建并打包 IcarusII 发布产物到 dist/pkg（Steam/手动安
 - 按改动范围跑 `verify-changes` 技能；不要打包一个测试失败的树。
 - prefab/UI 改动要**先**跑 `rebuild-ui-bundle` 技能，否则包会悄悄带上旧窗口。
 - 版本号在 `packaging/thunderstore/manifest.json`（以及 csproj 的 `ModVersion`）；发布前核对。
+- 更新日志必须按 git history 重写，见下一节。
+
+## 更新日志
+
+发布前重写 `packaging/thunderstore/CHANGELOG.md` 的目标版本条目：
+
+1. 找基线：`git log --oneline --grep '^release:'`，取上一个 `release: <version>` 提交；
+   用 `git log <基线>..HEAD` 看本次范围。
+2. 只写玩家能感知的变化（feat / fix / style / perf）；docs、chore、refactor、测试等内部提交不写。
+3. **不写中间版本或开发迭代**（M0–M5、dev 构建、临时版本号）；把它们合并成一条
+   面向该版本的完整说明。
+4. 检查历史：已发布但旧条目漏掉的功能/修复，补进对应版本。
+5. 写玩家能感知的结果，不要复述提交信息（写“左栏新增会话列表”，不写“feat(ui): …”）。
 
 ## 打包后
 
