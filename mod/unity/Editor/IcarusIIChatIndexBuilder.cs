@@ -76,6 +76,9 @@ namespace IcarusII.EditorTools
                     ? scroll.Find(ViewportName + "/" + ContentName) as RectTransform
                     : null;
                 var template = content != null ? content.Find(TemplateName) as RectTransform : null;
+                // 新结构靠 conversation-group-template 展示会话；turn-row-template 是旧版单行列表。
+                // 玩家删掉旧模板时不要再补回来。
+                var hasGroups = content != null && content.Find("conversation-group-template") != null;
                 if (template != null &&
                     content.Find("conversation-group-template") == null &&
                     (template.Find("link/label") == null ||
@@ -87,7 +90,7 @@ namespace IcarusII.EditorTools
                     template = null;
                 }
 
-                if (scroll == null || content == null || template == null)
+                if (scroll == null || content == null || (template == null && !hasGroups))
                 {
                     if (scroll == null)
                     {

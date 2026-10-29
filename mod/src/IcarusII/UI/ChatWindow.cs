@@ -228,6 +228,7 @@ namespace IcarusII.UI
             public RectTransform Header;
             public RectTransform Records;
             public Text Title;
+            public Color TitleColor;
             public Text Count;
             public Image Chevron;
             public ChevronSpin ChevronSpin;
@@ -5148,7 +5149,7 @@ namespace IcarusII.UI
                 Records = records,
                 Title = header.Find("title-mask/title")?.GetComponent<Text>(),
                 Count = header.Find("count")?.GetComponent<Text>(),
-                Chevron = header.Find("chevron")?.GetComponent<Image>(),
+                Chevron = header.Find("chevron/icon")?.GetComponent<Image>(),
             };
             // 展开状态只由标题左侧的 chevron 改变；首次出现时只有当前会话默认展开，
             // 并把这次默认写进状态，之后切走再切回不会被重新展开。
@@ -5161,6 +5162,7 @@ namespace IcarusII.UI
             view.Visible = _conversationVisible.TryGetValue(info.Id, out var visible)
                 ? visible
                 : 5;
+            view.TitleColor = view.Title != null ? view.Title.color : Color.white;
             AssignIconMapping(view.Title, TryGetPreferredIconMapping(), restyle: false);
             _conversationViews.Add(view);
 
@@ -5199,8 +5201,11 @@ namespace IcarusII.UI
         {
             if (view == null) return;
             if (view.Title != null)
+            {
                 view.Title.text = HeaderTitleLabel(
                     string.IsNullOrEmpty(view.Info.Title) ? Strings.Get("chat.conversation.new") : view.Info.Title);
+                view.Title.color = view.Id == _activeConversationId ? _accent : view.TitleColor;
+            }
             if (view.Count != null) view.Count.text = Strings.Get("chat.index.count", view.Info.RecordCount);
             if (view.Chevron != null)
             {
