@@ -41,7 +41,8 @@ namespace IcarusII.EditorTools
             try
             {
                 var index = root.transform.Find(IndexName) as RectTransform;
-                if (index == null)
+                var createdIndex = index == null;
+                if (createdIndex)
                 {
                     index = NewRect(IndexName, root.transform);
                     index.anchorMin = new Vector2(0f, 0f);
@@ -57,10 +58,10 @@ namespace IcarusII.EditorTools
                 var font = titleText != null ? titleText.font : null;
                 var material = titleText != null ? titleText.material : null;
 
-                var bg = index.GetComponent<Image>();
-                if (bg == null)
+                // 只给新建的 chat-index 铺底色。玩家删掉底色时不要再补回来。
+                if (createdIndex && index.GetComponent<Image>() == null)
                 {
-                    bg = index.gameObject.AddComponent<Image>();
+                    var bg = index.gameObject.AddComponent<Image>();
                     bg.color = PanelBg;
                     bg.raycastTarget = false;
                 }
