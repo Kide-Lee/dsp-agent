@@ -204,7 +204,7 @@ computer use 只对第 3 类里有常驻 UI 的那一小撮有效，对第 1、2
 
 ### 5.1 协议
 
-`hello` 增加可选字段（老端忽略）：
+`hello` 增加可选字段（老端忽略），并新增能力串 `mod.bridge.v1`（没有该能力串就不注册 `mods_*` 元工具）：
 
 ```jsonc
 "extensions": [
@@ -243,7 +243,157 @@ computer use 只对第 3 类里有常驻 UI 的那一小撮有效，对第 1、2
 
 GenesisBook / MoreMegaStructure 这类注入 `LDB` 的内容 mod，`game_export_prototypes` 导出后 `kb_*` 就能搜到。需要验证两点：导出发生在所有插件加载之后；遇到未知 proto 字段时不崩。这两条是测试项，不是新功能。
 
-## 6. 安全与治理
+## 6. 新装一个 mod 的完整接入流程
+
+> 这一节回答「玩家刚装了一个从没见过的 mod，AI 怎么用上它」。
+> 前提：按 §4 分层实现；L0/L1 必做，L2 按需，L3 可选，L5 默认关。
+
+### 6.1 先把「全新 mod」分成五类
+
+| 类型 | 特征 | 接入方式 | 需要人工吗 |
+| --- | --- | --- | --- |
+| 内容型 | 注入 LDB：新物品/配方/建筑/星球 | 不需要新工具，kb 导出后自然可见 | 否 |
+| 配置型 | 只有 `ConfigEntry` | L0 + L1 | 否 |
+| 动作型·有 manifest | 随包带 `IcarusII.tools.json` | L2 | 作者写一次 |
+| 动作型·无 manifest | 有公开方法，但我们没见过 | `mods_api_list` 起草 + 玩家批准 | **玩家批准一次** |
+| 动作型·只有 UI | 没有 API，只有面板 | L3 | 否，但每步确认 |
+
+「全新」这个词只对第 4 类构成障碍；前三类要么自动可用，要么作者已经声明。
+
+### 6.2 首次启动的时序
+
+```text
+启动
+  BepInEx 加载插件 → Chainloader.PluginInfos 逐个填充
+  IcarusII 的 hello 只带自己的能力，不缓存 mod 列表
+
+玩家提问
+  sidecar 组 tools = 内置工具 + 四个元工具（mods_list / mods_config_list /
+                     mods_config_get / mods_config_set）
+
+模型调 mods_list
+  mod 侧现读 PluginInfos，返回
+  [{ guid, name, version, assembly, configCount, toolCount, hasManifest }]
+```
+
+**关键细节：不要在 `Awake` 里缓存 `PluginInfos`。** IcarusII 和目标 mod 是互不依赖的插件，加载顺序不保证；在 `Awake` 做快照会漏掉后加载的 mod。每次 `mods_list` 现读一次，成本可以忽略。
+
+### 6.3 分支一：配置型（最常见）
+
+```text
+模型 mods_config_list(guid)
+  → [{ section, key, type, default, current, description }]
+
+模型 mods_config_set(guid, section, key, value)
+  sidecar：risk 1（作弊类 mod 的开关按 risk 2），受限档位直接放行，只读档位弹确认卡
+  mod：校验 section/key 存在
+      → ConfigEntryBase.SetSerializedValue(value)（解析失败 = 参数错误）
+      → ConfigFile.Save()
+      → 捕获 SettingChanged 回调里抛出的异常，转成工具错误
+  → { old, new, restartHint }
+  → 撤销栈 push「恢复 <mod> 的 <key>」
+```
+
+玩家看到两个东西：工具卡（改了哪个 mod 的哪个开关，旧值 → 新值）和一句提示（部分 mod 需要重启生效）。
+
+### 6.4 分支二：随包 manifest
+
+插件目录里有 `IcarusII.tools.json` → IcarusII 启动时扫描 → 校验 `pluginGuid` 与版本范围 → 登记为扩展。
+
+模型看到的是 `mods_list` 里 `toolCount > 0`。要用时：
+
+```text
+模型 mods_tools_enable(<extId>)
+  → sidecar 向 mod 拉 ext_tools（schema）
+  → 会话重建
+  → 下一轮模型就能看到这些工具
+```
+
+用完 `mods_tools_disable`，或回合结束自动关，避免几十个工具常驻 prompt。
+
+### 6.5 分支三：有 API 但没有 manifest
+
+这是「全新 mod」最真实的处境，必须诚实：**没有适配器就没有工具。** 流程是：
+
+1. `mods_api_list(guid)`：只读，列出该插件程序集里「参数类型全在白名单内」的公开静态方法（类型名 + 方法名 + 参数签名）。这一步只读元数据，不执行任何东西。插件实例上的公开实例方法以后可以再放开，第一版只做静态，避免猜实例状态。
+2. 模型把候选方法整理成一份 manifest 草案，在聊天里逐条列出（类型、方法、参数、打算叫什么工具、risk）。
+3. 玩家确认「就是这几个」→ IcarusII 把草案写入 `BepInEx/config/icarus-ii/bridge/<guid>.json`，同时绑定当前插件版本。
+4. 工具注册；之后每次调用走正常确认/令牌。
+
+这条路的安全来自三点：只能调该插件自己程序集的方法；参数类型白名单；玩家逐条批准且版本绑定。
+
+如果玩家不想批准，就退回「用配置 / 用 UI / 我告诉你手动怎么做」——**不要偷偷用 computer use 去点**。
+
+### 6.6 分支四：只有 UI
+
+```text
+模型 ui_snapshot()
+  → [{ path, type, text, interactable, active }]
+
+模型选控件 → ui_click(path)（risk 2，确认卡）
+  → 合成 PointerClick 派发
+  → 等一帧（或几帧）让界面稳定
+
+模型 ui_snapshot() 再取一次，比对差异
+  → 有变化：报告结果
+  → 没变化：如实说「可能没生效」，不假装成功
+```
+
+### 6.7 运行中热装
+
+游戏运行期间把新 mod 放进 `BepInEx/plugins`，BepInEx 不会加载它。
+
+- `mods_list` 看不到它；
+- 模型应回答「需要重启游戏才会加载」；
+- 不做插件目录监听：收益低，噪音大（mod 管理器切换 profile 会批量改文件）。
+
+### 6.8 三个具体例子
+
+**A. Auxilaryfunction（配置型）**
+
+> 玩家：帮我关掉自动拾取。
+> 模型：你装了 Auxilaryfunction 3.1.1，配置里有 `AutoPick`（自动拾取，当前开启）。要关掉吗？
+> 玩家：关。
+> → 确认/直接执行 → `mods_config_set` → 工具卡「AutoPick: true → false」+「可能需要重启」。
+
+**B. DSPCalculator（有 API、无 manifest）**
+
+> 玩家：用计算器帮我算一下这个产线。
+> 模型：DSPCalculator 有公开接口 `API.OpenNewWindowWithDemand`，但还没有适配器。我可以生成一份只调用这个方法的适配，你确认后以后就能直接用；或者你自己打开计算器，我告诉你填什么。
+> 玩家：生成吧。
+> → `mods_api_list` → 草案 → 确认 → manifest 落盘 → 下一轮 `open_calculator` 可用。
+
+**C. PlanetFinder（只有 UI）**
+
+> 玩家：帮我找有可燃冰的星球。
+> 模型：（先 `mods_list` 确认装了 PlanetFinder）我可以用它的搜索窗口，需要你确认两次点击。
+> → `ui_snapshot` 拿到「搜索框、资源下拉、搜索按钮」→ 逐个 `ui_click` / 填值 → 再快照确认结果。
+
+### 6.9 失败与降级
+
+| 情况 | 表现 | 处理 |
+| --- | --- | --- |
+| mod 没加载 | `mods_list` 里没有 | 提示重启；不猜 |
+| 插件加载失败 | `PluginInfo.Instance` 为 null | 列表里标 `failed`，不提供任何操作 |
+| manifest 版本不匹配 | 扩展在列表里标 `disabled: version` | 不注册工具 |
+| manifest 格式错 | 启动日志报错 | 整份忽略，不影响其他扩展 |
+| 配置项不存在 | 工具返回 `unknown_config` | 不写、不压撤销 |
+| 配置值解析失败 | `invalid_value` + 期望类型 | 让模型重试或问玩家 |
+| `SettingChanged` 抛异常 | 工具返回 `mod_error` | 已写入的值保留，提示可能不一致 |
+| 方法在更新后消失 | `api_missing` | 扩展自动禁用，提示需要更新适配器 |
+| UI 控件找不到 | `control_not_found` | 重新快照，不盲点 |
+| 主线程被卡住 | 超时报错 | 记录该 mod 为「慢调用」，在列表里标出 |
+
+### 6.10 这套流程的代价
+
+- 内容型、配置型：**装完就能用**，零人工。
+- 有 manifest 的动作型：作者写一次，玩家零人工。
+- 无 manifest 的动作型：玩家要批准一次（十几秒），之后固定可用。
+- 只有 UI 的：每步确认，能用但不稳。
+
+computer use 唯一能省掉的是「最后一次批准」，代价是失去返回值、失去撤销、失去跨分辨率稳定性。这笔交易不划算。
+
+## 7. 安全与治理
 
 | 风险 | 处置 |
 | --- | --- |
@@ -255,7 +405,7 @@ GenesisBook / MoreMegaStructure 这类注入 `LDB` 的内容 mod，`game_export_
 | mod 列表出站 | 只发 GUID/名称/版本/配置项，不发文件内容；在隐私说明里披露，默认只在需要时发 |
 | 撞名/劫持内置工具 | 扩展工具必须带前缀，注册期查重 |
 
-## 7. 落地顺序
+## 8. 落地顺序
 
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
@@ -265,7 +415,7 @@ GenesisBook / MoreMegaStructure 这类注入 `LDB` 的内容 mod，`game_export_
 | P3 | L3 UI 快照 + 点击 | 能列出某 mod 窗口的按钮并点中；点完快照变化可验证 |
 | P4 | L4 SDK 文档 + 示例 | 一个最小 mod 自己声明工具并被识别 |
 
-## 8. 风险清单
+## 9. 风险清单
 
 - 第三方 mod 的公开方法可能只是「碰巧 public」，语义没有承诺；适配器要按「每个版本重新验证」维护。
 - 配置项可能互相依赖（打开 A 才能用 B），单看 `Description` 不一定能发现；`ask_user` 是兜底。
@@ -273,7 +423,7 @@ GenesisBook / MoreMegaStructure 这类注入 `LDB` 的内容 mod，`game_export_
 - UI 树自动化会被自定义绘制（非 uGUI）绕过，例如直接 `OnGUI` 或自绘面板。
 - `PluginInfos` 只能看到 BepInEx 插件；r2modman 的 profile 隔离、DSP 自带内容都不在此列。
 
-## 9. 待拍板
+## 10. 待拍板
 
 1. 先做 P0（发现 + 配置），还是直接冲 P2（适配器）？我建议 P0，投入小、覆盖大，而且能立刻验证「玩家到底想让 AI 做什么」。
 2. 第三方工具默认关闭、玩家在设置里开——是否接受？
