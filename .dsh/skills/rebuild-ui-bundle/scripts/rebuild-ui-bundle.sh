@@ -47,7 +47,8 @@ dump_prefab() {
   local name="$1"
   rm -f "$DUMP"
   log "dump（$name）"
-  "$UNITY" -batchmode -nographics -quit -projectPath "$PROJ" \
+  # 不加 -nographics：与 build-ui-bundle.sh 一致。这台机器上 NullGfxDevice 会段错误。
+  "$UNITY" -batchmode -quit -projectPath "$PROJ" \
     -executeMethod IcarusII.EditorTools.IcarusIIDumpPrefab.DumpChatWindow \
     -logFile "$DUMP_DIR/$name.log" \
     || { tail -30 "$DUMP_DIR/$name.log" >&2 || true; die "dump 失败（$name）"; }
