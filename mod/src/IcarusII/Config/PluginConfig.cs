@@ -18,6 +18,12 @@ namespace IcarusII.Config
         /// <summary>M4m：输入框 !tool 调试直调；需要 sidecar 同时用 --debug-tools 启动。</summary>
         public bool DebugToolConsole { get; private set; }
 
+        /// <summary>
+        /// 第三方 mod 桥：允许读取其他 BepInEx 插件的列表与配置，并写入配置。
+        /// 默认关闭；改完需要重启游戏。
+        /// </summary>
+        public bool AllowThirdPartyTools { get; private set; }
+
         // [Sidecar]
         public string LaunchMode { get; private set; }
         public string SidecarHost { get; private set; }
@@ -165,6 +171,10 @@ namespace IcarusII.Config
             AutoFocusInput = cfg.Bind("UI", "AutoFocusInput", false,
                 "true = 打开窗口时自动聚焦输入框（可直接打字，但此时 R 是文字输入、不能关窗）。\n" +
                 "false = 需按 Enter 或点击窗口后开始输入；R 可随时开关窗口（默认）。").Value;
+
+            AllowThirdPartyTools = cfg.Bind("Bridge", "AllowThirdPartyTools", false,
+                "允许 AI 读取其他 BepInEx 插件的配置并写入（第三方 mod 桥）。\n" +
+                "默认关闭；修改后需要重启游戏。").Value;
 
             _thinkingLevelEntry = cfg.Bind("Agent", "ThinkingLevel", "high",
                 "思考档位：off | low | high | max（聊天窗只暴露这四档）。\n" +

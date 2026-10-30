@@ -86,6 +86,10 @@
   (`EGoalLevel.Off`) 时原生面板仍不会展示目标；`game_todo_add` / `game_todo_list`
   会返回 `goalPanelOff=true`，由模型提醒玩家打开目标设置，改为“关键节点”或
   “事无巨细”。
+- `mod.bridge.v1`：mod 支持第三方 mod 桥（P0）：`hello.extensions` + `mods_list` +
+  每个插件一个 `mod_<id>_config`。由 `BepInEx/config/icarus-ii.cfg` 的
+  `[Bridge] AllowThirdPartyTools` 控制，**默认关闭**；关闭时不声明该能力、不发扩展列表，
+  sidecar 也就不注册这些工具。该桥只读写 BepInEx 配置，不调用第三方代码；manifest/SDK 属于后续阶段。
 
 ### 4.2 `ready` — sidecar → mod
 
@@ -1495,6 +1499,73 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 - `game_drop_item`、`game_take_output`、`game_tether_add/clear` 不进入撤销栈：
   它们会把栈顶标记为“不可撤销”，随后 `game_undo_last_write` 返回明确错误，不会去撤销更早的无关操作。
 - `game_undo_last_write` 也走 A.12 确认；只撤销 mod 记录的一步。
+
+### B.1.6 第三方 mod 桥（`mod.bridge.v1`，P0）
+
+> 每个已加载的第三方插件对应一个配置工具；**工具与插件同生命周期**：
+> 插件被卸载或加载失败时，下一条 `hello` 的 `extensions` 不再包含它，sidecar 重建会话，
+> 对应工具从模型上下文里消失，而不是留一个调用时才报错的空壳。
+
+`hello.extensions`（可选）：
+
+```jsonc
+"extensions": [
+  { "id": "auxilaryfunction", "guid": "Auxilaryfunction", "name": "Auxilaryfunction",
+    "version": "3.1.1", "configCount": 72 }
+]
+```
+
+- `id` 由 mod 从 GUID 归一化并保证唯一（`[a-z0-9_]{1,24}`），用于工具名。
+- 老 sidecar 忽略该字段；老 mod 不发，桥工具不出现。
+
+模型可见工具：
+
+| 工具 | risk | 参数 | 说明 |
+| --- | --- | --- | --- |
+| `mods_list` | 0 | 无 | 列出已加载插件：`guid` / `name` / `version` / `assembly` / `configCount` / `loadFailed` |
+| `mod_<id>_config` | 0 或 1 | `action`（list/get/set）、`section?`、`key?`、`value?`、`offset?`、`limit?` | 只操作 `id` 对应的那个插件；`set` 为 risk 1 |
+
+- `mod_<id>_config` 只对 `extensions` 里 `configCount > 0` 的插件生成；插件不在列表里就没有这个工具。
+- 工具是 sidecar 侧的绑定：实际下发给 mod 的是内部工具 `mods_config_list` / `mods_config_get` / `mods_config_set` 加固定 `guid`。
+  这三个内部工具不广告给模型，只作为桥的线级原语存在。
+- `mods_config_set` 在写工具表里（risk 1）：走 A.12 确认与一次性令牌；写入前记录旧值并压入撤销栈，
+  撤销即恢复旧值并 `ConfigFile.Save()`。
+- 写入会触发该插件的 `SettingChanged`；回调抛异常时返回 `internal`，已写入的值保留。
+- `value` 按 `ConfigEntryBase.SettingType` 解析；解析失败返回错误，消息里带期望类型。
+- 只读 BepInEx 的公开元数据（`Chainloader.PluginInfos`、`ConfigFile`），不反射调用任何第三方方法。
+- 忽略 `icarus-ii` 自身，避免模型改自己的配置。
+- `loadFailed=true`（`PluginInfo.Instance == null`）的插件只出现在 `mods_list` 里，不产生 `mod_<id>_config`。
+- 关闭 `[Bridge] AllowThirdPartyTools` 时 mod 不声明本能力、不发 `extensions`；即使被直接调用也返回 `tool_unavailable`。
+- 列表只包含插件元数据与配置项，不读取第三方 mod 的文件内容。
+
+`mods_list` 返回示例：
+
+```jsonc
+{
+  "mods": [
+    { "guid": "Auxilaryfunction", "name": "Auxilaryfunction", "version": "3.1.1",
+      "assembly": "Auxilaryfunction", "configCount": 72, "loadFailed": false }
+  ],
+  "count": 1,
+  "display": "已加载 1 个第三方插件"
+}
+```
+
+`mod_<id>_config`（action=list）返回示例：
+
+```jsonc
+{
+  "guid": "Auxilaryfunction",
+  "entries": [
+    { "section": "General", "key": "AutoPick", "type": "Boolean",
+      "value": true, "default": false, "description": "自动拾取" }
+  ],
+  "total": 72,
+  "offset": 0,
+  "limit": 50,
+  "display": "Auxilaryfunction：72 个配置项（显示 1–50）"
+}
+```
 
 ### B.2 `tool_call`（sidecar → mod）
 

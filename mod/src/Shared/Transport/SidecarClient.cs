@@ -30,6 +30,9 @@ namespace IcarusII.Common.Transport
         public string GameLanguage = "unknown";
         public string[] Capabilities = new string[0];
 
+        /// <summary>第三方 mod 桥的插件摘要；空数组时不写 hello.extensions。</summary>
+        public Protocol.ExtensionSummary[] Extensions = new Protocol.ExtensionSummary[0];
+
         /// <summary>
         /// 连接时已加载的存档标识（协议 §4.1 的 saveKey）。
         /// 实际几乎总是 null——插件在加载时就连接，那时还在主菜单；
@@ -465,7 +468,8 @@ namespace IcarusII.Common.Transport
                         Protocol.Protocol.Hello,
                         Protocol.Protocol.BuildHello(
                             _options.Token, _options.ModVersion, _options.GameVersion,
-                            _options.GameLanguage, _options.Capabilities, _options.SaveKey),
+                            _options.GameLanguage, _options.Capabilities, _options.SaveKey,
+                            _options.Extensions),
                         NextId(), null);
                     await SendRawAsync(hello, connCts.Token).ConfigureAwait(false);
 

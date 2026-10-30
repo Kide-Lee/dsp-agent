@@ -8,8 +8,8 @@
 
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import type { JsonObject, ToolResultPayload } from '../protocol.js';
-import { GameToolHost, registerGameToolsFactory, SCRIPT_TOOL_NAME } from './host.js';
+import type { ExtensionSummary, JsonObject, ToolResultPayload } from '../protocol.js';
+import { GameToolHost, registerGameToolsFactory, SCRIPT_TOOL_NAME, toolError } from './host.js';
 import { WIKI_TOOL_NAMES } from '../wiki/tools.js';
 import { BLUEPRINT_TOOL_NAMES } from '../blueprint/tools.js';
 import { KB_TOOL_NAMES } from '../kb/tools.js';
@@ -30,6 +30,16 @@ export const CAPABILITY_GAME_ENTITY = 'game.entity.v1';
 export const CAPABILITY_GAME_PROGRESS = 'game.progress.v1';
 export const CAPABILITY_GAME_VIEW = 'game.view.v1';
 export const CAPABILITY_GAME_ANALYZE = 'game.analyze.v1';
+/** 第三方 mod 桥（P0）：插件列表与配置读写。 */
+export const CAPABILITY_MOD_BRIDGE = 'mod.bridge.v1';
+
+/** 桥工具名；测试用来断言能力门禁。 */
+export const BRIDGE_TOOL_NAMES = [
+  'mods_list',
+  'mods_config_list',
+  'mods_config_get',
+  'mods_config_set',
+] as const;
 
 export const GAME_TOOL_NAMES = [
   'game_get_overview',
@@ -82,6 +92,7 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_todo_list: CAPABILITY_GAME_TODO,
   game_todo_add: CAPABILITY_GAME_TODO,
   game_todo_remove: CAPABILITY_GAME_TODO,
+  mods_list: CAPABILITY_MOD_BRIDGE,
   game_undo_last_write: CAPABILITY_GAME_WRITE,
 };
 
@@ -564,25 +575,140 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       parameters: Type.Object({}),
       timeoutMs: 5000,
     }),
+    gameTool(host, {
+      name: 'mods_list',
+      label: '已装 mod 列表',
+      description:
+        '列出除本 mod 以外、当前已加载的 BepInEx 插件：GUID、名称、版本、程序集、配置项数量、是否加载失败。' +
+        '需要操作玩家安装的其他 mod 时先调用它，不要凭玩家口述猜 mod 是否存在。',
+      promptGuidelines: [
+        '玩家提到“我装的某个 mod”“帮我开关某个 mod 的功能”时先调用。',
+        'loadFailed=true 的插件只报告，不要尝试读写它的配置。',
+        '工具不存在说明玩家没有在 icarus-ii.cfg 的 [Bridge] AllowThirdPartyTools 打开桥。',
+      ],
+      parameters: Type.Object({}),
+      timeoutMs: 5000,
+    }),
   ];
 
   tools.push(...createWriteTools(host));
-  return tools.filter((tool) => {
+  const filtered = tools.filter((tool) => {
     const capability = TOOL_CAPABILITY[tool.name];
     return capability !== undefined && host.has(capability);
   });
+  if (host.has(CAPABILITY_MOD_BRIDGE)) {
+    for (const extension of host.extensionList ?? []) {
+      if (extension.configCount > 0) filtered.push(createExtensionConfigTool(host, extension));
+    }
+  }
+  return filtered;
+}
+
+/** 每个第三方插件一个配置工具；插件不在 hello.extensions 里时这个工具就不存在。 */
+export function extensionToolName(id: string): string {
+  return `mod_${id}_config`;
+}
+
+function createExtensionConfigTool(host: GameToolHost, extension: ExtensionSummary): ToolDefinition {
+  const name = extensionToolName(extension.id);
+  return {
+    name,
+    label: `${extension.name} 配置`,
+    description:
+      `读写 ${extension.name}（GUID ${extension.guid}，版本 ${extension.version}）的配置：` +
+      'action=list 列出、get 读取单个、set 写入。这个工具只在该 mod 已加载时存在；' +
+      'set 是写操作，需要确认，可用 game_undo_last_write 撤销。',
+    promptGuidelines: [
+      `只操作 ${extension.name}；不要拿别的 mod 的 GUID 调它。`,
+      'set 前先用 get 或 list 确认 key 与当前值；部分 mod 只在启动时读配置，改完可能需要重启。',
+      '配置项的 description 是 mod 作者写的说明，回答“这个开关是干什么的”时优先引用它。',
+    ],
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal('list'), Type.Literal('get'), Type.Literal('set')], {
+        description: 'list = 分页列出；get = 读一个；set = 写一个',
+      }),
+      section: Type.Optional(Type.String({ description: '配置分组' })),
+      key: Type.Optional(Type.String({ description: '配置项 key；get/set 必填' })),
+      value: Type.Optional(
+        Type.Union([Type.String(), Type.Number(), Type.Boolean()], {
+          description: 'set 的新值；按配置项类型解析',
+        }),
+      ),
+      offset: Type.Optional(Type.Integer({ minimum: 0, description: 'list 的起始偏移' })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, description: 'list 每页条数' })),
+    }),
+    executionMode: 'sequential',
+    async execute(_toolCallId, params, signal) {
+      const args = (params ?? {}) as Record<string, unknown>;
+      const action = typeof args['action'] === 'string' ? args['action'] : '';
+      const section = typeof args['section'] === 'string' ? args['section'] : undefined;
+      const key = typeof args['key'] === 'string' ? args['key'] : undefined;
+
+      const invalid = (
+        message: string,
+      ): { content: ReturnType<typeof buildToolContent>; details: ToolResultPayload } => {
+        const result = toolError('invalid_args', message);
+        return { content: buildToolContent(result), details: result };
+      };
+
+      if (action === 'list') {
+        const call: JsonObject = { guid: extension.guid };
+        if (section !== undefined) call['section'] = section;
+        if (typeof args['offset'] === 'number') call['offset'] = args['offset'];
+        if (typeof args['limit'] === 'number') call['limit'] = args['limit'];
+        const result = await host.call('mods_config_list', call, { timeoutMs: 5000, signal, risk: 0 });
+        return { content: buildToolContent(result), details: result };
+      }
+      if (action === 'get') {
+        if (!key) return invalid('get 需要 key');
+        const call: JsonObject = { guid: extension.guid, key };
+        if (section !== undefined) call['section'] = section;
+        const result = await host.call('mods_config_get', call, { timeoutMs: 5000, signal, risk: 0 });
+        return { content: buildToolContent(result), details: result };
+      }
+      if (action === 'set') {
+        if (!key || section === undefined || args['value'] === undefined) {
+          return invalid('set 需要 section、key 与 value');
+        }
+        const call: JsonObject = {
+          guid: extension.guid,
+          section,
+          key,
+          value: args['value'] as string | number | boolean,
+        };
+        const result = await host.call('mods_config_set', call, { timeoutMs: 8000, signal, risk: 1 });
+        return { content: buildToolContent(result), details: result };
+      }
+      return invalid('action 必须是 list / get / set');
+    },
+  };
 }
 
 registerGameToolsFactory(createGameTools);
 
 /** `ready.payload.tools` 用：按能力返回本次连接实际可用的工具名。 */
-export function toolNamesForCapabilities(capabilities: readonly string[]): string[] {
+export function toolNamesForCapabilities(
+  capabilities: readonly string[],
+  extensions: readonly ExtensionSummary[] = [],
+): string[] {
   // kb_* 是 sidecar 本地工具，不依赖 mod 能力；始终列出，未建立时返回 kb_unavailable。
   const game = Object.entries(TOOL_CAPABILITY)
     .filter(([, capability]) => capabilities.includes(capability))
     .map(([name]) => name);
   // 交互问答依赖 mod 的 choose UI；老 mod 不会声明该能力。
   const ask = capabilities.includes(CAPABILITY_UI_ASK) ? [UI_ASK_TOOL_NAME] : [];
+  // 每个已加载的第三方插件一个配置工具；插件不在 extensions 里时名字也不出现。
+  const bridge = capabilities.includes(CAPABILITY_MOD_BRIDGE)
+    ? extensions.filter((extension) => extension.configCount > 0).map((extension) => extensionToolName(extension.id))
+    : [];
   // 脚本工具是 sidecar 本地能力，始终注册（没有 game 工具时执行会明确报错）。
-  return [...ask, ...game, ...KB_TOOL_NAMES, ...WIKI_TOOL_NAMES, ...BLUEPRINT_TOOL_NAMES, SCRIPT_TOOL_NAME];
+  return [
+    ...ask,
+    ...game,
+    ...bridge,
+    ...KB_TOOL_NAMES,
+    ...WIKI_TOOL_NAMES,
+    ...BLUEPRINT_TOOL_NAMES,
+    SCRIPT_TOOL_NAME,
+  ];
 }

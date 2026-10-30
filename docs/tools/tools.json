@@ -4021,6 +4021,32 @@
       "notes": null
     },
     {
+      "name": "mods_list",
+      "label": "已装 mod 列表",
+      "description": "列出除本 mod 以外、当前已加载的 BepInEx 插件：GUID、名称、版本、程序集、配置项数量、是否加载失败。需要操作玩家安装的其他 mod 时先调用它，不要凭玩家口述猜 mod 是否存在。",
+      "promptGuidelines": [
+        "玩家提到“我装的某个 mod”“帮我开关某个 mod 的功能”时先调用。",
+        "loadFailed=true 的插件只报告，不要尝试读写它的配置。",
+        "工具不存在说明玩家没有在 icarus-ii.cfg 的 [Bridge] AllowThirdPartyTools 打开桥。"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "index.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      },
+      "notes": null
+    },
+    {
       "name": "run_script",
       "label": "脚本",
       "executionMode": "sequential",

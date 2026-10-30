@@ -45,6 +45,9 @@ namespace IcarusII
         internal static Plugin Instance { get; private set; }
         internal static ManualLogSource Log { get; private set; }
 
+        /// <summary>第三方 mod 桥是否启用（来自 BepInEx 配置，只读）。</summary>
+        internal static bool BridgeEnabled => Instance?._config?.AllowThirdPartyTools == true;
+
         private PluginConfig _config;
         private MainThreadDispatcher _dispatcher;
         private SidecarLauncher _launcher;

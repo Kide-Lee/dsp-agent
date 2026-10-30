@@ -463,6 +463,15 @@ export function serializeEnvelope(env: JsonObject): string {
 
 // ---------------------------------------------------------------- 负载解析
 
+export interface ExtensionSummary {
+  /** 工具名用的短 id（`[a-z0-9_]{1,24}`），由 mod 生成并保证唯一。 */
+  id: string;
+  guid: string;
+  name: string;
+  version: string;
+  configCount: number;
+}
+
 export interface HelloPayload {
   token: string;
   modVersion: string;
@@ -470,6 +479,8 @@ export interface HelloPayload {
   gameLanguage: string;
   capabilities: string[];
   saveKey: string | null;
+  /** 第三方 mod 桥（`mod.bridge.v1`）：当前已加载的插件摘要；老 mod 不发。 */
+  extensions: ExtensionSummary[];
 }
 
 /**
@@ -490,7 +501,31 @@ export function parseHelloPayload(payload: JsonObject): HelloPayload | null {
     gameLanguage: asString(payload['gameLanguage'], 'unknown'),
     capabilities: asStringArray(payload['capabilities']),
     saveKey: typeof saveKeyValue === 'string' ? saveKeyValue : null,
+    extensions: parseExtensions(payload['extensions']),
   };
+}
+
+/** 扩展摘要只接受结构化字段；格式不对的条目直接忽略，不让它影响握手。 */
+function parseExtensions(value: unknown): ExtensionSummary[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: ExtensionSummary[] = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) continue;
+    const row = item as Record<string, unknown>;
+    const id = typeof row['id'] === 'string' ? row['id'].trim() : '';
+    const guid = typeof row['guid'] === 'string' ? row['guid'].trim() : '';
+    if (!/^[a-z0-9_]{1,24}$/.test(id) || guid.length === 0 || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      guid,
+      name: typeof row['name'] === 'string' ? row['name'] : guid,
+      version: typeof row['version'] === 'string' ? row['version'] : '',
+      configCount: typeof row['configCount'] === 'number' ? row['configCount'] : 0,
+    });
+  }
+  return out;
 }
 
 export interface PromptPayload {

@@ -67,6 +67,7 @@ import {
   serializeEnvelope,
   type ConfigView,
   type ErrorCode,
+  type ExtensionSummary,
   type JsonObject,
   type BlueprintCardPayload,
   type LinkCardPayload,
@@ -112,8 +113,13 @@ export interface SessionOptions {
   config: ConfigStore;
   /** 知识库编排（多连接共享）。 */
   knowledge?: KnowledgeManager;
-  /** 本次连接注册的工具名；可按 hello 能力动态计算。 */
-  tools: readonly string[] | ((capabilities: readonly string[]) => readonly string[]);
+  /** 本次连接注册的工具名；可按 hello 能力与第三方插件列表动态计算。 */
+  tools:
+    | readonly string[]
+    | ((
+        capabilities: readonly string[],
+        extensions: readonly ExtensionSummary[],
+      ) => readonly string[]);
   /** M4m：是否允许 `tool_debug` 调试直调（默认 false）。 */
   debugTools?: boolean;
   helloTimeoutMs?: number;
@@ -278,6 +284,14 @@ function describeConfirmation(
       return {
         title: '撤销上一步？',
         body: '会撤销最近一次写操作；如果最近一次是不可撤销操作（丢物品/取成品/方位指示），会返回错误。',
+      };
+    case 'mods_config_set':
+      return {
+        title: '修改其他 mod 的配置？',
+        body: `mod：${fmt(args['guid'])}\n` +
+          `配置：${fmt(args['section'])}/${fmt(args['key'])}\n` +
+          `新值：${fmt(args['value'])}\n` +
+          '会写入该 mod 的配置文件，可能立即改变游戏行为；可撤销，部分 mod 需要重启生效。',
       };
     default:
       return { title: '确认写操作？', body: `${name}\n${stableJson(args)}` };
@@ -561,22 +575,22 @@ export class Session {
       configState: this.options.config.view().state,
     });
 
-    // 能力先同步给 agent：它会按能力重建工具集/会话。
+    // 能力与扩展先同步给 agent：插件列表变化时它会重建工具集/会话。
     try {
-      this.options.agent.onClientCapabilities?.(payload.capabilities);
+      this.options.agent.onClientCapabilities?.(payload.capabilities, payload.extensions);
     } catch (err) {
       this.logger.warn('同步 mod 能力失败', errorFields(err));
     }
 
     const toolNames =
       typeof this.options.tools === 'function'
-        ? this.options.tools(payload.capabilities)
+        ? this.options.tools(payload.capabilities, payload.extensions)
         : this.options.tools;
 
     // M4l：工具目录是可选字段；agent 没实现时老 mod 继续用 tools 名 + 本地短名。
     let toolCatalog: ToolCatalogEntry[] = [];
     try {
-      toolCatalog = this.options.agent.toolCatalog?.(payload.capabilities) ?? [];
+      toolCatalog = this.options.agent.toolCatalog?.(payload.capabilities, payload.extensions) ?? [];
     } catch (err) {
       this.logger.warn('生成工具目录失败（ready 不带 toolCatalog）', errorFields(err));
     }

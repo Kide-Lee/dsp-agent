@@ -9,7 +9,7 @@
  */
 
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { JsonObject, ToolResultPayload } from '../protocol.js';
+import type { ExtensionSummary, JsonObject, ToolResultPayload } from '../protocol.js';
 import { isSandboxOnlyTool } from './sandbox.js';
 
 /** 脚本工具名（sidecar 本地执行）。 */
@@ -78,6 +78,7 @@ export class GameToolHost {
   private transport: ToolTransport | null = null;
   private capabilities: string[] = [];
   private sandboxEnabled = false;
+  private extensions: ExtensionSummary[] = [];
   private cachedTools: ToolDefinition[] | null = null;
   /** 调试直调期间把 host 调用标记为 internal，mod 不显示普通工具卡。 */
   private debugMode = false;
@@ -92,6 +93,37 @@ export class GameToolHost {
     this.capabilities = normalized;
     this.cachedTools = null;
     return true;
+  }
+
+  /**
+   * 第三方 mod 列表（来自 hello.extensions）。
+   *
+   * 工具必须与提供它的插件同生命周期：插件被卸载/加载失败时，下一条 hello 不再列出它，
+   * 这里返回变化并让 agent 重建会话，旧工具从模型上下文里消失。
+   */
+  setExtensions(next: readonly ExtensionSummary[]): boolean {
+    const normalized = [...next].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const same =
+      normalized.length === this.extensions.length &&
+      normalized.every((value, index) => {
+        const current = this.extensions[index];
+        if (!current) return false;
+        return (
+          value.id === current.id &&
+          value.guid === current.guid &&
+          value.name === current.name &&
+          value.version === current.version &&
+          value.configCount === current.configCount
+        );
+      });
+    if (same) return false;
+    this.extensions = normalized;
+    this.cachedTools = null;
+    return true;
+  }
+
+  get extensionList(): readonly ExtensionSummary[] {
+    return this.extensions;
   }
 
   /**

@@ -40,6 +40,7 @@
 | 首次配置引导 | 取消聊天输入框的密钥录入态；`missing_key` / `invalid_key` / `unreachable` 时在聊天窗提示点击右上角设置按钮，由设置页「模型」页提交 Key。未配置时发送提问会被拦截并再次指向设置页，不再把输入当成 Key |
 | 输入工具条修复 | 图标 / 复选框 / 文字颜色改为按点击工具条前的光标/选区插入：工具栏按钮带 Unity `Button`，点击会让 InputField 失焦并把内部 caret 清 0；现在运行期记住最后聚焦时的选区并在插入前恢复 |
 | 提示词装配重构 | 单一人格文本在 `sidecar/prompts/system.zh.md`，构建时生成 TS 常量（`gen-prompts.mjs`；legacy 富文本版已移除）；`{{顾问字幕42}}` 这类引用在构建期从游戏 `Locale/<lcid>/base.txt` 取值并规范化，缺条目/`$LKEY` 直接失败；人格不再手写工具清单，能力段落与 `promptGuidelines` 按本轮注册表生成；新增 `--system-prompt-file`（仅调试/评测）与 `test/prompts.mjs` 护栏 |
+| 第三方 mod 桥 P0 | `mod.bridge.v1`：`hello.extensions` + `mods_list` + 每个插件一个 `mod_<id>_config`（action=list/get/set）。工具与插件同生命周期：插件卸载/加载失败后下一条 hello 不再列出它，sidecar 重建会话、工具从上下文消失。只读写 BepInEx 配置，默认关闭（`[Bridge] AllowThirdPartyTools`，无 UI 开关）；离线构建/测试通过，待实机 |
 
 ### M4 收尾修复
 
@@ -84,6 +85,8 @@
   只在玩家明确选择时使用，切换后聊天窗会给出提示。
 - 上下文压缩后的历史回合删除仍受 pi 会话 entry 类型限制，见
   [context-compression.md](context-compression.md)。
+- 第三方 mod 桥只覆盖 BepInEx 配置；安装/卸载 mod 需要重启游戏才会改变工具集合（BepInEx 不支持热加载）。
+  桥默认关闭，且设置页改版前只能用 `[Bridge] AllowThirdPartyTools` 手动开启，没有 UI 开关。
 
 ## 4. 接下来做什么
 

@@ -37,6 +37,10 @@ export function groupToolsForPrompt(tools: readonly ToolDefinition[]): Capabilit
       names: gameWrites.filter((name) => writeToolRisk(name) === 2),
     },
     {
+      title: '第三方 mod（发现与配置；set 会按权限确认）',
+      names: names.filter((name) => name.startsWith('mods_') || name.startsWith('mod_')),
+    },
+    {
       title: '知识库（只读，sidecar 本地数据）',
       names: names.filter((name) => name.startsWith('kb_')),
     },

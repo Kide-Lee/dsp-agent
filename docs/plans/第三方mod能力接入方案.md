@@ -139,13 +139,16 @@ computer use 只对第 3 类里有常驻 UI 的那一小撮有效，对第 1、2
 
 - `BepInEx.Bootstrap.Chainloader.PluginInfos`：拿到所有插件的 `GUID`、`Name`、`Version`、`Location`、`Dependencies`、`Incompatibilities`。
 - `plugin.Instance.Config`（`ConfigFile`）：拿到全部 `ConfigEntryBase`，含 `Definition.Section/Key`、`Description.Description`、`SettingType`、`DefaultValue`、`BoxedValue`。
-- 输出两个只读工具：`mods_list`（装了什么）、`mods_config_list(guid)`（这个 mod 有哪些开关）。模型据此知道「能做什么」，不需要猜。
+- 输出 `mods_list`（装了什么），以及**每个已加载插件一个** `mod_<id>_config`（这个 mod 有哪些开关）。
+  工具名里带插件 id，插件不在 hello.extensions 里时这个工具就不存在——不广告、不进模型上下文。
+  模型据此知道「能做什么」，不需要猜。
 
 已用 BepInEx 5.4.17 的元数据核实：`Chainloader.PluginInfos` 是公开静态属性；`ConfigFile` 实现 `IDictionary<ConfigDefinition, ConfigEntryBase>`，有 `Keys` / `Values` / `Count` / `GetConfigEntries()` / `TryGetEntry()` / `Save()`。
 
 ### 4.2 L1 配置读写（零 per-mod 成本，覆盖最大）
 
-- `mods_config_get(guid, section, key)`、`mods_config_set(guid, section, key, value)`。
+- `mod_<id>_config` 的 `action=get` / `action=set`；线级下发的仍是带 `guid` 的内部工具
+  `mods_config_get` / `mods_config_set`，它们不广告给模型。
 - `value` 的写入走 `ConfigEntryBase.SetSerializedValue`（它按 `SettingType` 解析字符串，解析失败直接报参数错误）。
 - 写操作：先记旧值 → 压撤销栈；设置后 `ConfigFile.Save()`；返回「是否需要重启」的提示（无法自动判断，就在结果里提醒「部分 mod 需要重启生效」）。
 - risk 默认 1（可逆），但允许 mod 分类覆盖：作弊类 mod 的开关按 risk 2 处理。
@@ -218,7 +221,7 @@ computer use 只对第 3 类里有常驻 UI 的那一小撮有效，对第 1、2
 
 现在工具集由 `capabilities` 静态决定，session 在能力变化时重建。第三方工具是动态的，按同样机制处理：
 
-1. 默认只注册 `mods_list` / `mods_config_list` / `mods_config_get` / `mods_config_set` 四个元工具。
+1. 默认只注册 `mods_list`；每个 `extensions` 里的插件生成一个 `mod_<id>_config`（`configCount > 0` 才生成）。
 2. 模型要用某个 mod 的具体工具时，先 `mods_tools_enable(guid)`；sidecar 拉 schema、重建 session、下一轮生效。
 3. 用完 `mods_tools_disable(guid)`，或回合结束自动关。
 
@@ -268,8 +271,7 @@ GenesisBook / MoreMegaStructure 这类注入 `LDB` 的内容 mod，`game_export_
   IcarusII 的 hello 只带自己的能力，不缓存 mod 列表
 
 玩家提问
-  sidecar 组 tools = 内置工具 + 四个元工具（mods_list / mods_config_list /
-                     mods_config_get / mods_config_set）
+  sidecar 组 tools = 内置工具 + mods_list + 每个插件的 mod_<id>_config
 
 模型调 mods_list
   mod 侧现读 PluginInfos，返回
@@ -278,14 +280,19 @@ GenesisBook / MoreMegaStructure 这类注入 `LDB` 的内容 mod，`game_export_
 
 **关键细节：不要在 `Awake` 里缓存 `PluginInfos`。** IcarusII 和目标 mod 是互不依赖的插件，加载顺序不保证；在 `Awake` 做快照会漏掉后加载的 mod。每次 `mods_list` 现读一次，成本可以忽略。
 
+**绑定规则：** 每个插件的工具名里带它的 `id`（`mod_<id>_config`），工具集合完全由本条 `hello.extensions` 决定。
+插件被卸载、被禁用或加载失败时，下一条 hello 不再列出它，sidecar 立刻重建会话，对应工具从模型上下文消失；
+不会留下一个“调用时才报 mod 不存在”的空壳工具。
+
 ### 6.3 分支一：配置型（最常见）
 
 ```text
-模型 mods_config_list(guid)
+模型 mod_x_config(action=list)
   → [{ section, key, type, default, current, description }]
 
-模型 mods_config_set(guid, section, key, value)
+模型 mod_x_config(action=set, section, key, value)
   sidecar：risk 1（作弊类 mod 的开关按 risk 2），受限档位直接放行，只读档位弹确认卡
+  线级：mods_config_set(guid=该插件, section, key, value)
   mod：校验 section/key 存在
       → ConfigEntryBase.SetSerializedValue(value)（解析失败 = 参数错误）
       → ConfigFile.Save()

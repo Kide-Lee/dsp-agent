@@ -81,6 +81,7 @@ import {
   type BlueprintTiers,
   type StatusState,
   type StreamChannel,
+  type ExtensionSummary,
   type ToolCatalogEntry,
   type ToolDebugResultPayload,
   type ToolResultPayload,
@@ -196,7 +197,7 @@ export interface AgentRunner {
    * 本次连接实际可用的工具目录（M4l，供 ready.payload.toolCatalog / 聊天窗工具列表）。
    * 老实现可以不提供。
    */
-  toolCatalog?(capabilities: readonly string[]): ToolCatalogEntry[];
+  toolCatalog?(capabilities: readonly string[], extensions?: readonly ExtensionSummary[]): ToolCatalogEntry[];
   /**
    * M4m：调试直调。不创建/使用 pi 会话，不调用 LLM；只执行一个只读工具。
    * 老实现可以不提供。
@@ -204,8 +205,8 @@ export interface AgentRunner {
   debugTool?(name: string, args: JsonObject, emit: AgentEmitter): Promise<ToolDebugResultPayload>;
   /** `config.set` 落地后调用：让下一次 run 使用新配置。 */
   onConfigChanged(): void;
-  /** 握手完成后同步 mod 能力；能力变化时 agent 应重建会话。 */
-  onClientCapabilities?(capabilities: readonly string[]): void;
+  /** 握手完成后同步 mod 能力与第三方插件列表；任一变化时 agent 应重建会话。 */
+  onClientCapabilities?(capabilities: readonly string[], extensions?: readonly ExtensionSummary[]): void;
   /** 切换存档；null = 回到主菜单。agent 应在回合边界重建会话。 */
   onSaveChanged?(saveKey: string | null): void;
   /** 当前载入是否启用游戏沙盒工具；变化时 agent 应在回合边界重建会话。 */
@@ -1261,12 +1262,17 @@ export class PiAgent implements AgentRunner {
     this.teardown();
   }
 
-  onClientCapabilities(capabilities: readonly string[]): void {
-    const changed = this.host.setCapabilities(capabilities);
-    if (!changed) return;
+  onClientCapabilities(
+    capabilities: readonly string[],
+    extensions: readonly ExtensionSummary[] = [],
+  ): void {
+    const capsChanged = this.host.setCapabilities(capabilities);
+    const extensionsChanged = this.host.setExtensions(extensions);
+    if (!capsChanged && !extensionsChanged) return;
 
-    this.logger.info('mod 能力变化，工具集将按新能力重建', {
+    this.logger.info('mod 能力/插件列表变化，工具集将重建', {
       capabilities: [...capabilities],
+      extensions: extensions.map((extension) => extension.id),
     });
     if (this.active) {
       this.pendingTeardown = true;
@@ -3038,8 +3044,12 @@ export class PiAgent implements AgentRunner {
   }
 
   /** M4l：ready.payload.toolCatalog；只暴露显示需要的短字段。 */
-  toolCatalog(capabilities: readonly string[]): ToolCatalogEntry[] {
+  toolCatalog(
+    capabilities: readonly string[],
+    extensions: readonly ExtensionSummary[] = [],
+  ): ToolCatalogEntry[] {
     this.host.setCapabilities(capabilities);
+    this.host.setExtensions(extensions);
     return this.buildToolDefinitions().map((tool) => ({
       name: tool.name,
       label: tool.label || tool.name,

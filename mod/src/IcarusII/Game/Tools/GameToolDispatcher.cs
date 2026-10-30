@@ -137,6 +137,10 @@ namespace IcarusII.Game.Tools
             Register(new GameTodoRemoveTool());
             Register(new TakeOutputTool());
             Register(new UndoLastWriteTool());
+            Register(new ModsListTool());
+            Register(new ModsConfigListTool());
+            Register(new ModsConfigGetTool());
+            Register(new ModsConfigSetTool());
         }
 
         private static bool IsWriteTool(string name)

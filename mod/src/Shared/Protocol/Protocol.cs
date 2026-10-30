@@ -5,6 +5,19 @@ using IcarusII.Common.Json;
 namespace IcarusII.Common.Protocol
 {
     /// <summary>
+    /// hello.extensions 的一条：第三方插件摘要。
+    /// `Id` 用于工具名（`mod_&lt;id&gt;_config`），由 mod 生成并保证唯一。
+    /// </summary>
+    public sealed class ExtensionSummary
+    {
+        public string Id;
+        public string Guid;
+        public string Name;
+        public string Version;
+        public int ConfigCount;
+    }
+
+    /// <summary>
     /// 协议 v1 的常量与信封辅助。
     /// 契约来源：docs/protocol-v1.md —— 改这里之前先改那份文档。
     /// </summary>
@@ -183,6 +196,9 @@ namespace IcarusII.Common.Protocol
         /// <summary>mod 支持受控写脚本（run_script 脚本级确认 + 租约）。</summary>
         public const string CapabilityScriptWrite = "script.write.v1";
 
+        /// <summary>mod 支持第三方 mod 桥（读取插件列表与配置，P0）。</summary>
+        public const string CapabilityModBridge = "mod.bridge.v1";
+
         /// <summary>sidecar → mod：请求玩家确认一次写操作。</summary>
         public const string ConfirmRequest = "confirm_request";
 
@@ -214,6 +230,12 @@ namespace IcarusII.Common.Protocol
         public const string ToolTodoRemove = "game_todo_remove";
         public const string ToolTakeOutput = "game_take_output";
         public const string ToolCopyBlueprint = "game_copy_blueprint";
+
+        /// <summary>第三方 mod 桥（P0）：插件列表与配置读写。</summary>
+        public const string ToolModsList = "mods_list";
+        public const string ToolModsConfigList = "mods_config_list";
+        public const string ToolModsConfigGet = "mods_config_get";
+        public const string ToolModsConfigSet = "mods_config_set";
 
         /// <summary>
         /// sidecar 本地「写文件」工具。它们不改变游戏状态，所以不需要 mod 令牌，
@@ -288,6 +310,8 @@ namespace IcarusII.Common.Protocol
             ToolUndoLastWrite,
             // 只写蓝图文件，但属于游戏工具；risk 1，走同一确认/令牌链路。
             ToolCopyBlueprint,
+            // 第三方 mod 配置写入；可撤销，risk 1。
+            ToolModsConfigSet,
         };
 
         public static bool IsWriteTool(string toolName)
@@ -437,7 +461,8 @@ namespace IcarusII.Common.Protocol
         }
 
         public static JsonValue BuildHello(string token, string modVersion, string gameVersion,
-            string gameLanguage, string[] capabilities, string saveKey)
+            string gameLanguage, string[] capabilities, string saveKey,
+            ExtensionSummary[] extensions = null)
         {
             var p = JsonValue.NewObject();
             p.Set("token", token ?? string.Empty);
@@ -448,6 +473,24 @@ namespace IcarusII.Common.Protocol
             var caps = JsonValue.NewArray();
             if (capabilities is not null) foreach (var c in capabilities) caps.Add(c);
             p.Set("capabilities", caps);
+
+            // 第三方 mod 桥：工具与插件同生命周期；没装/没启用时不写这个字段。
+            if (extensions is not null && extensions.Length > 0)
+            {
+                var list = JsonValue.NewArray();
+                foreach (var extension in extensions)
+                {
+                    if (extension is null) continue;
+                    var item = JsonValue.NewObject();
+                    item.Set("id", extension.Id ?? string.Empty);
+                    item.Set("guid", extension.Guid ?? string.Empty);
+                    item.Set("name", extension.Name ?? string.Empty);
+                    item.Set("version", extension.Version ?? string.Empty);
+                    item.Set("configCount", extension.ConfigCount);
+                    list.Add(item);
+                }
+                p.Set("extensions", list);
+            }
 
             // saveKey 允许为 null（尚未进入存档）；显式写出 null，避免“缺字段”与“解绑”两种语义。
             p.Set("saveKey", saveKey is null ? JsonValue.Null : JsonValue.Of(saveKey));

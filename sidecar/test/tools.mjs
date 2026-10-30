@@ -14,7 +14,12 @@
 
 import { Session } from '../dist/session.js';
 import { GameToolHost } from '../dist/tools/host.js';
-import { createGameTools, toolNamesForCapabilities } from '../dist/tools/registry.js';
+import {
+  CAPABILITY_MOD_BRIDGE,
+  createGameTools,
+  toolNamesForCapabilities,
+} from '../dist/tools/registry.js';
+import { isWriteToolName, writeToolRisk } from '../dist/tools/write.js';
 import { createAskTool, UI_ASK_TOOL_NAME, UI_ASK_TOOL_NAME_ALIASES } from '../dist/tools/ask.js';
 
 let passed = 0;
@@ -745,6 +750,57 @@ async function run() {
     await waitFor(() => state.result !== null);
     check('标记拒绝后不执行', state.result?.error?.code === 'confirmation_denied');
     check('标记拒绝后没有 tool_call', !socket.frames.some((f) => f.type === 'tool_call'));
+  }
+
+  console.log('── 16. 第三方 mod 工具与插件同生命周期 ──');
+  {
+    const extension = {
+      id: 'aux',
+      guid: 'Auxilaryfunction',
+      name: 'Auxilaryfunction',
+      version: '3.1.1',
+      configCount: 72,
+    };
+    const names = toolNamesForCapabilities([CAPABILITY_MOD_BRIDGE], [extension]);
+    check('声明能力+插件时广告 mods_list', names.includes('mods_list'));
+    check('声明能力+插件时广告 mod_aux_config', names.includes('mod_aux_config'));
+    check('未声明能力时不广告 mod_aux_config', !toolNamesForCapabilities([], [extension]).includes('mod_aux_config'));
+    check('没有插件时不广告 mod_aux_config', !toolNamesForCapabilities([CAPABILITY_MOD_BRIDGE], []).includes('mod_aux_config'));
+    check(
+      '没有配置项的插件不产生工具',
+      !toolNamesForCapabilities([CAPABILITY_MOD_BRIDGE], [{ ...extension, configCount: 0 }]).includes(
+        'mod_aux_config',
+      ),
+    );
+    check('mods_config_set 仍记为写工具', isWriteToolName('mods_config_set'));
+    check('mods_config_set risk=1', writeToolRisk('mods_config_set') === 1);
+    check('未知写工具仍按 risk 2', writeToolRisk('mods_unknown_tool') === 2);
+
+    const host = new GameToolHost();
+    host.setCapabilities([CAPABILITY_MOD_BRIDGE]);
+    host.setExtensions([extension]);
+    const tool = createGameTools(host).find((item) => item.name === 'mod_aux_config');
+    check('per-mod 工具已注册', !!tool);
+    check('per-mod 工具参数是 object', tool?.parameters?.type === 'object');
+    check('per-mod 工具有 action 参数', !!tool?.parameters?.properties?.action);
+    check('per-mod 工具描述带 mod 名', String(tool?.description ?? '').includes('Auxilaryfunction'));
+
+    // 卸载插件：下一条 hello 不再列出它，工具随之消失。
+    host.setExtensions([]);
+    check('卸载后工具不再生成', !createGameTools(host).some((item) => item.name === 'mod_aux_config'));
+
+    // 会话层：hello.extensions 要真的进入 ready.tools。
+    const withExt = makeSession();
+    const helloWithExt = hello([CAPABILITY_MOD_BRIDGE]);
+    helloWithExt.payload.extensions = [extension];
+    withExt.session.handleFrame(Buffer.from(JSON.stringify(helloWithExt)), false);
+    const readyWithExt = withExt.socket.frames.find((frame) => frame.type === 'ready');
+    check('ready.tools 含 per-mod 工具', readyWithExt?.payload?.tools?.includes('mod_aux_config'));
+
+    const withoutExt = makeSession();
+    withoutExt.session.handleFrame(Buffer.from(JSON.stringify(hello([CAPABILITY_MOD_BRIDGE]))), false);
+    const readyWithoutExt = withoutExt.socket.frames.find((frame) => frame.type === 'ready');
+    check('没有 extensions 时 ready.tools 不含 per-mod 工具', !readyWithoutExt?.payload?.tools?.includes('mod_aux_config'));
   }
 
   console.log();

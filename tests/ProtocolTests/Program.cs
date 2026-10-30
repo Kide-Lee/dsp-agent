@@ -288,6 +288,29 @@ namespace IcarusII.Tests
             var withSave = Protocol.BuildHello("t", "1", "2", "zh", null, "abc123");
             Eq("saveKey 写入", "abc123", withSave["saveKey"].AsString());
             Eq("capabilities 为 null 时是空数组", 0, withSave["capabilities"].Count);
+            Check("没有扩展时不写 hello.extensions", !withSave.Has("extensions"));
+
+            var withExtensions = Protocol.BuildHello("t", "1", "2", "zh",
+                new[] { Protocol.CapabilityModBridge }, "abc123",
+                new[]
+                {
+                    new ExtensionSummary
+                    {
+                        Id = "auxilaryfunction",
+                        Guid = "Auxilaryfunction",
+                        Name = "Auxilaryfunction",
+                        Version = "3.1.1",
+                        ConfigCount = 72,
+                    },
+                });
+            Eq("extensions 数量", 1, withExtensions["extensions"].Count);
+            Eq("extensions[0].id", "auxilaryfunction", withExtensions["extensions"][0]["id"].AsString());
+            Eq("extensions[0].guid", "Auxilaryfunction", withExtensions["extensions"][0]["guid"].AsString());
+            Eq("extensions[0].configCount", 72L, withExtensions["extensions"][0]["configCount"].AsLong());
+            Eq("mod.bridge.v1 能力串", "mod.bridge.v1", Protocol.CapabilityModBridge);
+            Eq("mods_list 工具名", "mods_list", Protocol.ToolModsList);
+            Eq("mods_config_set 工具名", "mods_config_set", Protocol.ToolModsConfigSet);
+            Check("mods_config_set 记为写工具", Protocol.IsWriteTool(Protocol.ToolModsConfigSet));
 
             // 顺序敏感：parse 后按 type 分派是客户端主路径
             var wire = env.ToJson();

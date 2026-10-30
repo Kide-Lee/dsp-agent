@@ -1,10 +1,13 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using BepInEx.Logging;
+using IcarusII.Common.Protocol;
 using IcarusII.Common.Transport;
 using IcarusII.Config;
+using IcarusII.Game.Tools;
 
 namespace IcarusII.Core
 {
@@ -228,6 +231,28 @@ namespace IcarusII.Core
 
         private SidecarOptions BuildOptions(string host, int port, string token)
         {
+            var capabilities = new List<string>
+            {
+                "ui.chat",
+                IcarusII.Common.Protocol.Protocol.CapabilityGameRead,
+                IcarusII.Common.Protocol.Protocol.CapabilityGameEntity,
+                IcarusII.Common.Protocol.Protocol.CapabilityGameProgress,
+                IcarusII.Common.Protocol.Protocol.CapabilityGameView,
+                IcarusII.Common.Protocol.Protocol.CapabilityGameAnalyze,
+                IcarusII.Common.Protocol.Protocol.CapabilityUiAsk,
+                IcarusII.Common.Protocol.Protocol.CapabilityGameWrite,
+                IcarusII.Common.Protocol.Protocol.CapabilityGameSandbox,
+                IcarusII.Common.Protocol.Protocol.CapabilityGameDrop,
+                IcarusII.Common.Protocol.Protocol.CapabilityGameBuild,
+                IcarusII.Common.Protocol.Protocol.CapabilityGameStorage,
+                IcarusII.Common.Protocol.Protocol.CapabilityGameTether,
+                IcarusII.Common.Protocol.Protocol.CapabilityGameTodo,
+                IcarusII.Common.Protocol.Protocol.CapabilityScriptWrite,
+                IcarusII.Common.Protocol.Protocol.CapabilityRichTextV2,
+            };
+            if (_config.AllowThirdPartyTools)
+                capabilities.Add(IcarusII.Common.Protocol.Protocol.CapabilityModBridge);
+
             return new SidecarOptions
             {
                 Host = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host.Trim(),
@@ -236,25 +261,10 @@ namespace IcarusII.Core
                 ModVersion = Plugin.PluginVersion,
                 GameVersion = Game.GameRefs.GameVersion,
                 GameLanguage = Game.GameRefs.LanguageCode,
-                Capabilities = new[]
-                {
-                    "ui.chat",
-                    IcarusII.Common.Protocol.Protocol.CapabilityGameRead,
-                    IcarusII.Common.Protocol.Protocol.CapabilityGameEntity,
-                    IcarusII.Common.Protocol.Protocol.CapabilityGameProgress,
-                    IcarusII.Common.Protocol.Protocol.CapabilityGameView,
-                    IcarusII.Common.Protocol.Protocol.CapabilityGameAnalyze,
-                    IcarusII.Common.Protocol.Protocol.CapabilityUiAsk,
-                    IcarusII.Common.Protocol.Protocol.CapabilityGameWrite,
-                    IcarusII.Common.Protocol.Protocol.CapabilityGameSandbox,
-                    IcarusII.Common.Protocol.Protocol.CapabilityGameDrop,
-                    IcarusII.Common.Protocol.Protocol.CapabilityGameBuild,
-                    IcarusII.Common.Protocol.Protocol.CapabilityGameStorage,
-                    IcarusII.Common.Protocol.Protocol.CapabilityGameTether,
-                    IcarusII.Common.Protocol.Protocol.CapabilityGameTodo,
-                    IcarusII.Common.Protocol.Protocol.CapabilityScriptWrite,
-                    IcarusII.Common.Protocol.Protocol.CapabilityRichTextV2,
-                },
+                Capabilities = capabilities.ToArray(),
+                Extensions = _config.AllowThirdPartyTools
+                    ? ModBridge.Extensions()
+                    : new ExtensionSummary[0],
                 ConnectTimeoutMs = Math.Max(500, _config.ConnectTimeoutMs),
                 MinBackoffMs = 1000,
                 MaxBackoffMs = 30000,
