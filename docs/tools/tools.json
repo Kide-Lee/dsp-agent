@@ -4035,7 +4035,7 @@
       },
       "executionMode": "sequential",
       "source": "game",
-      "capability": null,
+      "capability": "mod.bridge.v1",
       "risk": 0,
       "timeoutMs": null,
       "group": "index.md",

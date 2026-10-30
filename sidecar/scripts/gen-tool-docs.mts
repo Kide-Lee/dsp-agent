@@ -43,6 +43,7 @@ const CAPABILITIES = [
   'game.storage.v1',
   'game.tether.v1',
   'game.todo.v1',
+  'mod.bridge.v1',
 ] as const;
 
 /** 文档分组：每个文件覆盖一组能力位（或本地工具）。 */
@@ -218,7 +219,7 @@ function capabilityMap(): Map<string, string> {
   const map = new Map<string, string>();
   for (const capability of CAPABILITIES) {
     for (const name of toolNamesForCapabilities([capability])) {
-      if (name.startsWith('game_') && !map.has(name)) map.set(name, capability);
+      if ((name.startsWith('game_') || name === 'mods_list') && !map.has(name)) map.set(name, capability);
     }
   }
   return map;
@@ -593,9 +594,17 @@ function renderIndex(tools: DocTool[]): string {
     '| `game_spawn_item` / `game_teleport` | **尚未实现** | ' +
       '沙盒专属；`tools/sandbox.ts` 只保留了名字与门禁。见 [prompt-shape.md](prompt-shape.md) 的沙盒段 |',
   );
+  lines.push(
+    '| `mods_config_list` / `mods_config_get` / `mods_config_set` | 内部线级工具 | ' +
+      '`mod_<id>_config` 的实现细节，由 sidecar 带固定 `guid` 直调；不广告给模型 |',
+  );
+  lines.push(
+    '| `mod_<id>_config` | 动态注册 | 每个已加载的第三方插件一个；插件不在 `hello.extensions` 里时不存在 |',
+  );
   lines.push('');
   lines.push(
-    '所以：mod 侧共 39 个 `Name` 声明，其中 37 个进入模型工具列表，2 个是内部导出工具。',
+    '所以：mod 侧共 39 个 `Name` 声明，其中 37 个进入模型工具列表，2 个是内部导出工具；' +
+      '第三方 mod 工具按 `hello.extensions` 动态生成，不在固定清单里。',
   );
   lines.push('');
 

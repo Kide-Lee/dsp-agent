@@ -11,7 +11,7 @@
 
 | 工具 | label | 能力位 | 风险 | 超时 | 一句话 |
 | --- | --- | --- | --- | --- | --- |
-| [`mods_list`](index.md#mods_list) | 已装 mod 列表 | 本地 | 只读 | — | 列出除本 mod 以外、当前已加载的 BepInEx 插件：GUID、名称、版本、程序集、配置项数量、是否加载失败。 |
+| [`mods_list`](index.md#mods_list) | 已装 mod 列表 | `mod.bridge.v1` | 只读 | — | 列出除本 mod 以外、当前已加载的 BepInEx 插件：GUID、名称、版本、程序集、配置项数量、是否加载失败。 |
 | [`game_get_overview`](game-read.md#game_get_overview) | 存档概览 | `game.read.v1` | 只读 | 5000ms | 读取当前存档概览：存档名、游戏时刻、当前行星/星系、玩家经纬度、是否暂停。 |
 | [`game_get_planet`](game-read.md#game_get_planet) | 行星状态 | `game.read.v1` | 只读 | 12000ms | 读取指定行星（省略则为当前行星）的类型、半径、矿脉按资源汇总、建筑按原型计数。 |
 | [`game_get_player`](game-read.md#game_get_player) | 玩家状态 | `game.read.v1` | 只读 | 6000ms | 读取伊卡洛斯的能量、护盾、反应堆能量与背包物品（id、名称、数量）。 |
@@ -94,12 +94,13 @@ mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告�
 | `game.view.v1` | 1 | `game_capture_view` |
 | `game.analyze.v1` | 1 | `game_analyze_area` |
 | `game.todo.v1` | 4 | `game_todo_templates`、`game_todo_list`、`game_todo_add` |
-| 本地（始终注册） | 14 | `mods_list`、`ask_user`、`run_script` |
+| `mod.bridge.v1` | 1 | `mods_list` |
 | `game.write.v1` | 4 | `game_place_marker`、`game_open_panel`、`game_set_research` |
 | `game.drop.v1` | 1 | `game_drop_item` |
 | `game.build.v1` | 4 | `game_set_recipe`、`game_set_assembler_batch`、`game_feed_input` |
 | `game.storage.v1` | 5 | `game_storage_set_filter`、`game_storage_set_limit`、`game_storage_move` |
 | `game.tether.v1` | 3 | `game_tether_add`、`game_tether_clear`、`game_tether_list` |
+| 本地（始终注册） | 13 | `ask_user`、`run_script`、`kb_search` |
 
 ### 不在模型工具列表里的工具
 
@@ -107,8 +108,10 @@ mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告�
 | --- | --- | --- |
 | `game_export_prototypes` / `game_export_text` | mod 有实现，不注册 | KB 导出用的内部工具（协议附录 B.5），由 sidecar 导出流程直调，不广告给模型 |
 | `game_spawn_item` / `game_teleport` | **尚未实现** | 沙盒专属；`tools/sandbox.ts` 只保留了名字与门禁。见 [prompt-shape.md](prompt-shape.md) 的沙盒段 |
+| `mods_config_list` / `mods_config_get` / `mods_config_set` | 内部线级工具 | `mod_<id>_config` 的实现细节，由 sidecar 带固定 `guid` 直调；不广告给模型 |
+| `mod_<id>_config` | 动态注册 | 每个已加载的第三方插件一个；插件不在 `hello.extensions` 里时不存在 |
 
-所以：mod 侧共 39 个 `Name` 声明，其中 37 个进入模型工具列表，2 个是内部导出工具。
+所以：mod 侧共 39 个 `Name` 声明，其中 37 个进入模型工具列表，2 个是内部导出工具；第三方 mod 工具按 `hello.extensions` 动态生成，不在固定清单里。
 
 ### 返回字段表怎么来的
 
