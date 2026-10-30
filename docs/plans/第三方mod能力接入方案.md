@@ -437,6 +437,7 @@ computer use 唯一能省掉的是「最后一次批准」，代价是失去返�
   计划里的 UXAssist 被替换：它的公开 API 只有存档导入/导出钩子（`Action<BinaryWriter>`），
   没有可调用的用户动作；BulletTime 有公开的 `SetSpeedRatio` / `SetPauseMode`。
 - 调用只允许公开静态方法 + 基本类型参数；工具名 `mod_<id>_<name>`，与插件同生命周期。
+- AI 起草：`mods_api_list` 只读列出候选方法，AI 输出 manifest JSON，玩家手动落盘；不新增文件写工具。
 
 **P3 实现说明（2026-10-30）**
 

@@ -95,6 +95,7 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_todo_add: CAPABILITY_GAME_TODO,
   game_todo_remove: CAPABILITY_GAME_TODO,
   mods_list: CAPABILITY_MOD_BRIDGE,
+  mods_api_list: CAPABILITY_MOD_BRIDGE,
   ui_snapshot: CAPABILITY_UI_TREE,
   ui_click: CAPABILITY_UI_TREE,
   game_undo_last_write: CAPABILITY_GAME_WRITE,
@@ -577,6 +578,22 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '如果结果里 goalPanelOff=true，说明玩家“目标建议”选了自由探索，目标不显示；回答进度时提醒玩家打开目标面板设置改成“关键节点”或“事无巨细”。',
       ],
       parameters: Type.Object({}),
+      timeoutMs: 5000,
+    }),
+    gameTool(host, {
+      name: 'mods_api_list',
+      label: 'mod 可调用方法',
+      description:
+        '只读列出某个插件程序集里可被 manifest 调用的公开静态方法：类型、方法、参数、返回值。' +
+        '用于给没有 manifest 的 mod 起草适配器；只读元数据，不执行任何代码。',
+      promptGuidelines: [
+        '玩家要求为某个 mod 生成适配、且它没有 manifest 时使用。',
+        '只把这里列出的方法写进 manifest，不要猜方法名或参数。',
+        'manifest 由你用 JSON 输出，让玩家放到 BepInEx/config/icarus-ii/bridge/<guid>.json；助手不会自动写这个文件。',
+      ],
+      parameters: Type.Object({
+        guid: Type.String({ description: '插件 GUID，来自 mods_list' }),
+      }),
       timeoutMs: 5000,
     }),
     gameTool(host, {

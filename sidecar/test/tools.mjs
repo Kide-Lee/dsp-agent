@@ -773,6 +773,7 @@ async function run() {
     };
     const names = toolNamesForCapabilities([CAPABILITY_MOD_BRIDGE], [extension]);
     check('声明能力+插件时广告 mods_list', names.includes('mods_list'));
+    check('声明能力+插件时广告 mods_api_list', names.includes('mods_api_list'));
     check('声明能力+插件时广告 mod_aux_config', names.includes('mod_aux_config'));
     check('未声明能力时不广告 mod_aux_config', !toolNamesForCapabilities([], [extension]).includes('mod_aux_config'));
     check('没有插件时不广告 mod_aux_config', !toolNamesForCapabilities([CAPABILITY_MOD_BRIDGE], []).includes('mod_aux_config'));

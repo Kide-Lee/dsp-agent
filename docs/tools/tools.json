@@ -4021,6 +4021,40 @@
       "notes": null
     },
     {
+      "name": "mods_api_list",
+      "label": "mod 可调用方法",
+      "description": "只读列出某个插件程序集里可被 manifest 调用的公开静态方法：类型、方法、参数、返回值。用于给没有 manifest 的 mod 起草适配器；只读元数据，不执行任何代码。",
+      "promptGuidelines": [
+        "玩家要求为某个 mod 生成适配、且它没有 manifest 时使用。",
+        "只把这里列出的方法写进 manifest，不要猜方法名或参数。",
+        "manifest 由你用 JSON 输出，让玩家放到 BepInEx/config/icarus-ii/bridge/<guid>.json；助手不会自动写这个文件。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "guid"
+        ],
+        "properties": {
+          "guid": {
+            "type": "string",
+            "description": "插件 GUID，来自 mods_list"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "index.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      },
+      "notes": null
+    },
+    {
       "name": "mods_list",
       "label": "已装 mod 列表",
       "description": "列出除本 mod 以外、当前已加载的 BepInEx 插件：GUID、名称、版本、程序集、配置项数量、是否加载失败。需要操作玩家安装的其他 mod 时先调用它，不要凭玩家口述猜 mod 是否存在。",

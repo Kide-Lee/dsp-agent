@@ -254,6 +254,7 @@ namespace IcarusII.Common.Protocol
         public const string ToolModsConfigList = "mods_config_list";
         public const string ToolModsConfigGet = "mods_config_get";
         public const string ToolModsConfigSet = "mods_config_set";
+        public const string ToolModsApiList = "mods_api_list";
         public const string ToolUiSnapshot = "ui_snapshot";
         public const string ToolUiClick = "ui_click";
 

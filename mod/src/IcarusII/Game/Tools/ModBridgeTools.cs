@@ -279,6 +279,75 @@ namespace IcarusII.Game.Tools
         }
     }
 
+    /// <summary>
+    /// 只读列出插件程序集里可被 manifest 调用的公开静态方法，供 AI 起草适配器。
+    /// 只读元数据，不执行任何第三方代码；不写文件。
+    /// </summary>
+    internal sealed class ModsApiListTool : IGameToolHandler
+    {
+        private const int MaxMethods = 200;
+
+        public string Name => Protocol.ToolModsApiList;
+        public int TimeoutMs => 5000;
+
+        public IGameToolJob Start(JsonValue args) => new OneShotJob(() => Build(args));
+
+        private static GameToolJobResult Build(JsonValue args)
+        {
+            ModBridge.RequireEnabled();
+            var guid = args["guid"].AsString(null);
+            var info = ModBridge.Find(guid)
+                ?? throw new InvalidOperationException($"找不到插件：{guid ?? "(空)"}");
+            var assembly = info.Instance?.GetType().Assembly
+                ?? throw new InvalidOperationException($"插件未成功加载：{info.Metadata.GUID}");
+
+            var methods = JsonValue.NewArray();
+            var count = 0;
+            foreach (var type in assembly.GetTypes())
+            {
+                if (!type.IsPublic && !type.IsNestedPublic) continue;
+                foreach (var method in type.GetMethods(
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+                {
+                    if (method.IsSpecialName || method.IsGenericMethodDefinition) continue;
+                    var parameters = method.GetParameters();
+                    if (parameters.Length > 6) continue;
+                    var simple = true;
+                    foreach (var parameter in parameters)
+                        if (!IsSimple(parameter.ParameterType)) { simple = false; break; }
+                    if (!simple) continue;
+
+                    var item = JsonValue.NewObject();
+                    item.Set("type", type.FullName ?? type.Name);
+                    item.Set("method", method.Name);
+                    var list = JsonValue.NewArray();
+                    foreach (var parameter in parameters)
+                        list.Add($"{parameter.ParameterType.Name} {parameter.Name}");
+                    item.Set("parameters", list);
+                    item.Set("returns", method.ReturnType.Name);
+                    methods.Add(item);
+                    if (++count >= MaxMethods) break;
+                }
+                if (count >= MaxMethods) break;
+            }
+
+            var data = JsonValue.NewObject();
+            data.Set("guid", info.Metadata.GUID ?? string.Empty);
+            data.Set("methods", methods);
+            data.Set("count", count);
+            data.Set("truncated", count >= MaxMethods);
+            data.Set("display", $"列出 {count} 个可调用方法" + (count >= MaxMethods ? "（已截断）" : string.Empty));
+            return new GameToolJobResult { Data = data, Truncated = count >= MaxMethods };
+        }
+
+        private static bool IsSimple(Type type)
+        {
+            return type == typeof(string) || type == typeof(bool) ||
+                   type == typeof(int) || type == typeof(long) ||
+                   type == typeof(float) || type == typeof(double) || type.IsEnum;
+        }
+    }
+
     internal sealed class ModsConfigListTool : IGameToolHandler
     {
         private const int DefaultLimit = 50;

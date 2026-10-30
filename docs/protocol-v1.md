@@ -1526,6 +1526,7 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | 工具 | risk | 参数 | 说明 |
 | --- | --- | --- | --- |
 | `mods_list` | 0 | 无 | 列出已加载插件：`guid` / `name` / `version` / `assembly` / `configCount` / `loadFailed` |
+| `mods_api_list` | 0 | `guid` | 只读列出该插件程序集里可被 manifest 调用的公开静态方法（类型/方法/参数/返回），供起草适配器 |
 | `mod_<id>_config` | 0 或 1 | `action`（list/get/set）、`section?`、`key?`、`value?`、`offset?`、`limit?` | 只操作 `id` 对应的那个插件；`set` 为 risk 1 |
 
 - `mod_<id>_config` 只对 `extensions` 里 `configCount > 0` 的插件生成；插件不在列表里就没有这个工具。
@@ -1623,6 +1624,8 @@ manifest 格式：
 - 没有 `undo` 的写工具会把撤销栈顶标记为不可撤销，避免 `game_undo_last_write` 跳过它。
 - 工具与插件同生命周期：插件不加载时，`extensions` 里没有它，工具也不存在。
 - 参考适配器（DSPCalculator / LSTM / BulletTime）是内置样例；外部 manifest 优先。
+- AI 起草：先调 `mods_api_list`，把候选方法整理成 manifest JSON 交给玩家；**不会自动写文件**，
+  玩家自行放到 `BepInEx/config/icarus-ii/bridge/<guid>.json` 或插件目录。
 
 ### B.1.8 uGUI 控件树（`ui.tree.v1`，P3）
 
