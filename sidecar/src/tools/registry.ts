@@ -95,6 +95,8 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_todo_add: CAPABILITY_GAME_TODO,
   game_todo_remove: CAPABILITY_GAME_TODO,
   mods_list: CAPABILITY_MOD_BRIDGE,
+  mods_tools_enable: CAPABILITY_MOD_BRIDGE,
+  mods_tools_disable: CAPABILITY_MOD_BRIDGE,
   mods_api_list: CAPABILITY_MOD_BRIDGE,
   ui_snapshot: CAPABILITY_UI_TREE,
   ui_click: CAPABILITY_UI_TREE,
@@ -580,6 +582,8 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       parameters: Type.Object({}),
       timeoutMs: 5000,
     }),
+    extensionControlTool(host, 'mods_tools_enable', '启用 mod 工具', true),
+    extensionControlTool(host, 'mods_tools_disable', '禁用 mod 工具', false),
     gameTool(host, {
       name: 'mods_api_list',
       label: 'mod 可调用方法',
@@ -652,6 +656,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
   });
   if (host.has(CAPABILITY_MOD_BRIDGE)) {
     for (const extension of host.extensionList ?? []) {
+      if (!host.isExtensionEnabled(extension.id)) continue;
       if (extension.configCount > 0) filtered.push(createExtensionConfigTool(host, extension));
       for (const tool of extension.tools ?? []) filtered.push(createExtensionInvokeTool(host, tool));
     }
@@ -677,6 +682,34 @@ function createExtensionInvokeTool(host: GameToolHost, tool: ExtensionTool): Too
         signal,
         risk: tool.risk,
       });
+      return { content: buildToolContent(result), details: result };
+    },
+  };
+}
+
+/** 启用/禁用某个扩展的工具；只改工具集，不碰插件本身。 */
+function extensionControlTool(
+  host: GameToolHost,
+  name: string,
+  label: string,
+  enabled: boolean,
+): ToolDefinition {
+  return {
+    name,
+    label,
+    description: `${label}；下一轮会话生效。默认所有已加载插件都启用。`,
+    promptGuidelines: [
+      '只有玩家明确要求时才切换；禁用不会卸载插件，也不会改配置。',
+      'id 来自 mods_list；不要猜。',
+    ],
+    parameters: Type.Object({ id: Type.String({ description: '扩展 id' }) }),
+    executionMode: 'sequential',
+    async execute(_toolCallId, params) {
+      const id = String((params as Record<string, unknown> | null)?.['id'] ?? '');
+      const changed = host.setExtensionEnabled(id, enabled);
+      const result: ToolResultPayload = changed
+        ? { ok: true, data: { display: `${label}：${id}，下一轮生效` }, error: null, meta: {} }
+        : toolError('invalid_args', `没有这个扩展，或状态未变化：${id}`);
       return { content: buildToolContent(result), details: result };
     },
   };

@@ -4081,6 +4081,72 @@
       "notes": null
     },
     {
+      "name": "mods_tools_disable",
+      "label": "禁用 mod 工具",
+      "description": "禁用 mod 工具；下一轮会话生效。默认所有已加载插件都启用。",
+      "promptGuidelines": [
+        "只有玩家明确要求时才切换；禁用不会卸载插件，也不会改配置。",
+        "id 来自 mods_list；不要猜。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "扩展 id"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "index.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      },
+      "notes": null
+    },
+    {
+      "name": "mods_tools_enable",
+      "label": "启用 mod 工具",
+      "description": "启用 mod 工具；下一轮会话生效。默认所有已加载插件都启用。",
+      "promptGuidelines": [
+        "只有玩家明确要求时才切换；禁用不会卸载插件，也不会改配置。",
+        "id 来自 mods_list；不要猜。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "扩展 id"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": null,
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "index.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      },
+      "notes": null
+    },
+    {
       "name": "run_script",
       "label": "脚本",
       "executionMode": "sequential",

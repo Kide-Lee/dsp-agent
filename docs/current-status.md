@@ -88,7 +88,7 @@
   只在玩家明确选择时使用，切换后聊天窗会给出提示。
 - 上下文压缩后的历史回合删除仍受 pi 会话 entry 类型限制，见
   [context-compression.md](context-compression.md)。
-- 第三方 mod 桥的工具按已加载插件自动生成，没有「手动启用/禁用扩展」开关；安装/卸载 mod 需要重启游戏才会改变工具集合（BepInEx 不支持热加载）。
+- 第三方 mod 桥的工具按已加载插件自动生成，默认启用；可用 `mods_tools_disable/enable` 按插件隐藏/恢复（下一轮生效）。安装/卸载 mod 需要重启游戏才会改变工具集合（BepInEx 不支持热加载）。
   桥默认关闭，且设置页改版前只能用 `[Bridge] AllowThirdPartyTools` 手动开启，没有 UI 开关。
 
 ## 4. 接下来做什么

@@ -1527,9 +1527,13 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | --- | --- | --- | --- |
 | `mods_list` | 0 | 无 | 列出已加载插件：`guid` / `name` / `version` / `assembly` / `configCount` / `loadFailed` |
 | `mods_api_list` | 0 | `guid` | 只读列出该插件程序集里可被 manifest 调用的公开静态方法（类型/方法/参数/返回），供起草适配器 |
+| `mods_tools_enable` | 0 | `id` | 启用某个插件的工具（默认已启用）；下一轮生效 |
+| `mods_tools_disable` | 0 | `id` | 禁用某个插件的工具，避免占用上下文；不卸载插件、不改配置；下一轮生效 |
 | `mod_<id>_config` | 0 或 1 | `action`（list/get/set）、`section?`、`key?`、`value?`、`offset?`、`limit?` | 只操作 `id` 对应的那个插件；`set` 为 risk 1 |
 
 - `mod_<id>_config` 只对 `extensions` 里 `configCount > 0` 的插件生成；插件不在列表里就没有这个工具。
+- 默认所有插件工具都启用；`mods_tools_disable` 后该插件的工具不再生成，`enable` 恢复。
+  切换在回合边界重建会话，下一轮生效。
 - 工具是 sidecar 侧的绑定：实际下发给 mod 的是内部工具 `mods_config_list` / `mods_config_get` / `mods_config_set` 加固定 `guid`。
   这三个内部工具不广告给模型，只作为桥的线级原语存在。
 - `mods_config_set` 在写工具表里（risk 1）：走 A.12 确认与一次性令牌；写入前记录旧值并压入撤销栈，

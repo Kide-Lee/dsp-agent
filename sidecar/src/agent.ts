@@ -207,6 +207,8 @@ export interface AgentRunner {
   onConfigChanged(): void;
   /** 握手完成后同步 mod 能力与第三方插件列表；任一变化时 agent 应重建会话。 */
   onClientCapabilities?(capabilities: readonly string[], extensions?: readonly ExtensionSummary[]): void;
+  /** 本次连接实际广告的工具名（含扩展启用状态）；老实现回退到 options.tools。 */
+  toolNames?(capabilities: readonly string[], extensions?: readonly ExtensionSummary[]): readonly string[];
   /** 切换存档；null = 回到主菜单。agent 应在回合边界重建会话。 */
   onSaveChanged?(saveKey: string | null): void;
   /** 当前载入是否启用游戏沙盒工具；变化时 agent 应在回合边界重建会话。 */
@@ -1205,6 +1207,14 @@ export class PiAgent implements AgentRunner {
     this.agentDir = join(options.dataDir, 'agent');
     this.store = options.store;
     this.host = options.host;
+    // 启用/禁用扩展工具后，下一轮重建会话；回合中则延后。
+    this.host.onToolsetChanged = () => {
+      if (this.active) {
+        this.pendingTeardown = true;
+        return;
+      }
+      this.teardown();
+    };
     this.kb = options.kb ?? null;
     this.wiki = new WikiClient({
       zhApi: this.store.wikiEndpoint('zh') ?? undefined,
@@ -3041,6 +3051,13 @@ export class PiAgent implements AgentRunner {
       ),
       createScriptTool(this.host),
     ];
+  }
+
+  /** 本次连接广告的工具名；按 host 当前能力/扩展启用状态生成。 */
+  toolNames(capabilities: readonly string[], extensions: readonly ExtensionSummary[] = []): readonly string[] {
+    this.host.setCapabilities(capabilities);
+    this.host.setExtensions(extensions);
+    return this.buildToolDefinitions().map((tool) => tool.name);
   }
 
   /** M4l：ready.payload.toolCatalog；只暴露显示需要的短字段。 */

@@ -589,9 +589,10 @@ export class Session {
     }
 
     const toolNames =
-      typeof this.options.tools === 'function'
+      this.options.agent.toolNames?.(payload.capabilities, payload.extensions) ??
+      (typeof this.options.tools === 'function'
         ? this.options.tools(payload.capabilities, payload.extensions)
-        : this.options.tools;
+        : this.options.tools);
 
     // M4l：工具目录是可选字段；agent 没实现时老 mod 继续用 tools 名 + 本地短名。
     let toolCatalog: ToolCatalogEntry[] = [];
