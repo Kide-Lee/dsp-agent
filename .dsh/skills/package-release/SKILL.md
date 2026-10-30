@@ -33,8 +33,19 @@ description: 构建并打包 IcarusII 发布产物到 dist/pkg（Steam/手动安
 
 - 按改动范围跑 `verify-changes` 技能；不要打包一个测试失败的树。
 - prefab/UI 改动要**先**跑 `rebuild-ui-bundle` 技能，否则包会悄悄带上旧窗口。
-- 版本号在 `packaging/thunderstore/manifest.json`（以及 csproj 的 `ModVersion`）；发布前核对。
-- 更新日志必须按 git history 重写，见下一节。
+- 版本号规则见下一节；发布前核对。
+- 更新日志必须按 git history 重写，见下下节。
+
+## 版本号
+
+格式 `大.中.小`：
+
+- **大版本号、中版本号由用户决定**，没明确指定时不要自行提升。
+- **小版本号 = 发布准备时的 `git rev-list --count HEAD`**（仓库提交总数，只增不减）。
+- 以下位置必须一致：`packaging/thunderstore/manifest.json` 的 `version_number`、
+  `mod/Directory.Build.props` 的 `ModVersion`、`mod/src/IcarusII/Plugin.cs` 的
+  `PluginVersion`、sidecar 的 `SERVER_VERSION` 与 `sidecar/package.json`。
+- 版本号写进提交后提交数会再 +1，这是预期行为：小版本号取的是**写入前**的数量。
 
 ## 更新日志
 

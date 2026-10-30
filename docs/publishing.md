@@ -50,7 +50,8 @@ scripts/package.sh && (cd dist/pkg && zip -r ../../dist/IcarusII-<ver>-manual.zi
 2. Upload Package → 选 `dist/IcarusII-<ver>.zip`；
 3. 首次上传后页面 URL 形如 `https://thunderstore.io/c/dyson-sphere-program/p/<Team>/IcarusII/`，
    把它回填到 `packaging/thunderstore/manifest.json` 的 `website_url`（或填 GitHub 仓库）；
-4. 后续更新：递增 `version_number` → 重新打包 → 上传同一包名。
+4. 后续更新：按版本号规则递增 `version_number`（大/中版本号由项目决定，小版本号 =
+   `git rev-list --count HEAD`，见 `package-release` 技能）→ 重新打包 → 上传同一包名。
 
 ### Nexus（第二入口）
 
