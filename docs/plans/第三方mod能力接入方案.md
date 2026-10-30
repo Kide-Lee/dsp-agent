@@ -279,3 +279,40 @@ GenesisBook / MoreMegaStructure 这类注入 `LDB` 的内容 mod，`game_export_
 2. 第三方工具默认关闭、玩家在设置里开——是否接受？
 3. L3（UI 树自动化）要不要做？它是「零适配覆盖 UI-only mod」的唯一体面方案，但仍然要每次确认。
 4. 是否愿意维护一份「热门 mod 适配器」清单（P2 的三个参考实现之外）？
+
+## 附：两个 IcarusII 能否互为主子代理
+
+> 假设性问题，结论是「当前架构下不能，且没有做的价值」。记录在此，避免以后重复讨论。
+
+### A.1 两个实例怎么才能同时存在
+
+- 插件的 GUID 是常量 `icarus-ii`（`mod/src/IcarusII/Plugin.cs:34`）。BepInEx 按 GUID 去重，只保留较新的版本（`BepInEx.dll` 里的日志串 `Skipping [{0}] because a newer version exists ({1})`）。所以**同一份 mod 复制两份不会同时加载**。
+- 要并存，只能改 GUID 做 fork。改了 GUID 之后，配置文件名（`BepInEx/config/<GUID>.cfg`）、数据目录、端口都可以各不相同，但默认值仍然相同。
+
+### A.2 并存的第一个问题是共享资源
+
+| 资源 | 默认值 | 冲突表现 |
+| --- | --- | --- |
+| sidecar 端口 | `8765`（`Sidecar`/`Port`） | 第二个 sidecar `EADDRINUSE`，进程退出，mod 显示「sidecar 提前退出」 |
+| 数据目录 | `%APPDATA%/icarus-ii`（Proton 下在 compatdata 的 pfx 里） | 两个 sidecar 抢写 `runtime.json`；后写的 token 覆盖前面的，另一个 mod 握手失败 |
+| 热键 | `R` | 两个聊天窗一起开关 |
+| UI 排序 | `sortingOrder=30000` | 两个窗口叠在一起 |
+| 撤销栈 | 进程内单层 | 两套互不知情，后一次写覆盖前一次的撤销项 |
+
+端口可以改成 `0`（sidecar 支持内核分配），数据目录可以各自指定，热键可以改成可配——但这些都要玩家手工配两套，且 fork 的默认值得改。
+
+### A.3 为什么「当子代理」调不动
+
+1. **agent 不在 mod 里。** mod 只是协议中继；LLM 循环、会话、确认都在 sidecar。L2 桥能调的只是插件程序集里的公开方法，而 IcarusII 的实现几乎全是 `internal`，也没有 `Submit(prompt)` 这类入口。
+2. **协议层倒是有一条路。** `prompt`（mod → sidecar）本来就是提交问题的消息；另一个进程只要拿到 `runtime.json` 里的 token，就能 `hello` + `prompt` 驱动它。但 token 只区分「本机同用户」，不区分「是不是另一个 IcarusII」，这等于给任何本地进程开了后门。
+3. **确认归属无解。** B 的写操作要 B 的 sidecar 发确认、B 的 mod 验令牌；A 无法代答。玩家只有一个，会同时收到两个确认框。想让 A 代答，等于让 B 放弃自己的权限模型。
+4. **双 LLM 循环没有收益。** 两个 agent 看同一份游戏状态，1+1 < 2；递归调用（A→B→A）还要额外做深度、步数、费用上限。
+
+### A.4 如果真要做，最小形态
+
+- 不做「两个 agent 互调」，做「一个 agent + 多组工具」：第三方能力通过 manifest / SDK 注册进同一个 IcarusII（即本文 §4 的 L2/L4）。
+- 非要多实例，至少需要：显式开关 + 实例身份（GUID/端口/token 绑定）、公开的 `SubmitAsync` 或 MCP 化的 sidecar、子代理写操作的确认归属规则、递归与预算上限、端口与数据目录隔离。
+
+### A.5 判断
+
+技术上「能」的部分是跨进程发 `prompt` 和同进程调公开方法；「不能」的部分是把它当子代理用——没有 API、没有身份、没有确认归属。而这三样补齐的复杂度，远高于把能力直接做成工具。多 agent 真正有价值的形态是「一个主 agent + 多个无 LLM 的能力单元」，不是一个完整 agent 去驱动另一个完整 agent。
