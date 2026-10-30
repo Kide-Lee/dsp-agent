@@ -62,6 +62,8 @@ for f in \
   "$PROJ/Assets/IcarusII/ChatWindow.prefab.meta" \
   "$PROJ/Assets/IcarusII/button-agent.prefab" \
   "$PROJ/Assets/IcarusII/button-agent.prefab.meta" \
+  "$PROJ/Assets/IcarusII/SettingsPage.prefab" \
+  "$PROJ/Assets/IcarusII/SettingsPage.prefab.meta" \
   "$PROJ/Assets/IcarusII/Resources/console.png" \
   "$PROJ/Assets/IcarusII/Resources/console.png.meta" \
   "$PROJ/Assets/IcarusII/Resources/new-conversation.png" \

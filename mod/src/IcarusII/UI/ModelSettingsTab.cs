@@ -19,16 +19,15 @@ namespace IcarusII.UI
     ///     点模型行把它设为当前模型；
     ///   * 修改先留在草稿里，点窗口右下角原生的「应用设置」才提交给 sidecar。
     ///
-    /// 注入机制本身没变：`UIOptionWindow` 的页签按钮/文字/内容根都是数组，
+    /// 注入机制没变：`UIOptionWindow` 的页签按钮/文字/内容根都是数组，
     /// 运行时扩一位、克隆一套按钮和内容根即可，不动游戏 prefab。
+    ///
+    /// 页面本体是 `Assets/IcarusII/SettingsPage.prefab`：这里只克隆内容根、
+    /// 实例化 prefab、按节点名绑定控件，并往列表里克隆 prefab 自带的行模板。
     /// </summary>
     internal static class ModelSettingsTab
     {
         private const float TabWidth = 160f;
-
-        // ---- 原生设置页的排版基准（从 DSPGame.unity 的 Option Window 量的）----
-        private const float PageLeft = 30f;
-        private const float PageTop = 12f;
 
         private const string DefaultProvider = "deepseek";
         private const string DefaultModel = "deepseek-v4-flash";
@@ -39,19 +38,15 @@ namespace IcarusII.UI
 
         private static readonly List<ProviderCatalogEntry> _presetProviders = new List<ProviderCatalogEntry>();
 
-        // 原生文字/控件取值：label 18px、#FFFFFFC8（200/255）；
-        // 输入框底 #0000006E（110/255）；ComboBox 文本 16px。
+        // 原生文字/控件取值：label 18px、#FFFFFFC8（200/255）。
         private static readonly Color LabelColor = new Color(1f, 1f, 1f, 200f / 255f);
         private static readonly Color DimColor = new Color(1f, 1f, 1f, 0.58f);
-        private static readonly Color ControlBgColor = new Color(0f, 0f, 0f, 110f / 255f);
         private static readonly Color PlaceholderColor = new Color(1f, 1f, 1f, 0.5f);
         private static readonly Color HintColor = new Color(1f, 1f, 1f, 0.686f);
         private static readonly Color HintWarnColor = new Color(0.991f, 0.59f, 0.369f, 0.686f);
         private static readonly Color HintOkColor = new Color(0.45f, 0.90f, 0.55f, 0.686f);
-        private static readonly Color CardBgColor = new Color(0f, 0f, 0f, 0.16f);
         private static readonly Color RowBgColor = new Color(1f, 1f, 1f, 0.04f);
         private static readonly Color RowSelectedColor = new Color(0.35f, 0.75f, 1f, 0.16f);
-        private static readonly Color AccentColor = new Color(0.35f, 0.75f, 1f, 1f);
         private static readonly Color KeyOkColor = new Color(0.45f, 0.90f, 0.55f, 1f);
         private static readonly Color KeyMissingColor = new Color(1f, 0.59f, 0.37f, 1f);
 
@@ -132,6 +127,12 @@ namespace IcarusII.UI
         private static volatile ModelCatalogResult _catalogResult;
         private static volatile bool _catalogPending;
         private static float _catalogRequestedAt;
+
+        // ---- 列表行模板：来自 SettingsPage.prefab，运行期只克隆，不在代码里搭布局 ----
+        private static GameObject _providerRowTemplate;
+        private static GameObject _modelRowTemplate;
+        private static GameObject _catalogRowTemplate;
+        private static GameObject _emptyRowTemplate;
 
         /// <summary>由 Plugin 在 sidecar 客户端就绪后调用。</summary>
         public static void Bind(SidecarClient client)
@@ -497,112 +498,75 @@ namespace IcarusII.UI
                 rootRt.offsetMax = Vector2.zero;
             }
 
-            var vlg = root.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
-            vlg.spacing = 8f;
-            // 底部留 60：原生窗口底部按钮区（全局「恢复默认设置」等）不能被正文压住。
-            vlg.padding = new RectOffset((int)PageLeft, 24, (int)PageTop, 60);
+            // 页面布局全部来自 prefab；这里只绑定控件、接事件。
+            var view = SettingsPageView.Create(root, _font);
+            _providerList = view.ProviderList;
+            _modelList = view.ModelList;
+            _editorTitle = view.EditorTitle;
+            _keyDot = view.KeyDot;
+            _modelCount = view.ModelCount;
+            _editorHint = view.EditorHint;
+            _apiKeyField = view.ApiKeyField;
+            _baseUrlField = view.BaseUrlField;
+            _addProviderField = view.AddProviderField;
+            _addModelField = view.AddModelField;
+            _hint = view.Hint;
+            _keyTestStatus = view.KeyTestStatus;
+            _testKeyButton = view.TestKeyButton;
+            _testKeyButtonLabel = view.TestKeyLabel;
+            _catalogPopup = view.CatalogPopup;
+            _catalogList = view.CatalogList;
+            _catalogTitle = view.CatalogTitle;
+            _catalogHint = view.CatalogHint;
+            _catalogButton = view.CatalogButton;
+            _catalogButtonLabel = view.CatalogLabel;
+            _providerRowTemplate = view.ProviderRowTemplate;
+            _modelRowTemplate = view.ModelRowTemplate;
+            _catalogRowTemplate = view.CatalogRowTemplate;
+            _emptyRowTemplate = view.EmptyRowTemplate;
+            _addProviderField.text = DefaultProvider;
 
-            var head = UiFactory.Node("page-head", root);
-            head.gameObject.AddComponent<LayoutElement>().preferredHeight = 32f;
-            var title = AddText(head, Strings.Get("model.page.title"), 18, LabelColor, TextAnchor.MiddleLeft);
-            UiFactory.Stretch(title.rectTransform, 0f, 0f, 0f, 0f);
+            _apiKeyField.onValueChanged.AddListener(OnApiKeyChanged);
+            _baseUrlField.onValueChanged.AddListener(OnBaseUrlChanged);
+            _testKeyButton.onClick.AddListener(OnTestKey);
+            _catalogButton.onClick.AddListener(OnFetchModels);
+            view.AddProviderButton.onClick.AddListener(OnAddProvider);
+            view.AddModelButton.onClick.AddListener(OnAddModel);
+            view.DeleteProviderButton.onClick.AddListener(OnDeleteProvider);
+            view.CatalogCloseButton.onClick.AddListener(() =>
+            {
+                if (_catalogPopup != null) _catalogPopup.gameObject.SetActive(false);
+            });
 
-            var body = UiFactory.Node("page-body", root);
-            var bodyLe = body.gameObject.AddComponent<LayoutElement>();
-            bodyLe.minHeight = 260f;
-            bodyLe.flexibleHeight = 1f;
-            var hlg = body.gameObject.AddComponent<HorizontalLayoutGroup>();
-            hlg.childControlWidth = true;
-            hlg.childControlHeight = true;
-            hlg.childForceExpandWidth = false;
-            hlg.childForceExpandHeight = true;
-            hlg.spacing = 12f;
-            hlg.childAlignment = TextAnchor.UpperLeft;
-
-            BuildProviderPane(body, window);
-            BuildEditorPane(body);
-
-            // 底部状态行：用原生设置页的字号/透明度，不像外挂调试文字。
-            var hintRow = UiFactory.Node("hint-row", root);
-            hintRow.gameObject.AddComponent<LayoutElement>().preferredHeight = 24f;
-            _hint = AddText(hintRow, string.Empty, 15, HintColor, TextAnchor.MiddleLeft);
-            UiFactory.Stretch(_hint.rectTransform, 0f, 0f, 0f, 0f);
+            _presetCombo = CreatePresetCombo(window, view.PresetHost);
+            EnsureProviderCatalog();
 
             var revertSlot = CreateHiddenRevertSlot(root, revertTemplate);
             HookApplyButton(window);
-            BuildCatalogPopup(root);
 
             RefreshFromConfig(force: true);
             LogTextDiagnostics("密钥输入框", _apiKeyField != null ? _apiKeyField.textComponent : null);
             return revertSlot;
         }
 
-        private static void BuildProviderPane(RectTransform body, UIOptionWindow window)
-        {
-            var pane = UiFactory.Node("provider-pane", body);
-            var le = pane.gameObject.AddComponent<LayoutElement>();
-            le.preferredWidth = 190f;
-            le.flexibleWidth = 0f;
-            le.flexibleHeight = 1f;
-            var bg = pane.gameObject.AddComponent<Image>();
-            bg.color = CardBgColor;
-
-            var vlg = pane.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(8, 8, 8, 8);
-            vlg.spacing = 6f;
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
-
-            var head = UiFactory.Node("provider-head", pane);
-            head.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
-            var label = AddText(head, Strings.Get("model.provider.title"), 15, DimColor, TextAnchor.MiddleLeft);
-            UiFactory.Stretch(label.rectTransform, 0f, 0f, 0f, 0f);
-
-            _providerList = AddScrollList(pane, "provider-list", 80f);
-
-            var presetLabel = AddText(pane, Strings.Get("model.provider.preset"), 12, DimColor, TextAnchor.MiddleLeft);
-            presetLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 20f;
-            var presetRow = AddRow(pane, "provider-preset-row", 28f, 0f);
-            _presetCombo = CreatePresetCombo(window, presetRow);
-            EnsureProviderCatalog();
-
-            var addRow = AddRow(pane, "add-provider-row", 28f, 0f);
-            _addProviderField = AddInput(addRow, Strings.Get("model.provider.id.placeholder"), false, 26f, 0f);
-            _addProviderField.text = DefaultProvider;
-            AddButton(addRow, "+", OnAddProvider, 28f, 26f, 16);
-
-        }
-
         /// <summary>克隆原生设置页的下拉框，用于「预设供应商」。</summary>
-        private static UIComboBox CreatePresetCombo(UIOptionWindow window, RectTransform parent)
+        private static UIComboBox CreatePresetCombo(UIOptionWindow window, RectTransform host)
         {
             UIComboBox template = window != null ? window.languageComp : null;
             if (template == null && window != null) template = window.resolutionComp;
             if (template == null && window != null) template = window.displayModeComp;
-            if (template == null)
+            if (template == null || host == null)
             {
-                Plugin.Log.LogWarning("[模型页] 找不到原生下拉框模板，预设供应商只能用 ID 输入。");
+                Plugin.Log.LogWarning("[模型页] 找不到原生下拉框模板或宿主节点，预设供应商只能用 ID 输入。");
                 return null;
             }
 
             GameObject go = null;
             try
             {
-                // 原生 UIComboBox 初始化时可能把自己的父节点 SetAsLastSibling；
-                // 中间加一层 host，让它只能动 host，不会把「预设供应商」整行挪到
+                // host 来自 prefab：原生 UIComboBox 初始化时可能把自己的父节点
+                // SetAsLastSibling，让它只能动 host，不会把「预设供应商」整行挪到
                 // 「供应商 ID」下面。
-                var host = UiFactory.Node("preset-combo-host", parent);
-                UiFactory.Stretch(host, 0f, 0f, 0f, 0f);
-                var hostLe = host.gameObject.AddComponent<LayoutElement>();
-                hostLe.flexibleWidth = 1f;
-                hostLe.preferredHeight = 26f;
-
                 go = UnityEngine.Object.Instantiate(template.gameObject, host, false);
                 go.name = "provider-preset-combo";
                 go.SetActive(true);
@@ -706,132 +670,6 @@ namespace IcarusII.UI
             {
                 SetEditorHint(Strings.Get("model.provider.picked", _presetProviders[data].Name), false);
             }
-        }
-
-        private static void BuildEditorPane(RectTransform body)
-        {
-            var pane = UiFactory.Node("editor-pane", body);
-            var le = pane.gameObject.AddComponent<LayoutElement>();
-            le.flexibleWidth = 1f;
-            le.flexibleHeight = 1f;
-            var bg = pane.gameObject.AddComponent<Image>();
-            bg.color = CardBgColor;
-
-            var vlg = pane.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(10, 10, 8, 8);
-            vlg.spacing = 6f;
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
-
-            var head = AddRow(pane, "editor-head", 34f, 0f);
-            _keyDot = AddDot(head, KeyMissingColor);
-            _editorTitle = AddText(head, string.Empty, 18, LabelColor, TextAnchor.MiddleLeft);
-            _editorTitle.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
-            AddButton(head, Strings.Get("model.provider.delete"), OnDeleteProvider, 46f, 24f, 14);
-
-            var keyRow = AddRow(pane, "api-key-row", 30f, 0f);
-            AddFixedLabel(keyRow, Strings.Get("model.api_key.label"), 70f);
-            _apiKeyField = AddInput(keyRow, Strings.Get("model.api_key.placeholder"), true, 28f, 0f);
-            _apiKeyField.onValueChanged.AddListener(OnApiKeyChanged);
-            _testKeyButton = AddButton(keyRow, Strings.Get("model.test.button"), OnTestKey, 52f, 28f, 13);
-            _testKeyButtonLabel = _testKeyButton != null
-                ? _testKeyButton.GetComponentInChildren<Text>(true)
-                : null;
-
-            var keyStatus = AddText(pane, string.Empty, 12, DimColor, TextAnchor.MiddleLeft);
-            keyStatus.horizontalOverflow = HorizontalWrapMode.Wrap;
-            keyStatus.verticalOverflow = VerticalWrapMode.Truncate;
-            keyStatus.gameObject.AddComponent<LayoutElement>().preferredHeight = 32f;
-            _keyTestStatus = keyStatus;
-
-            var urlRow = AddRow(pane, "base-url-row", 30f, 0f);
-            AddFixedLabel(urlRow, Strings.Get("model.base_url.label"), 70f);
-            _baseUrlField = AddInput(urlRow, Strings.Get("model.base_url.placeholder"), false, 28f, 0f);
-            _baseUrlField.onValueChanged.AddListener(OnBaseUrlChanged);
-
-            var modelsHead = AddRow(pane, "models-head", 26f, 0f);
-            var modelsLabel = AddText(modelsHead, Strings.Get("model.label"), 15, DimColor, TextAnchor.MiddleLeft);
-            modelsLabel.gameObject.AddComponent<LayoutElement>().preferredWidth = 52f;
-            _modelCount = AddText(modelsHead, string.Empty, 13, DimColor, TextAnchor.MiddleRight);
-            _modelCount.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
-
-            _modelList = AddScrollList(pane, "model-list", 90f);
-
-            var addModelRow = AddRow(pane, "add-model-row", 28f, 0f);
-            _addModelField = AddInput(addModelRow, Strings.Get("model.id.placeholder"), false, 26f, 300f);
-            AddButton(addModelRow, "+", OnAddModel, 28f, 26f, 16);
-            _catalogButton = AddButton(addModelRow, Strings.Get("model.catalog.button"), OnFetchModels, 112f, 26f, 13);
-            _catalogButtonLabel = _catalogButton != null
-                ? _catalogButton.GetComponentInChildren<Text>(true)
-                : null;
-
-            _editorHint = AddText(pane, string.Empty, 13, DimColor, TextAnchor.MiddleLeft);
-            // 错误文案可能带 HTTP 状态与地址建议，允许折成两行，避免横向压到别的控件。
-            _editorHint.horizontalOverflow = HorizontalWrapMode.Wrap;
-            _editorHint.verticalOverflow = VerticalWrapMode.Truncate;
-            _editorHint.gameObject.AddComponent<LayoutElement>().preferredHeight = 52f;
-        }
-
-        // ---------------------------------------------------------------- 获取可用模型
-
-        private static void BuildCatalogPopup(Transform root)
-        {
-            var popup = UiFactory.Node("model-catalog-popup", root);
-            popup.anchorMin = new Vector2(0.5f, 0.5f);
-            popup.anchorMax = new Vector2(0.5f, 0.5f);
-            popup.pivot = new Vector2(0.5f, 0.5f);
-            popup.sizeDelta = new Vector2(640f, 480f);
-            popup.anchoredPosition = Vector2.zero;
-            var le = popup.gameObject.AddComponent<LayoutElement>();
-            le.ignoreLayout = true;
-            var bg = popup.gameObject.AddComponent<Image>();
-            bg.color = new Color(0.055f, 0.09f, 0.13f, 0.985f);
-            _catalogPopup = popup;
-
-            var head = UiFactory.Node("catalog-head", popup);
-            head.anchorMin = new Vector2(0f, 1f);
-            head.anchorMax = new Vector2(1f, 1f);
-            head.pivot = new Vector2(0.5f, 1f);
-            head.anchoredPosition = new Vector2(0f, -12f);
-            head.sizeDelta = new Vector2(-32f, 38f);
-            var hlg = head.gameObject.AddComponent<HorizontalLayoutGroup>();
-            hlg.padding = new RectOffset(16, 16, 0, 0);
-            hlg.spacing = 8f;
-            hlg.childControlWidth = true;
-            hlg.childControlHeight = true;
-            hlg.childForceExpandWidth = false;
-            hlg.childForceExpandHeight = false;
-            hlg.childAlignment = TextAnchor.MiddleLeft;
-
-            _catalogTitle = AddText(head, Strings.Get("model.catalog.title"), 18, LabelColor, TextAnchor.MiddleLeft);
-            _catalogTitle.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
-            AddButton(head, "×", () =>
-            {
-                if (_catalogPopup != null) _catalogPopup.gameObject.SetActive(false);
-            }, 32f, 32f, 18);
-
-            _catalogList = AddScrollList(popup, "catalog-list", 240f);
-            var scrollRoot = _catalogList != null ? _catalogList.parent.parent as RectTransform : null;
-            if (scrollRoot != null)
-            {
-                scrollRoot.anchorMin = new Vector2(0f, 0f);
-                scrollRoot.anchorMax = new Vector2(1f, 1f);
-                scrollRoot.offsetMin = new Vector2(16f, 52f);
-                scrollRoot.offsetMax = new Vector2(-16f, -60f);
-            }
-
-            var hintRow = UiFactory.Node("catalog-hint-row", popup);
-            hintRow.anchorMin = new Vector2(0f, 0f);
-            hintRow.anchorMax = new Vector2(1f, 0f);
-            hintRow.pivot = new Vector2(0.5f, 0f);
-            hintRow.anchoredPosition = new Vector2(0f, 12f);
-            hintRow.sizeDelta = new Vector2(-32f, 30f);
-            _catalogHint = AddText(hintRow, string.Empty, 13, HintColor, TextAnchor.MiddleLeft);
-            UiFactory.Stretch(_catalogHint.rectTransform, 16f, 0f, 16f, 0f);
-
-            popup.gameObject.SetActive(false);
         }
 
         private static void OnFetchModels()
@@ -1166,34 +1004,32 @@ namespace IcarusII.UI
 
             if (_catalogModels.Count == 0)
             {
-                var empty = AddText(_catalogList, Strings.Get("model.catalog.empty"), 14, DimColor, TextAnchor.MiddleLeft);
-                empty.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
+                EmptyRow(_catalogList, "model.catalog.empty");
                 return;
             }
 
             foreach (var model in _catalogModels)
             {
                 var item = model;
-                var row = AddRow(_catalogList, "catalog-row", 30f, 4f);
-                var label = AddText(row,
-                    string.IsNullOrEmpty(item.Name) || item.Name == item.Id
-                        ? item.Id
-                        : item.Name + "  ·  " + item.Id,
-                    14, LabelColor, TextAnchor.MiddleLeft);
-                var labelLe = label.gameObject.AddComponent<LayoutElement>();
-                labelLe.flexibleWidth = 1f;
-                label.horizontalOverflow = HorizontalWrapMode.Wrap;
-                label.verticalOverflow = VerticalWrapMode.Truncate;
+                var row = InstantiateRow(_catalogRowTemplate, _catalogList, "catalog-row");
+                if (row == null) return;
+
+                var label = row.Find("label").GetComponent<Text>();
+                label.text = string.IsNullOrEmpty(item.Name) || item.Name == item.Id
+                    ? item.Id
+                    : item.Name + "  ·  " + item.Id;
 
                 var exists = draft != null && draft.Models.Exists((m) => m.Id == item.Id);
-                if (exists)
+                var added = row.Find("added");
+                added.gameObject.SetActive(exists);
+                if (exists) added.GetComponent<Text>().text = Strings.Get("model.catalog.added");
+
+                var addButton = row.Find("add-button");
+                addButton.gameObject.SetActive(!exists);
+                if (!exists)
                 {
-                    var added = AddText(row, Strings.Get("model.catalog.added"), 12, DimColor, TextAnchor.MiddleRight);
-                    added.gameObject.AddComponent<LayoutElement>().preferredWidth = 52f;
-                }
-                else
-                {
-                    AddButton(row, Strings.Get("model.catalog.add"), () => AddCatalogModel(item), 64f, 24f, 13);
+                    addButton.Find("label").GetComponent<Text>().text = Strings.Get("model.catalog.add");
+                    addButton.GetComponent<Button>().onClick.AddListener(() => AddCatalogModel(item));
                 }
             }
         }
@@ -1214,200 +1050,6 @@ namespace IcarusII.UI
                 string.IsNullOrEmpty(model.Name) ? model.Id : model.Name), false);
         }
 
-        private static void AddFixedLabel(Transform parent, string text, float width)
-        {
-            var label = AddText(parent, text, 15, LabelColor, TextAnchor.MiddleLeft);
-            var le = label.gameObject.AddComponent<LayoutElement>();
-            le.preferredWidth = width;
-            le.minWidth = width;
-        }
-
-        private static Text AddText(Transform parent, string text, int size, Color color, TextAnchor align)
-        {
-            var rt = UiFactory.Node("text", parent);
-            var label = UiFactory.AddLabel(rt, _font, size, color, align, gameMaterial: false);
-            label.text = text;
-            label.supportRichText = false;
-            label.raycastTarget = false;
-            label.horizontalOverflow = HorizontalWrapMode.Overflow;
-            label.verticalOverflow = VerticalWrapMode.Overflow;
-            return label;
-        }
-
-        private static RectTransform AddRow(Transform parent, string name, float height, float pad)
-        {
-            var row = UiFactory.Node(name, parent);
-            var le = row.gameObject.AddComponent<LayoutElement>();
-            le.preferredHeight = height;
-            le.minHeight = height;
-
-            var hlg = row.gameObject.AddComponent<HorizontalLayoutGroup>();
-            hlg.padding = new RectOffset((int)pad, (int)pad, 0, 0);
-            hlg.spacing = 6f;
-            hlg.childControlWidth = true;
-            hlg.childControlHeight = true;
-            hlg.childForceExpandWidth = false;
-            hlg.childForceExpandHeight = false;
-            hlg.childAlignment = TextAnchor.MiddleLeft;
-            return row;
-        }
-
-        private static RectTransform AddScrollList(Transform parent, string name, float minHeight)
-        {
-            var root = UiFactory.Node(name, parent);
-            var le = root.gameObject.AddComponent<LayoutElement>();
-            le.flexibleHeight = 1f;
-            le.minHeight = minHeight;
-
-            var bg = root.gameObject.AddComponent<Image>();
-            bg.color = new Color(0f, 0f, 0f, 0.12f);
-            bg.raycastTarget = true;
-
-            var scroll = root.gameObject.AddComponent<ScrollRect>();
-            scroll.horizontal = false;
-            scroll.vertical = true;
-            scroll.movementType = ScrollRect.MovementType.Clamped;
-            scroll.scrollSensitivity = 25f;
-            scroll.inertia = true;
-
-            var viewport = UiFactory.Node("viewport", root);
-            UiFactory.Stretch(viewport, 2f, 2f, 2f, 2f);
-            var vpImg = viewport.gameObject.AddComponent<Image>();
-            vpImg.color = new Color(0f, 0f, 0f, 0f);
-            vpImg.raycastTarget = true;
-            viewport.gameObject.AddComponent<RectMask2D>();
-
-            var content = UiFactory.Node("content", viewport);
-            content.anchorMin = new Vector2(0f, 1f);
-            content.anchorMax = new Vector2(1f, 1f);
-            content.pivot = new Vector2(0.5f, 1f);
-            content.anchoredPosition = Vector2.zero;
-            content.sizeDelta = Vector2.zero;
-
-            var vlg = content.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(2, 2, 2, 2);
-            vlg.spacing = 2f;
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
-
-            var fitter = content.gameObject.AddComponent<ContentSizeFitter>();
-            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
-            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-            scroll.viewport = viewport;
-            scroll.content = content;
-            return content;
-        }
-
-        private static Image AddDot(Transform parent, Color color)
-        {
-            var rt = UiFactory.Node("key-dot", parent);
-            var le = rt.gameObject.AddComponent<LayoutElement>();
-            le.preferredWidth = 8f;
-            le.minWidth = 8f;
-            le.preferredHeight = 8f;
-            le.minHeight = 8f;
-            var image = rt.gameObject.AddComponent<Image>();
-            image.color = color;
-            image.raycastTarget = false;
-            return image;
-        }
-
-        private static InputField AddInput(Transform parent, string placeholder, bool password,
-            float height, float preferredWidth)
-        {
-            var box = UiFactory.Node("input", parent);
-            var le = box.gameObject.AddComponent<LayoutElement>();
-            le.preferredHeight = height;
-            if (preferredWidth > 0f)
-            {
-                le.preferredWidth = preferredWidth;
-                le.minWidth = preferredWidth;
-            }
-            else
-            {
-                le.flexibleWidth = 1f;
-            }
-
-            var bg = box.gameObject.AddComponent<Image>();
-            bg.color = ControlBgColor;
-            bg.raycastTarget = true;
-            box.gameObject.AddComponent<RectMask2D>();
-
-            var textRt = UiFactory.Node("text", box);
-            UiFactory.Stretch(textRt, 8f, 0f, 8f, 0f);
-            var text = textRt.gameObject.AddComponent<Text>();
-            text.font = _font;
-            text.fontSize = 15;
-            text.color = Color.white;
-            text.alignment = TextAnchor.MiddleLeft;
-            text.supportRichText = false;
-            text.horizontalOverflow = HorizontalWrapMode.Overflow;
-            text.verticalOverflow = VerticalWrapMode.Truncate;
-
-            var phRt = UiFactory.Node("placeholder", box);
-            UiFactory.Stretch(phRt, 8f, 0f, 8f, 0f);
-            var ph = phRt.gameObject.AddComponent<Text>();
-            ph.font = _font;
-            ph.fontSize = 15;
-            ph.color = PlaceholderColor;
-            ph.alignment = TextAnchor.MiddleLeft;
-            ph.horizontalOverflow = HorizontalWrapMode.Overflow;
-            ph.verticalOverflow = VerticalWrapMode.Truncate;
-            ph.text = placeholder;
-
-            var input = box.gameObject.AddComponent<InputField>();
-            input.textComponent = text;
-            input.placeholder = ph;
-            input.targetGraphic = bg;
-            input.lineType = InputField.LineType.SingleLine;
-            if (password)
-            {
-                input.contentType = InputField.ContentType.Password;
-                input.asteriskChar = '•';
-            }
-            return input;
-        }
-
-        private static Button AddButton(Transform parent, string label, Action action,
-            float width, float height, int fontSize)
-        {
-            var go = UiFactory.Node("button", parent);
-            var le = go.gameObject.AddComponent<LayoutElement>();
-            le.preferredWidth = width;
-            le.minWidth = width;
-            le.preferredHeight = height;
-            le.minHeight = height;
-
-            var bg = go.gameObject.AddComponent<Image>();
-            bg.color = new Color(0f, 0f, 0f, 0.38f);
-            var button = go.gameObject.AddComponent<Button>();
-            button.targetGraphic = bg;
-            button.transition = Selectable.Transition.ColorTint;
-            var colors = button.colors;
-            colors.normalColor = Color.white;
-            colors.highlightedColor = new Color(0.84f, 0.90f, 1f, 1f);
-            colors.pressedColor = new Color(0.68f, 0.78f, 0.95f, 1f);
-            colors.disabledColor = new Color(0.5f, 0.5f, 0.5f, 0.4f);
-            button.colors = colors;
-            var nav = button.navigation;
-            nav.mode = Navigation.Mode.None;
-            button.navigation = nav;
-
-            var textRt = UiFactory.Node("label", go);
-            UiFactory.Stretch(textRt, 2f, 0f, 2f, 0f);
-            var text = UiFactory.AddLabel(textRt, _font, fontSize, Color.white,
-                TextAnchor.MiddleCenter, gameMaterial: false);
-            text.text = label;
-            text.supportRichText = false;
-            text.raycastTarget = false;
-
-            button.onClick.AddListener(() => action());
-            return button;
-        }
-
         private static void ClearChildren(RectTransform parent)
         {
             if (parent == null) return;
@@ -1417,6 +1059,28 @@ namespace IcarusII.UI
                 child.SetActive(false);
                 UnityEngine.Object.Destroy(child);
             }
+        }
+
+        /// <summary>从 prefab 里的行模板克隆一行；模板缺失时记日志并返回 null。</summary>
+        private static RectTransform InstantiateRow(GameObject template, RectTransform parent, string name)
+        {
+            if (template == null || parent == null)
+            {
+                Plugin.Log.LogWarning("[模型页] 列表行模板或容器缺失，跳过一行。");
+                return null;
+            }
+
+            var go = UnityEngine.Object.Instantiate(template, parent, false);
+            go.name = name;
+            go.SetActive(true);
+            return (RectTransform)go.transform;
+        }
+
+        private static void EmptyRow(RectTransform parent, string textKey)
+        {
+            var row = InstantiateRow(_emptyRowTemplate, parent, "empty-row");
+            if (row == null) return;
+            row.GetComponent<Text>().text = Strings.Get(textKey);
         }
 
         private static void LogTextDiagnostics(string name, Text text)
@@ -1624,8 +1288,7 @@ namespace IcarusII.UI
             ClearChildren(_providerList);
             if (_providers.Count == 0)
             {
-                var empty = AddText(_providerList, Strings.Get("model.provider.empty"), 14, DimColor, TextAnchor.MiddleLeft);
-                empty.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
+                EmptyRow(_providerList, "model.provider.empty");
                 return;
             }
 
@@ -1633,35 +1296,20 @@ namespace IcarusII.UI
             {
                 var draft = provider;
                 var selected = draft.Id == _selectedProvider;
-                var row = AddRow(_providerList, "provider-" + draft.Id, 30f, 6f);
-                var bg = row.gameObject.AddComponent<Image>();
-                bg.color = selected ? RowSelectedColor : RowBgColor;
-                bg.raycastTarget = true;
+                var row = InstantiateRow(_providerRowTemplate, _providerList, "provider-" + draft.Id);
+                if (row == null) return;
 
-                var button = row.gameObject.AddComponent<Button>();
-                button.targetGraphic = bg;
-                button.transition = Selectable.Transition.ColorTint;
-                var colors = button.colors;
-                colors.normalColor = Color.white;
-                colors.highlightedColor = new Color(0.88f, 0.93f, 1f, 1f);
-                colors.pressedColor = new Color(0.72f, 0.82f, 0.96f, 1f);
-                button.colors = colors;
-                var nav = button.navigation;
-                nav.mode = Navigation.Mode.None;
-                button.navigation = nav;
-                button.onClick.AddListener(() => SelectProvider(draft.Id));
+                row.GetComponent<Image>().color = selected ? RowSelectedColor : RowBgColor;
+                row.GetComponent<Button>().onClick.AddListener(() => SelectProvider(draft.Id));
 
                 var keyed = draft.HasKey || !string.IsNullOrEmpty(draft.ApiKey);
-                AddDot(row, keyed ? KeyOkColor : KeyMissingColor);
+                row.Find("key-dot").GetComponent<Image>().color = keyed ? KeyOkColor : KeyMissingColor;
 
-                var name = AddText(row, draft.Name, 15,
-                    selected ? Color.white : LabelColor, TextAnchor.MiddleLeft);
-                name.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
-                name.horizontalOverflow = HorizontalWrapMode.Wrap;
-                name.verticalOverflow = VerticalWrapMode.Truncate;
+                var name = row.Find("name").GetComponent<Text>();
+                name.text = draft.Name;
+                name.color = selected ? Color.white : LabelColor;
 
-                var count = AddText(row, draft.Models.Count.ToString(), 12, DimColor, TextAnchor.MiddleRight);
-                count.gameObject.AddComponent<LayoutElement>().preferredWidth = 18f;
+                row.Find("count").GetComponent<Text>().text = draft.Models.Count.ToString();
             }
         }
 
@@ -1671,53 +1319,32 @@ namespace IcarusII.UI
             var draft = SelectedDraft;
             if (draft == null)
             {
-                var empty = AddText(_modelList, Strings.Get("model.provider.missing"), 14, DimColor, TextAnchor.MiddleLeft);
-                empty.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
+                EmptyRow(_modelList, "model.provider.missing");
                 return;
             }
 
-            if (draft.Models.Count == 0)
-            {
-                var empty = AddText(_modelList, Strings.Get("model.empty"), 14, DimColor, TextAnchor.MiddleLeft);
-                empty.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
-            }
+            if (draft.Models.Count == 0) EmptyRow(_modelList, "model.empty");
 
             foreach (var model in draft.Models)
             {
                 var item = model;
                 var active = draft.Id == _activeProvider && item.Id == _activeModel;
-                var row = AddRow(_modelList, "model-" + item.Id, 28f, 6f);
-                var bg = row.gameObject.AddComponent<Image>();
-                bg.color = active ? RowSelectedColor : RowBgColor;
-                bg.raycastTarget = true;
+                var row = InstantiateRow(_modelRowTemplate, _modelList, "model-" + item.Id);
+                if (row == null) return;
 
-                var button = row.gameObject.AddComponent<Button>();
-                button.targetGraphic = bg;
-                button.transition = Selectable.Transition.ColorTint;
-                var colors = button.colors;
-                colors.normalColor = Color.white;
-                colors.highlightedColor = new Color(0.88f, 0.93f, 1f, 1f);
-                colors.pressedColor = new Color(0.72f, 0.82f, 0.96f, 1f);
-                button.colors = colors;
-                var nav = button.navigation;
-                nav.mode = Navigation.Mode.None;
-                button.navigation = nav;
-                button.onClick.AddListener(() => SetActiveModel(draft.Id, item.Id));
+                row.GetComponent<Image>().color = active ? RowSelectedColor : RowBgColor;
+                row.GetComponent<Button>().onClick.AddListener(() => SetActiveModel(draft.Id, item.Id));
 
-                var name = AddText(row, item.Name, 15,
-                    active ? Color.white : LabelColor, TextAnchor.MiddleLeft);
-                var nameLe = name.gameObject.AddComponent<LayoutElement>();
-                nameLe.preferredWidth = 320f;
-                name.horizontalOverflow = HorizontalWrapMode.Wrap;
-                name.verticalOverflow = VerticalWrapMode.Truncate;
+                var name = row.Find("name").GetComponent<Text>();
+                name.text = item.Name;
+                name.color = active ? Color.white : LabelColor;
 
-                if (active)
-                {
-                    var badge = AddText(row, Strings.Get("model.current"), 12, KeyOkColor, TextAnchor.MiddleRight);
-                    badge.gameObject.AddComponent<LayoutElement>().preferredWidth = 28f;
-                }
+                var badge = row.Find("badge");
+                badge.gameObject.SetActive(active);
+                if (active) badge.GetComponent<Text>().text = Strings.Get("model.current");
 
-                AddButton(row, "×", () => RemoveModel(draft.Id, item.Id), 22f, 22f, 14);
+                row.Find("delete-button").GetComponent<Button>()
+                    .onClick.AddListener(() => RemoveModel(draft.Id, item.Id));
             }
 
             if (_modelCount != null)

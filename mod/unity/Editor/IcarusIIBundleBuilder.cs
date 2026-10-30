@@ -38,6 +38,11 @@ namespace IcarusII.EditorTools
         /// 运行期挂在游戏 Game Menu 的截图键正上方（见 UI/AgentMenuButton.cs）。
         /// </summary>
         private const string AgentButtonPrefabPath = "Assets/IcarusII/button-agent.prefab";
+        /// <summary>
+        /// 「模型」设置页本体（注入到游戏原生设置窗口的那一页）。
+        /// 布局全部在这份 prefab 里，mod 只在运行期实例化并按节点名绑定。
+        /// </summary>
+        private const string SettingsPagePrefabPath = "Assets/IcarusII/SettingsPage.prefab";
         private const string SpriteRoot = "Assets/Resources/UI/Textures/Sprites/";
         private const string SpriteDir = "Assets/Resources/UI/Textures/Sprites/Sci-fi/";
         private const string IconDir = "Assets/Resources/UI/Textures/Sprites/Icons/";
@@ -50,6 +55,7 @@ namespace IcarusII.EditorTools
         private const string BundleName = "icarusii-ui";
         private const string AssetName = "IcarusIIWindow";
         private const string AgentButtonAssetName = "IcarusIIAgentButton";
+        private const string SettingsPageAssetName = "IcarusIISettingsPage";
 
         [MenuItem("Icarus II/Build UI AssetBundle (Windows)")]
         public static void BuildFromMenu()
@@ -124,6 +130,12 @@ namespace IcarusII.EditorTools
                             "这份是手工维护的 prefab（从游戏原生截图键复制而来），不要删。");
             }
 
+            if (AssetDatabase.LoadAssetAtPath<GameObject>(SettingsPagePrefabPath) == null)
+            {
+                return Fail("找不到设置页 prefab：" + SettingsPagePrefabPath + "\n" +
+                            "「模型」设置页的布局全部在这份 prefab 里，缺了它设置页会注入失败。");
+            }
+
             if (!IcarusIIChatIndexBuilder.Ensure(PrefabPath))
             {
                 return Fail("chat-index prefab 结构构建失败：" + PrefabPath);
@@ -162,6 +174,8 @@ namespace IcarusII.EditorTools
                     PrefabPath,
                     // 右下角 Game Menu 的聊天入口按钮（含它自己的图标/底图/材质）。
                     AgentButtonPrefabPath,
+                    // 「模型」设置页（注入原生设置窗口）。
+                    SettingsPagePrefabPath,
                     AgentButtonIconPath,
                     NewConversationIconPath,
                     SpriteDir + "crystal-btn-black.png",
@@ -205,6 +219,7 @@ namespace IcarusII.EditorTools
                 {
                     AssetName,
                     AgentButtonAssetName,
+                    SettingsPageAssetName,
                     "console",
                     "new-conversation",
                     "crystal-btn-black",
