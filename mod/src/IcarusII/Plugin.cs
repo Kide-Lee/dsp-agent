@@ -142,6 +142,8 @@ namespace IcarusII
             try
             {
                 _config = new PluginConfig(Config);
+                // manifest 工具的写判定；桥关闭时 manifest 不会加载，钩子恒为 false。
+                IcarusII.Common.Protocol.Protocol.ExtraWriteTool = Game.Tools.ModManifest.IsWrite;
                 _dispatcher = new MainThreadDispatcher();
                 _tools = new GameToolDispatcher(Log);
                 _hotkey = new HotkeyService(_config);

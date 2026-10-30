@@ -15,6 +15,21 @@ namespace IcarusII.Common.Protocol
         public string Name;
         public string Version;
         public int ConfigCount;
+        /// <summary>manifest 声明的工具（P2）；没有 manifest 时为空数组。</summary>
+        public ExtensionToolSummary[] Tools;
+    }
+
+    /// <summary>hello.extensions[].tools[]：一个由第三方 manifest 声明的工具。</summary>
+    public sealed class ExtensionToolSummary
+    {
+        /// <summary>完整工具名（`mod_&lt;id&gt;_&lt;name&gt;`），sidecar 原样使用。</summary>
+        public string Name;
+        public string Label;
+        public string Description;
+        public int Risk;
+        public int TimeoutMs;
+        /// <summary>JSON Schema 对象。</summary>
+        public JsonValue Parameters;
     }
 
     /// <summary>
@@ -314,12 +329,19 @@ namespace IcarusII.Common.Protocol
             ToolModsConfigSet,
         };
 
+        /// <summary>
+        /// 第三方 manifest 工具的写判定钩子（P2）。由 mod 侧按当前 manifest 设置；
+        /// 为空时只看静态写工具表。sidecar 侧有各自的判定，不共享这个委托。
+        /// </summary>
+        public static Func<string, bool> ExtraWriteTool;
+
         public static bool IsWriteTool(string toolName)
         {
             if (string.IsNullOrEmpty(toolName)) return false;
             for (int i = 0; i < WriteToolNames.Length; i++)
                 if (string.Equals(WriteToolNames[i], toolName, StringComparison.Ordinal)) return true;
-            return false;
+            var extra = ExtraWriteTool;
+            return extra is not null && extra(toolName);
         }
 
         /// <summary>
@@ -487,6 +509,24 @@ namespace IcarusII.Common.Protocol
                     item.Set("name", extension.Name ?? string.Empty);
                     item.Set("version", extension.Version ?? string.Empty);
                     item.Set("configCount", extension.ConfigCount);
+                    if (extension.Tools is not null && extension.Tools.Length > 0)
+                    {
+                        var tools = JsonValue.NewArray();
+                        foreach (var tool in extension.Tools)
+                        {
+                            if (tool is null || string.IsNullOrEmpty(tool.Name)) continue;
+                            var toolJson = JsonValue.NewObject();
+                            toolJson.Set("name", tool.Name);
+                            toolJson.Set("label", tool.Label ?? tool.Name);
+                            toolJson.Set("description", tool.Description ?? string.Empty);
+                            toolJson.Set("risk", tool.Risk);
+                            toolJson.Set("timeoutMs", tool.TimeoutMs > 0 ? tool.TimeoutMs : 8000);
+                            toolJson.Set("parameters",
+                                tool.Parameters is not null ? tool.Parameters : JsonValue.NewObject());
+                            tools.Add(toolJson);
+                        }
+                        if (tools.Count > 0) item.Set("tools", tools);
+                    }
                     list.Add(item);
                 }
                 p.Set("extensions", list);

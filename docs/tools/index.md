@@ -110,6 +110,7 @@ mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告�
 | `game_spawn_item` / `game_teleport` | **尚未实现** | 沙盒专属；`tools/sandbox.ts` 只保留了名字与门禁。见 [prompt-shape.md](prompt-shape.md) 的沙盒段 |
 | `mods_config_list` / `mods_config_get` / `mods_config_set` | 内部线级工具 | `mod_<id>_config` 的实现细节，由 sidecar 带固定 `guid` 直调；不广告给模型 |
 | `mod_<id>_config` | 动态注册 | 每个已加载的第三方插件一个；插件不在 `hello.extensions` 里时不存在 |
+| `mod_<id>_<name>` | 动态注册 | manifest 声明的第三方工具；同样随插件加载/卸载出现和消失 |
 
 所以：mod 侧共 39 个 `Name` 声明，其中 37 个进入模型工具列表，2 个是内部导出工具；第三方 mod 工具按 `hello.extensions` 动态生成，不在固定清单里。
 

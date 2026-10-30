@@ -1567,6 +1567,60 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 }
 ```
 
+### B.1.7 manifest 工具（`mod.bridge.v1`，P2）
+
+`hello.extensions[]` 可选带 `tools[]`：由插件随包的 `IcarusII.tools.json` 或
+`BepInEx/config/icarus-ii/bridge/<guid>.json` 声明，把插件的**公开静态方法**暴露成工具。
+
+```jsonc
+"extensions": [
+  {
+    "id": "dspcalculator", "guid": "DSPCalculator", "name": "DSPCalculator",
+    "version": "0.5.25", "configCount": 11,
+    "tools": [
+      { "name": "mod_dspcalculator_open_calculator", "label": "打开计算器",
+        "description": "打开 DSPCalculator 的计算器窗口。", "risk": 1, "timeoutMs": 5000,
+        "parameters": { "type": "object", "properties": {} } }
+    ]
+  }
+]
+```
+
+manifest 格式：
+
+```jsonc
+{
+  "schema": 1,
+  "pluginAssembly": "DSPCalculator",   // 或 pluginGuid；二选一，按程序集名/插件 GUID 匹配
+  "pluginVersion": ">=0.5 <1",         // 可选；不匹配整份禁用
+  "tools": [{
+    "name": "open_calculator",         // 短名；加载时补成 mod_<id>_open_calculator
+    "title": "打开计算器",
+    "description": "…",
+    "risk": 1,                         // 0/1/2
+    "timeoutMs": 5000,
+    "parameters": { "type": "object", "properties": {} },
+    "invoke": {
+      "type": "DSPCalculator.API",     // 必须是声明插件自己程序集里的类型
+      "method": "OpenOneWindow",       // 公开静态方法
+      "args": []                       // 字符串=取同名工具参数；{"const":x}=字面量；{"default":x}=缺省
+    },
+    "undo": {                          // risk 2 必填；risk 0/1 可选
+      "type": "…", "method": "…", "args": []
+    }
+  }]
+}
+```
+
+约束：
+
+- 只调用声明插件**自己程序集**里的公开静态方法；参数类型限 `int/long/float/double/bool/string/enum`。
+- 版本不匹配、manifest 解析失败、risk 2 缺 `undo` → 对应工具不注册，`mods_list` 里仍然能看到插件。
+- manifest 工具的写判定由 mod 侧注册到 `Protocol.IsWriteTool`；risk > 0 走 A.12 确认与一次性令牌。
+- 没有 `undo` 的写工具会把撤销栈顶标记为不可撤销，避免 `game_undo_last_write` 跳过它。
+- 工具与插件同生命周期：插件不加载时，`extensions` 里没有它，工具也不存在。
+- 参考适配器（DSPCalculator / LSTM / BulletTime）是内置样例；外部 manifest 优先。
+
 ### B.2 `tool_call`（sidecar → mod）
 
 ```jsonc

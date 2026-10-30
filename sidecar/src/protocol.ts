@@ -463,6 +463,17 @@ export function serializeEnvelope(env: JsonObject): string {
 
 // ---------------------------------------------------------------- 负载解析
 
+export interface ExtensionTool {
+  /** 完整工具名（`mod_<id>_<name>`），mod 生成，sidecar 原样使用。 */
+  name: string;
+  label: string;
+  description: string;
+  risk: 0 | 1 | 2;
+  timeoutMs: number;
+  /** JSON Schema；直接作为工具参数 schema。 */
+  parameters: Record<string, unknown>;
+}
+
 export interface ExtensionSummary {
   /** 工具名用的短 id（`[a-z0-9_]{1,24}`），由 mod 生成并保证唯一。 */
   id: string;
@@ -470,6 +481,8 @@ export interface ExtensionSummary {
   name: string;
   version: string;
   configCount: number;
+  /** manifest 声明的工具；没有 manifest 时为空数组。 */
+  tools: ExtensionTool[];
 }
 
 export interface HelloPayload {
@@ -523,6 +536,33 @@ function parseExtensions(value: unknown): ExtensionSummary[] {
       name: typeof row['name'] === 'string' ? row['name'] : guid,
       version: typeof row['version'] === 'string' ? row['version'] : '',
       configCount: typeof row['configCount'] === 'number' ? row['configCount'] : 0,
+      tools: parseExtensionTools(row['tools']),
+    });
+  }
+  return out;
+}
+
+/** 扩展工具：name/label/description/risk/timeoutMs/parameters；格式不对的单条忽略。 */
+function parseExtensionTools(value: unknown): ExtensionTool[] {
+  if (!Array.isArray(value)) return [];
+  const out: ExtensionTool[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) continue;
+    const row = item as Record<string, unknown>;
+    const name = typeof row['name'] === 'string' ? row['name'].trim() : '';
+    if (!/^[a-z0-9_]{1,64}$/.test(name) || seen.has(name)) continue;
+    const parameters = row['parameters'];
+    if (typeof parameters !== 'object' || parameters === null || Array.isArray(parameters)) continue;
+    seen.add(name);
+    const risk = typeof row['risk'] === 'number' ? Math.min(2, Math.max(0, Math.trunc(row['risk']))) : 0;
+    out.push({
+      name,
+      label: typeof row['label'] === 'string' ? row['label'] : name,
+      description: typeof row['description'] === 'string' ? row['description'] : '',
+      risk: risk as 0 | 1 | 2,
+      timeoutMs: typeof row['timeoutMs'] === 'number' && row['timeoutMs'] > 0 ? row['timeoutMs'] : 8000,
+      parameters: parameters as Record<string, unknown>,
     });
   }
   return out;

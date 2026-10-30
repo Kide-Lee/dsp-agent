@@ -760,6 +760,15 @@ async function run() {
       name: 'Auxilaryfunction',
       version: '3.1.1',
       configCount: 72,
+      tools: [],
+    };
+    const adapterTool = {
+      name: 'mod_aux_open',
+      label: '打开窗口',
+      description: '测试用 manifest 工具',
+      risk: 1,
+      timeoutMs: 5000,
+      parameters: { type: 'object', properties: {} },
     };
     const names = toolNamesForCapabilities([CAPABILITY_MOD_BRIDGE], [extension]);
     check('声明能力+插件时广告 mods_list', names.includes('mods_list'));
@@ -785,9 +794,26 @@ async function run() {
     check('per-mod 工具有 action 参数', !!tool?.parameters?.properties?.action);
     check('per-mod 工具描述带 mod 名', String(tool?.description ?? '').includes('Auxilaryfunction'));
 
+    // manifest 工具：与 config 工具一样绑定插件生命周期。
+    const withTool = { ...extension, tools: [adapterTool] };
+    const toolNames = toolNamesForCapabilities([CAPABILITY_MOD_BRIDGE], [withTool]);
+    check('manifest 工具进入工具名列表', toolNames.includes('mod_aux_open'));
+    const toolHost = new GameToolHost();
+    toolHost.setCapabilities([CAPABILITY_MOD_BRIDGE]);
+    toolHost.setExtensions([withTool]);
+    const manifestTool = createGameTools(toolHost).find((item) => item.name === 'mod_aux_open');
+    check('manifest 工具已注册', !!manifestTool);
+    check('manifest 工具使用插件给的 schema', manifestTool?.parameters?.type === 'object');
+    check('manifest 工具描述来自 manifest', String(manifestTool?.description ?? '').includes('测试用'));
+
     // 卸载插件：下一条 hello 不再列出它，工具随之消失。
     host.setExtensions([]);
     check('卸载后工具不再生成', !createGameTools(host).some((item) => item.name === 'mod_aux_config'));
+    toolHost.setExtensions([extension]);
+    check(
+      '卸载后 manifest 工具不再生成',
+      !createGameTools(toolHost).some((item) => item.name === 'mod_aux_open'),
+    );
 
     // 会话层：hello.extensions 要真的进入 ready.tools。
     const withExt = makeSession();

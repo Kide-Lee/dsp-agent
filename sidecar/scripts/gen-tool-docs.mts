@@ -601,6 +601,9 @@ function renderIndex(tools: DocTool[]): string {
   lines.push(
     '| `mod_<id>_config` | 动态注册 | 每个已加载的第三方插件一个；插件不在 `hello.extensions` 里时不存在 |',
   );
+  lines.push(
+    '| `mod_<id>_<name>` | 动态注册 | manifest 声明的第三方工具；同样随插件加载/卸载出现和消失 |',
+  );
   lines.push('');
   lines.push(
     '所以：mod 侧共 39 个 `Name` 声明，其中 37 个进入模型工具列表，2 个是内部导出工具；' +

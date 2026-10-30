@@ -113,7 +113,8 @@ export class GameToolHost {
           value.guid === current.guid &&
           value.name === current.name &&
           value.version === current.version &&
-          value.configCount === current.configCount
+          value.configCount === current.configCount &&
+          JSON.stringify(value.tools ?? []) === JSON.stringify(current.tools ?? [])
         );
       });
     if (same) return false;

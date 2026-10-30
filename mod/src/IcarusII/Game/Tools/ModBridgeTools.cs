@@ -149,25 +149,50 @@ namespace IcarusII.Game.Tools
         /// <summary>hello.extensions：当前已加载的第三方插件摘要（按 GUID 排序，id 唯一）。</summary>
         internal static ExtensionSummary[] Extensions()
         {
-            var used = new HashSet<string>(StringComparer.Ordinal);
             var list = new List<ExtensionSummary>();
             foreach (var info in Plugins())
             {
                 var guid = info.Metadata.GUID ?? string.Empty;
+                var manifestTools = ModManifest.ToolsFor(guid);
+                var tools = new List<ExtensionToolSummary>();
+                foreach (var tool in manifestTools) tools.Add(tool.ToSummary());
                 list.Add(new ExtensionSummary
                 {
-                    Id = UniqueId(Slug(guid), used),
+                    Id = IdFor(info),
                     Guid = guid,
                     Name = info.Metadata.Name ?? guid,
                     Version = info.Metadata.Version?.ToString() ?? string.Empty,
                     ConfigCount = info.Instance?.Config is null ? 0 : Entries(info).Count,
+                    Tools = tools.Count == 0 ? null : tools.ToArray(),
                 });
             }
             return list.ToArray();
         }
 
+        private static Dictionary<string, string> _ids;
+        private static int _idsCount = -1;
+
+        /// <summary>插件 GUID → 工具名片段；与 Extensions() 使用同一套规则。</summary>
+        internal static string IdFor(PluginInfo info)
+        {
+            var plugins = Plugins();
+            if (_ids is null || _idsCount != plugins.Count)
+            {
+                _ids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                _idsCount = plugins.Count;
+                var used = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var plugin in plugins)
+                {
+                    var guid = plugin.Metadata.GUID ?? string.Empty;
+                    _ids[guid] = UniqueId(Slug(guid), used);
+                }
+            }
+            var wanted = info.Metadata.GUID ?? string.Empty;
+            return _ids.TryGetValue(wanted, out var id) ? id : Slug(wanted);
+        }
+
         /// <summary>工具名片段：只留小写字母/数字/下划线，最长 20，避免不同 GUID 撞名。</summary>
-        private static string Slug(string guid)
+        internal static string Slug(string guid)
         {
             var sb = new StringBuilder();
             foreach (var c in (guid ?? string.Empty).ToLowerInvariant())

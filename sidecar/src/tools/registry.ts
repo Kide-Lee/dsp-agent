@@ -8,7 +8,7 @@
 
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import type { ExtensionSummary, JsonObject, ToolResultPayload } from '../protocol.js';
+import type { ExtensionSummary, ExtensionTool, JsonObject, ToolResultPayload } from '../protocol.js';
 import { GameToolHost, registerGameToolsFactory, SCRIPT_TOOL_NAME, toolError } from './host.js';
 import { WIKI_TOOL_NAMES } from '../wiki/tools.js';
 import { BLUEPRINT_TOOL_NAMES } from '../blueprint/tools.js';
@@ -599,9 +599,33 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
   if (host.has(CAPABILITY_MOD_BRIDGE)) {
     for (const extension of host.extensionList ?? []) {
       if (extension.configCount > 0) filtered.push(createExtensionConfigTool(host, extension));
+      for (const tool of extension.tools ?? []) filtered.push(createExtensionInvokeTool(host, tool));
     }
   }
   return filtered;
+}
+
+/** manifest 声明的第三方工具：名字、schema、risk 全部来自插件；插件不在就没有它。 */
+function createExtensionInvokeTool(host: GameToolHost, tool: ExtensionTool): ToolDefinition {
+  return {
+    name: tool.name,
+    label: tool.label,
+    description: tool.description || `${tool.label}（第三方 mod 工具）`,
+    promptGuidelines: [
+      `这是 ${tool.label} 提供的第三方 mod 工具；只在对应插件加载时存在。`,
+      tool.risk > 0 ? '这是写操作，执行前会请求确认；可撤销性由该 mod 的适配器声明。' : '只读工具。',
+    ],
+    parameters: tool.parameters as never,
+    executionMode: 'sequential',
+    async execute(_toolCallId, params, signal) {
+      const result = await host.call(tool.name, (params ?? {}) as JsonObject, {
+        timeoutMs: tool.timeoutMs,
+        signal,
+        risk: tool.risk,
+      });
+      return { content: buildToolContent(result), details: result };
+    },
+  };
 }
 
 /** 每个第三方插件一个配置工具；插件不在 hello.extensions 里时这个工具就不存在。 */
@@ -699,7 +723,10 @@ export function toolNamesForCapabilities(
   const ask = capabilities.includes(CAPABILITY_UI_ASK) ? [UI_ASK_TOOL_NAME] : [];
   // 每个已加载的第三方插件一个配置工具；插件不在 extensions 里时名字也不出现。
   const bridge = capabilities.includes(CAPABILITY_MOD_BRIDGE)
-    ? extensions.filter((extension) => extension.configCount > 0).map((extension) => extensionToolName(extension.id))
+    ? extensions.flatMap((extension) => [
+        ...(extension.configCount > 0 ? [extensionToolName(extension.id)] : []),
+        ...(extension.tools ?? []).map((tool) => tool.name),
+      ])
     : [];
   // 脚本工具是 sidecar 本地能力，始终注册（没有 game 工具时执行会明确报错）。
   return [

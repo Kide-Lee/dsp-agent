@@ -422,6 +422,15 @@ computer use 唯一能省掉的是「最后一次批准」，代价是失去返�
 | P3 | L3 UI 快照 + 点击 | 能列出某 mod 窗口的按钮并点中；点完快照变化可验证 |
 | P4 | L4 SDK 文档 + 示例 | 一个最小 mod 自己声明工具并被识别 |
 
+**P2 实现说明（2026-10-30）**
+
+- 加载器已实现：外部 `BepInEx/config/icarus-ii/bridge/<guid>.json` 或插件目录 `IcarusII.tools.json`，
+  版本不匹配、解析失败、risk 2 缺 `undo` 时对应工具不注册。
+- 内置 3 个参考适配器：DSPCalculator、LSTM、**BulletTime**。
+  计划里的 UXAssist 被替换：它的公开 API 只有存档导入/导出钩子（`Action<BinaryWriter>`），
+  没有可调用的用户动作；BulletTime 有公开的 `SetSpeedRatio` / `SetPauseMode`。
+- 调用只允许公开静态方法 + 基本类型参数；工具名 `mod_<id>_<name>`，与插件同生命周期。
+
 ## 9. 风险清单
 
 - 第三方 mod 的公开方法可能只是「碰巧 public」，语义没有承诺；适配器要按「每个版本重新验证」维护。

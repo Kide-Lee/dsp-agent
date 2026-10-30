@@ -301,12 +301,30 @@ namespace IcarusII.Tests
                         Name = "Auxilaryfunction",
                         Version = "3.1.1",
                         ConfigCount = 72,
+                        Tools = new[]
+                        {
+                            new ExtensionToolSummary
+                            {
+                                Name = "mod_auxilaryfunction_open",
+                                Label = "打开",
+                                Description = "测试工具",
+                                Risk = 1,
+                                TimeoutMs = 5000,
+                                Parameters = JsonValue.Parse(@"{""type"":""object"",""properties"":{}}"),
+                            },
+                        },
                     },
                 });
             Eq("extensions 数量", 1, withExtensions["extensions"].Count);
             Eq("extensions[0].id", "auxilaryfunction", withExtensions["extensions"][0]["id"].AsString());
             Eq("extensions[0].guid", "Auxilaryfunction", withExtensions["extensions"][0]["guid"].AsString());
             Eq("extensions[0].configCount", 72L, withExtensions["extensions"][0]["configCount"].AsLong());
+            Eq("extensions[0].tools 数量", 1, withExtensions["extensions"][0]["tools"].Count);
+            Eq("extensions[0].tools[0].name", "mod_auxilaryfunction_open",
+                withExtensions["extensions"][0]["tools"][0]["name"].AsString());
+            Eq("extensions[0].tools[0].risk", 1L, withExtensions["extensions"][0]["tools"][0]["risk"].AsLong());
+            Eq("extensions[0].tools[0].parameters.type", "object",
+                withExtensions["extensions"][0]["tools"][0]["parameters"]["type"].AsString());
             Eq("mod.bridge.v1 能力串", "mod.bridge.v1", Protocol.CapabilityModBridge);
             Eq("mods_list 工具名", "mods_list", Protocol.ToolModsList);
             Eq("mods_config_set 工具名", "mods_config_set", Protocol.ToolModsConfigSet);

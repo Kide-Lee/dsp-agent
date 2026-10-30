@@ -172,7 +172,10 @@ namespace IcarusII.Game.Tools
             IGameToolHandler handler;
             if (!_handlers.TryGetValue(name, out handler))
             {
-                return Error(callId, name, Protocol.CodeToolNotFound, $"未知工具：{name}");
+                // 第三方 manifest 工具按名字动态解析；插件不在就直接 tool_not_found。
+                if (!ModManifest.TryResolve(name, out var plugin, out var tool))
+                    return Error(callId, name, Protocol.CodeToolNotFound, $"未知工具：{name}");
+                handler = new ManifestToolHandler(name, plugin, tool);
             }
 
             if (_active.Count >= MaxActiveCalls)
