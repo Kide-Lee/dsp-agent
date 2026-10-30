@@ -7,11 +7,13 @@
 
 ## 工具清单
 
-共 51 个模型可见工具。
+共 53 个模型可见工具。
 
 | 工具 | label | 能力位 | 风险 | 超时 | 一句话 |
 | --- | --- | --- | --- | --- | --- |
 | [`mods_list`](index.md#mods_list) | 已装 mod 列表 | `mod.bridge.v1` | 只读 | — | 列出除本 mod 以外、当前已加载的 BepInEx 插件：GUID、名称、版本、程序集、配置项数量、是否加载失败。 |
+| [`ui_click`](index.md#ui_click) | 点击界面控件 | `ui.tree.v1` | risk 2 | 8000ms | 按 ui_snapshot 给出的路径派发一次合成点击（PointerClick）。 |
+| [`ui_snapshot`](index.md#ui_snapshot) | 界面控件 | `ui.tree.v1` | 只读 | — | 列出当前可见的 uGUI 可交互控件：层级路径、类型、显示文字、是否可用、Toggle/InputField 的值。 |
 | [`game_get_overview`](game-read.md#game_get_overview) | 存档概览 | `game.read.v1` | 只读 | 5000ms | 读取当前存档概览：存档名、游戏时刻、当前行星/星系、玩家经纬度、是否暂停。 |
 | [`game_get_planet`](game-read.md#game_get_planet) | 行星状态 | `game.read.v1` | 只读 | 12000ms | 读取指定行星（省略则为当前行星）的类型、半径、矿脉按资源汇总、建筑按原型计数。 |
 | [`game_get_player`](game-read.md#game_get_player) | 玩家状态 | `game.read.v1` | 只读 | 6000ms | 读取伊卡洛斯的能量、护盾、反应堆能量与背包物品（id、名称、数量）。 |
@@ -94,6 +96,7 @@ mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告�
 | `game.view.v1` | 1 | `game_capture_view` |
 | `game.analyze.v1` | 1 | `game_analyze_area` |
 | `game.todo.v1` | 4 | `game_todo_templates`、`game_todo_list`、`game_todo_add` |
+| `ui.tree.v1` | 2 | `ui_snapshot`、`ui_click` |
 | `mod.bridge.v1` | 1 | `mods_list` |
 | `game.write.v1` | 4 | `game_place_marker`、`game_open_panel`、`game_set_research` |
 | `game.drop.v1` | 1 | `game_drop_item` |

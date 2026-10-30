@@ -42,6 +42,7 @@
 | 提示词装配重构 | 单一人格文本在 `sidecar/prompts/system.zh.md`，构建时生成 TS 常量（`gen-prompts.mjs`；legacy 富文本版已移除）；`{{顾问字幕42}}` 这类引用在构建期从游戏 `Locale/<lcid>/base.txt` 取值并规范化，缺条目/`$LKEY` 直接失败；人格不再手写工具清单，能力段落与 `promptGuidelines` 按本轮注册表生成；新增 `--system-prompt-file`（仅调试/评测）与 `test/prompts.mjs` 护栏 |
 | 第三方 mod 桥 P0 | `mod.bridge.v1`：`hello.extensions` + `mods_list` + 每个插件一个 `mod_<id>_config`（action=list/get/set）。工具与插件同生命周期：插件卸载/加载失败后下一条 hello 不再列出它，sidecar 重建会话、工具从上下文消失。只读写 BepInEx 配置，默认关闭（`[Bridge] AllowThirdPartyTools`，无 UI 开关）；离线构建/测试通过，待实机 |
 | 第三方 mod 桥 P2 | manifest 加载器：外部 `icarus-ii/bridge/<guid>.json` / 插件目录 `IcarusII.tools.json`，版本不匹配或 risk 2 缺 `undo` 时工具不注册；内置参考适配器 DSPCalculator / LSTM / BulletTime（UXAssist 的公开 API 只有存档钩子，已替换）。只调声明插件自己程序集的公开静态方法；离线构建/测试通过，待实机 |
+| 第三方 mod 桥 P3 | `ui.tree.v1`：`ui_snapshot` 枚举 uGUI `Selectable`（路径/类型/文字/可用性），`ui_click` 按路径派发合成 `PointerClick`；不读像素、不做 OS 输入、不抢焦点；`ui_click` risk 2、不可撤销，点完须再快照复核。离线构建/测试通过，待实机 |
 
 ### M4 收尾修复
 

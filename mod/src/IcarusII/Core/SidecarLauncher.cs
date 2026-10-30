@@ -249,6 +249,7 @@ namespace IcarusII.Core
                 IcarusII.Common.Protocol.Protocol.CapabilityGameTodo,
                 IcarusII.Common.Protocol.Protocol.CapabilityScriptWrite,
                 IcarusII.Common.Protocol.Protocol.CapabilityRichTextV2,
+                IcarusII.Common.Protocol.Protocol.CapabilityUiTree,
             };
             if (_config.AllowThirdPartyTools)
                 capabilities.Add(IcarusII.Common.Protocol.Protocol.CapabilityModBridge);

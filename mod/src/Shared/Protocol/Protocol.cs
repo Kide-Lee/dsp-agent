@@ -214,6 +214,9 @@ namespace IcarusII.Common.Protocol
         /// <summary>mod 支持第三方 mod 桥（读取插件列表与配置，P0）。</summary>
         public const string CapabilityModBridge = "mod.bridge.v1";
 
+        /// <summary>mod 支持 uGUI 控件树快照与合成点击（P3）。</summary>
+        public const string CapabilityUiTree = "ui.tree.v1";
+
         /// <summary>sidecar → mod：请求玩家确认一次写操作。</summary>
         public const string ConfirmRequest = "confirm_request";
 
@@ -251,6 +254,8 @@ namespace IcarusII.Common.Protocol
         public const string ToolModsConfigList = "mods_config_list";
         public const string ToolModsConfigGet = "mods_config_get";
         public const string ToolModsConfigSet = "mods_config_set";
+        public const string ToolUiSnapshot = "ui_snapshot";
+        public const string ToolUiClick = "ui_click";
 
         /// <summary>
         /// sidecar 本地「写文件」工具。它们不改变游戏状态，所以不需要 mod 令牌，
@@ -327,6 +332,8 @@ namespace IcarusII.Common.Protocol
             ToolCopyBlueprint,
             // 第三方 mod 配置写入；可撤销，risk 1。
             ToolModsConfigSet,
+            // 合成点击：语义未知、不可撤销，risk 2。
+            ToolUiClick,
         };
 
         /// <summary>

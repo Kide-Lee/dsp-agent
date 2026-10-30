@@ -141,6 +141,8 @@ namespace IcarusII.Game.Tools
             Register(new ModsConfigListTool());
             Register(new ModsConfigGetTool());
             Register(new ModsConfigSetTool());
+            Register(new UiSnapshotTool());
+            Register(new UiClickTool());
         }
 
         private static bool IsWriteTool(string name)

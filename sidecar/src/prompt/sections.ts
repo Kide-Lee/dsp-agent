@@ -37,6 +37,10 @@ export function groupToolsForPrompt(tools: readonly ToolDefinition[]): Capabilit
       names: gameWrites.filter((name) => writeToolRisk(name) === 2),
     },
     {
+      title: '界面（uGUI 控件树；点击会按权限确认且不可撤销）',
+      names: names.filter((name) => name.startsWith('ui_')),
+    },
+    {
       title: '第三方 mod（发现与配置；set 会按权限确认）',
       names: names.filter((name) => name.startsWith('mods_') || name.startsWith('mod_')),
     },

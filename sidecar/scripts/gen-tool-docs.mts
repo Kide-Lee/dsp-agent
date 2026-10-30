@@ -44,6 +44,7 @@ const CAPABILITIES = [
   'game.tether.v1',
   'game.todo.v1',
   'mod.bridge.v1',
+  'ui.tree.v1',
 ] as const;
 
 /** 文档分组：每个文件覆盖一组能力位（或本地工具）。 */
@@ -219,7 +220,7 @@ function capabilityMap(): Map<string, string> {
   const map = new Map<string, string>();
   for (const capability of CAPABILITIES) {
     for (const name of toolNamesForCapabilities([capability])) {
-      if ((name.startsWith('game_') || name === 'mods_list') && !map.has(name)) map.set(name, capability);
+      if ((name.startsWith('game_') || name === 'mods_list' || name.startsWith('ui_')) && !map.has(name)) map.set(name, capability);
     }
   }
   return map;

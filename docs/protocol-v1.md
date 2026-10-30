@@ -90,6 +90,8 @@
   每个插件一个 `mod_<id>_config`。由 `BepInEx/config/icarus-ii.cfg` 的
   `[Bridge] AllowThirdPartyTools` 控制，**默认关闭**；关闭时不声明该能力、不发扩展列表，
   sidecar 也就不注册这些工具。该桥只读写 BepInEx 配置，不调用第三方代码；manifest/SDK 属于后续阶段。
+- `ui.tree.v1`：mod 支持 uGUI 控件树快照与合成点击（`ui_snapshot` / `ui_click`，P3）。
+  只枚举 uGUI 的 `Selectable`，不读像素、不做 OS 输入；`ui_click` 是 risk 2 写操作。
 
 ### 4.2 `ready` — sidecar → mod
 
@@ -1491,6 +1493,7 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | `game_todo_remove` | 2 | `groupId?`, `goalId?` | 隐藏/删除 AI 创建的目标；确认后执行 |
 | `game_take_output` | 2 | `buildingId` | 取生产建筑成品；保留配方；背包满返回剩余；不进入撤销栈 |
 | `game_undo_last_write` | 1 | 无 | 撤销最近一次可撤销写操作；最近一次不可撤销时返回错误 |
+| `ui_click` | 2 | `path` | 点击 uGUI 控件；确认后执行；不可撤销（见 B.1.8） |
 
 - `game_place_marker` / `game_open_panel` / `game_set_research` / `game_undo_last_write` 需要 `game.write.v1`；`game_drop_item` 需要 `game.drop.v1`；`game_set_recipe` / `game_set_assembler_batch` / `game_take_output` / `game_feed_input` 需要 `game.build.v1`；存储五件套需要 `game.storage.v1`；方位三件套需要 `game.tether.v1`；目标四件套需要 `game.todo.v1`。
 - risk 1/2 的工具都会先走 A.12；拒绝确认时 mod 不执行、无任何副作用。
@@ -1620,6 +1623,20 @@ manifest 格式：
 - 没有 `undo` 的写工具会把撤销栈顶标记为不可撤销，避免 `game_undo_last_write` 跳过它。
 - 工具与插件同生命周期：插件不加载时，`extensions` 里没有它，工具也不存在。
 - 参考适配器（DSPCalculator / LSTM / BulletTime）是内置样例；外部 manifest 优先。
+
+### B.1.8 uGUI 控件树（`ui.tree.v1`，P3）
+
+| 工具 | risk | 参数 | 说明 |
+| --- | --- | --- | --- |
+| `ui_snapshot` | 0 | `filter?`, `includeHidden?` | 列出可见的 uGUI 可交互控件：`path` / `type` / `label` / `interactable` / `active`；Toggle/InputField 带 `value`/`text` |
+| `ui_click` | 2 | `path` | 按路径派发一次合成 `PointerClick`；确认后执行；不可撤销 |
+
+- 只枚举 `Canvas`（跳过 WorldSpace）下的 `Selectable`；上限 4000 个访问节点、150 条结果、深度 14。
+- `path` 形如 `/<Canvas>/<Child>#<siblingIndex>/…`；`ui_click` 只接受活动、`interactable=true` 的控件。
+- 点击用 `ExecuteEvents.Execute<IPointerClickHandler>` + 控件中心的 `PointerEventData`，和真实点击同一条链路；
+  不修改鼠标位置、不抢焦点。
+- 自绘/`OnGUI` 界面不会被枚举；点完必须再用 `ui_snapshot` 复核，没有变化就如实报告。
+- `ui_click` 会把撤销栈顶标记为不可撤销，避免 `game_undo_last_write` 跳过它去撤销更早的操作。
 
 ### B.2 `tool_call`（sidecar → mod）
 

@@ -285,6 +285,12 @@ function describeConfirmation(
         title: '撤销上一步？',
         body: '会撤销最近一次写操作；如果最近一次是不可撤销操作（丢物品/取成品/方位指示），会返回错误。',
       };
+    case 'ui_click':
+      return {
+        title: '点击界面控件？',
+        body: `路径：${fmt(args['path'])}\n` +
+          '会派发一次合成点击；语义未知、不可撤销，点完请用 ui_snapshot 复核。',
+      };
     case 'mods_config_set':
       return {
         title: '修改其他 mod 的配置？',

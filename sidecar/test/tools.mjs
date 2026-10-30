@@ -16,6 +16,7 @@ import { Session } from '../dist/session.js';
 import { GameToolHost } from '../dist/tools/host.js';
 import {
   CAPABILITY_MOD_BRIDGE,
+  CAPABILITY_UI_TREE,
   createGameTools,
   toolNamesForCapabilities,
 } from '../dist/tools/registry.js';
@@ -822,6 +823,24 @@ async function run() {
     withExt.session.handleFrame(Buffer.from(JSON.stringify(helloWithExt)), false);
     const readyWithExt = withExt.socket.frames.find((frame) => frame.type === 'ready');
     check('ready.tools 含 per-mod 工具', readyWithExt?.payload?.tools?.includes('mod_aux_config'));
+
+    console.log('── 17. uGUI 控件树能力门禁 ──');
+    {
+      const names = toolNamesForCapabilities([CAPABILITY_UI_TREE]);
+      check('声明 ui.tree.v1 时广告 ui_snapshot', names.includes('ui_snapshot'));
+      check('声明 ui.tree.v1 时广告 ui_click', names.includes('ui_click'));
+      const without = toolNamesForCapabilities(['game.read.v1']);
+      check('未声明 ui.tree.v1 时不广告 ui_snapshot', !without.includes('ui_snapshot'));
+      check('未声明 ui.tree.v1 时不广告 ui_click', !without.includes('ui_click'));
+      check('ui_click 记为写工具', isWriteToolName('ui_click'));
+      check('ui_click risk=2', writeToolRisk('ui_click') === 2);
+
+      const uiHost = new GameToolHost();
+      uiHost.setCapabilities([CAPABILITY_UI_TREE]);
+      const click = createGameTools(uiHost).find((item) => item.name === 'ui_click');
+      check('ui_click 已注册', !!click);
+      check('ui_click 需要 path', !!click?.parameters?.properties?.path);
+    }
 
     const withoutExt = makeSession();
     withoutExt.session.handleFrame(Buffer.from(JSON.stringify(hello([CAPABILITY_MOD_BRIDGE]))), false);

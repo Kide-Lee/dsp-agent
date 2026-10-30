@@ -431,6 +431,14 @@ computer use 唯一能省掉的是「最后一次批准」，代价是失去返�
   没有可调用的用户动作；BulletTime 有公开的 `SetSpeedRatio` / `SetPauseMode`。
 - 调用只允许公开静态方法 + 基本类型参数；工具名 `mod_<id>_<name>`，与插件同生命周期。
 
+**P3 实现说明（2026-10-30）**
+
+- `ui_snapshot` / `ui_click` 已实现：枚举 uGUI `Selectable`，路径 `/<Canvas>/<Child>#<index>`；
+  点击用合成 `PointerClick`，不读像素、不做 OS 输入、不抢焦点。
+- 上限：4000 个访问节点、150 条结果、深度 14；只接受活动且 `interactable` 的控件。
+- `ui_click` risk 2，走确认/令牌；点完必须再快照复核，失败不假装成功。
+- 自绘/`OnGUI` 界面枚举不到，这是 L3 的已知覆盖边界。
+
 ## 9. 风险清单
 
 - 第三方 mod 的公开方法可能只是「碰巧 public」，语义没有承诺；适配器要按「每个版本重新验证」维护。

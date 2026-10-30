@@ -32,6 +32,8 @@ export const CAPABILITY_GAME_VIEW = 'game.view.v1';
 export const CAPABILITY_GAME_ANALYZE = 'game.analyze.v1';
 /** 第三方 mod 桥（P0）：插件列表与配置读写。 */
 export const CAPABILITY_MOD_BRIDGE = 'mod.bridge.v1';
+/** uGUI 控件树（P3）：快照与合成点击。 */
+export const CAPABILITY_UI_TREE = 'ui.tree.v1';
 
 /** 桥工具名；测试用来断言能力门禁。 */
 export const BRIDGE_TOOL_NAMES = [
@@ -93,6 +95,8 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_todo_add: CAPABILITY_GAME_TODO,
   game_todo_remove: CAPABILITY_GAME_TODO,
   mods_list: CAPABILITY_MOD_BRIDGE,
+  ui_snapshot: CAPABILITY_UI_TREE,
+  ui_click: CAPABILITY_UI_TREE,
   game_undo_last_write: CAPABILITY_GAME_WRITE,
 };
 
@@ -574,6 +578,39 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       ],
       parameters: Type.Object({}),
       timeoutMs: 5000,
+    }),
+    gameTool(host, {
+      name: 'ui_snapshot',
+      label: '界面控件',
+      description:
+        '列出当前可见的 uGUI 可交互控件：层级路径、类型、显示文字、是否可用、Toggle/InputField 的值。' +
+        '用 filter 按文字或路径过滤；只覆盖 uGUI，自绘/OnGUI 界面看不到。',
+      promptGuidelines: [
+        '需要操作没有专用工具的 mod 面板时先快照，按 label 找控件；不要凭像素猜位置。',
+        '路径带 #序号，必须原样传给 ui_click。',
+        '快照只读；点击后建议再快照一次确认界面变化。',
+      ],
+      parameters: Type.Object({
+        filter: Type.Optional(Type.String({ description: '按显示文字或路径过滤（不区分大小写）' })),
+        includeHidden: Type.Optional(Type.Boolean({ description: '包含未激活节点，默认 false' })),
+      }),
+      timeoutMs: 5000,
+    }),
+    gameTool(host, {
+      name: 'ui_click',
+      label: '点击界面控件',
+      description:
+        '按 ui_snapshot 给出的路径派发一次合成点击（PointerClick）。写操作：执行前玩家必须确认；' +
+        '语义未知、不可撤销，点击后请用 ui_snapshot 复核。',
+      promptGuidelines: [
+        '只点击 ui_snapshot 里出现、且 interactable=true 的控件。',
+        '点完必须再快照确认；没变化就如实说“可能没生效”，不要假装成功。',
+      ],
+      parameters: Type.Object({
+        path: Type.String({ description: 'ui_snapshot 返回的 path，原样传入' }),
+      }),
+      timeoutMs: 5000,
+      risk: 2,
     }),
     gameTool(host, {
       name: 'mods_list',

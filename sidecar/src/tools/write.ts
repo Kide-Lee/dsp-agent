@@ -43,6 +43,7 @@ export const WRITE_TOOL_NAMES = [
   'game_undo_last_write',
   'game_copy_blueprint',
   'mods_config_set',
+  'ui_click',
 ] as const;
 
 /**
@@ -75,6 +76,7 @@ const WRITE_TOOL_RISK: Record<string, 1 | 2> = {
   game_undo_last_write: 1,
   game_copy_blueprint: 1,
   mods_config_set: 1,
+  ui_click: 2,
 };
 
 /** 未知写工具按 risk 2 处理（更保守，仍会要求确认）。 */
