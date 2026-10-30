@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "pluginGuid": "com.example.bridge",
+  "pluginVersion": ">=1.0",
+  "tools": [
+    {
+      "name": "add",
+      "title": "加法",
+      "description": "返回两个整数之和。",
+      "risk": 0,
+      "timeoutMs": 5000,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "left": { "type": "integer" },
+          "right": { "type": "integer" }
+        },
+        "required": ["left", "right"]
+      },
+      "invoke": {
+        "type": "ExampleBridge.ExampleBridgePlugin",
+        "method": "Add",
+        "args": ["left", "right"]
+      }
+    }
+  ]
+}

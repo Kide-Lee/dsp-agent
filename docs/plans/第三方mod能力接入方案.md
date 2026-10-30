@@ -439,6 +439,12 @@ computer use 唯一能省掉的是「最后一次批准」，代价是失去返�
 - `ui_click` risk 2，走确认/令牌；点完必须再快照复核，失败不假装成功。
 - 自绘/`OnGUI` 界面枚举不到，这是 L3 的已知覆盖边界。
 
+**P4 实现说明（2026-10-30）**
+
+- SDK 文档：[../third-party-mod-bridge.md](../third-party-mod-bridge.md)，含 manifest 字段、调用约束、安全边界与验证步骤。
+- 可运行示例：[../examples/bridge-example/](../examples/bridge-example/README.md)（插件源码 + `IcarusII.tools.json`）。
+- 示例只作为文档，不参与本仓库构建。
+
 ## 9. 风险清单
 
 - 第三方 mod 的公开方法可能只是「碰巧 public」，语义没有承诺；适配器要按「每个版本重新验证」维护。
