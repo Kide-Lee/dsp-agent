@@ -11,17 +11,15 @@ namespace IcarusII.UI
     /// 设定页「工具」分区：完整工具目录 + 开关。
     ///
     /// 目录与开关都以 sidecar 为权威：每次改动都发 tools.set，回执带回新目录；
-    /// 列表只是把回执渲染到 prefab 的 tool-row 模板。关闭工具不影响权限档位。
+    /// 列表只是把回执渲染到 prefab 的 tool-row 模板，并按 group 分节。
+    /// 关闭工具不影响权限档位。
     /// </summary>
     internal sealed class SettingsToolsPage
     {
-        private enum Filter
+        private static readonly string[] GroupOrder =
         {
-            All,
-            Read,
-            Write,
-            Third,
-        }
+            "game.read", "game.write", "kb", "blueprint", "script", "thirdparty", "other",
+        };
 
         private sealed class RowBinding
         {
@@ -29,15 +27,15 @@ namespace IcarusII.UI
             public Text Name;
             public Text Id;
             public Text Access;
-            public Text State;
-            public Image Dot;
+            public Image AccessPill;
             public Button Toggle;
+            public UISwitch Switch;
         }
 
         private readonly SettingsPageView _view;
         private readonly HashSet<string> _disabled = new HashSet<string>(StringComparer.Ordinal);
         private List<ToolCatalogEntryInfo> _catalog = new List<ToolCatalogEntryInfo>();
-        private Filter _filter = Filter.All;
+        private string _group;
         private string _search = string.Empty;
         private string _legend;
         private string _status;
@@ -62,11 +60,20 @@ namespace IcarusII.UI
                     _search = value ?? string.Empty;
                     Render();
                 });
-            if (_view.ToolChipAll != null) _view.ToolChipAll.onClick.AddListener(() => SetFilter(Filter.All));
-            if (_view.ToolChipRead != null) _view.ToolChipRead.onClick.AddListener(() => SetFilter(Filter.Read));
-            if (_view.ToolChipWrite != null) _view.ToolChipWrite.onClick.AddListener(() => SetFilter(Filter.Write));
-            if (_view.ToolChipThird != null) _view.ToolChipThird.onClick.AddListener(() => SetFilter(Filter.Third));
+            BindChip(_view.ToolChipAll, null);
+            BindChip(_view.ToolChipRead, "game.read");
+            BindChip(_view.ToolChipWrite, "game.write");
+            BindChip(_view.ToolChipKb, "kb");
+            BindChip(_view.ToolChipBlueprint, "blueprint");
+            BindChip(_view.ToolChipScript, "script");
+            BindChip(_view.ToolChipThird, "thirdparty");
             if (_view.ToolsEnableAll != null) _view.ToolsEnableAll.onClick.AddListener(EnableAll);
+        }
+
+        private void BindChip(Button chip, string group)
+        {
+            if (chip == null) return;
+            chip.onClick.AddListener(() => SetGroup(group));
         }
 
         public void EnsureLoaded()
@@ -127,9 +134,9 @@ namespace IcarusII.UI
             }
         }
 
-        private void SetFilter(Filter filter)
+        private void SetGroup(string group)
         {
-            _filter = filter;
+            _group = group;
             Render();
         }
 
@@ -161,11 +168,22 @@ namespace IcarusII.UI
             ClearChildren(_view.ToolsList);
 
             var shown = 0;
-            foreach (var entry in _catalog)
+            foreach (var group in GroupOrder)
             {
-                if (!Matches(entry)) continue;
-                RenderRow(entry);
-                shown++;
+                var entries = new List<ToolCatalogEntryInfo>();
+                foreach (var entry in _catalog)
+                {
+                    if (GroupOf(entry) != group) continue;
+                    if (!Matches(entry)) continue;
+                    entries.Add(entry);
+                }
+                if (entries.Count == 0) continue;
+                AddGroupTitle(group, entries.Count);
+                foreach (var entry in entries)
+                {
+                    RenderRow(entry);
+                    shown++;
+                }
             }
             if (shown == 0) AddEmptyRow(Strings.Get("settings.tools.empty"));
 
@@ -176,23 +194,7 @@ namespace IcarusII.UI
 
         private bool Matches(ToolCatalogEntryInfo entry)
         {
-            switch (_filter)
-            {
-                case Filter.Read:
-                    if (entry.Risk > 0) return false;
-                    break;
-                case Filter.Write:
-                    if (entry.Risk <= 0) return false;
-                    break;
-                case Filter.Third:
-                {
-                    var third = entry.Group == "thirdparty"
-                        || (string.IsNullOrEmpty(entry.Group) && entry.Source != "builtin"
-                            && !string.IsNullOrEmpty(entry.Source));
-                    if (!third) return false;
-                    break;
-                }
-            }
+            if (_group is not null && GroupOf(entry) != _group) return false;
             var query = (_search ?? string.Empty).Trim();
             if (query.Length == 0) return true;
             if (!string.IsNullOrEmpty(entry.Name)
@@ -200,6 +202,39 @@ namespace IcarusII.UI
             if (!string.IsNullOrEmpty(entry.Label)
                 && entry.Label.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) return true;
             return false;
+        }
+
+        private static string GroupOf(ToolCatalogEntryInfo entry)
+        {
+            var group = entry.Group;
+            if (group == "game.read" || group == "game.write" || group == "kb"
+                || group == "blueprint" || group == "script" || group == "thirdparty") return group;
+            // 旧 sidecar 没有 group 字段：按风险粗分，至少不会全部堆到「其它」。
+            if (string.IsNullOrEmpty(group)) return entry.Risk > 0 ? "game.write" : "game.read";
+            return "other";
+        }
+
+        private void AddGroupTitle(string group, int count)
+        {
+            var template = _view.ToolGroupTitleTemplate;
+            if (template == null) return;
+            var node = Instantiate(template, _view.ToolsList, "group-title");
+            var text = node.GetComponent<Text>();
+            if (text != null) text.text = $"{GroupLabel(group)} · {count}";
+        }
+
+        private static string GroupLabel(string group)
+        {
+            switch (group)
+            {
+                case "game.read": return Strings.Get("settings.tools.group.read");
+                case "game.write": return Strings.Get("settings.tools.group.write");
+                case "kb": return Strings.Get("settings.tools.group.kb");
+                case "blueprint": return Strings.Get("settings.tools.group.bp");
+                case "script": return Strings.Get("settings.tools.group.script");
+                case "thirdparty": return Strings.Get("settings.tools.group.third");
+                default: return Strings.Get("settings.tools.group.other");
+            }
         }
 
         private void RenderRow(ToolCatalogEntryInfo entry)
@@ -213,45 +248,47 @@ namespace IcarusII.UI
                 Entry = entry,
                 Name = FindText(node.transform, "info/name-row/name"),
                 Id = FindText(node.transform, "info/id"),
-                Access = FindText(node.transform, "info/name-row/access"),
-                State = FindText(node.transform, "state"),
-                Dot = FindComponent<Image>(node.transform, "info/name-row/dot"),
+                Access = FindText(node.transform, "info/name-row/access-pill/access"),
+                AccessPill = FindComponent<Image>(node.transform, "info/name-row/access-pill"),
                 Toggle = FindComponent<Button>(node.transform, "toggle"),
+                Switch = FindComponent<UISwitch>(node.transform, "toggle"),
             };
             if (row.Name != null)
+            {
                 row.Name.text = string.IsNullOrEmpty(entry.Label) ? entry.Name : entry.Label;
+                row.Name.color = new Color(1f, 1f, 1f, enabled ? 0.784f : 0.35f);
+            }
             if (row.Id != null)
             {
                 var builtin = string.IsNullOrEmpty(entry.Source) || entry.Source == "builtin";
                 row.Id.text = builtin
                     ? entry.Name
                     : $"{entry.Name} · {Strings.Get("settings.tools.source", entry.SourceName ?? entry.Source)}";
+                row.Id.color = new Color(1f, 1f, 1f, enabled ? 0.42f : 0.2f);
             }
             if (row.Access != null)
             {
                 row.Access.text = AccessLabel(entry.Risk);
                 row.Access.color = AccessColor(entry.Risk);
             }
-            if (row.State != null)
-                row.State.text = Strings.Get(enabled ? "settings.tools.state.on" : "settings.tools.state.off");
-            if (row.Dot != null)
-                row.Dot.color = enabled
-                    ? new Color(0.45f, 0.90f, 0.55f, 1f)
-                    : new Color(1f, 1f, 1f, 0.28f);
-            if (row.Toggle != null)
+            if (row.AccessPill != null)
             {
-                var label = row.Toggle.GetComponentInChildren<Text>(true);
-                if (label != null) label.text = Strings.Get("settings.tools.toggle");
-                row.Toggle.onClick.AddListener(() => Toggle(row.Entry));
+                var color = AccessColor(entry.Risk);
+                row.AccessPill.color = new Color(color.r, color.g, color.b, enabled ? 0.16f : 0.07f);
             }
+            if (row.Switch != null) row.Switch.SetToggleNoEvent(enabled);
+            if (row.Toggle != null) row.Toggle.onClick.AddListener(() => Toggle(row.Entry));
         }
 
         private void RenderChips()
         {
-            TintChip(_view.ToolChipAll, _filter == Filter.All);
-            TintChip(_view.ToolChipRead, _filter == Filter.Read);
-            TintChip(_view.ToolChipWrite, _filter == Filter.Write);
-            TintChip(_view.ToolChipThird, _filter == Filter.Third);
+            TintChip(_view.ToolChipAll, _group is null);
+            TintChip(_view.ToolChipRead, _group == "game.read");
+            TintChip(_view.ToolChipWrite, _group == "game.write");
+            TintChip(_view.ToolChipKb, _group == "kb");
+            TintChip(_view.ToolChipBlueprint, _group == "blueprint");
+            TintChip(_view.ToolChipScript, _group == "script");
+            TintChip(_view.ToolChipThird, _group == "thirdparty");
         }
 
         private static void TintChip(Button chip, bool on)
@@ -271,7 +308,6 @@ namespace IcarusII.UI
         private static Color AccessColor(int risk)
         {
             if (risk >= 2) return new Color(0.99f, 0.59f, 0.37f, 1f);
-            if (risk == 1) return new Color(0.35f, 0.75f, 1f, 1f);
             return new Color(0.35f, 0.75f, 1f, 1f);
         }
 
@@ -297,6 +333,10 @@ namespace IcarusII.UI
             if (name != null) name.text = text;
             var id = FindText(node.transform, "info/id");
             if (id != null) id.text = string.Empty;
+            var pill = node.transform.Find("info/name-row/access-pill");
+            if (pill != null) pill.gameObject.SetActive(false);
+            var toggle = node.transform.Find("toggle");
+            if (toggle != null) toggle.gameObject.SetActive(false);
         }
 
         private static GameObject Instantiate(GameObject template, RectTransform parent, string name)

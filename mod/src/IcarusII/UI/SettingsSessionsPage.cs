@@ -39,6 +39,7 @@ namespace IcarusII.UI
         private ConversationsIndexedInfo _index;
         private bool _loading;
         private float _requestedAt;
+        private int _timeouts;
         private bool _onlyCurrent;
         private string _search = string.Empty;
         private string _status;
@@ -93,7 +94,13 @@ namespace IcarusII.UI
         public void Tick()
         {
             // 请求已发出但 5 秒没有回执（断线/旧端）时重试，避免一直停在加载态。
-            if (_loading && Time.unscaledTime - _requestedAt > 5f) _loading = false;
+            if (_loading && Time.unscaledTime - _requestedAt > 5f)
+            {
+                _loading = false;
+                _timeouts++;
+                // 连发两次都没有回执，基本可以断定对端不支持 conversations.index。
+                if (_index is null && _timeouts >= 2) SetStatus(Strings.Get("settings.sessions.offline"), 4f);
+            }
             if (_index is null && !_loading && Time.unscaledTime > _nextRetry)
             {
                 _nextRetry = Time.unscaledTime + 2f;
@@ -105,6 +112,7 @@ namespace IcarusII.UI
             {
                 _index = result;
                 _loading = false;
+                _timeouts = 0;
                 Render();
             }
             if (ModelSettingsTab.TakeConversationsDirty()) RequestIndex();
@@ -240,10 +248,9 @@ namespace IcarusII.UI
             var template = _view.ConversationGroupTemplate;
             if (template == null) return;
             var header = Instantiate(template, _view.SessionsList, "conv-group");
-            var name = group.Current
-                ? $"{group.SaveName} · {Strings.Get("settings.sessions.current")}"
-                : group.SaveName;
-            SetText(header.transform, "name", name);
+            SetText(header.transform, "name", group.SaveName);
+            var pill = header.transform.Find("current-pill");
+            if (pill != null) pill.gameObject.SetActive(group.Current);
             SetText(header.transform, "save-key", ShortKey(group.SaveKey));
             SetText(header.transform, "meta",
                 Strings.Get("settings.sessions.group.meta", group.Conversations.Count, FormatTime(group.LastSeen)));
@@ -268,8 +275,14 @@ namespace IcarusII.UI
                 var title = string.IsNullOrEmpty(conversation.Title)
                     ? Strings.Get("settings.sessions.untitled")
                     : conversation.Title;
-                if (conversation.IsActive) title = $"{title} · {Strings.Get("settings.sessions.active")}";
                 row.Title.text = title;
+            }
+            var pill = node.transform.Find("current-pill");
+            if (pill != null)
+            {
+                pill.gameObject.SetActive(conversation.IsActive);
+                var label = pill.Find("label")?.GetComponent<Text>();
+                if (label != null) label.text = Strings.Get("settings.sessions.active");
             }
             var meta = FindText(node.transform, "meta");
             if (meta != null)
