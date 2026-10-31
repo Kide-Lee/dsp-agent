@@ -168,7 +168,7 @@ namespace IcarusII.UI
             DataDirValue = Bind<Text>(root, "content/pane-general/body/viewport/content/section/version-card/kv-dir/path", missing);
             CopyDirButton = Bind<Button>(root, "content/pane-general/body/viewport/content/section/version-card/kv-dir/copy-dir-button", missing);
             CopyDiagnosticsButton = Bind<Button>(root, "content/pane-general/body/viewport/content/general-actions/copy-diagnostics-button", missing);
-            CopyGroupButton = Bind<Button>(root, "content/pane-about/body/viewport/content/group-card/group-row/actions/copy-group-button", missing);
+            CopyGroupButton = Bind<Button>(root, "content/pane-about/body/viewport/content/group-card/copy-row/copy-group-button", missing);
             PermissionStatus = Bind<Text>(root, "content/pane-general/body/viewport/content/section/head/permission-status", missing);
 
             AddNav(root, missing, SectionGeneral, "nav-general", "pane-general");
