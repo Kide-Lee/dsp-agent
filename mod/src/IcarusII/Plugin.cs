@@ -151,7 +151,6 @@ namespace IcarusII
                 _chat.Submitted += OnUserSubmitted;
                 _chat.ThinkingLevelChanged += OnThinkingLevelChanged;
                 _chat.PermissionLevelChanged += OnPermissionLevelChanged;
-                _chat.ModelSelectionChanged += OnModelSelectionChanged;
                 _chat.TurnDeleted += OnTurnDeleted;
                 _chat.CompactionUndoRequested += OnCompactionUndoRequested;
                 _chat.RegenerateRequested += OnRegenerateRequested;
@@ -1355,33 +1354,6 @@ namespace IcarusII
             Log.LogInfo($"[配置] 权限 → {level}（config.set {(id != null ? "已发送" : "发送失败")}）");
         }
 
-        /// <summary>
-        /// 玩家在聊天窗里换了模型。模型列表由 sidecar 的 config.json 持久化，
-        /// 这里直接发 `config.set{activeProvider,activeModel}`；下一轮 prompt 生效。
-        /// </summary>
-        private void OnModelSelectionChanged(string provider, string model)
-        {
-            if (string.IsNullOrEmpty(provider) || string.IsNullOrEmpty(model)) return;
-
-            if (_client == null || _client.State != ConnectionState.Ready)
-            {
-                _chat?.SetStatus(Strings.Get("plugin.model.offline"), WarnColor);
-                Log.LogInfo($"[配置] 模型 → {provider}/{model}（连接未就绪，未发送）");
-                return;
-            }
-
-            var id = _client.SendConfigSet(activeProvider: provider, activeModel: model);
-            if (id == null)
-            {
-                _chat?.SetStatus(Strings.Get("plugin.model.failed"), WarnColor);
-                Log.LogWarning($"[配置] 模型 → {provider}/{model}（config.set 发送失败）");
-                return;
-            }
-
-            _chat?.SetStatus(Strings.Get("model.switched", provider + "/" + model), OkColor);
-            Log.LogInfo($"[配置] 模型 → {provider}/{model}（config.set 已发送）");
-        }
-
         /// <summary>sidecar 上报的配置状态变化：据此切换「首次引导」与正常聊天。</summary>
         private void OnConfigChanged(ConfigState config)
         {
@@ -1433,9 +1405,6 @@ namespace IcarusII
                 _config?.SetPermissionLevel(config.PermissionLevel);
                 _chat.ApplyPermissionLevel(config.PermissionLevel);
             }
-
-            // 模型列表/当前模型：sidecar 的 config.state 是权威来源。
-            _chat.ApplyModels(config);
 
             // 只在状态真正变化时追加引导，避免切换模型/思考档位收到
             // 重复的 config.state 时刷屏。

@@ -144,8 +144,6 @@ namespace IcarusII.I18n
             // 注入到原生设置窗口的那一个页签的标题（页内还有「模型」分区）
             ["settings.tab.title"] = "Icarus II",
             ["tab.title"] = "Icarus II",
-            ["model.none"] = "未配置",
-            ["model.switched"] = "模型：{0}",
             ["model.page.title"] = "供应商与模型",
             ["model.provider.title"] = "供应商",
             ["model.provider.empty"] = "还没有供应商",
@@ -349,8 +347,6 @@ namespace IcarusII.I18n
             ["plugin.delete.offline"] = "删除未同步到会话（连接未就绪）；重进存档可能仍会出现这条对话。",
             ["plugin.compaction_undo.offline"] = "撤销压缩失败（连接未就绪）。",
             ["plugin.compaction_undo.changed"] = "撤销压缩失败（连接状态已变化）。",
-            ["plugin.model.offline"] = "sidecar 未连接，模型选择未生效",
-            ["plugin.model.failed"] = "模型选择发送失败",
             ["plugin.send.offline"] = "尚未连接到 sidecar，消息未发送。",
             ["plugin.send.changed"] = "发送失败（连接状态已变化）。",
             // 调试命令（!tool / !tools）在聊天窗里显示的结果

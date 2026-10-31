@@ -414,34 +414,6 @@ namespace IcarusII.UI
         private string _permissionLevel = Protocol.DefaultPermission;
         private bool _suppressPermissionEvent;
 
-        /// <summary>
-        /// 输入栏里的「模型」下拉框（prefab 里挂在 model-group/model-level）。
-        /// 选项是 sidecar 的 providers × models 扁平化结果。
-        /// </summary>
-        private UIComboBox _modelCombo;
-        private readonly List<ModelChoice> _modelChoices = new List<ModelChoice>();
-        private string _modelProvider = string.Empty;
-        private string _modelId = string.Empty;
-        private string _modelSignature = string.Empty;
-        private bool _suppressModelEvent;
-        private ConfigState _pendingModelState;
-
-        private sealed class ModelChoice
-        {
-            public string Provider;
-            public string Model;
-            public string Label;
-        }
-
-        /// <summary>玩家在聊天窗里切换了模型。参数是 (provider, model)。</summary>
-        public event Action<string, string> ModelSelectionChanged;
-
-        /// <summary>当前选中的 provider（空 = 尚未配置）。</summary>
-        public string SelectedProvider => _modelProvider;
-
-        /// <summary>当前选中的 model id（空 = 尚未配置）。</summary>
-        public string SelectedModel => _modelId;
-
         /// <summary>工具失败时的标题色。</summary>
         private static readonly Color WarnColor = new Color(1f, 0.47f, 0.32f, 1f);
 
@@ -1298,7 +1270,6 @@ namespace IcarusII.UI
             WireThinkingLevelCombo(panel);
             // 「权限」下拉框：只读 / 受限 / 接管，决定写操作是否弹确认。
             WirePermissionLevelCombo(panel);
-            WireModelCombo(panel);
 
             // ── 从原生窗口抄来时缺的两处运行期初始化（不改你的 prefab）──
 
@@ -1685,7 +1656,6 @@ namespace IcarusII.UI
                 if (_autoFocusInput && !AskShowing) FocusInput();
                 EnsureThinkingComboText();
                 EnsurePermissionComboText();
-                EnsureModelComboText();
                 RebuildBottomLayout();
                 // 刚 SetActive(true)，布局还没重建：直接贴底只能按旧高度算，
                 // 打开窗口时可能停在历史中间而不是最新一条（蓝图卡片尤其明显）。
@@ -3759,270 +3729,6 @@ namespace IcarusII.UI
             finally { _suppressPermissionEvent = false; }
         }
 
-
-        // ---------------------------------------------------------------- 模型选择
-
-        /// <summary>
-        /// 把 sidecar 的 providers × models 铺进「模型」下拉框，并同步当前选中项。
-        /// 设置页保存后、config.state 回显时都会调用。
-        /// </summary>
-        public void ApplyModels(ConfigState state)
-        {
-            if (state == null) return;
-            if (_modelCombo == null)
-            {
-                _pendingModelState = state;
-                return;
-            }
-
-            var signature = BuildModelSignature(state);
-            if (signature != _modelSignature)
-            {
-                _modelSignature = signature;
-                _modelChoices.Clear();
-
-                foreach (var provider in state.Providers)
-                {
-                    if (provider == null || string.IsNullOrEmpty(provider.Id)) continue;
-                    foreach (var model in provider.Models)
-                    {
-                        if (model == null || string.IsNullOrEmpty(model.Id)) continue;
-                        _modelChoices.Add(new ModelChoice
-                        {
-                            Provider = provider.Id,
-                            Model = model.Id,
-                            Label = string.IsNullOrEmpty(model.Name) ? model.Id : model.Name,
-                        });
-                    }
-                }
-
-                _suppressModelEvent = true;
-                try
-                {
-                    _modelCombo.Items.Clear();
-                    _modelCombo.ItemsData.Clear();
-                    if (_modelChoices.Count == 0)
-                    {
-                        _modelCombo.Items.Add(Strings.Get("model.none"));
-                        _modelCombo.ItemsData.Add(0);
-                    }
-                    else
-                    {
-                        for (var i = 0; i < _modelChoices.Count; i++)
-                        {
-                            _modelCombo.Items.Add(_modelChoices[i].Label);
-                            _modelCombo.ItemsData.Add(i);
-                        }
-                    }
-                    _modelCombo.UpdateItems();
-                }
-                finally
-                {
-                    _suppressModelEvent = false;
-                }
-            }
-
-            var active = IndexOfModel(state.Provider, state.Model);
-            if (active < 0) active = 0;
-            SelectModelIndex(active, notify: false);
-        }
-
-        /// <summary>当前选中的模型下标（找不到时返回 -1）。</summary>
-        private int IndexOfModel(string provider, string model)
-        {
-            if (string.IsNullOrEmpty(provider) || string.IsNullOrEmpty(model)) return -1;
-            for (var i = 0; i < _modelChoices.Count; i++)
-            {
-                if (string.Equals(_modelChoices[i].Provider, provider, StringComparison.Ordinal)
-                    && string.Equals(_modelChoices[i].Model, model, StringComparison.Ordinal))
-                    return i;
-            }
-            return -1;
-        }
-
-        private void SelectModelIndex(int index, bool notify)
-        {
-            if (_modelCombo == null) return;
-            if (_modelChoices.Count == 0)
-            {
-                _modelProvider = string.Empty;
-                _modelId = string.Empty;
-                return;
-            }
-            if (index < 0 || index >= _modelChoices.Count) index = 0;
-
-            var choice = _modelChoices[index];
-            var changed = !string.Equals(choice.Provider, _modelProvider, StringComparison.Ordinal)
-                          || !string.Equals(choice.Model, _modelId, StringComparison.Ordinal);
-            _modelProvider = choice.Provider;
-            _modelId = choice.Model;
-
-            _suppressModelEvent = true;
-            try { _modelCombo.itemIndex = index; }
-            finally { _suppressModelEvent = false; }
-
-            if (changed && notify) ModelSelectionChanged?.Invoke(choice.Provider, choice.Model);
-        }
-
-        private void OnModelComboChanged()
-        {
-            if (_suppressModelEvent || _modelCombo == null) return;
-            SelectModelIndex(_modelCombo.itemIndex, notify: true);
-        }
-
-        private static string BuildModelSignature(ConfigState state)
-        {
-            var sb = new StringBuilder();
-            foreach (var provider in state.Providers)
-            {
-                if (provider == null) continue;
-                sb.Append(provider.Id).Append(':');
-                foreach (var model in provider.Models)
-                {
-                    if (model == null) continue;
-                    sb.Append(model.Id).Append('=').Append(model.Name).Append(';');
-                }
-                sb.Append('|');
-            }
-            return sb.ToString();
-        }
-
-        /// <summary>与思考档位相同的兜底：UIComboBox 首次激活时 label 可能被清空。</summary>
-        private void EnsureModelComboText()
-        {
-            if (_modelCombo == null) return;
-
-            var index = IndexOfModel(_modelProvider, _modelId);
-            if (index < 0) index = 0;
-            if (_modelCombo.itemIndex == index
-                && !string.IsNullOrEmpty(_modelCombo.m_Input != null ? _modelCombo.m_Input.text : null))
-                return;
-
-            _suppressModelEvent = true;
-            try { _modelCombo.itemIndex = index; }
-            finally { _suppressModelEvent = false; }
-        }
-
-        /// <summary>把 prefab 里的「模型」下拉框接上；选项内容由 ApplyModels 填。</summary>
-        private void WireModelCombo(RectTransform panel)
-        {
-            var comboNode = FindNode(panel,
-                "input/editor/tool-bar/model-group/model-level",
-                "tool-bar/model-group/model-level",
-                "model-group/model-level",
-                "input/editor/tool-bar/model-level",
-                "tool-bar/model-level", "model-level");
-            var combo = comboNode != null ? comboNode.GetComponent<UIComboBox>() : null;
-            if (combo == null) combo = CloneModelCombo(panel);
-            if (combo == null)
-            {
-                Plugin.Log.LogInfo("[UI] prefab 里没有「模型」下拉框，模型只能在设置页切换。");
-                return;
-            }
-
-            ConfigureModelCombo(panel, combo);
-        }
-
-        /// <summary>
-        /// 兜底：旧 AssetBundle 里没有 model-group（用户只改了 prefab、还没重打包）时，
-        /// 克隆同一工具条上的 thinking-group，改名成模型下拉框。位置放在「思考」左边 6px。
-        /// </summary>
-        private UIComboBox CloneModelCombo(RectTransform panel)
-        {
-            GameObject clone = null;
-            try
-            {
-                var bar = panel != null ? FindNode(panel, "input/editor/tool-bar") as RectTransform : null;
-                if (bar == null || bar.Find("model-group") != null) return null;
-
-                var thinking = bar.Find("thinking-group") as RectTransform;
-                if (thinking == null)
-                {
-                    Plugin.Log.LogError("[UI] prefab 缺少 thinking-group，无法克隆模型下拉组");
-                    return null;
-                }
-
-                clone = UnityEngine.Object.Instantiate(thinking.gameObject, bar, false);
-                clone.name = "model-group";
-                var rt = clone.transform as RectTransform;
-                if (rt != null)
-                {
-                    rt.anchoredPosition = new Vector2(
-                        thinking.anchoredPosition.x - rt.sizeDelta.x - 6f,
-                        thinking.anchoredPosition.y);
-                    rt.SetSiblingIndex(thinking.GetSiblingIndex());
-                }
-
-                var label = clone.transform.Find("thinking-label");
-                if (label != null)
-                {
-                    label.name = "model-label";
-                    var text = label.GetComponent<Text>();
-                    if (text != null) text.text = Strings.Get("model.label");
-                }
-
-                var comboGo = clone.transform.Find("thinking-level");
-                if (comboGo == null) return null;
-                comboGo.name = "model-level";
-                var combo = comboGo.GetComponent<UIComboBox>();
-                if (combo == null) return null;
-
-                // 在激活前先清掉从「思考」复制来的 3 个档位，避免 Awake 按错误数量建条目。
-                combo.Items.Clear();
-                combo.ItemsData.Clear();
-                combo.Items.Add(Strings.Get("model.none"));
-                combo.ItemsData.Add(0);
-
-                clone.SetActive(true);
-                clone = null;   // 交给场景，别在 finally 里销毁
-                Plugin.Log.LogInfo("[UI] prefab 没有 model-group，已从 thinking-group 克隆「模型」下拉框。");
-                return combo;
-            }
-            catch (Exception ex)
-            {
-                Plugin.Log.LogWarning($"[UI] 克隆「模型」下拉框失败：{ex.Message}");
-                return null;
-            }
-            finally
-            {
-                if (clone != null) UnityEngine.Object.Destroy(clone);
-            }
-        }
-
-
-        private void ConfigureModelCombo(RectTransform panel, UIComboBox combo)
-        {
-            _modelCombo = combo;
-            combo.translated = true;   // 文案由我们填，别让游戏再翻译
-            combo.Items.Clear();
-            combo.ItemsData.Clear();
-            combo.Items.Add(Strings.Get("model.none"));
-            combo.ItemsData.Add(0);
-            combo.UpdateItems();
-            _suppressModelEvent = true;
-            try { combo.itemIndex = 0; }
-            finally { _suppressModelEvent = false; }
-            combo.onItemIndexChange.AddListener(OnModelComboChanged);
-
-            // 和思考下拉框一样朝上展开（工具条在窗口底部）。
-            var comboRt = combo.transform as RectTransform;
-            var dropDown = combo.transform.Find("Dropdown List ScrollBox") as RectTransform;
-            if (dropDown != null)
-            {
-                dropDown.anchorMin = new Vector2(0f, 0f);
-                dropDown.anchorMax = new Vector2(0f, 0f);
-                dropDown.pivot = new Vector2(0f, 0f);
-                dropDown.anchoredPosition = new Vector2(0f, comboRt != null ? comboRt.sizeDelta.y : 24f);
-            }
-
-            Plugin.Log.LogInfo("[UI] 已接上「模型」下拉框。");
-            if (_pendingModelState != null)
-            {
-                var pending = _pendingModelState;
-                _pendingModelState = null;
-                ApplyModels(pending);
-            }
-        }
 
         /// <summary>开始一段流式回复；后续 delta 会填进同一条消息。</summary>
         public void BeginStream(string speaker)
@@ -6972,7 +6678,6 @@ namespace IcarusII.UI
 
             if (IsOpen) Game.GameRefs.SetTextInputActive(true);
             if (IsOpen) EnsureThinkingComboText();
-            if (IsOpen) EnsureModelComboText();
 
             // 标题框正在编辑时键盘归它：清掉"期望聚焦"，避免下一行把焦点抢回聊天框。
             // 点过窗口任意位置后 _wantInputFocus 就是 true，不清理的话点标题会立刻被抢回去。
