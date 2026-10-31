@@ -92,6 +92,7 @@ namespace IcarusII.UI
         public Text SessionsCount;
         public RectTransform SessionsList;
         public GameObject ConversationGroupTemplate;
+        public GameObject ConversationGapTemplate;
         public GameObject ConversationRowTemplate;
         public InputField ConversationRenameInput;
 
@@ -108,6 +109,7 @@ namespace IcarusII.UI
         public RectTransform ToolsList;
         public GameObject ToolRowTemplate;
         public GameObject ToolGroupTitleTemplate;
+        public GameObject ToolGapTemplate;
         public Text ToolsLegend;
         public Button CopyDirButton;
         public Button CopyDiagnosticsButton;
@@ -252,6 +254,7 @@ namespace IcarusII.UI
             SessionsCount = Bind<Text>(root, sessions + "toolbar/label", missing);
             SessionsList = Bind<RectTransform>(root, sessions + "list/viewport/content", missing);
             ConversationGroupTemplate = BindNode(root, "templates/conv-group", missing);
+            ConversationGapTemplate = BindNode(root, "templates/conv-gap", missing);
             ConversationRowTemplate = BindNode(root, "templates/conv-row", missing);
             ConversationRenameInput = Bind<InputField>(root, "templates/conv-row/rename-input", missing);
 
@@ -268,6 +271,7 @@ namespace IcarusII.UI
             ToolsList = Bind<RectTransform>(root, tools + "list/viewport/content", missing);
             ToolRowTemplate = BindNode(root, "templates/tool-row", missing);
             ToolGroupTitleTemplate = BindNode(root, "templates/group-title", missing);
+            ToolGapTemplate = BindNode(root, "templates/tool-gap", missing);
             ToolsLegend = Bind<Text>(root, tools + "label", missing);
 
             AddNav(root, missing, SectionGeneral, "nav-general", "pane-general");

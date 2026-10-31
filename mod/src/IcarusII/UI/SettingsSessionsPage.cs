@@ -247,6 +247,8 @@ namespace IcarusII.UI
         {
             var template = _view.ConversationGroupTemplate;
             if (template == null) return;
+            if (_view.ConversationGapTemplate != null && _view.SessionsList.childCount > 0)
+                Instantiate(_view.ConversationGapTemplate, _view.SessionsList, "conv-gap");
             var header = Instantiate(template, _view.SessionsList, "conv-group");
             SetText(header.transform, "name", group.SaveName);
             var pill = header.transform.Find("current-pill");

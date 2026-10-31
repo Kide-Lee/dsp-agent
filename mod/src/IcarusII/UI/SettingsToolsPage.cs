@@ -178,6 +178,8 @@ namespace IcarusII.UI
                     entries.Add(entry);
                 }
                 if (entries.Count == 0) continue;
+                if (_view.ToolGapTemplate != null && shown > 0)
+                    Instantiate(_view.ToolGapTemplate, _view.ToolsList, "tool-gap");
                 AddGroupTitle(group, entries.Count);
                 foreach (var entry in entries)
                 {
