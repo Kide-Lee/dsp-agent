@@ -87,8 +87,6 @@ namespace IcarusII.UI
         public Button KeysResetButton;
 
         // 会话页。
-        public Text SessionsHeadTitle;
-        public Text SessionsHeadSubtitle;
         public InputField SessionSearch;
         public Button SessionsOnlyCurrent;
         public Text SessionsCount;
@@ -98,8 +96,6 @@ namespace IcarusII.UI
         public InputField ConversationRenameInput;
 
         // 工具页。
-        public Text ToolsHeadTitle;
-        public Text ToolsHeadSubtitle;
         public InputField ToolSearch;
         public Button ToolChipAll;
         public Button ToolChipRead;
@@ -251,8 +247,6 @@ namespace IcarusII.UI
             KeysResetButton = Bind<Button>(root, "content/pane-keys/body/keys-footer/reset-button", missing);
 
             var sessions = "content/pane-sessions/body/";
-            SessionsHeadTitle = Bind<Text>(root, "content/pane-sessions/head/title", missing);
-            SessionsHeadSubtitle = Bind<Text>(root, "content/pane-sessions/head/subtitle", missing);
             SessionSearch = Bind<InputField>(root, sessions + "toolbar/search", missing);
             SessionsOnlyCurrent = Bind<Button>(root, sessions + "toolbar/only-current", missing);
             SessionsCount = Bind<Text>(root, sessions + "toolbar/label", missing);
@@ -262,8 +256,6 @@ namespace IcarusII.UI
             ConversationRenameInput = Bind<InputField>(root, "templates/conv-row/rename-input", missing);
 
             var tools = "content/pane-tools/body/";
-            ToolsHeadTitle = Bind<Text>(root, "content/pane-tools/head/title", missing);
-            ToolsHeadSubtitle = Bind<Text>(root, "content/pane-tools/head/subtitle", missing);
             ToolSearch = Bind<InputField>(root, tools + "toolbar/search", missing);
             ToolChipAll = Bind<Button>(root, tools + "toolbar/chip-all", missing);
             ToolChipRead = Bind<Button>(root, tools + "toolbar/chip-read", missing);
@@ -585,16 +577,6 @@ namespace IcarusII.UI
             SetText(keys + "key", Strings.Get("settings.keys.col.key"));
             SetText(keys + "set", Strings.Get("settings.keys.col.set"));
 
-            SetText("content/pane-sessions/head/tag", Strings.Get("settings.sessions.tag"));
-            SetText("content/pane-sessions/foot/hint", Strings.Get("settings.sessions.foot"));
-            SetText("content/pane-sessions/foot/path", Strings.Get("settings.sessions.foot.path"));
-            SetText("content/pane-tools/head/tag", Strings.Get("settings.tools.tag"));
-            SetText("content/pane-tools/foot/hint", Strings.Get("settings.tools.foot"));
-            SetText("content/pane-tools/foot/path", Strings.Get("settings.tools.foot.path"));
-            SessionsHeadTitle.text = Strings.Get("settings.sessions.title");
-            SessionsHeadSubtitle.text = Strings.Get("settings.sessions.subtitle");
-            ToolsHeadTitle.text = Strings.Get("settings.tools.title");
-            ToolsHeadSubtitle.text = Strings.Get("settings.tools.subtitle");
             SetText("content/pane-tools/body/toolbar/chip-kb/label", Strings.Get("settings.tools.chip.kb"));
             SetText("content/pane-tools/body/toolbar/chip-bp/label", Strings.Get("settings.tools.chip.bp"));
             SetText("content/pane-tools/body/toolbar/chip-script/label", Strings.Get("settings.tools.chip.script"));
