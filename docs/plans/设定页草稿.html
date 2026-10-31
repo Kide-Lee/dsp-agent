@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Icarus II · 设定页草稿</title>
+<style>
+  :root{
+    --ink:#04070b;
+    --panel:#0e1822;
+    --panel-2:#0a121a;
+    --panel-3:#101d29;
+    --edge:rgba(255,255,255,.11);
+    --edge-strong:rgba(255,255,255,.18);
+    --text:#dfe9f4;
+    --dim:#93a7bb;
+    --mute:#5e7285;
+    --accent:#5abfff;
+    --accent-soft:rgba(90,191,255,.13);
+    --warn:#fd9a5e;
+    --warn-soft:rgba(253,154,94,.10);
+    --ok:#6fe08a;
+    --danger:#ff7272;
+    --mono:ui-monospace,SFMono-Regular,"Cascadia Mono","Noto Sans Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    background:
+      radial-gradient(1200px 700px at 20% -10%, rgba(38,86,135,.35), transparent 60%),
+      radial-gradient(900px 600px at 90% 110%, rgba(24,74,86,.28), transparent 55%),
+      radial-gradient(2px 2px at 12% 22%, rgba(255,255,255,.45), transparent 60%),
+      radial-gradient(1px 1px at 38% 68%, rgba(255,255,255,.30), transparent 60%),
+      radial-gradient(1px 1px at 72% 32%, rgba(255,255,255,.35), transparent 60%),
+      radial-gradient(2px 2px at 86% 76%, rgba(255,255,255,.22), transparent 60%),
+      var(--ink);
+    color:var(--text);
+    font:13px/1.55 -apple-system,"Segoe UI","Noto Sans SC","Microsoft YaHei",sans-serif;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    min-height:100%;padding:28px 16px;gap:14px;
+  }
+
+  /* ---------- 窗口外壳：切角 + 双层描边 ---------- */
+  .frame{
+    width:1120px;height:690px;
+    padding:1px;
+    background:linear-gradient(160deg,rgba(255,255,255,.34),rgba(255,255,255,.06) 34%,rgba(90,191,255,.18));
+    clip-path:polygon(20px 0,100% 0,100% calc(100% - 20px),calc(100% - 20px) 100%,0 100%,0 20px);
+    filter:drop-shadow(0 26px 60px rgba(0,0,0,.62));
+  }
+  .window{
+    position:relative;width:100%;height:100%;
+    background:linear-gradient(168deg,#13212e 0%,#0d1721 46%,#0a121a 100%);
+    clip-path:polygon(20px 0,100% 0,100% calc(100% - 20px),calc(100% - 20px) 100%,0 100%,0 20px);
+    display:flex;flex-direction:column;overflow:hidden;
+  }
+  .window::after{
+    content:"";position:absolute;inset:0;pointer-events:none;z-index:0;
+    background:
+      linear-gradient(90deg,rgba(90,191,255,.55),transparent 28%) top left/100% 1px no-repeat,
+      radial-gradient(900px 300px at 50% -20%,rgba(90,191,255,.10),transparent 70%);
+  }
+  .titlebar,.tabs,.body{position:relative;z-index:1}
+
+  /* ---------- 标题栏 ---------- */
+  .titlebar{
+    height:42px;flex:0 0 42px;display:flex;align-items:center;gap:10px;
+    padding:0 18px;border-bottom:1px solid var(--edge);
+    background:linear-gradient(180deg,rgba(255,255,255,.04),transparent);
+  }
+  .titlebar h1{margin:0;font-size:15px;font-weight:600;letter-spacing:.06em}
+  .titlebar .spacer{flex:1}
+  .tag{
+    font-size:11px;color:var(--mute);border:1px solid var(--edge);
+    padding:1px 7px;border-radius:2px;letter-spacing:.04em;
+  }
+  .tag.warn{color:var(--warn);border-color:rgba(253,154,94,.35);background:var(--warn-soft)}
+  .icon-btn{
+    width:26px;height:26px;display:grid;place-items:center;color:var(--dim);
+    border:1px solid transparent;border-radius:2px;cursor:pointer;background:none;
+  }
+  .icon-btn:hover{color:var(--text);border-color:var(--edge);background:rgba(255,255,255,.04)}
+
+  /* ---------- 顶栏页签（原生 + 注入） ---------- */
+  .tabs{
+    height:44px;flex:0 0 44px;display:flex;align-items:stretch;
+    padding-left:20px;border-bottom:1px solid var(--edge);
+    background:rgba(0,0,0,.16);
+  }
+  .tab{
+    width:160px;display:flex;align-items:center;justify-content:center;
+    color:var(--mute);font-size:13px;position:relative;letter-spacing:.04em;
+  }
+  .tab.native{cursor:default;opacity:.62}
+  .tab.ours{color:var(--text);font-weight:600}
+  .tab.ours::after{
+    content:"";position:absolute;left:24px;right:24px;bottom:0;height:2px;
+    background:linear-gradient(90deg,transparent,var(--accent),transparent);
+    box-shadow:0 0 12px rgba(90,191,255,.55);
+  }
+  .tab .dot{
+    width:6px;height:6px;border-radius:50%;background:var(--accent);
+    margin-right:7px;box-shadow:0 0 8px rgba(90,191,255,.9);
+  }
+
+  /* ---------- 主体：左导航 + 右内容 ---------- */
+  .body{flex:1;display:flex;min-height:0}
+  .nav{
+    width:196px;flex:0 0 196px;padding:14px 0;display:flex;flex-direction:column;gap:2px;
+    border-right:1px solid var(--edge);background:rgba(0,0,0,.14);
+  }
+  .nav-item{
+    position:relative;display:flex;align-items:center;gap:11px;
+    height:40px;padding:0 16px;margin:0 8px;border-radius:2px;
+    color:var(--dim);cursor:pointer;user-select:none;
+    border:1px solid transparent;background:none;font:inherit;text-align:left;
+  }
+  .nav-item svg{flex:0 0 16px;opacity:.85}
+  .nav-item:hover{color:var(--text);background:rgba(255,255,255,.045)}
+  .nav-item.on{
+    color:var(--text);background:linear-gradient(90deg,var(--accent-soft),rgba(90,191,255,.02));
+    border-color:rgba(90,191,255,.22);
+  }
+  .nav-item.on::before{
+    content:"";position:absolute;left:-8px;top:8px;bottom:8px;width:2px;
+    background:var(--accent);box-shadow:0 0 10px rgba(90,191,255,.8);
+  }
+  .nav-item .badge{
+    margin-left:auto;font-size:10px;color:var(--mute);font-family:var(--mono);
+  }
+  .nav-sep{height:1px;background:var(--edge);margin:10px 16px}
+
+  .content{flex:1;min-width:0;position:relative}
+  .pane{
+    position:absolute;inset:0;display:none;flex-direction:column;min-height:0;
+  }
+  .pane.on{display:flex}
+  .pane-head{
+    padding:16px 22px 12px;border-bottom:1px solid rgba(255,255,255,.06);
+    display:flex;align-items:flex-end;gap:12px;
+  }
+  .pane-head h2{margin:0;font-size:18px;font-weight:600;letter-spacing:.02em}
+  .pane-head p{margin:2px 0 0;font-size:12px;color:var(--mute)}
+  .pane-head .spacer{flex:1}
+  .pane-body{
+    flex:1;overflow-y:auto;padding:18px 22px 22px;min-height:0;
+    scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent;
+    scrollbar-gutter:stable;
+  }
+  .pane-foot{
+    flex:0 0 38px;height:38px;display:flex;align-items:center;gap:10px;
+    padding:0 22px;border-top:1px solid var(--edge);
+    font-size:11.5px;color:var(--mute);background:rgba(0,0,0,.14);
+  }
+  .pane-foot .spacer{flex:1}
+  .pane-body::-webkit-scrollbar{width:8px}
+  .pane-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:4px}
+  .pane-body::-webkit-scrollbar-track{background:transparent}
+
+  /* ---------- 通用控件 ---------- */
+  .sect{margin-bottom:22px}
+  .sect:last-child{margin-bottom:0}
+  .sect-title{
+    font-size:11px;letter-spacing:.14em;color:var(--mute);
+    margin:0 0 9px;font-weight:600;
+  }
+  .card{
+    border:1px solid var(--edge);border-radius:2px;
+    background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.012));
+  }
+  .card + .card{margin-top:8px}
+  .row{
+    display:flex;align-items:center;gap:12px;padding:10px 14px;
+    border-bottom:1px solid rgba(255,255,255,.055);
+  }
+  .row:last-child{border-bottom:0}
+  .row .k{color:var(--dim);width:132px;flex:0 0 132px}
+  .row .v{color:var(--text)}
+  .row .spacer{flex:1}
+  .kv{display:grid;grid-template-columns:1fr 1fr}
+  .kv-cell{
+    display:flex;align-items:center;gap:10px;padding:9px 14px;min-width:0;
+    border-bottom:1px solid rgba(255,255,255,.055);
+  }
+  .kv-cell:nth-child(odd){border-right:1px solid rgba(255,255,255,.055)}
+  .kv-cell.wide{grid-column:1 / -1;border-right:0;border-bottom:0}
+  .kv .kk{width:64px;flex:0 0 64px;color:var(--dim)}
+  .kv .vv{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mono{font-family:var(--mono);font-size:12px;letter-spacing:.02em}
+  .dim{color:var(--dim)}
+  .mute{color:var(--mute)}
+  .small{font-size:11.5px}
+
+  .btn{
+    height:28px;padding:0 12px;border-radius:2px;cursor:pointer;
+    border:1px solid var(--edge-strong);background:rgba(255,255,255,.05);
+    color:var(--text);font:inherit;font-size:12px;display:inline-flex;
+    align-items:center;gap:6px;white-space:nowrap;
+  }
+  .btn:hover{background:rgba(90,191,255,.14);border-color:rgba(90,191,255,.4)}
+  .btn.primary{
+    background:linear-gradient(180deg,rgba(90,191,255,.26),rgba(90,191,255,.14));
+    border-color:rgba(90,191,255,.5);color:#eaf7ff;
+  }
+  .btn.primary:hover{background:rgba(90,191,255,.34)}
+  .btn.ghost{background:transparent;border-color:transparent;color:var(--dim);padding:0 8px}
+  .btn.ghost:hover{color:var(--text);background:rgba(255,255,255,.06)}
+  .btn.danger{color:var(--danger);border-color:rgba(255,114,114,.35);background:rgba(255,114,114,.08)}
+  .btn.danger:hover{background:rgba(255,114,114,.18)}
+  .btn[disabled]{opacity:.42;cursor:not-allowed}
+  .btn[disabled]:hover{background:rgba(255,255,255,.05);border-color:var(--edge-strong)}
+
+  .input{
+    height:28px;border:1px solid var(--edge-strong);border-radius:2px;
+    background:rgba(0,0,0,.35);color:var(--text);padding:0 9px;
+    font:inherit;font-size:12px;min-width:0;outline:none;
+  }
+  .input::placeholder{color:var(--mute)}
+  .input:focus{border-color:rgba(90,191,255,.55);box-shadow:0 0 0 1px rgba(90,191,255,.18)}
+
+  .switch{
+    flex:0 0 38px;width:38px;height:20px;border-radius:10px;position:relative;
+    background:rgba(255,255,255,.10);border:1px solid var(--edge-strong);
+    cursor:pointer;transition:background .15s,border-color .15s;
+  }
+  .switch::after{
+    content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+    background:#cfd9e4;transition:transform .15s,background .15s;
+  }
+  .switch.on{background:rgba(90,191,255,.55);border-color:rgba(90,191,255,.75)}
+  .switch.on::after{transform:translateX(18px);background:#f2fbff;box-shadow:0 0 8px rgba(90,191,255,.8)}
+
+  .chip{
+    height:24px;padding:0 10px;border-radius:2px;font-size:11.5px;cursor:pointer;
+    border:1px solid var(--edge);background:transparent;color:var(--dim);
+  }
+  .chip:hover{color:var(--text);border-color:var(--edge-strong)}
+  .chip.on{color:#eaf7ff;background:var(--accent-soft);border-color:rgba(90,191,255,.45)}
+
+  .pill{
+    font-size:10.5px;padding:1px 6px;border-radius:2px;border:1px solid var(--edge);
+    color:var(--dim);letter-spacing:.02em;white-space:nowrap;
+  }
+  .pill.ro{color:#8fd0ff;border-color:rgba(90,191,255,.35);background:rgba(90,191,255,.10)}
+  .pill.limited{color:#8fe3d6;border-color:rgba(111,224,196,.32);background:rgba(111,224,196,.08)}
+  .pill.takeover{color:#ffb98f;border-color:rgba(253,154,94,.36);background:var(--warn-soft)}
+  .pill.cur{color:#bde8ff;border-color:rgba(90,191,255,.4);background:rgba(90,191,255,.12)}
+  .pill.restart{color:var(--warn);border-color:rgba(253,154,94,.36);background:var(--warn-soft)}
+
+  .key{
+    font-family:var(--mono);font-size:11.5px;padding:2px 8px;border-radius:2px;
+    border:1px solid var(--edge-strong);background:rgba(0,0,0,.35);
+    box-shadow:0 1px 0 rgba(255,255,255,.08) inset;
+    color:var(--text);white-space:nowrap;
+  }
+  .key.capturing{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);animation:pulse 1.2s infinite}
+  .key.combo-key{
+    cursor:pointer;display:inline-flex;align-items:center;gap:9px;height:26px;
+    font-family:inherit;font-size:12px;
+  }
+  .key.combo-key:hover{border-color:rgba(90,191,255,.5);color:#eaf7ff}
+  .key.combo-key svg{opacity:.6}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+
+  .note{
+    display:flex;gap:9px;padding:9px 12px;border-radius:2px;font-size:12px;
+    border:1px solid var(--edge);background:rgba(255,255,255,.025);color:var(--dim);
+  }
+  .note.warn{background:var(--warn-soft);border-color:rgba(253,154,94,.28);color:#f0bf9c}
+  .note.danger{background:rgba(255,114,114,.09);border-color:rgba(255,114,114,.30);color:#ffb3b3}
+  .note svg{flex:0 0 14px;margin-top:2px;opacity:.9}
+
+  /* ---------- 权限三卡 ---------- */
+  .perms{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .perm{
+    position:relative;padding:12px 13px;border:1px solid var(--edge);border-radius:2px;
+    background:rgba(255,255,255,.02);cursor:pointer;
+  }
+  .perm:hover{border-color:var(--edge-strong);background:rgba(255,255,255,.04)}
+  .perm.on{border-color:rgba(90,191,255,.5);background:linear-gradient(180deg,var(--accent-soft),rgba(90,191,255,.03))}
+  .perm .name{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px}
+  .perm .radio{
+    width:12px;height:12px;border-radius:50%;border:1px solid var(--edge-strong);
+    display:grid;place-items:center;flex:0 0 12px;
+  }
+  .perm.on .radio{border-color:var(--accent)}
+  .perm.on .radio::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px rgba(90,191,255,.9)}
+  .perm p{margin:7px 0 0;font-size:11.5px;color:var(--dim);line-height:1.6}
+  .perm .flag{position:absolute;top:11px;right:11px;font-size:10px;color:var(--mute)}
+
+  /* ---------- 模型页 ---------- */
+  .split{display:grid;grid-template-columns:236px 1fr;gap:14px;height:100%;min-height:0}
+  .pane-list{display:flex;flex-direction:column;gap:8px;min-height:0}
+  .combo{
+    height:28px;border:1px solid var(--edge-strong);border-radius:2px;background:rgba(0,0,0,.35);
+    display:flex;align-items:center;padding:0 9px;font-size:12px;color:var(--text);
+  }
+  .combo .spacer{flex:1}
+  .combo svg{opacity:.6}
+  .list-box{
+    flex:1;min-height:0;overflow-y:auto;border:1px solid var(--edge);border-radius:2px;
+    background:rgba(0,0,0,.18);
+    scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent;
+  }
+  .list-row{
+    display:flex;align-items:center;gap:9px;padding:8px 10px;cursor:pointer;
+    border-bottom:1px solid rgba(255,255,255,.045);
+  }
+  .list-row:hover{background:rgba(255,255,255,.04)}
+  .list-row.on{background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent)}
+  .dotk{width:6px;height:6px;border-radius:50%;flex:0 0 6px}
+  .dotk.ok{background:var(--ok);box-shadow:0 0 6px rgba(111,224,138,.7)}
+  .dotk.no{background:var(--warn);box-shadow:0 0 6px rgba(253,154,94,.6)}
+  .list-row .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
+  .list-row .n{font-size:10.5px;color:var(--mute);font-family:var(--mono)}
+
+  .editor{display:flex;flex-direction:column;gap:12px;min-height:0}
+  .editor-head{display:flex;align-items:center;gap:9px}
+  .editor-head .title{font-size:15px;font-weight:600}
+  .field-row{display:flex;align-items:center;gap:10px}
+  .field-row .label{width:64px;flex:0 0 64px;color:var(--dim);font-size:12px}
+  .field-row .input{flex:1}
+  .models-head{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:12px;margin-top:2px}
+  .models-head .count{color:var(--mute);font-family:var(--mono);font-size:11px}
+  .model-row{
+    display:flex;align-items:center;gap:10px;padding:7px 10px;cursor:pointer;
+    border:1px solid transparent;border-radius:2px;background:rgba(255,255,255,.02);
+  }
+  .model-row:hover{background:rgba(255,255,255,.045)}
+  .model-row.on{border-color:rgba(90,191,255,.45);background:var(--accent-soft)}
+  .model-row .mid{flex:1;min-width:0;font-family:var(--mono);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .model-row .mname{color:var(--dim);font-size:11.5px;font-family:inherit}
+
+  /* ---------- 会话页 ---------- */
+  .toolbar{display:flex;align-items:center;gap:9px;margin-bottom:14px}
+  .toolbar .spacer{flex:1}
+  .group{margin-bottom:16px}
+  .group-head{
+    display:flex;align-items:center;gap:9px;padding:7px 10px;
+    background:rgba(255,255,255,.035);border:1px solid var(--edge);border-bottom:0;
+    border-radius:2px 2px 0 0;font-size:12px;
+  }
+  .group-head .name{font-weight:600}
+  .group-head .spacer{flex:1}
+  .group-body{border:1px solid var(--edge);border-radius:0 0 2px 2px;overflow:hidden}
+  .conv{
+    display:flex;align-items:center;gap:10px;padding:9px 10px;
+    border-bottom:1px solid rgba(255,255,255,.05);background:rgba(0,0,0,.12);
+  }
+  .conv:last-child{border-bottom:0}
+  .conv:hover{background:rgba(255,255,255,.04)}
+  .conv .ct{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .conv .meta{font-size:11px;color:var(--mute);font-family:var(--mono);white-space:nowrap}
+  .conv .acts{display:flex;gap:4px;opacity:.45;transition:opacity .12s}
+  .conv:hover .acts{opacity:1}
+
+  /* ---------- 工具页 ---------- */
+  .tool-row{
+    display:flex;align-items:center;gap:11px;padding:9px 12px;
+    border-bottom:1px solid rgba(255,255,255,.05);
+  }
+  .tool-row:last-child{border-bottom:0}
+  .tool-row:hover{background:rgba(255,255,255,.025)}
+  .tool-row .tinfo{flex:1;min-width:0}
+  .tool-row .tname{display:flex;align-items:center;gap:8px;font-size:12.5px}
+  .tool-row .tid{font-family:var(--mono);font-size:11px;color:var(--mute);margin-top:2px}
+  .tool-row.off .tname,.tool-row.off .tid{opacity:.45}
+  /* ---------- 关于页 ---------- */
+  .about-grid{display:grid;grid-template-columns:340px minmax(0,1fr);gap:16px;align-items:start}
+  .about-grid .lic-card{grid-column:1;grid-row:1}
+  .about-grid .qr-card{grid-column:1;grid-row:2}
+  .about-grid .credits-card{grid-column:2;grid-row:1 / span 2}
+  .lic{display:flex;gap:14px;align-items:flex-start;padding:14px}
+  .lic .mark{
+    width:38px;height:38px;flex:0 0 38px;border:1px solid var(--edge-strong);
+    display:grid;place-items:center;border-radius:2px;color:var(--accent);
+    background:radial-gradient(circle at 30% 30%,rgba(90,191,255,.18),transparent 70%);
+  }
+  .credit-row{
+    display:flex;align-items:center;gap:10px;padding:6px 14px;
+    border-bottom:1px solid rgba(255,255,255,.05);
+  }
+  .credit-row:last-child{border-bottom:0}
+  .credit-row .cn{width:104px;flex:0 0 104px;font-weight:500;font-size:12px}
+  .credit-row .cu{width:116px;flex:0 0 116px;color:var(--dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .credit-row .cl{width:110px;flex:0 0 110px}
+  .credit-row .btn{padding:0 9px}
+  .credit-row .spacer{flex:1}
+  .qr-wrap{display:flex;gap:16px;align-items:center;padding:14px}
+  .qr{
+    width:104px;height:104px;flex:0 0 104px;border:1px solid var(--edge-strong);
+    border-radius:2px;background:#0b141c;display:grid;place-items:center;color:var(--dim);
+  }
+
+  .toast{
+    position:fixed;left:50%;bottom:26px;transform:translate(-50%,10px);
+    background:rgba(12,22,32,.96);border:1px solid rgba(90,191,255,.4);
+    color:#eaf7ff;font-size:12px;padding:8px 14px;border-radius:2px;
+    opacity:0;pointer-events:none;transition:opacity .16s,transform .16s;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);z-index:99;
+  }
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+
+  .caption{
+    width:1120px;display:flex;justify-content:space-between;gap:16px;
+    color:var(--mute);font-size:11.5px;padding:0 4px;
+  }
+  .caption b{color:var(--dim);font-weight:500}
+
+  @media (max-width:1180px){
+    .frame,.caption{transform:scale(.86);transform-origin:top center;margin-bottom:-90px}
+  }
+</style>
+</head>
+<body>
+
+<div class="frame">
+  <div class="window">
+
+    <!-- 标题栏 -->
+    <div class="titlebar">
+      <h1>设置</h1>
+      <span class="tag">草稿</span>
+      <span class="spacer"></span>
+      <button class="icon-btn" title="关闭">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4">
+          <path d="M3 3l8 8M11 3l-8 8"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- 顶栏页签：原生页签仅为示意，注入的是最后一个 -->
+    <div class="tabs">
+      <div class="tab native">画面</div>
+      <div class="tab native">音频</div>
+      <div class="tab native">游戏</div>
+      <div class="tab native">语言</div>
+      <div class="tab ours"><span class="dot"></span>Icarus II</div>
+    </div>
+
+    <div class="body">
+      <!-- 左导航 -->
+      <nav class="nav" id="nav">
+        <button class="nav-item on" data-pane="general">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M2 4h12M2 8h12M2 12h12"/><circle cx="6" cy="4" r="1.6" fill="#0d1721"/>
+            <circle cx="10.5" cy="8" r="1.6" fill="#0d1721"/><circle cx="5" cy="12" r="1.6" fill="#0d1721"/>
+          </svg>
+          通用
+        </button>
+        <button class="nav-item" data-pane="keys">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <rect x="1.5" y="4" width="13" height="8" rx="1.2"/>
+            <path d="M4 6.5h1M7 6.5h1M10 6.5h1M4 9.5h8"/>
+          </svg>
+          快捷键
+        </button>
+        <button class="nav-item" data-pane="model">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <rect x="4" y="4" width="8" height="8" rx="1"/>
+            <path d="M6 1.5v2M10 1.5v2M6 12.5v2M10 12.5v2M1.5 6h2M1.5 10h2M12.5 6h2M12.5 10h2"/>
+          </svg>
+          模型
+          <span class="badge" id="model-badge">2</span>
+        </button>
+        <button class="nav-item" data-pane="sessions">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M2 3.5h12v8H7l-3.5 2.5v-2.5H2z"/>
+          </svg>
+          会话
+          <span class="badge">18</span>
+        </button>
+        <button class="nav-item" data-pane="tools">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M10.8 2.3a3.4 3.4 0 0 0-4.2 4.2L2.2 11a1.6 1.6 0 0 0 2.3 2.3l4.5-4.4a3.4 3.4 0 0 0 4.2-4.2L11 6.1 9.4 4.5z"/>
+          </svg>
+          工具
+          <span class="badge">41</span>
+        </button>
+        <div class="nav-sep"></div>
+        <button class="nav-item" data-pane="about">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <circle cx="8" cy="8" r="6"/><path d="M8 7.2v4"/><circle cx="8" cy="4.9" r=".8" fill="currentColor"/>
+          </svg>
+          关于
+        </button>
+      </nav>
+
+      <div class="content">
+
+        <!-- ============ 通用 ============ -->
+        <section class="pane on" id="pane-general">
+          <div class="pane-head">
+            <div>
+              <h2>通用</h2>
+              <p>默认权限与新会话的基线行为</p>
+            </div>
+            <span class="spacer"></span>
+            <span class="tag">即时生效</span>
+          </div>
+          <div class="pane-body">
+            <div class="sect">
+              <div class="sect-title">默认权限</div>
+              <div class="perms" id="perms">
+                <div class="perm" data-level="readonly">
+                  <div class="name"><span class="radio"></span>只读</div>
+                  <p>所有写操作都要你确认，模型只能看。</p>
+                </div>
+                <div class="perm on" data-level="limited">
+                  <span class="flag">默认</span>
+                  <div class="name"><span class="radio"></span>受限</div>
+                  <p>低风险写操作（镜头 / 标记 / 面板 / 撤销）直接放行，改变存档的操作仍需确认。</p>
+                </div>
+                <div class="perm" data-level="takeover">
+                  <div class="name"><span class="radio"></span>接管</div>
+                  <p>所有写操作直接执行，不再询问。谨慎使用。</p>
+                </div>
+              </div>
+              <div class="note" style="margin-top:10px">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="7" cy="7" r="5.4"/><path d="M7 6.3v3.6"/><circle cx="7" cy="4.6" r=".7" fill="currentColor"/></svg>
+                <span>与聊天窗右下角的「权限」下拉是同一个值。若当前正在回答，改动从下一回合开始生效。</span>
+              </div>
+            </div>
+
+            <div class="sect">
+              <div class="sect-title">版本</div>
+              <div class="card kv">
+                <div class="kv-cell"><span class="kk">插件</span><span class="vv mono">Icarus II 1.0.0</span></div>
+                <div class="kv-cell"><span class="kk">BepInEx</span><span class="vv mono">5.4.17</span></div>
+                <div class="kv-cell"><span class="kk">sidecar</span><span class="vv mono">1.0.0</span><span class="pill ro">已连接 · 12 ms</span></div>
+                <div class="kv-cell"><span class="kk">协议</span><span class="vv mono">v1</span></div>
+                <div class="kv-cell"><span class="kk">游戏</span><span class="vv mono">0.10.30.3100</span></div>
+                <div class="kv-cell"><span class="kk">Unity</span><span class="vv mono">2022.3.62f3c1</span></div>
+                <div class="kv-cell wide">
+                  <span class="kk">数据目录</span>
+                  <span class="vv mono">%APPDATA%\icarus-ii</span>
+                  <button class="btn" data-copy="%APPDATA%\icarus-ii">复制路径</button>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:10px">
+                <button class="btn primary" data-copy="Icarus II 1.0.0 / sidecar 1.0.0 / protocol v1 / game 0.10.30.3100 / BepInEx 5.4.17">复制诊断信息</button>
+                <span class="spacer" style="flex:1"></span>
+                <span class="small mute" style="align-self:center">提问题时把诊断信息一起发出来最快</span>
+              </div>
+            </div>
+          </div>
+          <div class="pane-foot">
+            <span>权限是全局设置，对所有存档生效。</span>
+            <span class="spacer"></span>
+            <span>config.json · [Agent] PermissionLevel</span>
+          </div>
+        </section>
+
+        <!-- ============ 快捷键 ============ -->
+        <section class="pane" id="pane-keys">
+          <div class="pane-head">
+            <div>
+              <h2>快捷键</h2>
+              <p>打开聊天窗，以及发送与换行分别用哪个键</p>
+            </div>
+            <span class="spacer"></span>
+            <span class="tag">即时生效</span>
+          </div>
+          <div class="pane-body">
+            <div class="sect">
+              <div class="sect-title">窗口</div>
+              <div class="card">
+                <div class="row">
+                  <span class="k">打开 / 关闭聊天窗</span>
+                  <span class="v">
+                    <button class="key" id="key-open" data-capture="open">R</button>
+                  </span>
+                  <span class="spacer"></span>
+                  <button class="btn" data-capture="open">修改</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="sect">
+              <div class="sect-title">发送与换行</div>
+              <div class="card">
+                <div class="row">
+                  <span class="k">发送消息</span>
+                  <span class="v"><button class="key" id="key-send" data-capture="send">Enter</button></span>
+                  <span class="spacer"></span>
+                  <button class="btn" data-capture="send">修改</button>
+                </div>
+                <div class="row">
+                  <span class="k">换行</span>
+                  <span class="v"><button class="key" id="key-newline" data-capture="newline">Ctrl + Enter</button></span>
+                  <span class="spacer"></span>
+                  <button class="btn" data-capture="newline">修改</button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+          <div class="pane-foot">
+            <span>点击「修改」后按下新按键，Esc 取消；只按修饰键不算完成。</span>
+            <span class="spacer"></span>
+            <span>icarus-ii.cfg · [General] Hotkey / [Keys]</span>
+          </div>
+        </section>
+
+        <!-- ============ 模型 ============ -->
+        <section class="pane" id="pane-model">
+          <div class="pane-head">
+            <div>
+              <h2>模型</h2>
+              <p>管理供应商与模型，API 密钥只写不读</p>
+            </div>
+            <span class="spacer"></span>
+            <span class="tag">应用后生效</span>
+          </div>
+          <div class="pane-body" style="padding-bottom:10px">
+            <div class="split">
+              <!-- 供应商 -->
+              <div class="pane-list">
+                <div class="combo">
+                  预设供应商：自定义…
+                  <span class="spacer"></span>
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 3.5L5 6.5 8 3.5"/></svg>
+                </div>
+                <div class="list-box" id="providers">
+                  <div class="list-row on" data-provider="deepseek">
+                    <span class="dotk ok"></span>
+                    <span class="t">DeepSeek</span>
+                    <span class="n">2</span>
+                  </div>
+                  <div class="list-row" data-provider="openrouter">
+                    <span class="dotk no"></span>
+                    <span class="t">OpenRouter</span>
+                    <span class="n">0</span>
+                  </div>
+                </div>
+                <div style="display:flex;gap:6px">
+                  <input class="input" style="flex:1" placeholder="供应商 ID" />
+                  <button class="btn primary" title="添加供应商">+</button>
+                </div>
+              </div>
+
+              <!-- 编辑卡片 -->
+              <div class="editor">
+                <div class="editor-head">
+                  <span class="title" id="provider-title">DeepSeek</span>
+                  <span class="dotk ok"></span>
+                  <span class="spacer" style="flex:1"></span>
+                  <button class="btn ghost" id="delete-provider" style="color:var(--danger)">删除</button>
+                </div>
+                <div class="field-row">
+                  <span class="label">API 密钥</span>
+                  <input class="input" type="password" placeholder="已配置，留空不修改" />
+                  <button class="btn">检测</button>
+                </div>
+                <div class="field-row">
+                  <span class="label">API 地址</span>
+                  <input class="input" placeholder="留空使用默认地址" />
+                </div>
+                <div class="models-head">
+                  <span>模型</span><span class="count">2 个</span>
+                  <span class="spacer" style="flex:1"></span>
+                  <span class="small mute">点一行设为当前</span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:5px">
+                  <div class="model-row on">
+                    <span class="dotk ok"></span>
+                    <span class="mid">deepseek-v4-flash<span class="mname"> · DeepSeek V4 Flash</span></span>
+                    <span class="pill ro">当前</span>
+                  </div>
+                  <div class="model-row">
+                    <span class="dotk ok"></span>
+                    <span class="mid">deepseek-v4-pro<span class="mname"> · DeepSeek V4 Pro</span></span>
+                  </div>
+                </div>
+                <div style="display:flex;gap:6px;margin-top:2px">
+                  <input class="input" style="flex:1" placeholder="模型 ID" />
+                  <button class="btn">获取可用模型</button>
+                  <button class="btn primary" title="添加模型">+</button>
+                </div>
+                <div class="small mute" id="model-hint">Key 可用 · 218 ms</div>
+              </div>
+            </div>
+          </div>
+          <div class="pane-foot">
+            <span>改动先留在草稿里，点窗口右下角的「应用设置」才提交。</span>
+            <span class="spacer"></span>
+            <button class="btn primary" disabled>应用设置</button>
+          </div>
+        </section>
+
+        <!-- ============ 会话 ============ -->
+        <section class="pane" id="pane-sessions">
+          <div class="pane-head">
+            <div>
+              <h2>会话</h2>
+              <p>所有存档对应的会话，按存档分组</p>
+            </div>
+            <span class="spacer"></span>
+            <span class="tag">即时生效</span>
+          </div>
+          <div class="pane-body">
+            <div class="toolbar">
+              <input class="input" id="conv-search" placeholder="搜索会话标题" style="width:220px" />
+              <button class="chip on" id="only-current">只看当前存档</button>
+              <span class="spacer"></span>
+              <span class="small mute" id="conv-count">18 个会话 · 3 个存档</span>
+            </div>
+
+            <div class="group" data-save="A">
+              <div class="group-head">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 5h12v8H2z"/><path d="M2 5l2-2.5h3L9 5"/></svg>
+                <span class="name">我的档</span>
+                <span class="mono mute small">3f2a91c4</span>
+                <span class="pill cur">当前</span>
+                <span class="spacer"></span>
+                <span class="small mute">3 个会话 · 10-31 14:02</span>
+              </div>
+              <div class="group-body">
+                <div class="conv">
+                  <span class="ct">铁矿产线怎么优化</span>
+                  <span class="pill cur">使用中</span>
+                  <span class="meta">12 条 · 14:02</span>
+                  <span class="acts"><button class="btn ghost" title="导出为 Markdown">导出</button><button class="btn ghost" title="重命名">重命名</button><button class="btn ghost" style="color:var(--danger)" title="删除">删除</button></span>
+                </div>
+                <div class="conv">
+                  <span class="ct">蓝图的集装堆叠怎么开</span>
+                  <span class="meta">7 条 · 10-30 21:18</span>
+                  <span class="acts"><button class="btn ghost" title="导出为 Markdown">导出</button><button class="btn ghost">重命名</button><button class="btn ghost" style="color:var(--danger)">删除</button></span>
+                </div>
+                <div class="conv">
+                  <span class="ct mute">未命名会话</span>
+                  <span class="meta">0 条 · 10-30 20:55</span>
+                  <span class="acts"><button class="btn ghost" disabled title="没有消息可导出">导出</button><button class="btn ghost">重命名</button><button class="btn ghost" style="color:var(--danger)">删除</button></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="group" data-save="B">
+              <div class="group-head">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 5h12v8H2z"/><path d="M2 5l2-2.5h3L9 5"/></svg>
+                <span class="name">测试档</span>
+                <span class="mono mute small">91be07aa</span>
+                <span class="spacer"></span>
+                <span class="small mute">12 个会话 · 10-28 23:40</span>
+              </div>
+              <div class="group-body">
+                <div class="conv">
+                  <span class="ct">帮我看看这条产线为什么堵</span>
+                  <span class="meta">24 条 · 10-28 23:40</span>
+                  <span class="acts"><button class="btn ghost" title="导出为 Markdown">导出</button><button class="btn ghost">重命名</button><button class="btn ghost" style="color:var(--danger)">删除</button></span>
+                </div>
+                <div class="conv">
+                  <span class="ct">戴森球框架的发射窗口</span>
+                  <span class="meta">5 条 · 10-27 19:02</span>
+                  <span class="acts"><button class="btn ghost" title="导出为 Markdown">导出</button><button class="btn ghost">重命名</button><button class="btn ghost" style="color:var(--danger)">删除</button></span>
+                </div>
+                <div class="conv">
+                  <span class="ct">物流塔的最优分拣器数量</span>
+                  <span class="meta">9 条 · 10-26 12:31</span>
+                  <span class="acts"><button class="btn ghost" title="导出为 Markdown">导出</button><button class="btn ghost">重命名</button><button class="btn ghost" style="color:var(--danger)">删除</button></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="group" data-save="C">
+              <div class="group-head">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 5h12v8H2z"/><path d="M2 5l2-2.5h3L9 5"/></svg>
+                <span class="name mute">存档 7c11d0e2</span>
+                <span class="mono mute small">7c11d0e2</span>
+                <span class="spacer"></span>
+                <span class="small mute">3 个会话 · 10-20 08:12</span>
+              </div>
+              <div class="group-body">
+                <div class="conv">
+                  <span class="ct">开局怎么规划</span>
+                  <span class="meta">3 条 · 10-20 08:12</span>
+                  <span class="acts"><button class="btn ghost" title="导出为 Markdown">导出</button><button class="btn ghost">重命名</button><button class="btn ghost" style="color:var(--danger)">删除</button></span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="pane-foot">
+            <span>这里只管理标题、导出与清理，不切换上下文；聊天窗里始终是当前存档的活动会话。</span>
+            <span class="spacer"></span>
+            <span class="mute">exports/&lt;saveKey&gt;/*.md</span>
+          </div>
+        </section>
+
+        <!-- ============ 工具 ============ -->
+        <section class="pane" id="pane-tools">
+          <div class="pane-head">
+            <div>
+              <h2>工具</h2>
+              <p>模型手上有什么，以及你允许它用什么</p>
+            </div>
+            <span class="spacer"></span>
+            <span class="tag">下一回合生效</span>
+          </div>
+          <div class="pane-body">
+            <div class="small mute" style="margin:-2px 0 10px">
+              标记表示该工具在哪个权限档位下会被直接放行：只读 = 任何档位都执行，受限 = 受限/接管档位直接执行，接管 = 只有接管档位直接执行。
+            </div>
+
+            <div class="toolbar">
+              <input class="input" id="tool-search" placeholder="搜索工具名或 id" style="width:200px" />
+              <button class="chip on" data-group="all">全部</button>
+              <button class="chip" data-group="read">游戏读取</button>
+              <button class="chip" data-group="write">游戏写入</button>
+              <button class="chip" data-group="kb">知识库</button>
+              <button class="chip" data-group="bp">蓝图</button>
+              <button class="chip" data-group="script">脚本</button>
+              <button class="chip" data-group="third">第三方</button>
+              <span class="spacer"></span>
+              <button class="btn ghost" id="enable-all">全部启用</button>
+            </div>
+
+            <div class="sect-title" style="margin-bottom:8px">游戏读取 · 6</div>
+            <div class="card" data-group-box="read" style="margin-bottom:16px">
+              <div class="tool-row" data-search="game_get_overview 总览">
+                <div class="tinfo"><div class="tname">游戏总览<span class="pill ro">只读</span></div><div class="tid">game_get_overview</div></div>
+                <div class="switch on"></div>
+              </div>
+              <div class="tool-row" data-search="game_get_production 产量">
+                <div class="tinfo"><div class="tname">产量统计<span class="pill ro">只读</span></div><div class="tid">game_get_production</div></div>
+                <div class="switch on"></div>
+              </div>
+              <div class="tool-row" data-search="game_capture_view 截图">
+                <div class="tinfo"><div class="tname">拍截图<span class="pill ro">只读</span></div><div class="tid">game_capture_view</div></div>
+                <div class="switch on"></div>
+              </div>
+            </div>
+
+            <div class="sect-title" style="margin-bottom:8px">游戏写入 · 12</div>
+            <div class="card" data-group-box="write" style="margin-bottom:16px">
+              <div class="tool-row" data-search="game_place_marker 标记">
+                <div class="tinfo"><div class="tname">放置标记<span class="pill limited">受限</span></div><div class="tid">game_place_marker</div></div>
+                <div class="switch on"></div>
+              </div>
+              <div class="tool-row off" data-search="game_drop_item 丢弃">
+                <div class="tinfo"><div class="tname">丢弃物品<span class="pill takeover">接管</span></div><div class="tid">game_drop_item</div></div>
+                <div class="switch"></div>
+              </div>
+              <div class="tool-row" data-search="game_set_recipe 配方">
+                <div class="tinfo"><div class="tname">设置配方<span class="pill takeover">接管</span></div><div class="tid">game_set_recipe</div></div>
+                <div class="switch on"></div>
+              </div>
+            </div>
+
+            <div class="sect-title" style="margin-bottom:8px">知识库 / 蓝图 / 脚本 · 9</div>
+            <div class="card" style="margin-bottom:16px">
+              <div class="tool-row" data-search="kb_search 知识库">
+                <div class="tinfo"><div class="tname">检索知识库<span class="pill ro">只读</span></div><div class="tid">kb_search</div></div>
+                <div class="switch on"></div>
+              </div>
+              <div class="tool-row" data-search="blueprint_generate 蓝图">
+                <div class="tinfo"><div class="tname">生成蓝图<span class="pill ro">只读</span></div><div class="tid">blueprint_generate</div></div>
+                <div class="switch on"></div>
+              </div>
+              <div class="tool-row" data-search="run_script 脚本">
+                <div class="tinfo"><div class="tname">运行脚本<span class="pill takeover">接管</span></div><div class="tid">run_script</div></div>
+                <div class="switch on"></div>
+              </div>
+            </div>
+
+            <div class="sect-title" style="margin-bottom:8px">第三方 · 3</div>
+            <div class="card">
+              <div class="tool-row" data-search="mod_uxassist_config UXAssist">
+                <div class="tinfo"><div class="tname">UXAssist 配置<span class="pill ro">只读</span><span class="small mute">由 UXAssist 提供</span></div><div class="tid">mod_uxassist_config</div></div>
+                <div class="switch on"></div>
+              </div>
+              <div class="tool-row" data-search="mod_lstm_config LSTM">
+                <div class="tinfo"><div class="tname">LSTM 配置<span class="pill ro">只读</span><span class="small mute">由 LSTM 提供</span></div><div class="tid">mod_lstm_config</div></div>
+                <div class="switch on"></div>
+              </div>
+              <div class="tool-row" data-search="ui_click 控件点击">
+                <div class="tinfo"><div class="tname">点击控件<span class="pill takeover">接管</span><span class="small mute">由 UI 桥提供</span></div><div class="tid">ui_click</div></div>
+                <div class="switch on"></div>
+              </div>
+              <div class="row" style="border-bottom:0">
+                <span class="small mute">第三方总开关在 icarus-ii.cfg 的 [Bridge] AllowThirdPartyTools，改完需要重启游戏。</span>
+              </div>
+            </div>
+          </div>
+          <div class="pane-foot">
+            <span>开关只改变模型看到的能力，不改动任何存档数据。</span>
+            <span class="spacer"></span>
+            <span class="mute">config.json · disabledTools</span>
+          </div>
+        </section>
+
+        <!-- ============ 关于 ============ -->
+        <section class="pane" id="pane-about">
+          <div class="pane-head">
+            <div>
+              <h2>关于</h2>
+              <p>版权、引用的项目，以及怎么找到我们</p>
+            </div>
+            <span class="spacer"></span>
+            <span class="tag">只读</span>
+          </div>
+          <div class="pane-body">
+            <div class="about-grid">
+
+              <div class="card lic-card">
+                <div class="lic">
+                  <div class="mark">
+                    <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.8l5.4 3.1v6.2L8 14.2 2.6 11.1V4.9z"/><path d="M8 5v6M5.5 6.4l5 3.2M10.5 6.4l-5 3.2"/></svg>
+                  </div>
+                  <div>
+                    <div style="font-size:14px;font-weight:600">Icarus II</div>
+                    <div class="small dim" style="margin-top:2px">MIT License · © 2026 icarus-ii contributors</div>
+                    <div class="small mute" style="margin-top:6px">本项目不包含《戴森球计划》的任何游戏资源或程序集，需要正版游戏与 BepInEx。</div>
+                  </div>
+                </div>
+                <div class="row" style="border-top:1px solid var(--edge);border-bottom:0">
+                  <span class="small mute">许可证全文随仓库分发</span>
+                  <span class="spacer"></span>
+                  <button class="btn" data-copy="MIT License · Copyright (c) 2026 icarus-ii contributors">复制许可证</button>
+                </div>
+              </div>
+
+              <div class="card credits-card">
+                <div class="row" style="border-bottom:1px solid var(--edge)">
+                  <span style="font-weight:600">引用的项目</span>
+                  <span class="spacer"></span>
+                  <span class="small mute">许可证均与原项目一致</span>
+                </div>
+                <div class="credit-row"><span class="cn">pi</span><span class="cu">Agent 运行时</span><span class="cl pill ro">MIT</span><span class="spacer"></span><button class="btn ghost" data-copy="https://github.com/earendil-works/pi">复制链接</button></div>
+                <div class="credit-row"><span class="cn">BepInEx</span><span class="cu">mod 加载器</span><span class="cl pill ro">LGPL-2.1</span><span class="spacer"></span><button class="btn ghost" data-copy="https://github.com/BepInEx/BepInEx">复制链接</button></div>
+                <div class="credit-row"><span class="cn">Node.js</span><span class="cu">sidecar 运行时</span><span class="cl pill ro">MIT</span><span class="spacer"></span><button class="btn ghost" data-copy="https://nodejs.org/">复制链接</button></div>
+                <div class="credit-row"><span class="cn">ws</span><span class="cu">WebSocket 服务端</span><span class="cl pill ro">MIT</span><span class="spacer"></span><button class="btn ghost" data-copy="https://github.com/websockets/ws">复制链接</button></div>
+                <div class="credit-row"><span class="cn">typebox</span><span class="cu">工具参数 Schema</span><span class="cl pill ro">MIT</span><span class="spacer"></span><button class="btn ghost" data-copy="https://github.com/sinclairzx81/typebox">复制链接</button></div>
+                <div class="credit-row"><span class="cn">QuickJS</span><span class="cu">run_script 沙箱</span><span class="cl pill ro">MIT</span><span class="spacer"></span><button class="btn ghost" data-copy="https://github.com/quickjs-ng/quickjs">复制链接</button></div>
+                <div class="credit-row"><span class="cn">dsp-calc</span><span class="cu">蓝图布局算法与数据</span><span class="cl pill ro">Mulan PSL v2</span><span class="spacer"></span><button class="btn ghost" data-copy="https://github.com/antian369/dsp-calc">复制链接</button></div>
+                <div class="credit-row"><span class="cn">Lucide</span><span class="cu">部分界面图标</span><span class="cl pill ro">ISC</span><span class="spacer"></span><button class="btn ghost" data-copy="https://lucide.dev/">复制链接</button></div>
+                <div class="credit-row"><span class="cn">Unity Skills</span><span class="cu">开发期 uGUI 规范</span><span class="cl pill ro">Unity Companion</span><span class="spacer"></span><button class="btn ghost" data-copy="https://github.com/Unity-Technologies/skills">复制链接</button></div>
+                <div class="credit-row"><span class="small mute" style="white-space:nowrap">完整清单见仓库 THIRD-PARTY.md</span><span class="spacer"></span><span class="small mute">9 项</span></div>
+              </div>
+
+              <div class="card qr-card">
+                <div class="row" style="border-bottom:1px solid var(--edge)">
+                  <span style="font-weight:600">加入交流群</span>
+                  <span class="spacer"></span>
+                  <span class="small mute">伊卡洛斯二号研发中心</span>
+                </div>
+                <div class="qr-wrap">
+                  <div class="qr">
+                    <svg width="46" height="46" viewBox="0 0 46 46" fill="none" stroke="currentColor" stroke-width="1.6">
+                      <rect x="4" y="4" width="12" height="12"/><rect x="30" y="4" width="12" height="12"/>
+                      <rect x="4" y="30" width="12" height="12"/>
+                      <path d="M8 8h4v4H8zM34 8h4v4h-4zM8 34h4v4H8z" fill="currentColor" stroke="none"/>
+                      <path d="M22 6v8M22 22v6M28 22h10M32 26v8M22 32h6"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <div class="small mute">QQ 群号</div>
+                    <div class="mono" style="font-size:16px;letter-spacing:.06em;margin:2px 0 8px">1091497260</div>
+                    <div style="display:flex;gap:8px">
+                      <button class="btn primary" data-copy="1091497260">复制群号</button>
+                      <button class="btn ghost small">扫码加群</button>
+                    </div>
+                    <div class="small mute" style="margin-top:8px">二维码贴图随 UI bundle 分发，不联网拉取。</div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+          <div class="pane-foot">
+            <span>遇到问题时请附上「通用 → 复制诊断信息」的内容。</span>
+            <span class="spacer"></span>
+            <span class="mute">MIT · 2026</span>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="caption">
+  <span><b>草稿说明</b>：这是布局与文案的预览，不是最终 UI；原生页签名称仅为示意，实际渲染以 prefab 为准。</span>
+  <span>左键点击左侧分区切换 · 会话行悬停可导出/重命名/删除 · 开关与快捷键可交互</span>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ---- 分区切换（hash 深链：#model / #tools 可直接打开某一页）----
+  const nav = document.getElementById('nav');
+  const panes = document.querySelectorAll('.pane');
+  const activate = (name) => {
+    const item = [...document.querySelectorAll('.nav-item')].find((n) => n.dataset.pane === name);
+    if (!item) return;
+    document.querySelectorAll('.nav-item').forEach((n) => n.classList.toggle('on', n === item));
+    panes.forEach((p) => p.classList.toggle('on', p.id === 'pane-' + name));
+  };
+  nav.addEventListener('click', (e) => {
+    const item = e.target.closest('.nav-item');
+    if (!item) return;
+    if (location.hash.replace('#', '') === item.dataset.pane) activate(item.dataset.pane);
+    else location.hash = item.dataset.pane;
+  });
+  const fromHash = () => activate(location.hash.replace('#', '') || 'general');
+  fromHash();
+  window.addEventListener('hashchange', fromHash);
+
+  // ---- 权限三卡 ----
+  document.getElementById('perms').addEventListener('click', (e) => {
+    const card = e.target.closest('.perm');
+    if (!card) return;
+    document.querySelectorAll('.perm').forEach((c) => c.classList.toggle('on', c === card));
+    toast('权限已切到「' + card.querySelector('.name').textContent.trim() + '」（下一回合生效）');
+  });
+
+  // ---- 开关 ----
+  document.querySelectorAll('.switch').forEach((sw) => {
+    sw.addEventListener('click', () => {
+      sw.classList.toggle('on');
+      const row = sw.closest('.tool-row');
+      if (row) row.classList.toggle('off', !sw.classList.contains('on'));
+    });
+  });
+
+  // ---- 分组筛选 ----
+  const groupChips = document.querySelectorAll('[data-group]');
+  groupChips.forEach((chip) => chip.addEventListener('click', () => {
+    groupChips.forEach((c) => c.classList.toggle('on', c === chip));
+    const g = chip.dataset.group;
+    document.querySelectorAll('[data-group-box]').forEach((box) => {
+      box.style.display = (g === 'all' || g === box.dataset.groupBox) ? '' : 'none';
+    });
+    document.querySelectorAll('.sect-title').forEach((t) => { t.style.display = (g === 'all') ? '' : 'none'; });
+  }));
+
+  // ---- 搜索过滤 ----
+  const filterList = (input, selector) => {
+    const q = input.value.trim().toLowerCase();
+    document.querySelectorAll(selector).forEach((row) => {
+      const hay = (row.dataset.search || row.textContent).toLowerCase();
+      row.style.display = (!q || hay.includes(q)) ? '' : 'none';
+    });
+  };
+  const toolSearch = document.getElementById('tool-search');
+  toolSearch.addEventListener('input', () => filterList(toolSearch, '.tool-row'));
+  const convSearch = document.getElementById('conv-search');
+  convSearch.addEventListener('input', () => {
+    const q = convSearch.value.trim().toLowerCase();
+    document.querySelectorAll('.conv').forEach((row) => {
+      row.style.display = (!q || row.textContent.toLowerCase().includes(q)) ? '' : 'none';
+    });
+    document.querySelectorAll('.group').forEach((group) => {
+      const visible = [...group.querySelectorAll('.conv')].some((r) => r.style.display !== 'none');
+      group.style.display = visible ? '' : 'none';
+    });
+  });
+  document.getElementById('only-current').addEventListener('click', (e) => {
+    const chip = e.currentTarget;
+    chip.classList.toggle('on');
+    document.querySelectorAll('.group').forEach((group) => {
+      group.style.display = (chip.classList.contains('on') && group.dataset.save !== 'A') ? 'none' : '';
+    });
+    document.getElementById('conv-count').textContent = chip.classList.contains('on') ? '3 个会话 · 1 个存档' : '18 个会话 · 3 个存档';
+  });
+
+  // ---- 供应商切换 ----
+  document.querySelectorAll('.list-row[data-provider]').forEach((row) => {
+    row.addEventListener('click', () => {
+      document.querySelectorAll('.list-row[data-provider]').forEach((r) => r.classList.toggle('on', r === row));
+      document.getElementById('provider-title').textContent = row.querySelector('.t').textContent;
+    });
+  });
+
+  // ---- 快捷键捕获（三个绑定共用）----
+  let capturing = null;
+  document.querySelectorAll('[data-capture]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (capturing) return;
+      const id = btn.dataset.capture;
+      const keyEl = document.getElementById('key-' + id);
+      if (!keyEl) return;
+      capturing = { keyEl, btn, original: keyEl.textContent };
+      keyEl.classList.add('capturing');
+      keyEl.textContent = '按下新按键…';
+      btn.textContent = 'Esc 取消';
+      btn.classList.add('primary');
+    });
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!capturing) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const { keyEl, btn, original } = capturing;
+    const done = (text, message) => {
+      keyEl.textContent = text;
+      keyEl.classList.remove('capturing');
+      btn.textContent = '修改';
+      btn.classList.remove('primary');
+      capturing = null;
+      if (message) toast(message);
+    };
+    if (e.key === 'Escape') { done(original); return; }
+    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return; // 只按修饰键不算完成
+    const parts = [];
+    if (e.ctrlKey) parts.push('Ctrl');
+    if (e.altKey) parts.push('Alt');
+    if (e.shiftKey) parts.push('Shift');
+    let label = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+    if (e.code === 'NumpadEnter') label = 'Num Enter';
+    parts.push(label);
+    done(parts.join(' + '), '已改为「' + parts.join(' + ') + '」');
+  }, true);
+
+  // ---- 复制 ----
+  document.querySelectorAll('[data-copy]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const text = btn.dataset.copy;
+      if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+      toast('已复制：' + text.slice(0, 28) + (text.length > 28 ? '…' : ''));
+    });
+  });
+
+  document.getElementById('enable-all').addEventListener('click', () => {
+    document.querySelectorAll('.tool-row .switch').forEach((sw) => sw.classList.add('on'));
+    document.querySelectorAll('.tool-row').forEach((r) => r.classList.remove('off'));
+    toast('已启用全部工具');
+  });
+
+  document.getElementById('delete-provider').addEventListener('click', () => toast('删除供应商会同时删除它的模型与密钥'));
+  document.querySelectorAll('[data-menu]').forEach((btn) => btn.addEventListener('click', () => {
+    toast('这个位置会弹出 Enter / Ctrl+Enter / Shift+Enter / Alt+Enter');
+  }));
+
+  // ---- toast ----
+  let toastTimer = null;
+  function toast(text) {
+    const el = document.getElementById('toast');
+    el.textContent = text;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
+  }
+</script>
+</body>
+</html>
