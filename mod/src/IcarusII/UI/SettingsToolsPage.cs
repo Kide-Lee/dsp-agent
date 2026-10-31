@@ -26,6 +26,7 @@ namespace IcarusII.UI
             public ToolCatalogEntryInfo Entry;
             public Text Name;
             public Text Id;
+            public Text Description;
             public Text Access;
             public Image AccessPill;
             public Button Toggle;
@@ -250,6 +251,7 @@ namespace IcarusII.UI
                 Entry = entry,
                 Name = FindText(node.transform, "info/name-row/name"),
                 Id = FindText(node.transform, "info/id"),
+                Description = FindText(node.transform, "info/desc"),
                 Access = FindText(node.transform, "info/name-row/access-pill/access"),
                 AccessPill = FindComponent<Image>(node.transform, "info/name-row/access-pill"),
                 Toggle = FindComponent<Button>(node.transform, "toggle"),
@@ -267,6 +269,11 @@ namespace IcarusII.UI
                     ? entry.Name
                     : $"{entry.Name} · {Strings.Get("settings.tools.source", entry.SourceName ?? entry.Source)}";
                 row.Id.color = new Color(1f, 1f, 1f, enabled ? 0.42f : 0.2f);
+            }
+            if (row.Description != null)
+            {
+                row.Description.text = entry.Description ?? string.Empty;
+                row.Description.gameObject.SetActive(!string.IsNullOrEmpty(row.Description.text));
             }
             if (row.Access != null)
             {
