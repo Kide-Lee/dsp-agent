@@ -3694,6 +3694,9 @@ namespace IcarusII.UI
             SetPermissionLevel(level, notify: true);
         }
 
+        /// <summary>设置页改权限：复用下拉框那条路径，保证两处显示一致。</summary>
+        internal void SetPermissionLevelFromSettings(string level) => SetPermissionLevel(level, notify: true);
+
         private void SetPermissionLevel(string level, bool notify)
         {
             if (!PluginConfig.IsValidPermissionLevel(level)) return;

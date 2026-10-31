@@ -1260,6 +1260,23 @@ namespace IcarusII
         /// 玩家在聊天窗里换了权限档位。本地 cfg 先落盘（断线也能记住），
         /// 再尽力发给 sidecar；tool_call / confirm_request 的门禁都读本地值。
         /// </summary>
+        /// <summary>sidecar 数据目录；设置页「复制路径」用。</summary>
+        public string DataDir => _launcher != null ? _launcher.DataDir : SidecarLauncher.DefaultDataDir();
+
+        /// <summary>当前权限档位；设置页打开时用它点亮卡片。</summary>
+        public string CurrentPermissionLevel => _chat != null ? _chat.PermissionLevel : _config?.PermissionLevel;
+
+        /// <summary>设置页点了权限卡：走和聊天窗下拉框同一条路径（更新下拉框、落盘、发 config.set）。</summary>
+        public void ApplyPermissionLevelFromSettings(string level)
+        {
+            if (_chat != null)
+            {
+                _chat.SetPermissionLevelFromSettings(level);
+                return;
+            }
+            OnPermissionLevelChanged(level);
+        }
+
         private void OnPermissionLevelChanged(string level)
         {
             if (!Protocol.IsValidPermissionLevel(level)) return;

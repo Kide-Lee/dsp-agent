@@ -31,6 +31,9 @@ die() { echo "错误：$*" >&2; exit 1; }
 
 mkdir -p "$DEST_ASSETS" "$(dirname "$LOG")"
 cp "$ROOT"/mod/unity/Editor/*.cs "$DEST_ASSETS/"
+# 关于页的二维码贴图：源文件放仓库里，构建前同步进工程（dsp-game 不进版本库）。
+mkdir -p "$PROJ/Assets/IcarusII/Resources"
+cp "$ROOT"/mod/unity/Resources/qq-group.png "$PROJ/Assets/IcarusII/Resources/qq-group.png"
 echo "==> 已同步编辑器脚本到 $DEST_ASSETS"
 
 echo "==> 以批处理模式调用 Unity（$UNITY_VERSION），日志：$LOG"

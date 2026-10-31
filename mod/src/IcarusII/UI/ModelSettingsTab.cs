@@ -5,6 +5,7 @@ using IcarusII.I18n;
 using IcarusII.Common.Json;
 using IcarusII.Common.Protocol;
 using IcarusII.Common.Transport;
+using IcarusII.Core;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -58,6 +59,7 @@ namespace IcarusII.UI
         private static bool _refreshPending;
 
         private static Font _font;
+        private static SettingsPageView _view;
 
         // ---- 草稿（点「应用设置」前不落盘）----
         private sealed class ModelDraft
@@ -203,6 +205,9 @@ namespace IcarusII.UI
                 return;
             }
             if (_index >= 0) SwitchTo(window, _index);
+            // 聊天窗按钮的语义就是「去填密钥/换模型」，所以从它进来时落在模型分区；
+            // 从 Esc 菜单进来则留在 prefab 的默认分区（通用）。
+            _view?.Show(SettingsPageView.SectionModel);
         }
 
         private static void Install(UIOptionWindow window)
@@ -500,6 +505,10 @@ namespace IcarusII.UI
 
             // 页面布局全部来自 prefab；这里只绑定控件、接事件。
             var view = SettingsPageView.Create(root, _font);
+            _view = view;
+            SettingsPageView.DataDirProvider = () => Plugin.Instance?.DataDir ?? SidecarLauncher.DefaultDataDir();
+            view.PermissionSelected += level => Plugin.Instance?.ApplyPermissionLevelFromSettings(level);
+            view.SetPermissionLevel(Plugin.Instance?.CurrentPermissionLevel ?? Protocol.PermissionLimited);
             _providerList = view.ProviderList;
             _modelList = view.ModelList;
             _editorTitle = view.EditorTitle;

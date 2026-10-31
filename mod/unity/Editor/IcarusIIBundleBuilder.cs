@@ -51,6 +51,8 @@ namespace IcarusII.EditorTools
         /// <summary>入口按钮的图标（用户提供）；随 prefab 一起进 bundle，避免引用丢失。</summary>
         private const string AgentButtonIconPath = "Assets/IcarusII/Resources/console.png";
         private const string NewConversationIconPath = "Assets/IcarusII/Resources/new-conversation.png";
+        /// <summary>关于页的 QQ 群二维码（用户提供）。</summary>
+        private const string QrGroupPath = "Assets/IcarusII/Resources/qq-group.png";
         private const string OutputDir = "Build/IcarusIIBundle";
         private const string BundleName = "icarusii-ui";
         private const string AssetName = "IcarusIIWindow";
@@ -178,6 +180,7 @@ namespace IcarusII.EditorTools
                     SettingsPagePrefabPath,
                     AgentButtonIconPath,
                     NewConversationIconPath,
+                    QrGroupPath,
                     SpriteDir + "crystal-btn-black.png",
                     SpriteDir + "circle-thin-64.png",
                     MaterialDir + "trsl-colored.mat",
@@ -222,6 +225,7 @@ namespace IcarusII.EditorTools
                     SettingsPageAssetName,
                     "console",
                     "new-conversation",
+                    "qq-group",
                     "crystal-btn-black",
                     "circle-thin-64",
                     "trsl-colored",
