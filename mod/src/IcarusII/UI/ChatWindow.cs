@@ -1688,7 +1688,8 @@ namespace IcarusII.UI
                 if (_input != null)
                 {
                     _input.DeactivateInputField();
-                    _input.text = string.Empty;
+                    // 未发送的草稿保留在输入框里：关窗只是 SetActive(false)，
+                    // 下次开窗 SeedInputCharColors 会重新种颜色表，文字照常可见。
                 }
                 // 还原游戏的输入标记
                 Game.GameRefs.SetTextInputActive(_savedInputing);
