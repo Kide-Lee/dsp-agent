@@ -307,6 +307,10 @@ Port = 8765
 ConnectTimeoutMs = 3000
 StartupTimeoutMs = 15000
 
+[Keys]
+Send = Return          ; 发送消息；可写 Ctrl+Return / F8 / S 等
+Newline = Control+Return  ; 换行；三项不能重复
+
 [UI]
 FontScale = 1.0
 Width = 780
@@ -318,7 +322,8 @@ MaxTranscriptLines = 500
 | --- | --- |
 | `LaunchMode=spawnExe` | 由插件自动拉起随包的 `icarus-ii-sidecar.exe`（默认，推荐） |
 | `LaunchMode=connectOnly` | 插件只连接；你自己先启动 sidecar（便于调试 / 多存档共用） |
-| `Hotkey` | 任意 Unity `KeyCode` 名 |
+| `Hotkey` | 任意 Unity `KeyCode` 名；可带 `Ctrl+` / `Alt+` / `Shift+` |
+| `[Keys] Send` / `Newline` | 发送与换行；与 `Hotkey` 三项不能重复。游戏内「设置 → Icarus II → 快捷键」可改键 |
 | `DebugToolConsole=true` | 开启输入框 `!tools` / `!tool` 调试直调；只读白名单，不经过 AI。`spawnExe` 会自动给 sidecar 加 `--debug-tools`，`connectOnly` 需手动加 |
 
 sidecar 自己的运行期配置（供应商、模型、蓝图目录、Wiki 端点）在 `config.json`，

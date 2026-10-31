@@ -13,7 +13,8 @@ import { GameToolHost, registerGameToolsFactory, SCRIPT_TOOL_NAME, toolError } f
 import { WIKI_TOOL_NAMES } from '../wiki/tools.js';
 import { BLUEPRINT_TOOL_NAMES } from '../blueprint/tools.js';
 import { KB_TOOL_NAMES } from '../kb/tools.js';
-import { CAPABILITY_UI_ASK, UI_ASK_TOOL_NAME } from './ask.js';
+import { CAPABILITY_UI_ASK, UI_ASK_TOOL_NAME, UI_ASK_TOOL_NAME_ALIASES } from './ask.js';
+import type { ToolGroup } from '../protocol.js';
 import {
   CAPABILITY_GAME_BUILD,
   CAPABILITY_GAME_DROP,
@@ -23,6 +24,8 @@ import {
   CAPABILITY_GAME_WRITE,
   WRITE_TOOL_NAMES,
   createWriteTools,
+  isWriteToolName,
+  writeToolRisk,
 } from './write.js';
 
 export const CAPABILITY_GAME_READ = 'game.read.v1';
@@ -825,4 +828,53 @@ export function toolNamesForCapabilities(
     ...BLUEPRINT_TOOL_NAMES,
     SCRIPT_TOOL_NAME,
   ];
+}
+
+// ---------------------------------------------------------------- A.14.1 目录元数据
+
+/**
+ * 本地工具里的写操作（risk 1）。它们不在 WRITE_TOOL_NAMES 里：
+ * 那几个名字只登记「走 mod 游戏侧确认」的写工具，本地文件/脚本写用各自的确认。
+ */
+const LOCAL_WRITE_TOOLS: readonly string[] = [
+  'blueprint_fs',
+  'blueprint_save',
+  'blueprint_generate',
+  SCRIPT_TOOL_NAME,
+];
+
+/** 工具在设定页里显示的风险标记：0 = 只读，1 = 可逆写，2 = 改变存档。 */
+export function toolRiskOf(name: string): 0 | 1 | 2 {
+  if (isWriteToolName(name)) return writeToolRisk(name);
+  if (LOCAL_WRITE_TOOLS.includes(name)) return 1;
+  return 0;
+}
+
+/** 工具分组；只用于设定页筛选，不影响执行。 */
+export function toolGroupOf(name: string): ToolGroup {
+  if (name.startsWith('mod_') || name.startsWith('mods_')) return 'thirdparty';
+  if ((KB_TOOL_NAMES as readonly string[]).includes(name)) return 'kb';
+  if ((WIKI_TOOL_NAMES as readonly string[]).includes(name)) return 'kb';
+  if ((BLUEPRINT_TOOL_NAMES as readonly string[]).includes(name)) return 'blueprint';
+  if (name === SCRIPT_TOOL_NAME) return 'script';
+  if (name === UI_ASK_TOOL_NAME || (UI_ASK_TOOL_NAME_ALIASES as readonly string[]).includes(name)) return 'ask';
+  if (name.startsWith('game_')) return toolRiskOf(name) > 0 ? 'game.write' : 'game.read';
+  if (name.startsWith('mods_') || name.startsWith('ui_')) return 'other';
+  return 'other';
+}
+
+/** 第三方工具名（`mod_<id>_<name>`）→ 来源；其他工具都算内置。 */
+export function toolSourceOf(
+  name: string,
+  extensions: readonly ExtensionSummary[] = [],
+): { source: string; sourceName: string } {
+  if (name.startsWith('mod_')) {
+    for (const extension of extensions) {
+      if (name.startsWith(`mod_${extension.id}_`)) {
+        return { source: extension.id, sourceName: extension.name || extension.id };
+      }
+    }
+    return { source: 'thirdparty', sourceName: '第三方插件' };
+  }
+  return { source: 'builtin', sourceName: '内置' };
 }

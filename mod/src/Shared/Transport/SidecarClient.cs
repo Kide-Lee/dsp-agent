@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
@@ -298,14 +299,14 @@ namespace IcarusII.Common.Transport
             return env["id"].AsString();
         }
 
-        /// <summary>A.13：玩家重命名会话。</summary>
-        public string SendConversationRename(string conversationId, string title)
+        /// <summary>A.13：玩家重命名会话；saveKey 可选（A.14.4 跨存档）。</summary>
+        public string SendConversationRename(string conversationId, string title, string saveKey = null)
         {
             if (_state != ConnectionState.Ready || string.IsNullOrEmpty(conversationId)) return null;
 
             var env = Protocol.Protocol.Envelope(
                 Protocol.Protocol.ConversationRename,
-                Protocol.Protocol.BuildConversationRename(conversationId, title),
+                Protocol.Protocol.BuildConversationRename(conversationId, title, saveKey),
                 NextId(), null);
 
             _sendQueue.Enqueue(env);
@@ -313,14 +314,62 @@ namespace IcarusII.Common.Transport
             return env["id"].AsString();
         }
 
-        /// <summary>A.13：删除会话。</summary>
-        public string SendConversationDelete(string conversationId)
+        /// <summary>A.13：删除会话；saveKey 可选（A.14.4 跨存档）。</summary>
+        public string SendConversationDelete(string conversationId, string saveKey = null)
         {
             if (_state != ConnectionState.Ready || string.IsNullOrEmpty(conversationId)) return null;
 
             var env = Protocol.Protocol.Envelope(
                 Protocol.Protocol.ConversationDelete,
-                Protocol.Protocol.BuildConversationTarget(conversationId),
+                Protocol.Protocol.BuildConversationTarget(conversationId, saveKey),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
+        /// <summary>
+        /// A.14.1：保存工具开关（整份替换）。响应是 `tools.state`，
+        /// 通过 <see cref="Received"/> 按 replyTo 关联。
+        /// </summary>
+        public string SendToolsSet(IList<string> disabled)
+        {
+            if (_state != ConnectionState.Ready) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ToolsSet,
+                Protocol.Protocol.BuildToolsSet(disabled),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
+        /// <summary>A.14.2：拉取跨存档会话索引；响应是 `conversations.indexed`。</summary>
+        public string SendConversationsIndex()
+        {
+            if (_state != ConnectionState.Ready) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ConversationsIndex,
+                Protocol.Protocol.BuildConversationsIndex(),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
+        /// <summary>A.14.3：导出一个会话为 Markdown；响应是 `conversations.exported`。</summary>
+        public string SendConversationsExport(string saveKey, string conversationId)
+        {
+            if (_state != ConnectionState.Ready || string.IsNullOrEmpty(conversationId)) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ConversationsExport,
+                Protocol.Protocol.BuildConversationsExport(saveKey, conversationId),
                 NextId(), null);
 
             _sendQueue.Enqueue(env);

@@ -80,6 +80,13 @@ export const MessageType = {
   // 设置页预设供应商下拉框：pi 内置目录的全部供应商
   ProviderCatalog: 'provider.catalog',
   ProviderTest: 'provider.test',
+  // A.14：设定页——工具开关、跨存档会话索引与导出
+  ToolsSet: 'tools.set',
+  ToolsState: 'tools.state',
+  ConversationsIndex: 'conversations.index',
+  ConversationsIndexed: 'conversations.indexed',
+  ConversationsExport: 'conversations.export',
+  ConversationsExported: 'conversations.exported',
   // M2：只读游戏工具（协议附录 B）
   ToolCall: 'tool_call',
   ToolResult: 'tool_result',
@@ -818,11 +825,24 @@ export interface ConversationInfo {
 
 export interface ConversationTargetPayload {
   conversationId: string;
+  /** A.14.4：缺省 = 当前存档。 */
+  saveKey?: string;
 }
 
 export interface ConversationRenamePayload {
   conversationId: string;
   title: string;
+  /** A.14.4：缺省 = 当前存档。 */
+  saveKey?: string;
+}
+
+/** A.14.4：可选 saveKey；空串/缺省都按“当前存档”处理。 */
+function parseOptionalSaveKey(payload: JsonObject): { ok: boolean; value?: string } {
+  const raw = payload['saveKey'];
+  if (raw === undefined || raw === null) return { ok: true };
+  if (typeof raw !== 'string') return { ok: false };
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? { ok: true, value: trimmed } : { ok: true };
 }
 
 /** 解析 conversation.rename：title 可以是空串，由 agent 统一校验。 */
@@ -831,7 +851,9 @@ export function parseConversationRenamePayload(payload: JsonObject): Conversatio
   const title = payload['title'];
   if (typeof id !== 'string' || id.trim().length === 0) return null;
   if (typeof title !== 'string') return null;
-  return { conversationId: id.trim(), title };
+  const saveKey = parseOptionalSaveKey(payload);
+  if (!saveKey.ok) return null;
+  return { conversationId: id.trim(), title, ...(saveKey.value ? { saveKey: saveKey.value } : {}) };
 }
 
 export function buildConversationRenamePayload(args: {
@@ -861,7 +883,9 @@ export function buildConversationRenamedPayload(args: {
 export function parseConversationTargetPayload(payload: JsonObject): ConversationTargetPayload | null {
   const value = payload['conversationId'];
   if (typeof value !== 'string' || value.trim().length === 0) return null;
-  return { conversationId: value.trim() };
+  const saveKey = parseOptionalSaveKey(payload);
+  if (!saveKey.ok) return null;
+  return { conversationId: value.trim(), ...(saveKey.value ? { saveKey: saveKey.value } : {}) };
 }
 
 export function buildConversationCreatedPayload(args: {
@@ -927,6 +951,141 @@ export function buildConversationDeletedPayload(args: {
     ...(args.messageCount !== undefined ? { messageCount: args.messageCount } : {}),
     history: args.history ?? [],
     ...(args.conversations ? { conversations: args.conversations } : {}),
+  };
+}
+
+// ---------------------------------------------------------------- 设定页（附录 A.14）
+
+/** `tools.set`：整份替换被关闭的工具名。 */
+export interface ToolsSetPayload {
+  disabled: string[];
+}
+
+export function parseToolsSetPayload(payload: JsonObject): ToolsSetPayload | null {
+  const disabled = normalizeDisabledTools(payload['disabled']);
+  return disabled === null ? null : { disabled };
+}
+
+export function buildToolsSetPayload(disabled: readonly string[]): JsonObject {
+  return { disabled: [...disabled] };
+}
+
+/** `tools.state`：开关回执 + 完整工具目录（含 enabled=false 的项）。 */
+export function buildToolsStatePayload(args: {
+  ok: boolean;
+  disabled: readonly string[];
+  rebuilt: boolean;
+  toolCatalog: readonly ToolCatalogEntry[];
+  error?: string | null;
+}): JsonObject {
+  return {
+    ok: args.ok,
+    disabled: [...args.disabled],
+    rebuilt: args.rebuilt,
+    toolCatalog: args.toolCatalog.map((entry) => ({
+      name: entry.name,
+      label: entry.label,
+      description: entry.description,
+      ...(entry.debuggable === undefined ? {} : { debuggable: entry.debuggable }),
+      ...(entry.group === undefined ? {} : { group: entry.group }),
+      ...(entry.risk === undefined ? {} : { risk: entry.risk }),
+      ...(entry.source === undefined ? {} : { source: entry.source }),
+      ...(entry.sourceName === undefined ? {} : { sourceName: entry.sourceName }),
+      ...(entry.enabled === undefined ? {} : { enabled: entry.enabled }),
+    })),
+    error: args.error ?? null,
+  };
+}
+
+/** `conversations.index` 的一条会话。 */
+export interface ConversationIndexEntry {
+  id: string;
+  title: string;
+  updatedAt: number;
+  messageCount: number;
+  isActive: boolean;
+}
+
+/** `conversations.index` 的一个存档分组。 */
+export interface ConversationSaveGroup {
+  saveKey: string;
+  saveName: string;
+  lastSeen: number;
+  current: boolean;
+  conversations: ConversationIndexEntry[];
+}
+
+export function buildConversationsIndexedPayload(args: {
+  currentSaveKey: string | null;
+  saves: readonly ConversationSaveGroup[];
+}): JsonObject {
+  return {
+    currentSaveKey: args.currentSaveKey,
+    saves: args.saves.map((group) => ({
+      saveKey: group.saveKey,
+      saveName: group.saveName,
+      lastSeen: group.lastSeen,
+      current: group.current,
+      conversations: group.conversations.map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        updatedAt: entry.updatedAt,
+        messageCount: entry.messageCount,
+        isActive: entry.isActive,
+      })),
+    })),
+  };
+}
+
+/** `conversations.export`：目前只支持 Markdown。 */
+export interface ConversationsExportRequest {
+  /** null = 当前存档。 */
+  saveKey: string | null;
+  conversationId: string;
+  format: 'md';
+}
+
+export function parseConversationsExportPayload(
+  payload: JsonObject,
+): ConversationsExportRequest | null {
+  const id = payload['conversationId'];
+  if (typeof id !== 'string' || id.trim().length === 0) return null;
+  const rawFormat = payload['format'];
+  if (rawFormat !== undefined && rawFormat !== null && rawFormat !== 'md') return null;
+  const saveKey = parseOptionalSaveKey(payload);
+  if (!saveKey.ok) return null;
+  return {
+    saveKey: saveKey.value ?? null,
+    conversationId: id.trim(),
+    format: 'md',
+  };
+}
+
+export function buildConversationsExportRequest(args: {
+  saveKey?: string | null;
+  conversationId: string;
+  format?: 'md';
+}): JsonObject {
+  return {
+    conversationId: args.conversationId,
+    format: args.format ?? 'md',
+    ...(args.saveKey ? { saveKey: args.saveKey } : {}),
+  };
+}
+
+export function buildConversationsExportedPayload(args: {
+  ok: boolean;
+  path?: string | null;
+  bytes?: number;
+  messageCount?: number;
+  error?: string | null;
+}): JsonObject {
+  return {
+    ok: args.ok,
+    ...(args.path ? { path: args.path } : {}),
+    ...(typeof args.bytes === 'number' ? { bytes: args.bytes } : {}),
+    ...(typeof args.messageCount === 'number' ? { messageCount: args.messageCount } : {}),
+    error: args.error ?? null,
   };
 }
 
@@ -1198,6 +1357,8 @@ export interface ConfigView {
   providers: ProviderView[];
   /** 当前选中的 provider/model（与 provider/model 冗余，便于新客户端读取）。 */
   active: { provider: string; model: string };
+  /** A.14.5：被玩家关闭的工具名；缺省 = 全部启用。 */
+  disabledTools?: string[];
 }
 
 /** 对单个供应商的增量更新；未给出的字段保持不变，`apiKey: ""` 表示清除。 */
@@ -1232,6 +1393,8 @@ export interface ConfigUpdatePayload {
   removeProviders?: string[];
   activeProvider?: string;
   activeModel?: string;
+  /** A.14.5：整份替换被关闭的工具名；`[]` = 全部启用。 */
+  disabledTools?: string[];
 }
 
 function parseModelEntries(value: unknown): ModelEntry[] | null {
@@ -1363,6 +1526,32 @@ export function parseConfigSetPayload(payload: JsonObject): ConfigUpdatePayload 
     out.activeModel = activeModel;
   }
 
+  // ---- A.14.5：工具开关 ----
+  const disabledTools = payload['disabledTools'];
+  if (disabledTools !== undefined && disabledTools !== null) {
+    const parsed = normalizeDisabledTools(disabledTools);
+    if (parsed === null) return null;
+    out.disabledTools = parsed;
+  }
+
+  return out;
+}
+
+/** 工具名列表的归一化：去空、去重、限长。非法输入返回 null。 */
+export function normalizeDisabledTools(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'string') return null;
+    const name = item.trim();
+    if (name.length === 0) continue;
+    if (name.length > 128) return null;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+    if (out.length > 512) return null;
+  }
   return out;
 }
 
@@ -1502,12 +1691,40 @@ export interface AgentInfo {
 }
 
 /** ready.payload.toolCatalog 的一条：工具名 + 显示名 + 简介（M4l）。 */
+/** A.14.1：工具分组，设定页用来筛选。 */
+export const TOOL_GROUPS = [
+  'game.read',
+  'game.write',
+  'kb',
+  'blueprint',
+  'script',
+  'ask',
+  'thirdparty',
+  'other',
+] as const;
+
+export type ToolGroup = (typeof TOOL_GROUPS)[number];
+
+export function isToolGroup(value: unknown): value is ToolGroup {
+  return typeof value === 'string' && (TOOL_GROUPS as readonly string[]).includes(value);
+}
+
 export interface ToolCatalogEntry {
   name: string;
   label: string;
   description: string;
   /** M4m：是否允许在 `!tool` 调试直调中执行（只读白名单）。 */
   debuggable?: boolean;
+  /** A.14.1：分组；老服务端不返回时 mod 按名字推断。 */
+  group?: ToolGroup;
+  /** A.14.1：0 = 只读，1 = 可逆写，2 = 改变存档。 */
+  risk?: 0 | 1 | 2;
+  /** A.14.1：`builtin` 或第三方插件 id。 */
+  source?: string;
+  /** A.14.1：来源显示名（内置 = 内置）。 */
+  sourceName?: string;
+  /** A.14.1：false = 被玩家关掉，不注册给模型。 */
+  enabled?: boolean;
 }
 
 // ---------------------------------------------------------------- 负载构造
@@ -1539,6 +1756,11 @@ export function buildReadyPayload(args: {
       label: entry.label,
       description: entry.description,
       ...(entry.debuggable === undefined ? {} : { debuggable: entry.debuggable }),
+      ...(entry.group === undefined ? {} : { group: entry.group }),
+      ...(entry.risk === undefined ? {} : { risk: entry.risk }),
+      ...(entry.source === undefined ? {} : { source: entry.source }),
+      ...(entry.sourceName === undefined ? {} : { sourceName: entry.sourceName }),
+      ...(entry.enabled === undefined ? {} : { enabled: entry.enabled }),
     }));
   }
   if (args.config) payload['config'] = buildConfigStatePayload(args.config);
@@ -1568,6 +1790,8 @@ export function buildConfigStatePayload(view: ConfigView): JsonObject {
       isActive: provider.isActive,
     })),
     active: { provider: active.provider, model: active.model },
+    // A.14.5：老测试夹具/老 agent 缺该字段时按「全部启用」处理。
+    disabledTools: Array.isArray(view.disabledTools) ? [...view.disabledTools] : [],
   };
 }
 

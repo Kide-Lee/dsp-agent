@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using IcarusII.I18n;
 using IcarusII.Common.Protocol;
+using IcarusII.Config;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -60,6 +61,50 @@ namespace IcarusII.UI
         public Button PermissionReadonly;
         public Button PermissionLimited;
         public Button PermissionTakeover;
+
+        // 通用页：版本值（prefab 里已命名成 *-value）与关于页二维码。
+        public Text VersionPlugin;
+        public Text VersionBepInEx;
+        public Text VersionSidecar;
+        public Text VersionProtocol;
+        public Text VersionGame;
+        public Text VersionUnity;
+        public RawImage QrImage;
+
+        // 快捷键页：三行 + 恢复本页设置。
+        public sealed class KeyRowBinding
+        {
+            public string Action;
+            public Text KeyLabel;
+            public Button InputButton;
+            public Text WaitingText;
+            public Text ConflictText;
+            public Button DefaultButton;
+            public Button ClearButton;
+        }
+
+        public readonly List<KeyRowBinding> KeyRows = new List<KeyRowBinding>();
+        public Button KeysResetButton;
+
+        // 会话页。
+        public InputField SessionSearch;
+        public Button SessionsOnlyCurrent;
+        public Text SessionsCount;
+        public RectTransform SessionsList;
+        public GameObject ConversationGroupTemplate;
+        public GameObject ConversationRowTemplate;
+        public InputField ConversationRenameInput;
+
+        // 工具页。
+        public InputField ToolSearch;
+        public Button ToolChipAll;
+        public Button ToolChipRead;
+        public Button ToolChipWrite;
+        public Button ToolChipThird;
+        public Button ToolsEnableAll;
+        public RectTransform ToolsList;
+        public GameObject ToolRowTemplate;
+        public Text ToolsLegend;
         public Button CopyDirButton;
         public Button CopyDiagnosticsButton;
         public Button CopyGroupButton;
@@ -68,6 +113,9 @@ namespace IcarusII.UI
 
         /// <summary>玩家点了某个权限档位；参数是协议里的只读/受限/接管。</summary>
         public event Action<string> PermissionSelected;
+
+        /// <summary>分区切换；参数是分区 id（general/keys/model/sessions/tools/about）。</summary>
+        public event Action<string> SectionChanged;
 
         /// <summary>左导航的一个条目：按钮 + 强调条 + 文字 + 对应分区根。</summary>
         private sealed class NavEntry
@@ -82,6 +130,8 @@ namespace IcarusII.UI
 
         private readonly List<NavEntry> _nav = new List<NavEntry>();
         private string _current = SectionGeneral;
+        /// <summary>进程内记住上次分区；不落盘。</summary>
+        private static string _lastSection;
 
         /// <summary>当前显示的分区 id。</summary>
         public string CurrentSection => _current;
@@ -120,13 +170,15 @@ namespace IcarusII.UI
             }
 
             view.ApplyTexts(font);
+            view.LoadQrTexture();
             view.WireActions();
-            view.Show(SectionGeneral);
+            view.Show(_lastSection ?? SectionGeneral);
             return view;
         }
 
         private void Bind(Transform root, List<string> missing)
         {
+            RefreshVersions();
             var model = "content/pane-model";
             ProviderList = Bind<RectTransform>(root, model + "/page-body/provider-pane/provider-list/viewport/content", missing);
             ModelList = Bind<RectTransform>(root, model + "/page-body/editor-pane/model-list/viewport/content", missing);
@@ -171,12 +223,75 @@ namespace IcarusII.UI
             CopyGroupButton = Bind<Button>(root, "content/pane-about/body/viewport/content/group-card/copy-row/copy-group-button", missing);
             PermissionStatus = Bind<Text>(root, "content/pane-general/body/viewport/content/section/head/permission-status", missing);
 
+            var generalCard = "content/pane-general/body/viewport/content/section/version-card";
+            VersionPlugin = Bind<Text>(root, generalCard + "/kv-plugin/plugin-value", missing);
+            VersionBepInEx = Bind<Text>(root, generalCard + "/kv-plugin/bepinex-value", missing);
+            VersionSidecar = Bind<Text>(root, generalCard + "/kv-sidecar/sidecar-value", missing);
+            VersionProtocol = Bind<Text>(root, generalCard + "/kv-sidecar/protocol-value", missing);
+            VersionGame = Bind<Text>(root, generalCard + "/kv-game/game-value", missing);
+            VersionUnity = Bind<Text>(root, generalCard + "/kv-game/unity-value", missing);
+            QrImage = Bind<RawImage>(root, "content/pane-about/body/viewport/content/group-card/qr", missing);
+
+            var keyTable = "content/pane-keys/body/key-table/";
+            AddKeyRow(root, missing, keyTable, "row-open", PluginConfig.KeyActionHotkey);
+            AddKeyRow(root, missing, keyTable, "row-send", PluginConfig.KeyActionSend);
+            AddKeyRow(root, missing, keyTable, "row-newline", PluginConfig.KeyActionNewline);
+            KeysResetButton = Bind<Button>(root, "content/pane-keys/body/keys-footer/reset-button", missing);
+
+            var sessions = "content/pane-sessions/body/";
+            SessionSearch = Bind<InputField>(root, sessions + "toolbar/search", missing);
+            SessionsOnlyCurrent = Bind<Button>(root, sessions + "toolbar/only-current", missing);
+            SessionsCount = Bind<Text>(root, sessions + "toolbar/label", missing);
+            SessionsList = Bind<RectTransform>(root, sessions + "list/viewport/content", missing);
+            ConversationGroupTemplate = BindNode(root, "templates/conv-group", missing);
+            ConversationRowTemplate = BindNode(root, "templates/conv-row", missing);
+            ConversationRenameInput = Bind<InputField>(root, "templates/conv-row/rename-input", missing);
+
+            var tools = "content/pane-tools/body/";
+            ToolSearch = Bind<InputField>(root, tools + "toolbar/search", missing);
+            ToolChipAll = Bind<Button>(root, tools + "toolbar/chip-all", missing);
+            ToolChipRead = Bind<Button>(root, tools + "toolbar/chip-read", missing);
+            ToolChipWrite = Bind<Button>(root, tools + "toolbar/chip-write", missing);
+            ToolChipThird = Bind<Button>(root, tools + "toolbar/chip-third", missing);
+            ToolsEnableAll = Bind<Button>(root, tools + "toolbar/enable-all", missing);
+            ToolsList = Bind<RectTransform>(root, tools + "list/viewport/content", missing);
+            ToolRowTemplate = BindNode(root, "templates/tool-row", missing);
+            ToolsLegend = Bind<Text>(root, tools + "label", missing);
+
             AddNav(root, missing, SectionGeneral, "nav-general", "pane-general");
             AddNav(root, missing, SectionKeys, "nav-keys", "pane-keys");
             AddNav(root, missing, SectionModel, "nav-model", "pane-model");
             AddNav(root, missing, SectionSessions, "nav-sessions", "pane-sessions");
             AddNav(root, missing, SectionTools, "nav-tools", "pane-tools");
             AddNav(root, missing, SectionAbout, "nav-about", "pane-about");
+        }
+
+        private void AddKeyRow(Transform root, List<string> missing, string table, string rowName, string action)
+        {
+            var row = table + rowName;
+            var rowBinding = new KeyRowBinding
+            {
+                Action = action,
+                KeyLabel = Bind<Text>(root, row + "/key-label", missing),
+                InputButton = Bind<Button>(root, row + "/input", missing),
+                WaitingText = Bind<Text>(root, row + "/input/waiting-text", missing),
+                ConflictText = Bind<Text>(root, row + "/conflict-text", missing),
+                DefaultButton = Bind<Button>(root, row + "/default-button", missing),
+                ClearButton = Bind<Button>(root, row + "/clear-button", missing),
+            };
+            KeyRows.Add(rowBinding);
+        }
+
+        /// <summary>关于页二维码：prefab 里只有 RawImage 槽位，贴图从同一个 bundle 取。</summary>
+        private void LoadQrTexture()
+        {
+            if (QrImage == null) return;
+            var texture = WindowPrefab.LoadAsset<Texture2D>("qq-group");
+            if (texture != null)
+            {
+                QrImage.texture = texture;
+                QrImage.uvRect = new Rect(0f, 0f, 1f, 1f);
+            }
         }
 
         private void AddNav(Transform root, List<string> missing, string id, string navName, string paneName)
@@ -275,14 +390,55 @@ namespace IcarusII.UI
             GUIUtility.systemCopyBuffer = text;
         }
 
+        /// <summary>侧车的 serverVersion；由 ModelSettingsTab 在 ready 后写入。</summary>
+        public static string ServerVersion;
+
+        /// <summary>刷新通用页的版本值；不依赖 sidecar 的项永远可读。</summary>
+        public void RefreshVersions()
+        {
+            var connected = ServerVersion != null;
+            if (VersionPlugin != null) VersionPlugin.text = $"Icarus II {Plugin.PluginVersion}";
+            if (VersionBepInEx != null) VersionBepInEx.text = BepInExVersion();
+            if (VersionSidecar != null)
+            {
+                VersionSidecar.text = connected
+                    ? Strings.Get("settings.version.connected", ServerVersion)
+                    : Strings.Get("settings.version.offline");
+            }
+            if (VersionProtocol != null) VersionProtocol.text = Strings.Get("settings.version.protocol", Protocol.Version);
+            if (VersionGame != null) VersionGame.text = Game.GameRefs.GameVersion ?? "—";
+            if (VersionUnity != null) VersionUnity.text = Application.unityVersion;
+        }
+
+        private static string BepInExVersion()
+        {
+            try
+            {
+                var version = typeof(BepInEx.Bootstrap.Chainloader).Assembly.GetName().Version;
+                return version is null ? "—" : $"{version.Major}.{version.Minor}.{version.Build}";
+            }
+            catch
+            {
+                return "—";
+            }
+        }
+
         private static string BuildDiagnostics()
         {
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("Icarus II 设置页 - 诊断信息");
             sb.AppendLine($"时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            sb.AppendLine($"游戏：{Application.version} / Unity {Application.unityVersion}");
+            sb.AppendLine($"插件：{Plugin.PluginVersion}");
+            sb.AppendLine($"BepInEx：{BepInExVersion()}");
+            sb.AppendLine($"sidecar：{(ServerVersion is null ? "未连接" : ServerVersion)}");
+            sb.AppendLine($"协议：v{Protocol.Version}");
+            sb.AppendLine($"游戏：{Game.GameRefs.GameVersion ?? "—"} / Unity {Application.unityVersion}");
             sb.AppendLine($"系统：{SystemInfo.operatingSystem}");
-            sb.AppendLine($"数据目录：{(DataDirProvider != null ? DataDirProvider() : string.Empty)}");
+            sb.AppendLine($"权限：{Plugin.Instance?.CurrentPermissionLevel ?? "—"}");
+            var dataDir = DataDirProvider != null ? DataDirProvider() : string.Empty;
+            sb.AppendLine($"数据目录：{dataDir}");
+            sb.AppendLine($"启动器：{WindowPrefab.Status}");
+            sb.AppendLine($"热键：{Plugin.Instance?.CurrentKeyBinding(Config.PluginConfig.KeyActionHotkey).Format() ?? "—"}");
             return sb.ToString();
         }
 
@@ -319,6 +475,7 @@ namespace IcarusII.UI
             if (!exists) return;
 
             _current = id;
+            _lastSection = id;
             foreach (var entry in _nav)
             {
                 var on = entry.Id == id;
@@ -327,6 +484,7 @@ namespace IcarusII.UI
                 if (entry.Bar != null) entry.Bar.color = on ? Accent : Clear;
                 if (entry.Label != null) entry.Label.color = on ? SelectedLabel : IdleLabel;
             }
+            SectionChanged?.Invoke(id);
         }
 
         private static GameObject BindNode(Transform root, string path, List<string> missing)
@@ -384,6 +542,7 @@ namespace IcarusII.UI
             SetPlaceholder(AddModelField, Strings.Get("model.id.placeholder"));
             SetPlaceholder(ApiKeyField, Strings.Get("model.api_key.placeholder"));
             SetPlaceholder(BaseUrlField, Strings.Get("model.base_url.placeholder"));
+            SetPlaceholder(ConversationRenameInput, Strings.Get("settings.sessions.rename.placeholder"));
         }
 
         private void SetText(string path, string text)

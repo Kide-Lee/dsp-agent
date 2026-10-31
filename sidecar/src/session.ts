@@ -48,7 +48,12 @@ import {
   buildConversationSwitchedPayload,
   buildConversationUpdatedPayload,
   buildConversationRenamedPayload,
+  buildToolsStatePayload,
+  buildConversationsIndexedPayload,
+  buildConversationsExportedPayload,
   parseConversationRenamePayload,
+  parseToolsSetPayload,
+  parseConversationsExportPayload,
   parseConversationTargetPayload,
   parseConfirmResultPayload,
   errorRetryable,
@@ -524,6 +529,15 @@ export class Session {
       case MessageType.ProviderTest:
         this.handleProviderTest(env);
         return;
+      case MessageType.ToolsSet:
+        this.queueBind(() => this.handleToolsSet(env));
+        return;
+      case MessageType.ConversationsIndex:
+        this.queueBind(() => this.handleConversationsIndex(env));
+        return;
+      case MessageType.ConversationsExport:
+        this.queueBind(() => this.handleConversationsExport(env));
+        return;
       default:
         // 未知 type 必须忽略且不断开（协议 §2）；已预留类型额外记一条 debug。
         this.logger.debug('忽略未知/预留消息类型', { type, id: env.id });
@@ -831,6 +845,128 @@ export class Session {
       });
   }
 
+  /** A.14.1：设定页保存工具开关；回执带回完整目录，避免两帧不同步。 */
+  private async handleToolsSet(env: import('./protocol.js').ParsedEnvelope): Promise<void> {
+    if (this._state !== 'ready') {
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+    const request = parseToolsSetPayload(env.payload);
+    if (!request) {
+      this.sendError('bad_request', 'tools.set.payload.disabled must be a string array', env.id || null);
+      return;
+    }
+
+    let disabled = request.disabled;
+    let rebuilt = false;
+    try {
+      if (this.options.agent.applyDisabledTools) {
+        const result = this.options.agent.applyDisabledTools(request.disabled);
+        disabled = result.disabled;
+        rebuilt = result.rebuilt;
+      } else {
+        const view = this.options.config.update({ disabledTools: request.disabled });
+        disabled = view.disabledTools ?? request.disabled;
+      }
+    } catch (err) {
+      this.logger.error('保存工具开关失败', errorFields(err));
+      this.sendError('internal', 'failed to persist tool settings', env.id || null);
+      return;
+    }
+
+    const capabilities = this.helloPayload?.capabilities ?? [];
+    const extensions = this.helloPayload?.extensions ?? [];
+    let toolCatalog: ToolCatalogEntry[] = [];
+    try {
+      toolCatalog = this.options.agent.toolCatalog?.(capabilities, extensions) ?? [];
+    } catch (err) {
+      this.logger.warn('生成工具目录失败', errorFields(err));
+    }
+
+    this.logger.info('工具开关已更新', { disabled, rebuilt, tools: toolCatalog.length });
+    this.sendEnvelope(
+      buildEnvelope({
+        type: MessageType.ToolsState,
+        replyTo: env.id || null,
+        payload: buildToolsStatePayload({ ok: true, disabled, rebuilt, toolCatalog }),
+      }),
+    );
+  }
+
+  /** A.14.2：跨存档会话索引；只读，不打扰当前活动会话。 */
+  private async handleConversationsIndex(env: import('./protocol.js').ParsedEnvelope): Promise<void> {
+    if (this._state !== 'ready') {
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+    let result: Awaited<ReturnType<NonNullable<AgentRunner['conversationIndex']>>> = {
+      currentSaveKey: this.boundSaveKey,
+      saves: [],
+    };
+    if (this.options.agent.conversationIndex) {
+      try {
+        result = await this.options.agent.conversationIndex();
+      } catch (err) {
+        this.logger.warn('生成会话索引失败', errorFields(err));
+      }
+    }
+    this.sendEnvelope(
+      buildEnvelope({
+        type: MessageType.ConversationsIndexed,
+        replyTo: env.id || null,
+        payload: buildConversationsIndexedPayload(result),
+      }),
+    );
+  }
+
+  /** A.14.3：导出单个会话；路径与字节数由 sidecar 回传。 */
+  private async handleConversationsExport(env: import('./protocol.js').ParsedEnvelope): Promise<void> {
+    if (this._state !== 'ready') {
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+    const request = parseConversationsExportPayload(env.payload);
+    if (!request) {
+      this.sendError('bad_request', 'conversations.export.payload 非法', env.id || null);
+      return;
+    }
+    const saveKey = request.saveKey ?? this.boundSaveKey;
+    if (!saveKey) {
+      this.sendEnvelope(
+        buildEnvelope({
+          type: MessageType.ConversationsExported,
+          replyTo: env.id || null,
+          payload: buildConversationsExportedPayload({ ok: false, error: 'no_save' }),
+        }),
+      );
+      return;
+    }
+    if (!this.options.agent.exportConversation) {
+      this.sendEnvelope(
+        buildEnvelope({
+          type: MessageType.ConversationsExported,
+          replyTo: env.id || null,
+          payload: buildConversationsExportedPayload({ ok: false, error: 'unsupported' }),
+        }),
+      );
+      return;
+    }
+    let result: Awaited<ReturnType<NonNullable<AgentRunner['exportConversation']>>>;
+    try {
+      result = await this.options.agent.exportConversation(saveKey, request.conversationId);
+    } catch (err) {
+      this.logger.warn('导出会话异常', errorFields(err));
+      result = { ok: false, error: 'internal' };
+    }
+    this.sendEnvelope(
+      buildEnvelope({
+        type: MessageType.ConversationsExported,
+        replyTo: env.id || null,
+        payload: buildConversationsExportedPayload(result),
+      }),
+    );
+  }
+
   /**
    * `config.set`（附录 A.1）。
    *
@@ -917,6 +1053,7 @@ export class Session {
     });
 
     try {
+      this.options.agent.noteSaveBinding?.(bind.saveKey, bind.saveName);
       this.options.agent.onSaveChanged?.(bind.saveKey);
       this.options.agent.onSandboxChanged?.(bind.sandbox);
       this.options.agent.onBlueprintTiers?.(bind.blueprintTiers ?? null);
@@ -1066,13 +1203,15 @@ export class Session {
       this.sendError('bad_request', 'conversation.rename.payload 非法', env.id || null);
       return;
     }
+    // A.14.4：可选 saveKey = 跨存档重命名；缺省仍走当前存档。
+    const saveKey = payload.saveKey ?? this.boundSaveKey;
     const reply = (ok: boolean, title: string, error?: string | null) => {
       this.sendEnvelope(
         buildEnvelope({
           type: MessageType.ConversationRenamed,
           replyTo: env.id || null,
           payload: buildConversationRenamedPayload({
-            saveKey: this.boundSaveKey,
+            saveKey,
             conversationId: payload.conversationId,
             title,
             ok,
@@ -1081,7 +1220,7 @@ export class Session {
         }),
       );
     };
-    if (!this.boundSaveKey) {
+    if (!saveKey) {
       reply(false, payload.title, 'save_required');
       return;
     }
@@ -1091,7 +1230,7 @@ export class Session {
     }
     try {
       const result = await this.options.agent.renameConversation(
-        this.boundSaveKey,
+        saveKey,
         payload.conversationId,
         payload.title,
       );
@@ -1107,20 +1246,22 @@ export class Session {
       this.sendError('unauthorized', 'handshake not completed', env.id || null);
       return;
     }
-    if (!this.boundSaveKey) {
-      this.sendError('save_required', 'save.bind is required before conversation.delete', env.id || null);
-      return;
-    }
     const target = parseConversationTargetPayload(env.payload);
     if (!target) {
       this.sendError('bad_request', 'conversation.delete.payload.conversationId 非法', env.id || null);
+      return;
+    }
+    // A.14.4：可选 saveKey = 跨存档删除；缺省仍走当前存档。
+    const saveKey = target.saveKey ?? this.boundSaveKey;
+    if (!saveKey) {
+      this.sendError('save_required', 'save.bind is required before conversation.delete', env.id || null);
       return;
     }
     if (!this.options.agent.deleteConversation) {
       this.sendError('internal', '当前 agent 不支持多会话', env.id || null);
       return;
     }
-    const result = await this.options.agent.deleteConversation(this.boundSaveKey, target.conversationId);
+    const result = await this.options.agent.deleteConversation(saveKey, target.conversationId);
     if (!result.ok) {
       this.sendError(
         (result.error as ErrorCode) ?? 'internal',
@@ -1130,21 +1271,24 @@ export class Session {
       return;
     }
 
-    const conversations = this.options.agent.getConversations
-      ? await this.options.agent.getConversations(this.boundSaveKey)
+    // 非当前存档：不读取/不改动当前活动会话，回执只带目标存档。
+    const isCurrentSave = saveKey === this.boundSaveKey;
+    const conversations = isCurrentSave && this.options.agent.getConversations
+      ? await this.options.agent.getConversations(saveKey)
       : [];
-    const activeConversationId =
-      this.options.agent.getActiveConversationId?.() ?? result.activeConversationId ?? null;
+    const activeConversationId = isCurrentSave
+      ? this.options.agent.getActiveConversationId?.() ?? result.activeConversationId ?? null
+      : result.activeConversationId ?? null;
     const conversation = conversations.find((item) => item.id === activeConversationId) ?? null;
-    const history = this.options.agent.getHistory
-      ? await this.options.agent.getHistory(this.boundSaveKey)
+    const history = isCurrentSave && this.options.agent.getHistory
+      ? await this.options.agent.getHistory(saveKey)
       : [];
     this.sendEnvelope(
       buildEnvelope({
         type: MessageType.ConversationDeleted,
         replyTo: env.id || null,
         payload: buildConversationDeletedPayload({
-          saveKey: this.boundSaveKey,
+          saveKey,
           conversationId: target.conversationId,
           ok: true,
           activeConversationId,

@@ -348,7 +348,7 @@ try {
     );
     check(
       '落盘文件不含多余字段',
-      Object.keys(onDisk).sort().join(',') === 'active,blueprintDir,permissionLevel,providers,thinkingLevel,wiki',
+      Object.keys(onDisk).sort().join(',') === 'active,blueprintDir,disabledTools,permissionLevel,providers,thinkingLevel,wiki',
       Object.keys(onDisk).join(','),
     );
     check(

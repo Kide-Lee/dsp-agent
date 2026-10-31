@@ -60,6 +60,10 @@ namespace IcarusII.UI
 
         private static Font _font;
         private static SettingsPageView _view;
+        private static SettingsKeysPage _keysPage;
+        private static SettingsSessionsPage _sessionsPage;
+        private static SettingsToolsPage _toolsPage;
+        private static int _settingsFrame;
 
         // ---- 草稿（点「应用设置」前不落盘）----
         private sealed class ModelDraft
@@ -105,6 +109,23 @@ namespace IcarusII.UI
         private static volatile ProviderCatalogResult _providerCatalogResult;
         private static volatile bool _providerCatalogPending;
         private static string _providerCatalogRequestId;
+
+        // ---- A.14 设定页：工具开关 / 会话索引 / 导出 ----
+        private static volatile List<ToolCatalogEntryInfo> _toolCatalog = new List<ToolCatalogEntryInfo>();
+        private static volatile List<string> _disabledTools = new List<string>();
+        private static volatile ToolsStateInfo _toolsStateResult;
+        private static volatile List<ToolCatalogEntryInfo> _toolsCatalogResult;
+        private static volatile bool _toolsDirty;
+        private static string _toolsSetRequestId;
+        private static volatile ConversationsIndexedInfo _conversationsIndexResult;
+        private static string _conversationsIndexRequestId;
+        private static volatile bool _conversationsDirty;
+        private static volatile ConversationsExportedInfo _conversationExportResult;
+        private static string _conversationExportRequestId;
+        private static string _conversationRenameRequestId;
+        private static string _conversationDeleteRequestId;
+        private static volatile string _conversationActionError;
+        private static volatile JsonValue _toolCatalogPayload;
 
         // ---- Key 检测 ----
         private static Button _testKeyButton;
@@ -153,6 +174,57 @@ namespace IcarusII.UI
         }
 
         private static int _watchTick;
+
+        /// <summary>设置页是否正在捕获快捷键；HotkeyService 用它让位。</summary>
+        public static bool IsCapturingKey => _keysPage is not null && _keysPage.IsCapturing;
+
+        /// <summary>
+        /// 每帧执行（设置窗口打开时才做事）：捕获快捷键、消费异步回执、刷新版本号。
+        /// 安装/补页签仍留给 30 帧一次的 Watch，避免每帧碰原生页签数组。
+        /// </summary>
+        public static void Tick()
+        {
+            var view = _view;
+            if (view is null || view.Root == null)
+            {
+                if (view is not null) ResetPages();
+                return;
+            }
+
+            var uiRoot = Game.GameRefs.UiRoot;
+            var window = uiRoot != null ? uiRoot.optionWindow : null;
+            if (window == null || !window.gameObject.activeInHierarchy) return;
+
+            var catalogPayload = _toolCatalogPayload;
+            if (catalogPayload is not null)
+            {
+                _toolCatalogPayload = null;
+                Plugin.Instance?.ApplyToolCatalogFromSettings(catalogPayload);
+            }
+
+            _keysPage?.Tick();
+            _sessionsPage?.Tick();
+            _toolsPage?.Tick();
+            if (++_settingsFrame % 60 == 0)
+            {
+                view.RefreshVersions();
+                view.SetPermissionLevel(Plugin.Instance?.CurrentPermissionLevel ?? Protocol.PermissionLimited);
+            }
+        }
+
+        private static void OnSectionChanged(string id)
+        {
+            if (id == SettingsPageView.SectionGeneral) _view?.RefreshVersions();
+            else if (id == SettingsPageView.SectionSessions) _sessionsPage?.EnsureLoaded();
+            else if (id == SettingsPageView.SectionTools) _toolsPage?.EnsureLoaded();
+        }
+
+        private static void ResetPages()
+        {
+            _keysPage = null;
+            _sessionsPage = null;
+            _toolsPage = null;
+        }
 
         /// <summary>
         /// 每帧轮询：只要**设置窗口是打开状态**而我们的页签不在，就补上。
@@ -312,7 +384,7 @@ namespace IcarusII.UI
                 }
                 if (label != null)
                 {
-                    label.text = Strings.Get("model.label");
+                    label.text = Strings.Get("settings.tab.title");
                     Plugin.Log.LogInfo(
                         $"[模型页] 页签文字对象 = {label.name}（parent={label.transform.parent?.name}、" +
                         $"是按钮子物体={label.transform.IsChildOf(btn.transform)}）");
@@ -505,9 +577,14 @@ namespace IcarusII.UI
 
             // 页面布局全部来自 prefab；这里只绑定控件、接事件。
             var view = SettingsPageView.Create(root, _font);
+            ResetPages();
             _view = view;
             SettingsPageView.DataDirProvider = () => Plugin.Instance?.DataDir ?? SidecarLauncher.DefaultDataDir();
             view.PermissionSelected += level => Plugin.Instance?.ApplyPermissionLevelFromSettings(level);
+            view.SectionChanged += OnSectionChanged;
+            _keysPage = new SettingsKeysPage(view);
+            _sessionsPage = new SettingsSessionsPage(view);
+            _toolsPage = new SettingsToolsPage(view);
             view.SetPermissionLevel(Plugin.Instance?.CurrentPermissionLevel ?? Protocol.PermissionLimited);
             _providerList = view.ProviderList;
             _modelList = view.ModelList;
@@ -720,6 +797,65 @@ namespace IcarusII.UI
         /// <summary>接收线程：只解析并存结果，绝不碰 UnityEngine 对象。</summary>
         private static void OnClientReceived(string type, JsonValue payload, string replyTo)
         {
+            // A.14：ready / tools.state 都带回完整工具目录与开关；只解析，落 UI 留给 Tick。
+            if (type == Protocol.Ready || type == Protocol.ToolsState)
+            {
+                var state = type == Protocol.ToolsState ? ToolsStateInfo.Parse(payload) : null;
+                var catalog = new List<ToolCatalogEntryInfo>();
+                var disabled = new List<string>();
+                ToolCatalogEntryInfo.ParseList(payload["toolCatalog"], catalog);
+                var disabledArray = type == Protocol.ToolsState
+                    ? payload["disabled"]
+                    : payload["config"]["disabledTools"];
+                if (disabledArray is not null && disabledArray.IsArray)
+                {
+                    foreach (var item in disabledArray.Items)
+                    {
+                        var name = item.AsString(null);
+                        if (!string.IsNullOrEmpty(name)) disabled.Add(name);
+                    }
+                }
+                _toolsCatalogResult = catalog;
+                _disabledTools = disabled;
+                _toolsDirty = true;
+                if (state is not null)
+                {
+                    _toolsStateResult = state;
+                    _toolCatalogPayload = payload;
+                }
+                return;
+            }
+            if (type == Protocol.ConversationsIndexed && replyTo == _conversationsIndexRequestId)
+            {
+                _conversationsIndexResult = ConversationsIndexedInfo.Parse(payload);
+                return;
+            }
+            if (type == Protocol.ConversationsExported && replyTo == _conversationExportRequestId)
+            {
+                _conversationExportResult = ConversationsExportedInfo.Parse(payload);
+                return;
+            }
+            if (type == Protocol.ConversationRenamed && replyTo == _conversationRenameRequestId)
+            {
+                var info = ConversationEventInfo.Parse(payload);
+                if (info.Ok) _conversationsDirty = true;
+                else _conversationActionError = info.Error ?? "rename_failed";
+                return;
+            }
+            if (type == Protocol.ConversationDeleted && replyTo == _conversationDeleteRequestId)
+            {
+                var info = ConversationEventInfo.Parse(payload);
+                if (info.Ok) _conversationsDirty = true;
+                else _conversationActionError = info.Error ?? "delete_failed";
+                return;
+            }
+            if (type == Protocol.Error)
+            {
+                var code = payload["code"].AsString("");
+                if (replyTo == _conversationRenameRequestId || replyTo == _conversationDeleteRequestId)
+                    _conversationActionError = code;
+                return;
+            }
             if (type == Protocol.ModelCatalog)
             {
                 if (string.IsNullOrEmpty(replyTo) || replyTo != _catalogRequestId) return;
@@ -740,6 +876,109 @@ namespace IcarusII.UI
                 _testKeyResult = ProviderTestResult.Parse(payload);
                 _testKeyPending = false;
             }
+        }
+
+        // ---------------------------------------------------------------- A.14 设定页数据
+
+        public static IReadOnlyList<ToolCatalogEntryInfo> CurrentToolCatalog => _toolsCatalogResult ?? _toolCatalog;
+
+        public static IReadOnlyList<string> CurrentDisabledTools => _disabledTools;
+
+        public static bool TakeToolsDirty()
+        {
+            if (!_toolsDirty) return false;
+            _toolsDirty = false;
+            if (_toolsCatalogResult is not null) _toolCatalog = _toolsCatalogResult;
+            _toolsCatalogResult = null;
+            return true;
+        }
+
+        public static ToolsStateInfo TakeToolsStateResult()
+        {
+            var result = _toolsStateResult;
+            _toolsStateResult = null;
+            return result;
+        }
+
+        public static bool RequestToolsSet(IEnumerable<string> disabled)
+        {
+            if (_client == null || _client.State != ConnectionState.Ready) return false;
+            var list = new List<string>();
+            if (disabled is not null)
+            {
+                foreach (var name in disabled)
+                {
+                    if (!string.IsNullOrEmpty(name)) list.Add(name);
+                }
+            }
+            var id = _client.SendToolsSet(list);
+            if (string.IsNullOrEmpty(id)) return false;
+            _toolsSetRequestId = id;
+            return true;
+        }
+
+        public static bool RequestConversationsIndex()
+        {
+            if (_client == null || _client.State != ConnectionState.Ready) return false;
+            var id = _client.SendConversationsIndex();
+            if (string.IsNullOrEmpty(id)) return false;
+            _conversationsIndexRequestId = id;
+            return true;
+        }
+
+        public static ConversationsIndexedInfo TakeConversationsIndexResult()
+        {
+            var result = _conversationsIndexResult;
+            _conversationsIndexResult = null;
+            return result;
+        }
+
+        public static bool TakeConversationsDirty()
+        {
+            if (!_conversationsDirty) return false;
+            _conversationsDirty = false;
+            return true;
+        }
+
+        public static bool RequestConversationExport(string saveKey, string conversationId)
+        {
+            if (_client == null || _client.State != ConnectionState.Ready) return false;
+            var id = _client.SendConversationsExport(saveKey, conversationId);
+            if (string.IsNullOrEmpty(id)) return false;
+            _conversationExportRequestId = id;
+            return true;
+        }
+
+        public static ConversationsExportedInfo TakeConversationExportResult()
+        {
+            var result = _conversationExportResult;
+            _conversationExportResult = null;
+            return result;
+        }
+
+        public static bool RequestConversationRename(string saveKey, string conversationId, string title)
+        {
+            if (_client == null || _client.State != ConnectionState.Ready) return false;
+            var id = _client.SendConversationRename(conversationId, title, saveKey);
+            if (string.IsNullOrEmpty(id)) return false;
+            _conversationRenameRequestId = id;
+            return true;
+        }
+
+        public static bool RequestConversationDelete(string saveKey, string conversationId)
+        {
+            if (_client == null || _client.State != ConnectionState.Ready) return false;
+            var id = _client.SendConversationDelete(conversationId, saveKey);
+            if (string.IsNullOrEmpty(id)) return false;
+            _conversationDeleteRequestId = id;
+            return true;
+        }
+
+        public static string TakeConversationActionError()
+        {
+            var error = _conversationActionError;
+            _conversationActionError = null;
+            return error;
         }
 
         /// <summary>主线程（Watch）：拉一次 pi 内置目录的供应商列表（只读、不联网）。</summary>

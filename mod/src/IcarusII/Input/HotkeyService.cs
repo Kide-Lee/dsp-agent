@@ -21,10 +21,17 @@ namespace IcarusII.Input
         public HotkeyService(PluginConfig config)
         {
             _config = config;
-            Key = config.Hotkey;
+            Key = config.HotkeyChord;
         }
 
-        public KeyCode Key { get; }
+        public KeyChord Key { get; private set; }
+
+        /// <summary>A.14.7：设置页改键后立即生效；冲突自检可以重新跑。</summary>
+        public void SetKey(KeyChord key)
+        {
+            Key = key;
+            _conflictLogged = false;
+        }
 
         /// <summary>本帧热键是否被按下（无论最终是否放行）。</summary>
         public bool KeyPressedThisFrame { get; private set; }
@@ -52,16 +59,19 @@ namespace IcarusII.Input
 
             // 1) 必须真的有按键（用 Unity 的，带窗口焦点语义；
             //    不用 WinInput.GetAsyncKeyState —— 那在游戏失焦时也会返回 true）
-            if (!UnityEngine.Input.GetKeyDown(Key)) return false;
+            if (!KeyChordInput.IsPressedThisFrame(Key)) return false;
             KeyPressedThisFrame = true;
 
-            // 2) 必须真的进入存档：开始菜单、载入中都不要开窗
+            // 2) 设置页正在捕获快捷键：让出按键，否则按 R 会开/关聊天窗。
+            if (UI.ModelSettingsTab.IsCapturingKey) { reason = "设置页正在捕获快捷键"; return false; }
+
+            // 3) 必须真的进入存档：开始菜单、载入中都不要开窗
             if (!GameRefs.IsInGame) { reason = "不在游戏内（开始菜单/载入中）"; return false; }
 
-            // 3) 焦点在输入框（聊天框/标题框）上 → 让位给文字输入
+            // 4) 焦点在输入框（聊天框/标题框）上 → 让位给文字输入
             if (inputFocused) { reason = "输入框已聚焦（R 作为文字输入）"; return false; }
 
-            // 4) 窗口已打开 → 关闭。
+            // 5) 窗口已打开 → 关闭。
             //    必须在"输入/全屏/建造"这些门控之前返回：窗口开着时
             //    VFInput.inputing 正是我们自己置为 true 的，否则永远关不掉。
             if (windowOpen) return true;
@@ -90,15 +100,18 @@ namespace IcarusII.Input
             if (_conflictLogged) return null;
             _conflictLogged = true;
 
-            var boundByGame = GameRefs.IsKeyBoundByGame(Key);
+            if (!KeyChordInput.TryResolve(Key, out var keyCode))
+                return $"热键 {Key.Format()} 无法解析成 KeyCode，请检查配置。";
+
+            var boundByGame = GameRefs.IsKeyBoundByGame(keyCode);
             if (!boundByGame)
-                return $"热键 {Key} 未在游戏按键表中出现，无冲突。";
+                return $"热键 {Key.Format()} 未在游戏按键表中出现，无冲突。";
 
             var note = _config.HotkeyRequireNoBuildTool
                 ? "建造模式下自动让位（HotkeyRequireNoBuildTool=true）。"
                 : "[警告] 已关闭建造模式让位，可能与「旋转建筑」冲突。";
 
-            return $"热键 {Key} 已被游戏绑定。{note} 如遇冲突可在配置中改键（可用 F8 等）。";
+            return $"热键 {Key.Format()} 已被游戏绑定。{note} 如遇冲突可在配置中改键（可用 F8 等）。";
         }
     }
 }

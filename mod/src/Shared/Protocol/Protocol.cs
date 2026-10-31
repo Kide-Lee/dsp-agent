@@ -71,6 +71,26 @@ namespace IcarusII.Common.Protocol
         /// <summary>mod → sidecar：检测某供应商的 Key/端点是否可用（M3）。</summary>
         public const string ProviderTest = "provider.test";
 
+        // ---- 设定页（协议附录 A.14）----
+
+        /// <summary>mod → sidecar：整份替换被关闭的工具名。</summary>
+        public const string ToolsSet = "tools.set";
+
+        /// <summary>sidecar → mod：工具开关回执 + 完整工具目录。</summary>
+        public const string ToolsState = "tools.state";
+
+        /// <summary>mod → sidecar：跨存档会话索引（只读）。</summary>
+        public const string ConversationsIndex = "conversations.index";
+
+        /// <summary>sidecar → mod：按存档分组的会话索引。</summary>
+        public const string ConversationsIndexed = "conversations.indexed";
+
+        /// <summary>mod → sidecar：把一个会话导出成 Markdown。</summary>
+        public const string ConversationsExport = "conversations.export";
+
+        /// <summary>sidecar → mod：导出结果（路径与字节数）。</summary>
+        public const string ConversationsExported = "conversations.exported";
+
         /// <summary>config.state 的取值。</summary>
         public const string ConfigReady = "ready";
         public const string ConfigMissingKey = "missing_key";
@@ -564,7 +584,8 @@ namespace IcarusII.Common.Protocol
             string baseUrl, string thinkingLevel = null,
             JsonValue providerConfig = null, JsonValue removeProviders = null,
             string activeProvider = null, string activeModel = null,
-            string permissionLevel = null, bool clearBaseUrl = false)
+            string permissionLevel = null, bool clearBaseUrl = false,
+            IList<string> disabledTools = null)
         {
             var p = JsonValue.NewObject();
             if (!string.IsNullOrEmpty(provider)) p.Set("provider", provider);
@@ -578,6 +599,48 @@ namespace IcarusII.Common.Protocol
             if (!string.IsNullOrEmpty(activeProvider)) p.Set("activeProvider", activeProvider);
             if (!string.IsNullOrEmpty(activeModel)) p.Set("activeModel", activeModel);
             if (!string.IsNullOrEmpty(permissionLevel)) p.Set("permissionLevel", permissionLevel);
+            if (disabledTools is not null) p.Set("disabledTools", BuildStringArray(disabledTools));
+            return p;
+        }
+
+        /// <summary>把字符串列表构造成 JSON 数组；空列表写成 `[]`（= 全部启用）。</summary>
+        private static JsonValue BuildStringArray(IList<string> values)
+        {
+            var array = JsonValue.NewArray();
+            if (values is not null)
+            {
+                for (int i = 0; i < values.Count; i++)
+                {
+                    var value = values[i];
+                    if (string.IsNullOrEmpty(value)) continue;
+                    array.Add(value);
+                }
+            }
+            return array;
+        }
+
+        /// <summary>构造 tools.set（协议附录 A.14.1）：整份替换被关闭的工具名。</summary>
+        public static JsonValue BuildToolsSet(IList<string> disabled)
+        {
+            var p = JsonValue.NewObject();
+            p.Set("disabled", BuildStringArray(disabled));
+            return p;
+        }
+
+        /// <summary>构造 conversations.index 的空载荷（协议附录 A.14.2）。</summary>
+        public static JsonValue BuildConversationsIndex()
+        {
+            return JsonValue.NewObject();
+        }
+
+        /// <summary>构造 conversations.export（协议附录 A.14.3）。</summary>
+        public static JsonValue BuildConversationsExport(string saveKey, string conversationId,
+            string format = "md")
+        {
+            var p = JsonValue.NewObject();
+            if (!string.IsNullOrEmpty(saveKey)) p.Set("saveKey", saveKey);
+            if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
+            p.Set("format", string.IsNullOrEmpty(format) ? "md" : format);
             return p;
         }
 
@@ -644,10 +707,11 @@ namespace IcarusII.Common.Protocol
         }
 
         /// <summary>构造 conversation.switch / conversation.delete 载荷（附录 A.13）。</summary>
-        public static JsonValue BuildConversationTarget(string conversationId)
+        public static JsonValue BuildConversationTarget(string conversationId, string saveKey = null)
         {
             var p = JsonValue.NewObject();
             if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
+            if (!string.IsNullOrEmpty(saveKey)) p.Set("saveKey", saveKey);
             return p;
         }
 
@@ -661,11 +725,13 @@ namespace IcarusII.Common.Protocol
         }
 
         /// <summary>构造 conversation.rename 载荷（附录 A.13）：玩家改标题。</summary>
-        public static JsonValue BuildConversationRename(string conversationId, string title)
+        public static JsonValue BuildConversationRename(string conversationId, string title,
+            string saveKey = null)
         {
             var p = JsonValue.NewObject();
             if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
             p.Set("title", title ?? string.Empty);
+            if (!string.IsNullOrEmpty(saveKey)) p.Set("saveKey", saveKey);
             return p;
         }
 
@@ -1556,12 +1622,19 @@ namespace IcarusII.Common.Protocol
         /// </summary>
         public string PermissionLevel { get; private set; }
 
+        /// <summary>
+        /// 被玩家关闭的工具名（协议附录 A.14.5，可选）。老服务端不返回时为空列表
+        /// （= 全部启用），调用方应把它当作权威，不要自己维护第二份开关。
+        /// </summary>
+        public List<string> DisabledTools { get; private set; }
+
         public string Message { get; private set; }
 
         public ConfigState()
         {
             State = Protocol.ConfigMissingKey;
             Providers = new List<ProviderInfo>();
+            DisabledTools = new List<string>();
         }
 
         /// <summary>已配置且可用。</summary>
@@ -1606,6 +1679,16 @@ namespace IcarusII.Common.Protocol
             result.ThinkingLevel = payload["thinkingLevel"].AsString(null);
             result.PermissionLevel = payload["permissionLevel"].AsString(null);
             result.Message = payload["message"].AsString(null);
+
+            var disabledTools = payload["disabledTools"];
+            if (disabledTools is not null && disabledTools.IsArray)
+            {
+                foreach (var item in disabledTools.Items)
+                {
+                    var name = item.AsString(null);
+                    if (!string.IsNullOrEmpty(name)) result.DisabledTools.Add(name);
+                }
+            }
 
             var providers = payload["providers"];
             if (providers is not null && providers.IsArray)
@@ -1740,6 +1823,197 @@ namespace IcarusII.Common.Protocol
                 }
             }
             return request;
+        }
+    }
+
+
+    /// <summary>
+    /// 工具目录里的一条（协议附录 A.14.1）。老 sidecar 不带 group/risk/source/enabled，
+    /// 调用方按名字推断、按「全部启用」显示。
+    /// </summary>
+    public sealed class ToolCatalogEntryInfo
+    {
+        public string Name;
+        public string Label;
+        public string Description;
+        /// <summary>M4m：`!tool` 调试直调是否允许。</summary>
+        public bool Debuggable = true;
+        /// <summary>A.14.1：game.read | game.write | kb | blueprint | script | ask | thirdparty | other。</summary>
+        public string Group;
+        /// <summary>A.14.1：0 = 只读，1 = 可逆写，2 = 改变存档。</summary>
+        public int Risk;
+        /// <summary>A.14.1：builtin 或第三方插件 id。</summary>
+        public string Source;
+        /// <summary>A.14.1：来源显示名。</summary>
+        public string SourceName;
+        /// <summary>A.14.1：false = 被玩家关掉。</summary>
+        public bool Enabled = true;
+
+        public static ToolCatalogEntryInfo Parse(JsonValue value)
+        {
+            if (value is null || !value.IsObject) return null;
+            var name = value["name"].AsString(null);
+            if (string.IsNullOrEmpty(name)) return null;
+            return new ToolCatalogEntryInfo
+            {
+                Name = name,
+                Label = value["label"].AsString(name),
+                Description = value["description"].AsString(string.Empty),
+                Debuggable = value["debuggable"].AsBool(true),
+                Group = value["group"].AsString(null),
+                Risk = value["risk"].AsInt(0),
+                Source = value["source"].AsString(null),
+                SourceName = value["sourceName"].AsString(null),
+                Enabled = value["enabled"].AsBool(true),
+            };
+        }
+
+        public static void ParseList(JsonValue array, List<ToolCatalogEntryInfo> target)
+        {
+            if (array is null || !array.IsArray || target is null) return;
+            foreach (var item in array.Items)
+            {
+                var entry = Parse(item);
+                if (entry is not null) target.Add(entry);
+            }
+        }
+    }
+
+    /// <summary>`tools.state`（协议附录 A.14.1）：开关回执 + 完整工具目录。</summary>
+    public sealed class ToolsStateInfo
+    {
+        public bool Ok { get; private set; }
+        public bool Rebuilt { get; private set; }
+        public string Error { get; private set; }
+        public List<string> Disabled { get; private set; } = new List<string>();
+        public List<ToolCatalogEntryInfo> ToolCatalog { get; private set; } =
+            new List<ToolCatalogEntryInfo>();
+
+        public static ToolsStateInfo Parse(JsonValue payload)
+        {
+            var result = new ToolsStateInfo();
+            if (payload is null || !payload.IsObject) return result;
+            result.Ok = payload["ok"].AsBool(false);
+            result.Rebuilt = payload["rebuilt"].AsBool(false);
+            result.Error = payload["error"].AsString(null);
+            var disabled = payload["disabled"];
+            if (disabled is not null && disabled.IsArray)
+            {
+                foreach (var item in disabled.Items)
+                {
+                    var name = item.AsString(null);
+                    if (!string.IsNullOrEmpty(name)) result.Disabled.Add(name);
+                }
+            }
+            ToolCatalogEntryInfo.ParseList(payload["toolCatalog"], result.ToolCatalog);
+            return result;
+        }
+    }
+
+    /// <summary>`conversations.indexed` 里的一条会话（协议附录 A.14.2）。</summary>
+    public sealed class ConversationIndexEntryInfo
+    {
+        public string Id { get; private set; }
+        public string Title { get; private set; }
+        public long UpdatedAt { get; private set; }
+        public int MessageCount { get; private set; }
+        public bool IsActive { get; private set; }
+
+        public static ConversationIndexEntryInfo Parse(JsonValue value)
+        {
+            if (value is null || !value.IsObject) return null;
+            var id = value["id"].AsString(null);
+            if (string.IsNullOrEmpty(id)) return null;
+            return new ConversationIndexEntryInfo
+            {
+                Id = id,
+                Title = value["title"].AsString(null),
+                UpdatedAt = value["updatedAt"].AsLong(0),
+                MessageCount = value["messageCount"].AsInt(0),
+                IsActive = value["isActive"].AsBool(false),
+            };
+        }
+    }
+
+    /// <summary>`conversations.indexed` 里的一个存档分组（协议附录 A.14.2）。</summary>
+    public sealed class ConversationSaveGroupInfo
+    {
+        public string SaveKey { get; private set; }
+        public string SaveName { get; private set; }
+        public long LastSeen { get; private set; }
+        public bool Current { get; private set; }
+        public List<ConversationIndexEntryInfo> Conversations { get; private set; } =
+            new List<ConversationIndexEntryInfo>();
+
+        public static ConversationSaveGroupInfo Parse(JsonValue value)
+        {
+            if (value is null || !value.IsObject) return null;
+            var saveKey = value["saveKey"].AsString(null);
+            if (string.IsNullOrEmpty(saveKey)) return null;
+            var group = new ConversationSaveGroupInfo
+            {
+                SaveKey = saveKey,
+                SaveName = value["saveName"].AsString(null),
+                LastSeen = value["lastSeen"].AsLong(0),
+                Current = value["current"].AsBool(false),
+            };
+            var conversations = value["conversations"];
+            if (conversations is not null && conversations.IsArray)
+            {
+                foreach (var item in conversations.Items)
+                {
+                    var entry = ConversationIndexEntryInfo.Parse(item);
+                    if (entry is not null) group.Conversations.Add(entry);
+                }
+            }
+            return group;
+        }
+    }
+
+    /// <summary>`conversations.indexed`（协议附录 A.14.2）：只读索引结果。</summary>
+    public sealed class ConversationsIndexedInfo
+    {
+        public string CurrentSaveKey { get; private set; }
+        public List<ConversationSaveGroupInfo> Saves { get; private set; } =
+            new List<ConversationSaveGroupInfo>();
+
+        public static ConversationsIndexedInfo Parse(JsonValue payload)
+        {
+            var result = new ConversationsIndexedInfo();
+            if (payload is null || !payload.IsObject) return result;
+            result.CurrentSaveKey = payload["currentSaveKey"].AsString(null);
+            var saves = payload["saves"];
+            if (saves is not null && saves.IsArray)
+            {
+                foreach (var item in saves.Items)
+                {
+                    var group = ConversationSaveGroupInfo.Parse(item);
+                    if (group is not null) result.Saves.Add(group);
+                }
+            }
+            return result;
+        }
+    }
+
+    /// <summary>`conversations.exported`（协议附录 A.14.3）：导出结果。</summary>
+    public sealed class ConversationsExportedInfo
+    {
+        public bool Ok { get; private set; }
+        public string Path { get; private set; }
+        public int Bytes { get; private set; }
+        public int MessageCount { get; private set; }
+        public string Error { get; private set; }
+
+        public static ConversationsExportedInfo Parse(JsonValue payload)
+        {
+            var result = new ConversationsExportedInfo();
+            if (payload is null || !payload.IsObject) return result;
+            result.Ok = payload["ok"].AsBool(false);
+            result.Path = payload["path"].AsString(null);
+            result.Bytes = payload["bytes"].AsInt(0);
+            result.MessageCount = payload["messageCount"].AsInt(0);
+            result.Error = payload["error"].AsString(null);
+            return result;
         }
     }
 

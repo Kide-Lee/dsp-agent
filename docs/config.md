@@ -31,6 +31,7 @@ Linux 下文件权限为 `0600`，目录为 `0700`。
   "active": { "provider": "deepseek", "model": "deepseek-v4-flash" },
   "thinkingLevel": "high",
   "permissionLevel": "limited",
+  "disabledTools": [],
   "blueprintDir": null,
   "wiki": {
     "zhApi": null,
@@ -47,11 +48,13 @@ Linux 下文件权限为 `0600`，目录为 `0700`。
 | `active` | 当前供应商与模型；与 `provider`/`model` 老字段冗余 |
 | `thinkingLevel` | `off` / `low` / `high` / `max`，默认 `high` |
 | `permissionLevel` | `readonly` / `limited` / `takeover`，默认 `limited` |
+| `disabledTools` | 被玩家在设定页关掉的工具名；`[]` = 全部启用。缺失按全部启用处理；关闭后模型与 `run_script` 白名单都看不到该工具 |
 | `blueprintDir` | 蓝图根目录；`null` 表示 `Documents/Dyson Sphere Program/Blueprint`。原生 Linux 跑 `connectOnly` 时用它指向 Proton 前缀里的蓝图目录 |
 | `wiki.zhApi` / `wiki.enApi` | 中文/英文 Wiki 的 `api.php` 地址；`null` 表示内置默认值 |
 
 `blueprintDir`、`wiki.*` 在 sidecar 启动时读取；修改后重启 sidecar 生效。
 `config.set` 不会修改这些字段。
+`disabledTools` 由设定页实时写入，下一回合生效；文件被手工改坏时按空列表处理。
 
 ## 迁移
 

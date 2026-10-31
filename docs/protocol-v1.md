@@ -1266,6 +1266,183 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
   只显示一个分组；不会因为连到老 sidecar 而失去索引。
 - 会话文件、卡片记录和 `active.json` 都只落在 sidecar 数据目录内，不写入游戏目录。
 
+### A.14 设定页（M6）
+
+**需求**：游戏的设置窗口里注入一个 `Icarus II` 页签，页内提供「通用 / 快捷键 / 模型 /
+会话 / 工具 / 关于」六个分区。模型页复用 A.1 / A.13 已有消息；其余分区需要
+工具开关、跨存档会话索引与导出。全部是**新消息或可选字段**，v1 既有字段语义不变。
+
+#### A.14.1 工具目录与开关
+
+`ready.payload.toolCatalog[]` 增加以下**可选**字段（老 mod 忽略）：
+
+```jsonc
+{
+  "name": "game_get_overview",
+  "label": "存档概览",
+  "description": "读取当前存档、星球、时间与玩家位置的概览",
+  "debuggable": true,
+  "group": "game.read",      // game.read | game.write | kb | blueprint | script | ask | thirdparty | other
+  "risk": 0,                 // 0 = 只读；1 = 可逆写；2 = 改变存档
+  "source": "builtin",       // builtin = 内置；否则为第三方插件的 id
+  "sourceName": "内置",      // 显示名；第三方为插件名
+  "enabled": true            // false = 被玩家在设定页关掉（不会注册给模型）
+}
+```
+
+`tools.set`（mod → sidecar）：整份替换「被关闭的工具名」列表。
+
+```jsonc
+{ "v": 1, "id": "m-90", "type": "tools.set",
+  "payload": { "disabled": ["game_take_output", "run_script"] } }
+```
+
+- `disabled` 必须是字符串数组；去空、去重、单条最长 128、最多 512 条，否则
+  `error{code:"bad_request"}`。
+- 列表里允许出现当前不存在的工具名：插件暂时卸载再装回来时，开关仍然生效。
+- 过滤点只有 `buildToolDefinitions()` 一处：它同时决定
+  `ready.payload.tools`、`ready.payload.toolCatalog`、pi 会话注册的工具，
+  以及 `run_script` 的 `dsp.call` 白名单（白名单取 `host.tools()`），
+  所以脚本不能绕过开关。
+- 能力变化会让 sidecar 丢弃当前 pi 会话，下一回合重建；正在回答时延后到回合结束。
+- 关闭工具只改变「模型能不能看到/调用它」，不改变权限档位，也不改变一次性令牌。
+
+`tools.state`（sidecar → mod）：`tools.set` 的回执，同时带回新的完整目录。
+
+```jsonc
+{
+  "v": 1, "id": "s-90", "type": "tools.state", "replyTo": "m-90",
+  "payload": {
+    "ok": true,
+    "disabled": ["game_take_output", "run_script"],
+    "rebuilt": true,
+    "toolCatalog": [ /* 同 ready.payload.toolCatalog，含 enabled=false 的项 */ ]
+  }
+}
+```
+
+- `toolCatalog` 是**完整**目录：被关掉的工具也在里面，`enabled=false`。
+- `rebuilt=true` 表示当前 pi 会话已被丢弃（或将在回合结束后丢弃），下一回合生效。
+
+#### A.14.2 `conversations.index` / `conversations.indexed` — 跨存档会话索引
+
+```jsonc
+{ "v": 1, "id": "m-91", "type": "conversations.index", "payload": {} }
+```
+
+```jsonc
+{
+  "v": 1, "id": "s-91", "type": "conversations.indexed", "replyTo": "m-91",
+  "payload": {
+    "currentSaveKey": "3f2a91c4d8e05b17",
+    "saves": [
+      {
+        "saveKey": "3f2a91c4d8e05b17",
+        "saveName": "我的档",
+        "lastSeen": 1760000000000,
+        "current": true,
+        "conversations": [
+          {
+            "id": "conv_7c1e…",
+            "title": "量子芯片产线规划",
+            "updatedAt": 1760000100000,
+            "messageCount": 12,
+            "isActive": true
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+- 索引**只读**：不得调用 `ensureActiveConversation`，不写 `active.json`、
+  不改变当前活动会话与当前存档。读取失败按空列表处理。
+- `saveKey` 是 `sessions/` 下的目录名（清洗后的存档键）；`saves.json` 里没有
+  条目时 `saveName` 为 `存档 <前 8 位>`，`lastSeen` 取该目录内最新的会话时间。
+- 上限：最多返回 50 个存档、每个存档 50 个会话；`messageCount` 是该会话里
+  用户提问的条数（不是 pi entry 总数）。
+- 空会话（只有 `active.json`、还没落盘）也要出现，`messageCount=0`。
+- 老 mod 不发该消息；老 sidecar 忽略该类型。
+
+#### A.14.3 `conversations.export` / `conversations.exported` — 导出一个会话
+
+```jsonc
+{ "v": 1, "id": "m-92", "type": "conversations.export",
+  "payload": { "saveKey": "3f2a91c4d8e05b17", "conversationId": "conv_7c1e…",
+               "format": "md" } }
+```
+
+```jsonc
+{
+  "v": 1, "id": "s-92", "type": "conversations.exported", "replyTo": "m-92",
+  "payload": { "ok": true, "path": "/home/me/.local/share/icarus-ii/exports/3f2a…/标题-20261031-1642.md",
+               "bytes": 4211, "messageCount": 12 }
+}
+```
+
+- `format` 目前只支持 `"md"`；省略按 `"md"`。
+- 文件由 sidecar 写：`<dataDir>/exports/<saveKey>/<标题>-<yyyymmdd-HHmm>.md`。
+  文件名去掉 `\ / : * ? " < > |` 并按字符截断 60；同名已存在时追加 `-2`、`-3`。
+- 内容：标题、存档名与 `saveKey`、导出时间，然后逐回合「你 / 助手」正文；
+  思考与工具步骤收成引用块（工具名 + 参数截断 200 字），不导出图片字节。
+- 没有消息的会话返回 `{ "ok": false, "error": "empty" }`，不落文件。
+- 其他失败：`no_save` / `conversation_not_found` / `io_error`。
+- 导出是只读操作：不切换活动会话、不修改会话文件。
+
+#### A.14.4 `conversation.rename` / `conversation.delete` 的 `saveKey`
+
+两个消息增加**可选** `saveKey`（缺省 = 当前存档）：
+
+```jsonc
+{ "v": 1, "id": "m-93", "type": "conversation.rename",
+  "payload": { "conversationId": "conv_7c1e…", "title": "新标题", "saveKey": "3f2a…" } }
+```
+
+- 非当前存档时允许重命名/删除，但**不切换**活动会话、不修改当前存档的
+  `active.json`；删除前同样拒绝 `busy`。
+- `conversation.renamed` / `conversation.deleted` 的 `payload.saveKey` 回传实际
+  操作的存档（缺省时即当前存档），便于 UI 把结果写回正确的分组。
+- 老 mod 不带 `saveKey`，行为与 A.13 完全一致。
+
+#### A.14.5 `config.set` / `config.state` 的 `disabledTools`
+
+两个消息增加**可选** `disabledTools`（字符串数组，语义同 A.14.1）：
+
+- `config.set{disabledTools:[…]}`：整份替换；`[]` 表示全部启用。sidecar 落盘并
+  重建会话（下一回合生效）。
+- `config.state.disabledTools` / `ready.payload.config.disabledTools`：当前开关值；
+  老 sidecar 不返回时 mod 按「全部启用」显示。
+- `tools.set` 与本字段写的是同一份数据；mod 侧只用一个入口，避免两套状态。
+
+#### A.14.6 `saves.json` — 存档显示名索引
+
+`<dataDir>/saves.json`：
+
+```jsonc
+{
+  "3f2a91c4d8e05b17": { "name": "我的档", "lastSeen": 1760000000000 }
+}
+```
+
+- 只在 `save.bind` 且 `saveName` 非空时写；`lastSeen` 为收到绑定的时间。
+- 文件损坏、缺条目、`name` 为空时一律按无索引处理，不影响会话读取。
+- 这是 sidecar 自己的数据文件，不属于协议；mod 不直接读写。
+
+#### A.14.7 快捷键配置（mod 本地，不属于协议）
+
+`icarus-ii.cfg` 新增：
+
+| 键 | 默认 | 说明 |
+| --- | --- | --- |
+| `[Keys] Send` | `Return` | 发送消息；可带 `Ctrl+` / `Alt+` / `Shift+` |
+| `[Keys] Newline` | `Control+Return` | 换行；与发送、打开键两两不同 |
+| `[General] Hotkey` | `R` | 打开/关闭聊天窗；沿用旧值，允许修饰键 |
+
+- 取值是 `Ctrl+Alt+Shift+KeyCode` 形式，`KeyCode` 用 Unity 名字（`Return`、`F8`、`A`）。
+- 解析失败或三项重复时回落到默认值并记一条 warning；这些规则只在本地生效，
+  不经过协议。
+
 ## 附录 B：只读游戏工具（M2）与知识库工具（M3）
 
 M2 新增 `game.read.v1` 能力。mod 在 `hello.capabilities` 中声明该能力后，

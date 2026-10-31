@@ -39,6 +39,7 @@ import {
   DEFAULT_THINKING_LEVEL,
   isPermissionLevel,
   isThinkingLevel,
+  normalizeDisabledTools,
   type ConfigStateValue,
   type ConfigUpdatePayload,
   type ConfigView,
@@ -144,6 +145,8 @@ export interface ConfigData {
   wikiZhApi: string | null;
   /** 英文 Wiki API 端点；null = 使用内置默认值。 */
   wikiEnApi: string | null;
+  /** A.14.5：被玩家关闭的工具名；空数组 = 全部启用。 */
+  disabledTools: string[];
 }
 
 /**
@@ -288,6 +291,7 @@ export class ConfigStore {
       blueprintDir: null,
       wikiZhApi: null,
       wikiEnApi: null,
+      disabledTools: [],
     };
     this.load();
     this.ensureActive();
@@ -409,6 +413,10 @@ export class ConfigStore {
       if (typeof en === 'string' && en.trim().length > 0) this.data.wikiEnApi = en.trim();
     }
 
+    // A.14.5：工具开关。老配置没有该字段 = 全部启用；损坏的列表按空处理。
+    const disabledTools = normalizeDisabledTools(parsed['disabledTools']);
+    if (disabledTools) this.data.disabledTools = disabledTools;
+
     this.ensureActive();
 
     this.logger.debug('已加载 config.json', {
@@ -473,6 +481,7 @@ export class ConfigStore {
       blueprintDir: this.data.blueprintDir,
       wikiZhApi: this.data.wikiZhApi,
       wikiEnApi: this.data.wikiEnApi,
+      disabledTools: [...this.data.disabledTools],
     };
   }
 
@@ -581,6 +590,9 @@ export class ConfigStore {
     if (patch.permissionLevel !== undefined) {
       this.data.permissionLevel = patch.permissionLevel;
     }
+    if (patch.disabledTools !== undefined) {
+      this.data.disabledTools = [...patch.disabledTools];
+    }
 
     // 6) 切到新供应商后，若原模型不属于它，自动选它的第一个模型。
     const providerNow = this.active();
@@ -609,6 +621,7 @@ export class ConfigStore {
 
     this.logger.info('配置已更新', {
       provider: this.data.activeProvider,
+      disabledTools: this.data.disabledTools,
       model: this.data.activeModel,
       providers: Object.keys(this.data.providers),
       apiKey: maskSecret(this.active()?.apiKey),
@@ -651,6 +664,11 @@ export class ConfigStore {
     return this.view();
   }
 
+  /** A.14.5：被关闭的工具名（只读快照）。 */
+  disabledToolNames(): readonly string[] {
+    return this.data.disabledTools;
+  }
+
   /** 蓝图根目录；null 表示用系统默认目录。 */
   blueprintRoot(): string | null {
     return this.data.blueprintDir;
@@ -670,6 +688,7 @@ export class ConfigStore {
       model: this.data.activeModel,
       thinkingLevel: this.data.thinkingLevel,
       permissionLevel: this.data.permissionLevel,
+      disabledTools: [...this.data.disabledTools],
       providers,
       active: { provider: this.data.activeProvider, model: this.data.activeModel },
     };
@@ -701,6 +720,7 @@ export class ConfigStore {
       permissionLevel: this.data.permissionLevel,
       blueprintDir: this.data.blueprintDir,
       wiki: { zhApi: this.data.wikiZhApi, enApi: this.data.wikiEnApi },
+      disabledTools: [...this.data.disabledTools],
     };
   }
 
@@ -715,6 +735,7 @@ export class ConfigStore {
       permissionLevel: this.data.permissionLevel,
       blueprintDir: this.data.blueprintDir,
       wiki: { zhApi: this.data.wikiZhApi, enApi: this.data.wikiEnApi },
+      disabledTools: this.data.disabledTools,
     };
     writeFileSync(tmp, `${JSON.stringify(onDisk, null, 2)}\n`, {
       encoding: 'utf8',

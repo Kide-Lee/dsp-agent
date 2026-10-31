@@ -71,6 +71,8 @@ import {
   type HistoryStep,
   type ConversationInfo,
   type ConversationRecord,
+  type ConversationSaveGroup,
+  type ConversationIndexEntry,
   type HistoryToolStep,
   type JsonObject,
   type ModelCatalogEntry,
@@ -108,6 +110,7 @@ import { createWikiTools } from './wiki/tools.js';
 import { WikiClient } from './wiki/client.js';
 import { AliasResolver } from './wiki/aliases.js';
 import { createBlueprintTools } from './blueprint/tools.js';
+import { toolGroupOf, toolRiskOf, toolSourceOf } from './tools/registry.js';
 import { BlueprintWorkspace } from './blueprint/workspace.js';
 import {
   attachBlueprintCards,
@@ -198,6 +201,25 @@ export interface AgentRunner {
    * 老实现可以不提供。
    */
   toolCatalog?(capabilities: readonly string[], extensions?: readonly ExtensionSummary[]): ToolCatalogEntry[];
+  /**
+   * A.14.1：整份替换被关闭的工具名。返回落盘后的列表与是否重建了会话。
+   * 老实现可以不提供（设定页会显示全部启用）。
+   */
+  applyDisabledTools?(disabled: readonly string[]): { disabled: string[]; rebuilt: boolean };
+  /**
+   * A.14.2：跨存档会话索引；只读，不改变当前存档/活动会话。
+   * 老实现可以不提供。
+   */
+  conversationIndex?(): Promise<{ currentSaveKey: string | null; saves: ConversationSaveGroup[] }>;
+  /**
+   * A.14.3：把一个会话导出成 Markdown；只读会话，不改活动会话。
+   */
+  exportConversation?(
+    saveKey: string | null,
+    conversationId: string,
+  ): Promise<{ ok: boolean; path?: string; bytes?: number; messageCount?: number; error?: string }>;
+  /** A.14.6：记录存档显示名，供会话索引分组使用。 */
+  noteSaveBinding?(saveKey: string | null, saveName: string | null): void;
   /**
    * M4m：调试直调。不创建/使用 pi 会话，不调用 LLM；只执行一个只读工具。
    * 老实现可以不提供。
@@ -471,6 +493,77 @@ const HISTORY_MAX_STEPS = 60;
 /** A.13：save.bound 里最多带多少个会话 / 每个会话多少条提问索引。 */
 const MAX_CONVERSATIONS = 50;
 const MAX_CONVERSATION_RECORDS = 40;
+/** A.14.2：设定页索引最多返回多少个存档。 */
+const MAX_INDEX_SAVES = 50;
+/** A.14.3：导出文件名与工具参数截断。 */
+const EXPORT_NAME_MAX_CHARS = 60;
+const EXPORT_STEP_CLIP_CHARS = 200;
+/** 导出时间戳格式：yyyymmdd-HHmm（本地时区）。 */
+function formatExportStamp(date: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}`;
+}
+
+/** 导出文件名清洗：去掉 Windows 非法字符与换行，压缩空白，按字符截断。 */
+function sanitizeExportName(raw: string, maxChars: number): string {
+  return raw
+    .replace(/[\\/:*?"<>|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxChars)
+    .trim();
+}
+
+function clipExportText(text: string, maxChars: number): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  return oneLine.length <= maxChars ? oneLine : `${oneLine.slice(0, maxChars)}…`;
+}
+
+function formatExportTime(timestamp: number | undefined): string {
+  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp <= 0) return '';
+  const date = new Date(timestamp);
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** A.14.3：会话的 Markdown 导出；工具/思考只留引用块摘要，不写图片字节。 */
+function renderConversationMarkdown(args: {
+  title: string;
+  saveName: string;
+  saveKey: string;
+  exportedAt: Date;
+  history: readonly HistoryMessage[];
+}): string {
+  const lines: string[] = [];
+  lines.push(`# ${args.title}`, '');
+  lines.push(`- 存档：${args.saveName}\`（${args.saveKey}）\``);
+  lines.push(`- 导出：${formatExportTime(args.exportedAt.getTime())}`);
+  lines.push('', '---', '');
+  for (const message of args.history) {
+    if (message.kind === 'compaction') {
+      lines.push('## 自动压缩上下文', '', message.text, '');
+      continue;
+    }
+    const time = formatExportTime(message.timestamp);
+    const who = message.role === 'user' ? '你' : '助手';
+    lines.push(`## ${who}${time ? ` · ${time}` : ''}`, '');
+    const steps = message.steps ?? [];
+    if (steps.length > 0) {
+      lines.push('> 思考与工具步骤：');
+      for (const step of steps) {
+        if (step.kind === 'tool') {
+          const detail = step.args ? `：${clipExportText(step.args, EXPORT_STEP_CLIP_CHARS)}` : '';
+          lines.push(`> - 工具 \`${step.name}\`${detail}`);
+        } else {
+          lines.push(`> - 思考：${clipExportText(step.text, EXPORT_STEP_CLIP_CHARS)}`);
+        }
+      }
+      lines.push('');
+    }
+    lines.push(message.text.trim(), '');
+  }
+  return `${lines.join('\n')}\n`;
+}
 /** 模型总结标题的输入预算与输出长度（字符）。 */
 const CONVERSATION_TITLE_INPUT_MAX = 2000;
 const CONVERSATION_TITLE_MAX_CHARS = 24;
@@ -1215,6 +1308,8 @@ export class PiAgent implements AgentRunner {
       }
       this.teardown();
     };
+    // A.14.1：配置里的工具开关在启动时就生效，脚本白名单/预算都读同一份。
+    this.host.setDisabledTools?.(this.store.disabledToolNames?.() ?? []);
     this.kb = options.kb ?? null;
     this.wiki = new WikiClient({
       zhApi: this.store.wikiEndpoint('zh') ?? undefined,
@@ -1251,6 +1346,8 @@ export class PiAgent implements AgentRunner {
   }
 
   onConfigChanged(): void {
+    // A.14.5：config.set 也可能带 disabledTools；先同步 host 的过滤集合。
+    this.host.setDisabledTools?.(this.store.disabledToolNames?.() ?? []);
     const data = this.store.get();
 
     // 正在跑回合时不要拆会话：否则流式输出会被拦腰截断。
@@ -1664,6 +1761,219 @@ export class PiAgent implements AgentRunner {
     };
   }
 
+  // ---------------------------------------------------------------- A.14 设定页
+
+  private savesIndexPath(): string {
+    return join(this.dataDir, 'saves.json');
+  }
+
+  /** 读存档显示名索引；损坏/缺条目一律按无索引处理。 */
+  private readSavesIndex(): Record<string, { name: string; lastSeen: number }> {
+    const out: Record<string, { name: string; lastSeen: number }> = Object.create(null) as Record<
+      string,
+      { name: string; lastSeen: number }
+    >;
+    try {
+      const parsed = JSON.parse(readFileSync(this.savesIndexPath(), 'utf8')) as unknown;
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return out;
+      for (const [key, raw] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof raw !== 'object' || raw === null) continue;
+        const row = raw as Record<string, unknown>;
+        if (typeof row['name'] !== 'string' || row['name'].trim().length === 0) continue;
+        const lastSeen = typeof row['lastSeen'] === 'number' && Number.isFinite(row['lastSeen'])
+          ? row['lastSeen']
+          : 0;
+        out[key] = { name: row['name'].trim(), lastSeen };
+      }
+    } catch {
+      // 不存在或损坏：无索引即可，不影响读取会话。
+    }
+    return out;
+  }
+
+  /** A.14.6：只在 save.bind 且有显示名时写；读-改-写，保留其它存档。 */
+  noteSaveBinding(saveKey: string | null, saveName: string | null): void {
+    if (!saveKey || !saveName || saveName.trim().length === 0) return;
+    const dirKey = this.sessionDirNameFor(saveKey);
+    const index = this.readSavesIndex();
+    index[dirKey] = { name: saveName.trim().slice(0, 64), lastSeen: Date.now() };
+    try {
+      mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
+      const path = this.savesIndexPath();
+      const tmp = `${path}.tmp-${process.pid}`;
+      writeFileSync(tmp, `${JSON.stringify(index, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+      renameSync(tmp, path);
+    } catch (err) {
+      this.logger.warn('写入 saves.json 失败', errorFields(err));
+    }
+  }
+
+  /** 只读 active.json；索引不能用 ensureActiveConversation（它会写盘）。 */
+  private readActiveConversationRaw(sessionDir: string): { id: string | null; title: string | null } {
+    try {
+      const parsed = JSON.parse(readFileSync(join(sessionDir, 'active.json'), 'utf8')) as Record<
+        string,
+        unknown
+      >;
+      const id = typeof parsed['activeConversationId'] === 'string'
+        ? parsed['activeConversationId']
+        : null;
+      const title = typeof parsed['title'] === 'string' && parsed['title'].trim().length > 0
+        ? parsed['title'].trim()
+        : null;
+      return { id, title };
+    } catch {
+      return { id: null, title: null };
+    }
+  }
+
+  /**
+   * A.14.2：扫描 `sessions/` 下的全部存档目录，返回只读索引。
+   * 不调用 ensureActiveConversation，不写 active.json，不切换当前状态。
+   */
+  async conversationIndex(): Promise<{
+    currentSaveKey: string | null;
+    saves: ConversationSaveGroup[];
+  }> {
+    const pi = await this.loadSdk();
+    const savesIndex = this.readSavesIndex();
+    const root = join(this.dataDir, 'sessions');
+    const currentDir = this.saveKey ? this.sessionDirNameFor(this.saveKey) : null;
+    const out: ConversationSaveGroup[] = [];
+
+    let dirs: string[] = [];
+    try {
+      dirs = readdirSync(root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+    } catch {
+      return { currentSaveKey: this.saveKey, saves: [] };
+    }
+
+    // 最近活动的存档排前面；按目录 mtime 粗排，避免每个都先读一遍。
+    const ranked = dirs
+      .filter((name) => name !== 'menu')
+      .map((name) => {
+        try {
+          return { name, mtime: statSync(join(root, name)).mtimeMs };
+        } catch {
+          return { name, mtime: 0 };
+        }
+      })
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, MAX_INDEX_SAVES);
+
+    for (const { name: dirKey } of ranked) {
+      const sessionDir = join(root, dirKey);
+      const active = this.readActiveConversationRaw(sessionDir);
+      let list: Awaited<ReturnType<typeof pi.SessionManager.list>> = [];
+      try {
+        list = await pi.SessionManager.list(this.dataDir, sessionDir);
+      } catch (err) {
+        this.logger.warn('索引会话失败，按空存档处理', { saveKey: dirKey, ...errorFields(err) });
+      }
+
+      const conversations: ConversationIndexEntry[] = [];
+      const seen = new Set<string>();
+      let newest = 0;
+      for (const info of list) {
+        if (conversations.length >= MAX_CONVERSATIONS) break;
+        const built = this.conversationInfoFrom(pi, dirKey, info);
+        conversations.push({
+          id: built.id,
+          title: built.title,
+          updatedAt: built.updatedAt,
+          messageCount: built.recordCount,
+          isActive: built.id === active.id,
+        });
+        seen.add(built.id);
+        newest = Math.max(newest, built.updatedAt);
+      }
+      if (active.id && !seen.has(active.id)) {
+        conversations.unshift({
+          id: active.id,
+          title: active.title ?? '新会话',
+          updatedAt: Date.now(),
+          messageCount: 0,
+          isActive: true,
+        });
+        newest = Math.max(newest, Date.now());
+      }
+      conversations.sort((a, b) => b.updatedAt - a.updatedAt);
+
+      const known = savesIndex[dirKey];
+      out.push({
+        saveKey: dirKey,
+        saveName: known?.name ?? `存档 ${dirKey.slice(0, 8)}`,
+        lastSeen: known?.lastSeen ?? newest,
+        current: dirKey === currentDir,
+        conversations,
+      });
+    }
+
+    out.sort((a, b) => b.lastSeen - a.lastSeen);
+    return { currentSaveKey: this.saveKey, saves: out };
+  }
+
+  /**
+   * A.14.3：导出单个会话为 Markdown。只读会话文件，不改变活动会话。
+   */
+  async exportConversation(
+    saveKey: string | null,
+    conversationId: string,
+  ): Promise<{ ok: boolean; path?: string; bytes?: number; messageCount?: number; error?: string }> {
+    if (!saveKey) return { ok: false, error: 'no_save' };
+    if (!conversationId) return { ok: false, error: 'conversation_not_found' };
+    const pi = await this.loadSdk();
+    const sessionDir = this.conversationSessionDir(saveKey);
+    if (!pi.SessionManager.findById(this.dataDir, conversationId, sessionDir)) {
+      return { ok: false, error: 'conversation_not_found' };
+    }
+    const { history, name } = this.readConversation(pi, saveKey, conversationId);
+    if (history.length === 0) return { ok: false, error: 'empty' };
+
+    const saveName =
+      this.readSavesIndex()[this.sessionDirNameFor(saveKey)]?.name ??
+      `存档 ${this.sessionDirNameFor(saveKey).slice(0, 8)}`;
+    const firstUser = history.find((message) => message.role === 'user' && message.text.trim());
+    const title = (name ?? '').trim() || firstUser?.text.trim() || '会话';
+    const targetDir = join(this.dataDir, 'exports', this.sessionDirNameFor(saveKey));
+    try {
+      mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+    } catch (err) {
+      this.logger.warn('创建导出目录失败', errorFields(err));
+      return { ok: false, error: 'io_error' };
+    }
+
+    const stamp = formatExportStamp(new Date());
+    const base = sanitizeExportName(title, 60) || 'conversation';
+    let path = join(targetDir, `${base}-${stamp}.md`);
+    for (let index = 2; existsSync(path) && index < 1000; index += 1) {
+      path = join(targetDir, `${base}-${stamp}-${index}.md`);
+    }
+
+    const markdown = renderConversationMarkdown({
+      title: title.slice(0, 120),
+      saveName,
+      saveKey,
+      exportedAt: new Date(),
+      history,
+    });
+    try {
+      writeFileSync(path, markdown, { encoding: 'utf8', mode: 0o600 });
+    } catch (err) {
+      this.logger.warn('导出会话失败', { saveKey, conversationId, ...errorFields(err) });
+      return { ok: false, error: 'io_error' };
+    }
+    this.logger.info('会话已导出', { saveKey, conversationId, path, bytes: Buffer.byteLength(markdown) });
+    return {
+      ok: true,
+      path,
+      bytes: Buffer.byteLength(markdown, 'utf8'),
+      messageCount: history.length,
+    };
+  }
+
   async getConversations(saveKey: string | null): Promise<ConversationInfo[]> {
     if (!saveKey) return [];
     const pi = await this.loadSdk();
@@ -1789,21 +2099,25 @@ export class PiAgent implements AgentRunner {
     if (!title) return { ok: false, error: 'invalid_title' };
 
     const pi = await this.loadSdk();
-    const activeId = await this.ensureActiveConversation(saveKey, pi);
+    // A.14.4：非当前存档只读解析活动会话，不能把别人的存档切成当前会话。
+    const isCurrent = saveKey === this.saveKey;
+    const activeId = isCurrent
+      ? await this.ensureActiveConversation(saveKey, pi)
+      : this.readActiveConversationId(saveKey);
     const sessionDir = this.conversationSessionDir(saveKey);
     const file = pi.SessionManager.findById(this.dataDir, conversationId, sessionDir);
     if (!file && conversationId !== activeId) return { ok: false, error: 'conversation_not_found' };
 
     // 空 draft 还没有 session 文件：标题先存在 active.json，等第一次提问时再写
     // 进 session_info（pi 在没有 user/assistant 消息前不会落盘）。
-    if (!file && conversationId === activeId && this.activeConversationDraft) {
-      this.activeConversationDraftTitle = title;
+    if (!file && conversationId === activeId && (isCurrent ? this.activeConversationDraft : true)) {
+      if (isCurrent) this.activeConversationDraftTitle = title;
       this.writeActiveConversationId(saveKey, conversationId, title);
       return { ok: true, title };
     }
 
     // 活动会话还活着：直接走 session manager，保证 leaf/parent 一致。
-    const live = this.session;
+    const live = isCurrent ? this.session : null;
     if (live && live.sessionId === conversationId) {
       try {
         live.setSessionName(title);
@@ -1839,7 +2153,10 @@ export class PiAgent implements AgentRunner {
     if (!saveKey) return { ok: false, error: 'no_save' };
     if (this.active) return { ok: false, error: 'busy' };
     const pi = await this.loadSdk();
-    const activeId = await this.ensureActiveConversation(saveKey, pi);
+    const isCurrent = saveKey === this.saveKey;
+    const activeId = isCurrent
+      ? await this.ensureActiveConversation(saveKey, pi)
+      : this.readActiveConversationId(saveKey);
     const sessionDir = this.conversationSessionDir(saveKey);
     const file = pi.SessionManager.findById(this.dataDir, conversationId, sessionDir);
     const isActive = conversationId === activeId;
@@ -1856,6 +2173,19 @@ export class PiAgent implements AgentRunner {
 
     if (!isActive) {
       return { ok: true, activeConversationId: activeId };
+    }
+
+    // 非当前存档：只改那个存档的 active.json，不动当前会话/内存状态。
+    if (!isCurrent) {
+      let list: Awaited<ReturnType<typeof pi.SessionManager.list>> = [];
+      try {
+        list = await pi.SessionManager.list(this.dataDir, sessionDir);
+      } catch (err) {
+        this.logger.warn('删除会话后列出剩余会话失败', { saveKey, ...errorFields(err) });
+      }
+      const next = list[0]?.id ?? this.newConversationId();
+      this.writeActiveConversationId(saveKey, next);
+      return { ok: true, activeConversationId: next };
     }
 
     // 删掉的是活动会话：优先切到最近修改的剩余会话；没有就新建空 draft。
@@ -3035,8 +3365,15 @@ export class PiAgent implements AgentRunner {
    * ensureSession 与 ready.payload.toolCatalog 共用，避免两处工具集漂移。
    */
   private buildToolDefinitions(): ToolDefinition[] {
+    return this.buildAllToolDefinitions().filter(
+      (tool) => !this.host.isToolDisabled(tool.name),
+    );
+  }
+
+  /** A.14.1：完整工具集（含被关掉的工具），设定页目录用。 */
+  private buildAllToolDefinitions(): ToolDefinition[] {
     return [
-      ...this.host.tools(),
+      ...this.host.allTools(),
       ...(this.host.has(CAPABILITY_UI_ASK) ? [createAskTool(this.host)] : []),
       ...(this.kb ? createKbTools(this.kb) : []),
       ...createWikiTools(this.wiki),
@@ -3067,12 +3404,33 @@ export class PiAgent implements AgentRunner {
   ): ToolCatalogEntry[] {
     this.host.setCapabilities(capabilities);
     this.host.setExtensions(extensions);
-    return this.buildToolDefinitions().map((tool) => ({
-      name: tool.name,
-      label: tool.label || tool.name,
-      description: clipText(tool.description ?? '', 160),
-      debuggable: isDebugToolAllowed(tool.name),
-    }));
+    const disabled = new Set(this.store.disabledToolNames?.() ?? []);
+    return this.buildAllToolDefinitions().map((tool) => {
+      const source = toolSourceOf(tool.name, extensions);
+      return {
+        name: tool.name,
+        label: tool.label || tool.name,
+        description: clipText(tool.description ?? '', 160),
+        debuggable: isDebugToolAllowed(tool.name),
+        group: toolGroupOf(tool.name),
+        risk: toolRiskOf(tool.name),
+        source: source.source,
+        sourceName: source.sourceName,
+        enabled: !disabled.has(tool.name),
+      };
+    });
+  }
+
+  /** A.14.1：设定页保存工具开关。只有真正变化时才会重建会话。 */
+  applyDisabledTools(disabled: readonly string[]): { disabled: string[]; rebuilt: boolean } {
+    const view = this.store.update({ disabledTools: [...disabled] });
+    const next = view.disabledTools ?? [];
+    const changed = this.host.setDisabledTools?.(next) ?? false;
+    this.logger.info('工具开关已更新', {
+      disabled: next,
+      rebuilt: changed,
+    });
+    return { disabled: [...next], rebuilt: changed };
   }
 
   /**

@@ -11,6 +11,7 @@ using IcarusII.Config;
 using IcarusII.Game;
 using IcarusII.Game.Tools;
 using IcarusII.I18n;
+using IcarusII.Input;
 
 namespace IcarusII.UI
 {
@@ -700,6 +701,11 @@ namespace IcarusII.UI
 
         /// <summary>多行输入框按回车后待提交（见 `OnInputNewLine`）。</summary>
         private bool _submitPending;
+        /// <summary>A.14.7：发送/换行的当前绑定；设置页改键后由 ApplyKeyBindings 更新。</summary>
+        private KeyChord _sendChord;
+        private KeyChord _newlineChord;
+        /// <summary>装 onValidateInput 之前游戏/输入框已有的校验器，必须先链它。</summary>
+        private InputField.OnValidateInput _previousInputValidator;
 
         /// <summary>本次开窗是否已经补过一次材质重绑（见 RebindInputTextMaterial）。</summary>
         private bool _textMaterialRebound;
@@ -992,6 +998,8 @@ namespace IcarusII.UI
             _fontSize = Mathf.RoundToInt(baseSize * Mathf.Max(0.5f, config.FontScale));
             _maxLines = Mathf.Max(50, config.MaxTranscriptLines);
             _autoFocusInput = config.AutoFocusInput;
+            _sendChord = config.SendChord;
+            _newlineChord = config.NewlineChord;
             _thinkingLevel = PluginConfig.IsValidThinkingLevel(config.ThinkingLevel)
                 ? config.ThinkingLevel.ToLowerInvariant()
                 : Protocol.ThinkingHigh;
@@ -1335,6 +1343,7 @@ namespace IcarusII.UI
             // 抄自信标窗待办框的输入框是**多行**的：回车不会走 onEndEdit，
             // 而是走游戏改写版 InputField 的 OnNewLine，所以这里单独接一发。
             _input.OnNewLine += OnInputNewLine;
+            InstallInputKeyBindings();
             _panel.gameObject.AddComponent<ClickToFocus>().Target = this;
 
             // 文案走本地化。标题：prefab 里已经写了字的就**尊重它**（例如手工外框里写了
@@ -7001,6 +7010,9 @@ namespace IcarusII.UI
             // 图标表可能比窗口/消息晚就绪（主菜单 → 存档加载）；低频补齐即可。
             if (IsOpen && ++_iconMapTick % 30 == 0) EnsureIconMappings();
 
+            // A.14.7：非回车键的发送/换行绑定在这里轮询；回车仍走 OnInputNewLine。
+            if (IsOpen) PollKeyBindings();
+
             // 多行输入框里按了回车：在 Tick 里落地提交（见 OnInputNewLine）
             if (_submitPending)
             {
@@ -7103,44 +7115,58 @@ namespace IcarusII.UI
         /// 多行输入框里按下回车。
         ///
         /// 多行模式下 UGUI 不会走 onEndEdit，而是插一个换行、再抛 `OnNewLine`（游戏改写版的行为）。
-        /// 现在的约定是：
+        /// 现在按配置判定（协议附录 A.14.7）：
         ///
-        ///   * **单独回车 = 发送**：把刚插进去的换行 trim 掉，清空并失焦
-        ///   * Ctrl（macOS 上还有 Cmd）+ 回车 = 换行（保留换行，走下面的复选框续写逻辑）
+        ///   * 组合等于「发送」→ 置待提交标志，由本帧 Tick 清空并失焦
+        ///   * 组合等于「换行」→ 保留换行，并复用原生待办框的复选框续写
+        ///   * 其它组合 → 不补复选框，按输入框原生行为换行
         ///
+        /// 工具菜单开着时回车始终是「选中当前项」，不参与发送/换行。
         /// 事件是在按键处理中间同步抛出来的，此刻直接改 text 会重入 InputField，
-        /// 所以只置标志，真正提交放到本帧的 `Tick()` 里做。
+        /// 所以发送只置标志，真正提交放到本帧的 `Tick()` 里做。
         /// </summary>
         private void OnInputNewLine(string text, int newlineIndex)
         {
-            if (!IsNewlineModifierHeld())
+            if (_toolMenuOpen)
             {
-                // 工具列表开着时 Enter = 选中当前项，而不是发送。
-                if (_toolMenuOpen)
+                var all = _input != null ? (_input.text ?? text ?? string.Empty) : (text ?? string.Empty);
+                if (newlineIndex >= 0 && newlineIndex < all.Length)
                 {
-                    var all = _input != null ? (_input.text ?? text ?? string.Empty) : (text ?? string.Empty);
-                    if (newlineIndex >= 0 && newlineIndex < all.Length)
-                    {
-                        all = all.Remove(newlineIndex, 1);
-                        SetInputText(all, Mathf.Min(newlineIndex, all.Length));
-                    }
-                    // 没有匹配项（例如手输了不存在的 /foo）就按普通消息发送，不要把玩家卡住。
-                    if (_toolVisible.Count == 0)
-                    {
-                        HideToolMenu();
-                        _submitPending = true;
-                        return;
-                    }
-                    SelectHighlightedTool();
+                    all = all.Remove(newlineIndex, 1);
+                    SetInputText(all, Mathf.Min(newlineIndex, all.Length));
+                }
+                // 没有匹配项（例如手输了不存在的 /foo）就按普通消息发送，不要把玩家卡住。
+                if (_toolVisible.Count == 0)
+                {
+                    HideToolMenu();
+                    _submitPending = true;
                     return;
                 }
-
-                _submitPending = true;
+                SelectHighlightedTool();
                 return;
             }
 
-            // 原生 UISmartInputField 的行为：上一行以 [-] / [+] 开头时，新行自动补一个复选框，
-            // 这样连续记待办不用每行都点一次按钮。
+            // 组字过程中按到绑定键不能把半成品发出去，也不该把组合键当换行。
+            if (_input != null && !string.IsNullOrEmpty(_input.compositionString)) return;
+
+            var chord = KeyChordInput.CurrentChord(KeyCode.Return);
+            if (chord.Equals(_newlineChord))
+            {
+                ApplyCheckboxContinuation(newlineIndex);
+                return;
+            }
+            if (chord.Equals(_sendChord))
+            {
+                _submitPending = true;
+            }
+        }
+
+        /// <summary>
+        /// 原生 UISmartInputField 的行为：上一行以 [-] / [+] 开头时，新行自动补一个复选框，
+        /// 这样连续记待办不用每行都点一次按钮。
+        /// </summary>
+        private void ApplyCheckboxContinuation(int newlineIndex)
+        {
             try
             {
                 if (_input == null || newlineIndex <= 0) return;
@@ -7165,14 +7191,92 @@ namespace IcarusII.UI
             }
         }
 
-        /// <summary>Ctrl（macOS 上还认 Cmd）是否按着——按着 = 换行，不按 = 发送。</summary>
-        private static bool IsNewlineModifierHeld()
+        /// <summary>
+        /// A.14.7：把发送/换行绑定到非回车键时，在 Tick 里轮询。
+        /// 回车仍走 OnInputNewLine；这里跳过回车，避免同一帧双触发。
+        /// </summary>
+        private void PollKeyBindings()
         {
-            // 注意：在本命名空间里 `Input` 会被解析成 IcarusII.Input 命名空间，必须限定 UnityEngine。
-            return UnityEngine.Input.GetKey(KeyCode.LeftControl)
-                || UnityEngine.Input.GetKey(KeyCode.RightControl)
-                || UnityEngine.Input.GetKey(KeyCode.LeftCommand)
-                || UnityEngine.Input.GetKey(KeyCode.RightCommand);
+            if (_input == null || !_input.isFocused || AskShowing) return;
+            if (TitleEditing || _toolMenuOpen) return;
+            // 组字中不判定：拼音打到一半按到绑定键会把半成品发出去。
+            if (!string.IsNullOrEmpty(_input.compositionString)) return;
+
+            if (TryPollChord(_sendChord, KeyCode.Return))
+            {
+                _submitPending = true;
+                return;
+            }
+            if (TryPollChord(_newlineChord, KeyCode.Return))
+            {
+                InsertNewlineAtCaret();
+            }
+        }
+
+        private static bool TryPollChord(KeyChord chord, KeyCode excludedKey)
+        {
+            if (chord.IsNone) return false;
+            if (!KeyChordInput.TryResolve(chord, out var key)) return false;
+            if (key == excludedKey) return false;
+            return KeyChordInput.IsPressedThisFrame(chord);
+        }
+
+        /// <summary>换行绑定到非回车键时，按光标位置插入换行，并复用复选框续写。</summary>
+        private void InsertNewlineAtCaret()
+        {
+            try
+            {
+                RestoreInputSelection();
+                _input.InsertGeneralString("\n");
+                var newlineIndex = Mathf.Clamp(_input.caretPosition - 1, 0, Mathf.Max(0, (_input.text?.Length ?? 1) - 1));
+                ApplyCheckboxContinuation(newlineIndex);
+                _input.ForceLabelUpdate();
+                RestoreInputFocus();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"按绑定键换行失败：{ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 可打印字符被绑成发送/换行时，必须把它从输入里拦掉：
+        /// 否则「按 S 发送」会先把 s 打进输入框再发送。
+        ///
+        /// 判定依据是本帧的 GetKeyDown 状态（与事件先后无关）；粘贴/IME 提交
+        /// 不会经过该键的 KeyDown，因此不会被误删。
+        /// </summary>
+        private char ValidateInputChar(string current, int charIndex, char addedChar)
+        {
+            var previous = _previousInputValidator;
+            if (previous is not null)
+            {
+                var chained = previous(current, charIndex, addedChar);
+                if (chained == '\0' || chained != addedChar) return chained;
+            }
+
+            if (_input is not null && !string.IsNullOrEmpty(_input.compositionString)) return addedChar;
+            if (_sendChord.TryGetTypedChar(out var sendChar) && sendChar == addedChar
+                && KeyChordInput.IsPressedThisFrame(_sendChord))
+                return '\0';
+            if (_newlineChord.TryGetTypedChar(out var newlineChar) && newlineChar == addedChar
+                && KeyChordInput.IsPressedThisFrame(_newlineChord))
+                return '\0';
+            return addedChar;
+        }
+
+        private void InstallInputKeyBindings()
+        {
+            if (_input == null) return;
+            _previousInputValidator = _input.onValidateInput;
+            _input.onValidateInput = ValidateInputChar;
+        }
+
+        /// <summary>A.14.7：设置页改键后同步到已创建的窗口。</summary>
+        public void ApplyKeyBindings(KeyChord send, KeyChord newline)
+        {
+            _sendChord = send;
+            _newlineChord = newline;
         }
 
         private void SubmitPendingInput()

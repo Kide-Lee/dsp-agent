@@ -50,6 +50,9 @@ namespace IcarusII.Tests
             Section("富文本输出");
             RichTextTests.Run();
 
+            Section("设定页（A.14）");
+            SettingsProtocolTests.Run();
+
             Console.WriteLine();
             if (_failures == 0)
             {

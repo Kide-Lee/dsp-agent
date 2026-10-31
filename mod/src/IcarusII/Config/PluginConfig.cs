@@ -1,6 +1,7 @@
 using System;
 using BepInEx.Configuration;
 using UnityEngine;
+using IcarusII.Input;
 
 namespace IcarusII.Config
 {
@@ -10,8 +11,23 @@ namespace IcarusII.Config
     /// </summary>
     internal sealed class PluginConfig
     {
-        // [General]
-        public KeyCode Hotkey { get; private set; }
+        // [General] / [Keys]
+        /// <summary>打开/关闭聊天窗的组合键（A.14.7，默认 R）。</summary>
+        public KeyChord HotkeyChord { get; private set; }
+        /// <summary>配置里的按键动作标识；设置页与冲突提示共用。</summary>
+        public const string KeyActionHotkey = "hotkey";
+        public const string KeyActionSend = "send";
+        public const string KeyActionNewline = "newline";
+
+        public static readonly KeyChord DefaultHotkey = KeyChord.Of("R");
+        public static readonly KeyChord DefaultSend = KeyChord.Of("Return");
+        public static readonly KeyChord DefaultNewline = KeyChord.Of("Return", ctrl: true);
+
+        /// <summary>发送消息的组合键（A.14.7，默认 Enter）。</summary>
+        public KeyChord SendChord { get; private set; }
+        /// <summary>换行的组合键（A.14.7，默认 Ctrl+Enter）。</summary>
+        public KeyChord NewlineChord { get; private set; }
+
         public bool HotkeyRequireNoBuildTool { get; private set; }
         public string Language { get; private set; }
         public bool Streaming { get; private set; }
@@ -61,6 +77,9 @@ namespace IcarusII.Config
         private readonly ConfigFile _cfg;
         private readonly ConfigEntry<string> _thinkingLevelEntry;
         private readonly ConfigEntry<string> _permissionLevelEntry;
+        private readonly ConfigEntry<string> _hotkeyEntry;
+        private readonly ConfigEntry<string> _sendChordEntry;
+        private readonly ConfigEntry<string> _newlineChordEntry;
 
         /// <summary>pi 的 ThinkingLevel 取值（DeepSeek Flash 映射 low/high/max）。</summary>
         private static readonly string[] ThinkingLevels =
@@ -126,10 +145,21 @@ namespace IcarusII.Config
         internal PluginConfig(ConfigFile cfg)
         {
             _cfg = cfg;
-            var general = cfg.Bind("General", "Hotkey", "R",
-                "打开/关闭聊天窗口的按键（Unity KeyCode 名，如 R / F8）。\n" +
-                "注意：建造模式下 R 属于游戏（旋转建筑），本 mod 会自动避让。");
-            Hotkey = ParseKey(general.Value, KeyCode.R);
+            _hotkeyEntry = cfg.Bind("General", "Hotkey", "R",
+                "打开/关闭聊天窗口的按键；可带修饰键（Ctrl+Alt+Shift+KeyCode）。\n" +
+                "例子：R / F8 / Ctrl+R。注意：建造模式下 R 属于游戏（旋转建筑），本 mod 会自动避让。");
+            HotkeyChord = ParseChord(_hotkeyEntry, DefaultHotkey, "General.Hotkey");
+
+            _sendChordEntry = cfg.Bind("Keys", "Send", "Return",
+                "发送消息的按键；可带修饰键（Ctrl+Alt+Shift+KeyCode）。\n" +
+                "默认 Return = Enter。与换行键、打开键不能重复。");
+            SendChord = ParseChord(_sendChordEntry, DefaultSend, "Keys.Send");
+
+            _newlineChordEntry = cfg.Bind("Keys", "Newline", "Control+Return",
+                "换行的按键；可带修饰键。默认 Control+Return = Ctrl+Enter。\n" +
+                "与发送键、打开键不能重复。");
+            NewlineChord = ParseChord(_newlineChordEntry, DefaultNewline, "Keys.Newline");
+            EnsureDistinctKeyBindings();
 
             HotkeyRequireNoBuildTool = cfg.Bind("General", "HotkeyRequireNoBuildTool", true,
                 "true = 建造/拆除/升级/蓝图模式下不让出热键（把 R 留给游戏）。").Value;
@@ -197,23 +227,103 @@ namespace IcarusII.Config
                 : "limited";
         }
 
-        /// <summary>把配置里的字符串解析成 KeyCode；失败时回退并交由调用方记录。</summary>
-        internal static KeyCode ParseKey(string raw, KeyCode fallback)
+        /// <summary>读取一个 chord 配置；无法解析时回落到默认并记一条 warning。</summary>
+        private static KeyChord ParseChord(ConfigEntry<string> entry, KeyChord fallback, string name)
         {
-            if (string.IsNullOrWhiteSpace(raw)) return fallback;
-            var trimmed = raw.Trim();
-            if (Enum.TryParse(trimmed, true, out KeyCode parsed) && parsed != KeyCode.None)
-                return parsed;
-
-            // 常见别名容忍
-            switch (trimmed.ToUpperInvariant())
-            {
-                case "ESC": return KeyCode.Escape;
-                case "ENTER": return KeyCode.Return;
-                case "SPACE": return KeyCode.Space;
-                case "TAB": return KeyCode.Tab;
-            }
+            var raw = entry != null ? entry.Value : null;
+            if (KeyChord.TryParse(raw, out var chord)) return chord;
+            Plugin.Log?.LogWarning($"[配置] {name} 无法解析为按键组合（{raw}），已回落到 {fallback.Format()}");
             return fallback;
         }
+
+        /// <summary>三个绑定两两不同；重复时全部回落默认并记录一次。</summary>
+        private void EnsureDistinctKeyBindings()
+        {
+            if (!HotkeyChord.Equals(SendChord) && !HotkeyChord.Equals(NewlineChord) &&
+                !SendChord.Equals(NewlineChord)) return;
+
+            HotkeyChord = DefaultHotkey;
+            SendChord = DefaultSend;
+            NewlineChord = DefaultNewline;
+            Plugin.Log?.LogWarning("[配置] 打开/发送/换行存在重复绑定，三项已回落到默认值");
+        }
+
+        /// <summary>某个动作换成新组合会不会与另外两项冲突；返回冲突动作 id，不冲突返回 null。</summary>
+        public string KeyConflict(string action, KeyChord chord)
+        {
+            if (action != KeyActionHotkey && chord.Equals(HotkeyChord)) return KeyActionHotkey;
+            if (action != KeyActionSend && chord.Equals(SendChord)) return KeyActionSend;
+            if (action != KeyActionNewline && chord.Equals(NewlineChord)) return KeyActionNewline;
+            return null;
+        }
+
+        /// <summary>恢复三项默认绑定；默认值本身两两不同，不需要逐个校验。</summary>
+        public void ResetKeyBindings()
+        {
+            HotkeyChord = DefaultHotkey;
+            SendChord = DefaultSend;
+            NewlineChord = DefaultNewline;
+            if (_hotkeyEntry is not null) _hotkeyEntry.Value = HotkeyChord.Format();
+            if (_sendChordEntry is not null) _sendChordEntry.Value = SendChord.Format();
+            if (_newlineChordEntry is not null) _newlineChordEntry.Value = NewlineChord.Format();
+            try
+            {
+                _cfg?.Save();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log?.LogWarning($"保存按键设置失败：{ex.Message}");
+            }
+        }
+
+        /// <summary>设置页保存一个按键绑定；重复时拒绝，返回 false。</summary>
+        public bool SetKeyBinding(string action, KeyChord chord)
+        {
+            if (chord.IsNone) return false;
+            if (KeyConflict(action, chord) is not null) return false;
+
+            var changed = false;
+            switch (action)
+            {
+                case KeyActionHotkey:
+                    if (_hotkeyEntry is not null) _hotkeyEntry.Value = chord.Format();
+                    if (!chord.Equals(HotkeyChord))
+                    {
+                        HotkeyChord = chord;
+                        changed = true;
+                    }
+                    break;
+                case KeyActionSend:
+                    if (_sendChordEntry is not null) _sendChordEntry.Value = chord.Format();
+                    if (!chord.Equals(SendChord))
+                    {
+                        SendChord = chord;
+                        changed = true;
+                    }
+                    break;
+                case KeyActionNewline:
+                    if (_newlineChordEntry is not null) _newlineChordEntry.Value = chord.Format();
+                    if (!chord.Equals(NewlineChord))
+                    {
+                        NewlineChord = chord;
+                        changed = true;
+                    }
+                    break;
+                default:
+                    return false;
+            }
+
+            if (!changed) return true;
+            try
+            {
+                _cfg?.Save();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log?.LogWarning($"保存按键设置失败：{ex.Message}");
+            }
+            return true;
+        }
+
     }
 }

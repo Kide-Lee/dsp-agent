@@ -182,7 +182,7 @@ namespace IcarusII
 
             Log.LogInfo($"{PluginName} {PluginVersion} 已加载");
             Log.LogInfo($"插件目录：{_pluginDir}");
-            Log.LogInfo($"热键：{_config.Hotkey}（建造模式让位 = {_config.HotkeyRequireNoBuildTool}）");
+            Log.LogInfo($"热键：{_config.HotkeyChord.Format()}（建造模式让位 = {_config.HotkeyRequireNoBuildTool}）");
             Log.LogInfo($"sidecar：{_config.LaunchMode} @ {_config.SidecarHost}:{_config.SidecarPort}");
             Log.LogInfo($"数据目录：{_launcher.DataDir}");
 
@@ -193,7 +193,9 @@ namespace IcarusII
 
         private void Update()
         {
-            // 设置窗口打开时自动补「模型」页签（不依赖从哪个入口进入设置）
+            // 设置窗口打开时自动补「模型」页签（不依赖从哪个入口进入设置）；
+            // Tick 负责每帧的快捷键捕获与异步回执，Watch 只做 30 帧一次的安装检查。
+            UI.ModelSettingsTab.Tick();
             UI.ModelSettingsTab.Watch();
 
             if (_initFailed) return;
@@ -237,7 +239,8 @@ namespace IcarusII
 
             // 右下角 Game Menu（截图键正上方）的聊天入口。
             // 菜单/UIRoot 重建后自动补回；已存在时这里只做两次引用比较。
-            AgentMenuButton.Ensure(_hotkey.Key, OpenChatFromMenu);
+            IcarusII.Input.KeyChordInput.TryResolve(_hotkey.Key, out var hotkeyCode);
+            AgentMenuButton.Ensure(hotkeyCode, OpenChatFromMenu);
 
             if (_uiInitialized && !_markersSanitized && GameRefs.IsInGame)
             {
@@ -352,8 +355,11 @@ namespace IcarusII
                         _chat.SetStatus(Strings.Get("status.ready"), OkColor);
                         // 新连接上服务端对存档一无所知，必须重新绑定
                         _saveSynced = false;
+                        UI.SettingsPageView.ServerVersion = ServerVersion;
                         break;
                     case ConnectionState.Backoff:
+                        ServerVersion = null;
+                        UI.SettingsPageView.ServerVersion = null;
                         _tools.CancelAll("连接退避");
                         CancelPendingAsk("连接退避", Protocol.CodeToolUnavailable);
                         CancelPendingConfirm("连接退避");
@@ -363,6 +369,8 @@ namespace IcarusII
                         _chat.SetStatus(Strings.Get("status.backoff") + " " + detail, WarnColor);
                         break;
                     default:
+                        ServerVersion = null;
+                        UI.SettingsPageView.ServerVersion = null;
                         _tools.CancelAll("连接断开");
                         CancelPendingAsk("连接断开", Protocol.CodeToolUnavailable);
                         CancelPendingConfirm("连接断开");
@@ -394,6 +402,8 @@ namespace IcarusII
                 {
                     var model = payload["agent"]["model"].AsString("?");
                     var session = payload["sessionId"].AsString("?");
+                    ServerVersion = payload["serverVersion"].AsString(null);
+                    UI.SettingsPageView.ServerVersion = ServerVersion;
                     ApplyToolCatalog(payload);
                     _chat.AppendSystem(Strings.Get("plugin.connected", Short(session), model));
                     break;
@@ -1260,11 +1270,53 @@ namespace IcarusII
         /// 玩家在聊天窗里换了权限档位。本地 cfg 先落盘（断线也能记住），
         /// 再尽力发给 sidecar；tool_call / confirm_request 的门禁都读本地值。
         /// </summary>
+        /// <summary>sidecar 的 serverVersion（ready 后写入）；设置页通用页用。</summary>
+        public string ServerVersion { get; private set; }
+
         /// <summary>sidecar 数据目录；设置页「复制路径」用。</summary>
         public string DataDir => _launcher != null ? _launcher.DataDir : SidecarLauncher.DefaultDataDir();
 
         /// <summary>当前权限档位；设置页打开时用它点亮卡片。</summary>
         public string CurrentPermissionLevel => _chat != null ? _chat.PermissionLevel : _config?.PermissionLevel;
+
+        /// <summary>A.14.7：设置页读取某个按键动作的当前绑定。</summary>
+        public IcarusII.Input.KeyChord CurrentKeyBinding(string action)
+        {
+            if (_config is null) return IcarusII.Input.KeyChord.None;
+            switch (action)
+            {
+                case PluginConfig.KeyActionSend: return _config.SendChord;
+                case PluginConfig.KeyActionNewline: return _config.NewlineChord;
+                default: return _config.HotkeyChord;
+            }
+        }
+
+        /// <summary>A.14.7：某个动作换成新组合会不会与另外两项冲突；返回冲突动作 id。</summary>
+        public string KeyConflict(string action, IcarusII.Input.KeyChord chord)
+        {
+            return _config?.KeyConflict(action, chord);
+        }
+
+        /// <summary>A.14.7：恢复三项默认按键（顺序无关，配置层一次写完）。</summary>
+        public void ResetKeyBindingsFromSettings()
+        {
+            _config?.ResetKeyBindings();
+            if (_config is null) return;
+            _hotkey?.SetKey(_config.HotkeyChord);
+            _chat?.ApplyKeyBindings(_config.SendChord, _config.NewlineChord);
+        }
+
+        /// <summary>A.14.7：设置页保存按键绑定；重复绑定由配置层拒绝。</summary>
+        public bool ApplyKeyBindingFromSettings(string action, IcarusII.Input.KeyChord chord)
+        {
+            if (_config is null || chord.IsNone) return false;
+            if (!_config.SetKeyBinding(action, chord)) return false;
+
+            _hotkey?.SetKey(_config.HotkeyChord);
+            _chat?.ApplyKeyBindings(_config.SendChord, _config.NewlineChord);
+            Log.LogInfo($"[配置] 按键 {action} → {chord.Format()}");
+            return true;
+        }
 
         /// <summary>设置页点了权限卡：走和聊天窗下拉框同一条路径（更新下拉框、落盘、发 config.set）。</summary>
         public void ApplyPermissionLevelFromSettings(string level)
@@ -1910,6 +1962,12 @@ namespace IcarusII
             _chat.SetOpen(false);
         }
 
+        /// <summary>A.14.1：设定页关闭工具后，聊天窗的「/」工具列表也要同步。</summary>
+        public void ApplyToolCatalogFromSettings(JsonValue payload)
+        {
+            ApplyToolCatalog(payload);
+        }
+
         /// <summary>
         /// ready.payload.toolCatalog（M4l）→ 聊天窗工具列表。
         /// 老 sidecar 不带 toolCatalog 时回退到 tools 名 + 本地短名。
@@ -1926,6 +1984,9 @@ namespace IcarusII
                 {
                     var name = entry["name"].AsString("");
                     if (string.IsNullOrEmpty(name)) continue;
+                    // A.14.1：被设定页关掉的工具不再出现在聊天窗「/」列表，
+                    // 否则玩家能强制调用一个没有注册给模型的工具。
+                    if (!entry["enabled"].AsBool(true)) continue;
                     items.Add(new ToolMenuItem
                     {
                         Name = name,

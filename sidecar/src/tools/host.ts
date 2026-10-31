@@ -80,6 +80,8 @@ export class GameToolHost {
   private sandboxEnabled = false;
   private extensions: ExtensionSummary[] = [];
   private disabledExtensions = new Set<string>();
+  /** A.14.1：被玩家关掉的工具名；过滤点是 tools()/allTools()，脚本白名单同源。 */
+  private disabledTools = new Set<string>();
   private cachedTools: ToolDefinition[] | null = null;
   /** 工具集变化（启用/禁用扩展）时通知 agent 在回合边界重建会话。 */
   onToolsetChanged?: () => void;
@@ -131,6 +133,32 @@ export class GameToolHost {
 
   get extensionList(): readonly ExtensionSummary[] {
     return this.extensions;
+  }
+
+  /**
+   * A.14.1：整份替换被关闭的工具名。返回是否真的变化。
+   * 变化时清缓存并请求 agent 在回合边界重建会话。
+   */
+  setDisabledTools(next: readonly string[]): boolean {
+    const normalized = new Set(next);
+    if (
+      normalized.size === this.disabledTools.size &&
+      [...normalized].every((name) => this.disabledTools.has(name))
+    ) {
+      return false;
+    }
+    this.disabledTools = normalized;
+    this.cachedTools = null;
+    this.onToolsetChanged?.();
+    return true;
+  }
+
+  get disabledToolNames(): readonly string[] {
+    return [...this.disabledTools];
+  }
+
+  isToolDisabled(name: string): boolean {
+    return this.disabledTools.has(name);
   }
 
   isExtensionEnabled(id: string): boolean {
@@ -205,8 +233,11 @@ export class GameToolHost {
     return this.transport !== null;
   }
 
-  /** 按当前能力返回工具定义；未声明 `game.read.v1` 时返回空数组。 */
-  tools(): ToolDefinition[] {
+  /**
+   * 按当前能力返回全部工具定义（忽略玩家开关）。
+   * 设定页的完整目录用它，才能把 enabled=false 的工具也列出来。
+   */
+  allTools(): ToolDefinition[] {
     if (this.cachedTools) return this.cachedTools;
     const factory = gameToolsFactory;
     if (!factory) {
@@ -217,6 +248,13 @@ export class GameToolHost {
       ? tools
       : tools.filter((tool) => !isSandboxOnlyTool(tool.name));
     return this.cachedTools;
+  }
+
+  /** 按当前能力返回工具定义；被玩家关掉的工具不注册给模型，也不进脚本白名单。 */
+  tools(): ToolDefinition[] {
+    const all = this.allTools();
+    if (this.disabledTools.size === 0) return all;
+    return all.filter((tool) => !this.disabledTools.has(tool.name));
   }
 
   async call(

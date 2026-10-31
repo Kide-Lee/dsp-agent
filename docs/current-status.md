@@ -1,6 +1,6 @@
 # 当前状态与下一步
 
-> 更新时间：2026-10-27。M4（M4a–M4j + 写操作）已完成并通过实机验收；M5 离线实现完成，待实机验收。
+> 更新时间：2026-10-31。M4（M4a–M4j + 写操作）已完成并通过实机验收；M5 离线实现完成，待实机验收；设定页功能（M6）已实现，待实机验收。
 > 本页是当前唯一的状态/计划入口；验收用的临时清单和提示词文档已移除。
 
 ## 1. 已完成
@@ -44,6 +44,7 @@
 | 第三方 mod 桥 P2 | manifest 加载器：外部 `icarus-ii/bridge/<guid>.json` / 插件目录 `IcarusII.tools.json`，版本不匹配或 risk 2 缺 `undo` 时工具不注册；内置参考适配器 DSPCalculator / LSTM / BulletTime（UXAssist 的公开 API 只有存档钩子，已替换）；`mods_api_list` 供 AI 起草 manifest（只读，JSON 由玩家落盘）。只调声明插件自己程序集的公开静态方法；离线构建/测试通过，待实机 |
 | 第三方 mod 桥 P3 | `ui.tree.v1`：`ui_snapshot` 枚举 uGUI `Selectable`（路径/类型/文字/可用性），`ui_click` 按路径派发合成 `PointerClick`；不读像素、不做 OS 输入、不抢焦点；`ui_click` risk 2、不可撤销，点完须再快照复核。离线构建/测试通过，待实机 |
 | 第三方 mod 桥 P4 | SDK 文档 `docs/third-party-mod-bridge.md` + 示例 `docs/examples/bridge-example/`（插件源码 + manifest）；说明 manifest 字段、调用约束、版本/失败与验证步骤 |
+| 设定页功能（M6） | 通用页版本/诊断、快捷键自由绑键（打开/发送/换行，含字符拦截与组字保护）、会话跨存档索引/搜索/重命名/删除/导出、工具开关（`disabledTools`，同时覆盖 `run_script` 白名单）、关于页二维码与复制；协议见附录 A.14。离线构建/测试通过，待实机验收 |
 
 ### M4 收尾修复
 
@@ -89,7 +90,7 @@
 - 上下文压缩后的历史回合删除仍受 pi 会话 entry 类型限制，见
   [context-compression.md](context-compression.md)。
 - 第三方 mod 桥的工具按已加载插件自动生成，默认启用；可用 `mods_tools_disable/enable` 按插件隐藏/恢复（下一轮生效）。安装/卸载 mod 需要重启游戏才会改变工具集合（BepInEx 不支持热加载）。
-  桥默认关闭，且设置页改版前只能用 `[Bridge] AllowThirdPartyTools` 手动开启，没有 UI 开关。
+  桥默认关闭，仍只能用 `[Bridge] AllowThirdPartyTools` 手动开启，设置页不提供总开关。
 
 ## 4. 接下来做什么
 
