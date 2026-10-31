@@ -1560,7 +1560,7 @@ namespace IcarusII.UI
         /// `&lt;color=#FFFFFF28&gt;` 标签，再乘 Text.color 就几乎全透明——
         /// 表现就是"输入框里打字，text 变了、光标在，但一个字形都看不见"。
         /// </summary>
-        private static void SeedInputCharColors(InputField f, string why)
+        private static void SeedInputCharColors(InputField f, string why, int minChars = 0)
         {
             if (f == null) return;
             try
@@ -1572,7 +1572,8 @@ namespace IcarusII.UI
                 if (palette != null && palette.Length > 0)
                     f.m_CharColorsMapping = palette;
 
-                int need = Mathf.Max(256, (f.text != null ? f.text.Length : 0) + 128);
+                int textChars = f.text != null ? f.text.Length : 0;
+                int need = Mathf.Max(256, Mathf.Max(textChars, minChars) + 128);
                 var colors = f.m_CharColors;
                 if (colors == null || colors.Length < need) colors = new short[need];
                 for (int i = 0; i < colors.Length; i++) colors[i] = -1;
@@ -1673,16 +1674,18 @@ namespace IcarusII.UI
                 // 让游戏停止响应移动/建造输入。记录原值以便还原。
                 _savedInputing = Game.GameRefs.SetTextInputActive(true);
                 UiFactory.EnsureEventSystem();
-                // 先把关窗时暂存的草稿放回去，再按它的长度重种颜色表。
+                // 关窗时 InputField.OnDisable 会把逐字符颜色清成 0（= 调色板 0 号色，alpha≈0.157），
+                // 那样整段文字会被包成 `<color=#FFFFFF28>` → 乘上 Text.color 后基本透明。
+                // 先把颜色表按草稿长度种回"跟随默认色"，再写入文本；顺序反了的话，
+                // 写入瞬间就会按 0 号色生成标签，之后改表也不会重算。
+                SeedInputCharColors(_input, "开窗", _draftInput != null ? _draftInput.Length : 0);
+                // 把关窗时暂存的草稿放回去，并强制刷新一次标签。
                 if (_input != null && _draftInput != null)
                 {
                     _input.text = _draftInput;
                     _input.caretPosition = _input.text.Length;
+                    _input.ForceLabelUpdate();
                 }
-                // 关窗时 InputField.OnDisable 会把逐字符颜色清成 0（= 调色板 0 号色，alpha≈0.157），
-                // 那样整段文字会被包成 `<color=#FFFFFF28>` → 乘上 Text.color 后基本透明。
-                // 开窗必须重种回"跟随默认色"。
-                SeedInputCharColors(_input, "开窗");
                 // CanvasRenderer 的材质绑定会在关窗/重建后丢失，开窗时重申一次。
                 if (_input != null) RebindInputTextMaterial(_input.textComponent, "开窗");
                 // 默认不自动聚焦：这样打开后按键仍可立即关窗。
