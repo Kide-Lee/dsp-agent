@@ -50,10 +50,11 @@ description: 从 dist/pkg 安全更新 Steam/Proton 版《戴森球计划》里�
    ```bash
    ./scripts/build-mod.sh                 # mod 源码改过才需要
    ./scripts/build-sidecar.sh windows-x64 # sidecar 源码改过才需要
-   ./scripts/build-ui-bundle.sh           # prefab/UI 改过才需要；要 Unity 编辑器
    ```
 
-   Unity 占用工程时 `build-ui-bundle.sh` 会拒绝执行。若 Unity 开着，要么在编辑器里打 bundle，要么先关掉。
+   prefab / UI 改过时，bundle 在**运行中的 Unity 编辑器**里打：
+   菜单 `Icarus II / Build UI AssetBundle (Windows)`，或 MCP 调 `IcarusIIBundleBuilder.BuildAll()`。
+   不需要关闭编辑器，构建器会自己回存 prefab 快照。
 
 2. 退出 DSP。`DSPGAME.exe` 在跑时脚本会拒绝执行。
 3. 确认 `BepInEx/core/BepInEx.dll` 存在。

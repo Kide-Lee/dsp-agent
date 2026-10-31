@@ -264,7 +264,7 @@ namespace IcarusII.UI
             if (card == null) return;
             var on = string.Equals(id, current, StringComparison.OrdinalIgnoreCase);
             if (card.targetGraphic != null) card.targetGraphic.color = on ? SelectedPermBg : Clear;
-            var dot = card.transform.Find("title-row/radio");
+            var dot = card.transform.Find("radio");
             var dotImage = dot != null ? dot.GetComponent<Image>() : null;
             if (dotImage != null) dotImage.color = on ? Accent : IdleDot;
         }

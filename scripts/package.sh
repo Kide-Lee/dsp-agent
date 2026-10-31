@@ -29,12 +29,12 @@ fi
 [[ -f "$EXE" ]] || { echo "缺少 $EXE" >&2; exit 1; }
 cp "$EXE" "$PLUGIN/sidecar/"
 
-# UI AssetBundle（Windows，由 scripts/build-ui-bundle.sh 生成）。
+# UI AssetBundle（Windows，在 Unity 编辑器里用 Icarus II 菜单或 BuildAll 生成）。
 # 聊天窗不再有代码构建兜底，缺 bundle 直接拒绝打包。
 BUNDLE="$ROOT/dsp-game/Build/IcarusIIBundle/icarusii-ui"
 [ -f "$BUNDLE" ] || {
   echo "缺少 UI AssetBundle：$BUNDLE" >&2
-  echo "请先运行 scripts/build-ui-bundle.sh（需要关闭 Unity）" >&2
+  echo "请先在 Unity 编辑器里执行 Icarus II / Build UI AssetBundle (Windows)" >&2
   exit 1
 }
 cp "$BUNDLE" "$PLUGIN/ui/"

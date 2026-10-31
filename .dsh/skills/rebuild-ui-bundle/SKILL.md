@@ -1,32 +1,29 @@
 ---
 name: rebuild-ui-bundle
-description: 从 prefab 重打聊天窗 UI AssetBundle，刷新 prefab 快照，并对比构建前后的 tool-bar 锚点以捕捉布局漂移。改过 prefab/UI 布局后使用，或游戏内聊天窗看起来不对时使用。
+description: 在运行中的 Unity 编辑器里重打聊天窗 UI AssetBundle，并刷新 prefab 快照、对比 tool-bar 锚点。改过 prefab/UI 后使用，或游戏内聊天窗看起来不对时使用。
 ---
 
 # 重打 IcarusII 的 UI 资源包
 
-```bash
-.dsh/skills/rebuild-ui-bundle/scripts/rebuild-ui-bundle.sh
-.dsh/skills/rebuild-ui-bundle/scripts/rebuild-ui-bundle.sh --add-parts   # 先跑"只做加法"的移植工具
-```
+**不关 Unity**，直接在编辑器里构建。
 
-Unity 占用工程时脚本拒绝执行；它在构建前后各 dump 一次 prefab，四个工具栏锚点一旦漂移就失败。
+两条等价入口：
+
+- 菜单：`Icarus II / Build UI AssetBundle (Windows)`
+- MCP for Unity：调用 `IcarusII.EditorTools.IcarusIIBundleBuilder.BuildAll()`
+
+构建器会在成功后自动把 prefab 与随包贴图回存到 `mod/unity/Prefab/`，所以不需要再跑额外的回存脚本。
 
 ## 前置条件
 
-- Unity `2022.3.62f3`，装好 Windows Build Support，路径 `$HOME/Unity/Hub/Editor/<version>/Editor/Unity`（可用 `UNITY=/path/to/Unity` 覆盖）。
-- Unity 编辑器**必须关闭**：批处理模式会独占锁。存在 `Temp/UnityLockfile` → 脚本直接停。
-- 受限沙箱可能需要 GPU/完整权限，否则 Unity 会报 `Failed to initialize unity graphics`。
-- prefab 修改在前，走 MCP for Unity。本技能只负责打包：
+- Unity `2022.3.62f3`，装好 Windows Build Support。
+- 编辑器里的 `Assets/IcarusII/Editor/*.cs` 必须是仓库里的最新版本；改过 `mod/unity/Editor/` 就先同步：
+  `cp mod/unity/Editor/*.cs dsp-game/Assets/IcarusII/Editor/`
+- 关于页的二维码贴图同理：`cp mod/unity/Resources/qq-group.png dsp-game/Assets/IcarusII/Resources/`
 
-  1. 通过 MCP for Unity 修改 `dsp-game/Assets/IcarusII/ChatWindow.prefab`；
-  2. 截图看窗口效果是否满足预期；
-  3. 保存，然后关闭 Unity；
-  4. 跑本脚本。
+## 构建前先 dump 一次
 
-## 为什么要对比 dump
-
-prefab 是二进制 —— `git diff` 只显示 `Bin`，工具栏悄悄移位看起来只是一次无害的字节变化。脚本在 dump 里抓四个右锚点分组，对比 `pos`/`sd`：
+prefab 是二进制，`git diff` 只显示 `Bin`，工具栏悄悄移位看起来只是一次无害的字节变化。构建前后各 dump 一次，比对这四个右锚点：
 
 | 节点 | 右锚点 |
 | --- | --- |
@@ -35,18 +32,22 @@ prefab 是二进制 —— `git diff` 只显示 `Bin`，工具栏悄悄移位看
 | `thinking-group` | `-220` |
 | `model-group` | `-340` |
 
-锚点漂移说明有东西（编辑器自动保存、跑了构建器、打开过 prefab）改写了 `anchoredPosition`。**不要**在运行期补偿：恢复 `mod/unity/Prefab/ChatWindow.prefab` 再重打。
+dump 用 MCP for Unity 调 `IcarusII.EditorTools.IcarusIIDumpPrefab.DumpChatWindow()`，产物在 `.scratch/chatwindow-dump.txt`；抓锚点的命令：
 
-`--add-parts` 是有意改结构，所以这时锚点对比只报告、不判失败。
+```bash
+grep -E 'tool-bar/(send-button|permission-group|thinking-group|model-group) +\[' .scratch/chatwindow-dump.txt \
+  | sed -E 's#.*tool-bar/([a-z-]+) +\[.*pos=\(([^)]*)\) sd=\(([^)]*)\)\].*#\1 pos=\2 size=\3#'
+```
+
+锚点漂移说明有东西（编辑器自动保存、跑了构建器、打开过 prefab）改写了 `anchoredPosition`。**不要**在运行期补偿：恢复 `mod/unity/Prefab/ChatWindow.prefab` 再重打。
 
 ## 产物与检查项
 
 - `dsp-game/Build/IcarusIIBundle/icarusii-ui` —— StandaloneWindows64 bundle，由 `package.sh` / `update-steam-mod` 打进包。
-- `mod/unity/Prefab/` 快照刷新（由 `scripts/build-ui-bundle.sh` 完成）；随后脚本用 `cmp` 比对工作副本与快照。
-- `.scratch/ui-dump/{before,after}.txt` 与 `{before,after}.log` —— 报告漂移时留着它们。
+- `mod/unity/Prefab/` 快照由构建器回存；构建后用 `cmp` 比对工作副本与快照，应当一致。
 
 ## 备注
 
 - `build-mod.sh` 只重打 DLL；只改 prefab 而不重打这个 bundle，游戏里看不到变化。
-- `scripts/build-ui-bundle.sh --add-parts` 只补缺失部件；默认路径从不重生成整个窗口。
+- 需要有"只做加法"的移植（补聊天窗缺失部件）时，调 `IcarusIIBundleBuilder.AddPartsAndBuild()`。
 - 构建成功后：`package-release`，再 `update-steam-mod`，然后用 1080p 和一个非 1080p 分辨率进游戏验收。

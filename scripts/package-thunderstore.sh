@@ -54,7 +54,7 @@ fi
 BUNDLE="$ROOT/dsp-game/Build/IcarusIIBundle/icarusii-ui"
 if [[ "${SKIP_UI:-0}" != "1" && ! -f "$BUNDLE" ]]; then
   warn "找不到 UI bundle：$BUNDLE"
-  warn "先跑 scripts/build-ui-bundle.sh；这次按 SKIP_UI=1 处理（界面会退回代码构建）"
+  warn "先在 Unity 编辑器里打 UI bundle；这次按 SKIP_UI=1 处理（界面会退回代码构建）"
   SKIP_UI=1
 fi
 

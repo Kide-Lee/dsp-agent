@@ -280,7 +280,46 @@ namespace IcarusII.EditorTools
             var size = new FileInfo(path).Length;
             Debug.Log($"[IcarusII] AssetBundle 已生成：{path}（{size / 1024} KB, StandaloneWindows64）");
             Debug.Log($"[IcarusII] 包内 bundle：{string.Join(", ", manifest.GetAllAssetBundles())}");
+            SyncPrefabSnapshots();
             return true;
+        }
+
+        /// <summary>
+        /// 把 prefab 与随包贴图回存到 `mod/unity/Prefab/`，让仓库里的快照跟着 bundle 走。
+        /// 以前这一步由批处理脚本做，现在编辑器内构建也做，避免两条路径产物不一致。
+        /// </summary>
+        private static void SyncPrefabSnapshots()
+        {
+            // Application.dataPath 形如 <repo>/dsp-game/Assets
+            var projectRoot = Directory.GetParent(Application.dataPath)?.FullName;
+            if (string.IsNullOrEmpty(projectRoot)) return;
+            var repoRoot = Directory.GetParent(projectRoot)?.FullName;
+            if (string.IsNullOrEmpty(repoRoot)) return;
+
+            var snapshotDir = Path.Combine(repoRoot, "mod", "unity", "Prefab");
+            if (!Directory.Exists(Path.GetDirectoryName(snapshotDir))) return;
+            Directory.CreateDirectory(snapshotDir);
+
+            var files = new[]
+            {
+                "Assets/IcarusII/ChatWindow.prefab",
+                "Assets/IcarusII/ChatWindow.prefab.meta",
+                "Assets/IcarusII/button-agent.prefab",
+                "Assets/IcarusII/button-agent.prefab.meta",
+                "Assets/IcarusII/SettingsPage.prefab",
+                "Assets/IcarusII/SettingsPage.prefab.meta",
+                "Assets/IcarusII/Resources/console.png",
+                "Assets/IcarusII/Resources/console.png.meta",
+                "Assets/IcarusII/Resources/new-conversation.png",
+                "Assets/IcarusII/Resources/new-conversation.png.meta",
+            };
+            foreach (var relative in files)
+            {
+                var source = Path.Combine(projectRoot, relative);
+                if (!File.Exists(source)) continue;
+                File.Copy(source, Path.Combine(snapshotDir, Path.GetFileName(relative)), true);
+            }
+            Debug.Log($"[IcarusII] prefab 快照已刷新：{snapshotDir}");
         }
 
         private static bool Fail(string message)
