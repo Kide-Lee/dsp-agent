@@ -38,6 +38,7 @@ namespace IcarusII.UI
         private readonly List<RowBinding> _rows = new List<RowBinding>();
         private ConversationsIndexedInfo _index;
         private bool _loading;
+        private float _requestedAt;
         private bool _onlyCurrent;
         private string _search = string.Empty;
         private string _status;
@@ -49,6 +50,8 @@ namespace IcarusII.UI
         {
             _view = view;
             Wire();
+            // 一进设置就拉索引：切到会话页时内容已经就绪，不在切页瞬间空一下。
+            EnsureLoaded();
         }
 
         private void Wire()
@@ -84,10 +87,13 @@ namespace IcarusII.UI
                 return;
             }
             _loading = true;
+            _requestedAt = Time.unscaledTime;
         }
 
         public void Tick()
         {
+            // 请求已发出但 5 秒没有回执（断线/旧端）时重试，避免一直停在加载态。
+            if (_loading && Time.unscaledTime - _requestedAt > 5f) _loading = false;
             if (_index is null && !_loading && Time.unscaledTime > _nextRetry)
             {
                 _nextRetry = Time.unscaledTime + 2f;

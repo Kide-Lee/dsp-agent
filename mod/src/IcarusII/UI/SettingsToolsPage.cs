@@ -50,6 +50,8 @@ namespace IcarusII.UI
             _view = view;
             _legend = view.ToolsLegend != null ? view.ToolsLegend.text : string.Empty;
             Wire();
+            // 目录通常已随 ready 到达；没有就主动拉一次，切页时不再显示空表。
+            EnsureLoaded();
         }
 
         private void Wire()

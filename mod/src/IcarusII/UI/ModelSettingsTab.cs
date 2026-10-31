@@ -585,6 +585,7 @@ namespace IcarusII.UI
             _keysPage = new SettingsKeysPage(view);
             _sessionsPage = new SettingsSessionsPage(view);
             _toolsPage = new SettingsToolsPage(view);
+            view.Show(SettingsPageView.InitialSection);
             view.SetPermissionLevel(Plugin.Instance?.CurrentPermissionLevel ?? Protocol.PermissionLimited);
             _providerList = view.ProviderList;
             _modelList = view.ModelList;

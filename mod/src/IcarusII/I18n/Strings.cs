@@ -226,7 +226,6 @@ namespace IcarusII.I18n
             ["settings.keys.action.send"] = "发送消息",
             ["settings.keys.action.newline"] = "换行",
             ["settings.keys.capturing"] = "按下按键…",
-            ["settings.keys.change"] = "修改",
             ["settings.keys.conflict"] = "已被「{0}」使用",
             ["settings.keys.saved"] = "已保存：{0}",
             ["settings.sessions.count"] = "共 {0} 个会话 · {1} 个存档",

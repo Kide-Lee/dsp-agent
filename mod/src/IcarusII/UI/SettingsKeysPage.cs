@@ -54,11 +54,7 @@ namespace IcarusII.UI
             {
                 var chord = CurrentBinding(row.Action);
                 if (row.KeyLabel != null) row.KeyLabel.text = chord.Display();
-                if (row.WaitingText != null)
-                {
-                    row.WaitingText.text = Strings.Get("settings.keys.change");
-                    row.WaitingText.gameObject.SetActive(true);
-                }
+                if (row.WaitingText != null) row.WaitingText.gameObject.SetActive(false);
                 if (row.KeyLabel != null) row.KeyLabel.gameObject.SetActive(true);
             }
             CancelCapture();
@@ -131,11 +127,7 @@ namespace IcarusII.UI
                 var row = FindRow(_capturing);
                 if (row != null)
                 {
-                    if (row.WaitingText != null)
-                    {
-                        row.WaitingText.text = Strings.Get("settings.keys.change");
-                        row.WaitingText.gameObject.SetActive(true);
-                    }
+                    if (row.WaitingText != null) row.WaitingText.gameObject.SetActive(false);
                     if (row.KeyLabel != null) row.KeyLabel.gameObject.SetActive(true);
                 }
             }
@@ -155,11 +147,7 @@ namespace IcarusII.UI
             {
                 if (row != null)
                 {
-                    if (row.WaitingText != null)
-                    {
-                        row.WaitingText.text = Strings.Get("settings.keys.change");
-                        row.WaitingText.gameObject.SetActive(true);
-                    }
+                    if (row.WaitingText != null) row.WaitingText.gameObject.SetActive(false);
                     if (row.KeyLabel != null) row.KeyLabel.gameObject.SetActive(true);
                 }
                 if (row != null) SetConflict(row, Strings.Get("settings.keys.conflict", ActionName(conflict)));

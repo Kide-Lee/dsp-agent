@@ -133,6 +133,9 @@ namespace IcarusII.UI
         /// <summary>进程内记住上次分区；不落盘。</summary>
         private static string _lastSection;
 
+        /// <summary>首次显示的分区：上次停留的分区，没有则通用。</summary>
+        public static string InitialSection => _lastSection ?? SectionGeneral;
+
         /// <summary>当前显示的分区 id。</summary>
         public string CurrentSection => _current;
 
@@ -172,7 +175,8 @@ namespace IcarusII.UI
             view.ApplyTexts(font);
             view.LoadQrTexture();
             view.WireActions();
-            view.Show(_lastSection ?? SectionGeneral);
+            // 初始分区由 ModelSettingsTab 在接好 SectionChanged 之后调用 Show，
+            // 否则首次进入「会话/工具」分区时不会触发数据加载。
             return view;
         }
 
@@ -482,9 +486,25 @@ namespace IcarusII.UI
                 if (entry.Pane != null) entry.Pane.gameObject.SetActive(on);
                 if (entry.Background != null) entry.Background.color = on ? SelectedBg : Clear;
                 if (entry.Bar != null) entry.Bar.color = on ? Accent : Clear;
-                if (entry.Label != null) entry.Label.color = on ? SelectedLabel : IdleLabel;
+                if (entry.Label != null)
+                {
+                    entry.Label.color = on ? SelectedLabel : IdleLabel;
+                    SyncNavHover(entry, entry.Label.color);
+                }
             }
             SectionChanged?.Invoke(id);
+        }
+
+        /// <summary>
+        /// 导航按钮的 hover 用原生 UIButton 做透明度动画；它退出 hover 时会回到
+        /// normalColor，所以选中态变化后必须把 normalColor 一起改掉。
+        /// </summary>
+        private static void SyncNavHover(NavEntry entry, Color color)
+        {
+            var button = entry.Button != null ? entry.Button.GetComponent<UIButton>() : null;
+            if (button == null || button.transitions == null || button.transitions.Length == 0) return;
+            button.transitions[0].normalColor = color;
+            button.RefreshTransitionsImmediately();
         }
 
         private static GameObject BindNode(Transform root, string path, List<string> missing)
