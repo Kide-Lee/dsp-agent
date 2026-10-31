@@ -128,6 +128,10 @@ namespace IcarusII.UI
         private RectTransform _chooseRoot;
         private AskPanel _askPanel;
         private bool _caretPrimed;
+        /// <summary>上一帧输入框是否有焦点；用于捕捉"刚聚焦"这一刻。</summary>
+        private bool _lastInputFocused;
+        /// <summary>开窗恢复草稿后armed：聚焦若把文本清掉，允许补回一次，直到玩家开始编辑。</summary>
+        private bool _draftRestoreArmed;
         private int _iconMapTick;
         private bool _iconMapReady;
 
@@ -142,6 +146,10 @@ namespace IcarusII.UI
         private static readonly FieldInfo InputAllowInputField =
             typeof(InputField).GetField("m_AllowInput",
                 BindingFlags.Instance | BindingFlags.NonPublic);
+        // 游戏版 InputField 的可见文本是 m_ColorText（带颜色标签），聚焦/失焦走不同分支。
+        private static readonly FieldInfo InputColorTextField =
+            typeof(InputField).GetField("m_ColorText",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
         private static readonly MethodInfo InputSetCaretVisibleMethod =
             typeof(InputField).GetMethod("SetCaretVisible",
                 BindingFlags.Instance | BindingFlags.NonPublic);
@@ -916,6 +924,7 @@ namespace IcarusII.UI
             _scroll = null;
             _input = null;
             _draftInput = null;
+            _draftRestoreArmed = false;
             _lines.Clear();
             _items.Clear();
             _linkTargets.Clear();
@@ -1536,7 +1545,11 @@ namespace IcarusII.UI
 
             // 关窗会 SetActive(false)，输入框的 OnDisable 会清掉文本；
             // 必须在禁用之前把草稿抓到字段里，开窗时再塞回去。
-            if (!open && _input != null) _draftInput = _input.text;
+            if (!open && _input != null)
+            {
+                _draftInput = _input.text;
+                _draftRestoreArmed = false;
+            }
 
             IsOpen = open;
             _root.SetActive(open);
@@ -1685,6 +1698,8 @@ namespace IcarusII.UI
                     _input.text = _draftInput;
                     _input.caretPosition = _input.text.Length;
                     _input.ForceLabelUpdate();
+                    // 聚焦路径可能再次清掉文本；在玩家真正开始编辑之前允许补一次。
+                    _draftRestoreArmed = !string.IsNullOrEmpty(_draftInput);
                 }
                 // CanvasRenderer 的材质绑定会在关窗/重建后丢失，开窗时重申一次。
                 if (_input != null) RebindInputTextMaterial(_input.textComponent, "开窗");
@@ -6888,6 +6903,45 @@ namespace IcarusII.UI
                 _caretPrimed = false;
             }
 
+            // 游戏版 InputField 聚焦时改看 m_ColorText（带颜色标签的渲染串）。
+            // 若它没跟着草稿更新，未聚焦能看到、一点击就空白；这里在刚聚焦时补一次并留日志。
+            var inputFocusedNow = _input != null && _input.isFocused;
+            if (inputFocusedNow != _lastInputFocused)
+            {
+                _lastInputFocused = inputFocusedNow;
+
+                // 聚焦路径若把草稿清掉，在玩家开始编辑前补回一次。
+                if (inputFocusedNow && _input != null && _draftRestoreArmed
+                    && _draftInput != null && string.IsNullOrEmpty(_input.text))
+                {
+                    _input.text = _draftInput;
+                    _input.caretPosition = _input.text.Length;
+                    _input.CalculateColorText();
+                    _input.ForceLabelUpdate();
+                }
+
+                var colorText = InputColorTextField != null
+                    ? InputColorTextField.GetValue(_input) as string
+                    : null;
+                Plugin.Log.LogInfo(
+                    $"[输入] focused={inputFocusedNow} text={(_input != null ? _input.text.Length : -1)} " +
+                    $"colorText={(colorText != null ? colorText.Length : -1)} " +
+                    $"comp={(_input != null && _input.textComponent != null ? _input.textComponent.text.Length : -1)} " +
+                    $"draft={(_draftInput != null ? _draftInput.Length : -1)}");
+                if (inputFocusedNow && _input != null
+                    && !string.IsNullOrEmpty(_input.text))
+                {
+                    // 聚焦后显示层从静态 Text 切到 InputField 自己的绘制路径，
+                    // 材质绑定可能还是空的（和开窗时同一个问题），补绑一次。
+                    RebindInputTextMaterial(_input.textComponent, "聚焦");
+                    if (string.IsNullOrEmpty(colorText))
+                    {
+                        _input.CalculateColorText();
+                        _input.ForceLabelUpdate();
+                    }
+                }
+            }
+
             // 图标表可能比窗口/消息晚就绪（主菜单 → 存档加载）；低频补齐即可。
             if (IsOpen && ++_iconMapTick % 30 == 0) EnsureIconMappings();
 
@@ -7172,6 +7226,7 @@ namespace IcarusII.UI
             HideToolMenu();
             _input.text = string.Empty;
             _draftInput = null;
+            _draftRestoreArmed = false;
             if (value.Length == 0) return;
 
             // 与单行路径一致：发送后主动失焦，玩家可直接按 R 关窗
@@ -7647,6 +7702,9 @@ namespace IcarusII.UI
 
         private void OnInputValueChanged(string value)
         {
+            // 玩家一旦改过文本（值和暂存草稿不同），就不再补回旧草稿。
+            if (_draftRestoreArmed && value != _draftInput) _draftRestoreArmed = false;
+
             if (_suppressToolMenuEvents || !IsOpen) return;
 
             var text = value ?? string.Empty;
@@ -8235,6 +8293,7 @@ namespace IcarusII.UI
             {
                 _input.text = string.Empty;
                 _draftInput = null;
+                _draftRestoreArmed = false;
                 // 发送后主动失焦：玩家读完回复可直接按 R 关窗，
                 // 想继续追问再按 Enter 即可。
                 _input.DeactivateInputField();
