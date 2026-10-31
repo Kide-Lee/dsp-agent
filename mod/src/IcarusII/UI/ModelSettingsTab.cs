@@ -353,7 +353,7 @@ namespace IcarusII.UI
                 // 上面那条路若拿到的是别的 Text，页签就会显示成"杂项"（踩过）。
                 if (window.tabTexts != null && window.tabTexts.Length > count && window.tabTexts[count] != null)
                 {
-                    window.tabTexts[count].text = Strings.Get("model.label");
+                    window.tabTexts[count].text = Strings.Get("tab.title");
                     Plugin.Log.LogInfo("[模型页] 页签文字 = " + window.tabTexts[count].text);
                 }
                 else

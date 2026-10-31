@@ -64,6 +64,7 @@ namespace IcarusII.UI
         public Button CopyDiagnosticsButton;
         public Button CopyGroupButton;
         public Text DataDirValue;
+        public Text PermissionStatus;
 
         /// <summary>玩家点了某个权限档位；参数是协议里的只读/受限/接管。</summary>
         public event Action<string> PermissionSelected;
@@ -168,6 +169,7 @@ namespace IcarusII.UI
             CopyDirButton = Bind<Button>(root, "content/pane-general/body/viewport/content/section/version-card/kv-dir/copy-dir-button", missing);
             CopyDiagnosticsButton = Bind<Button>(root, "content/pane-general/body/viewport/content/general-actions/copy-diagnostics-button", missing);
             CopyGroupButton = Bind<Button>(root, "content/pane-about/body/viewport/content/group-card/group-row/actions/copy-group-button", missing);
+            PermissionStatus = Bind<Text>(root, "content/pane-general/body/viewport/content/section/head/permission-status", missing);
 
             AddNav(root, missing, SectionGeneral, "nav-general", "pane-general");
             AddNav(root, missing, SectionKeys, "nav-keys", "pane-keys");
@@ -242,6 +244,19 @@ namespace IcarusII.UI
             TintPermission(PermissionReadonly, Protocol.PermissionReadonly, level);
             TintPermission(PermissionLimited, Protocol.PermissionLimited, level);
             TintPermission(PermissionTakeover, Protocol.PermissionTakeover, level);
+            if (PermissionStatus != null)
+            {
+                PermissionStatus.text = Strings.Get("permission.status", PermissionName(level));
+            }
+        }
+
+        private static string PermissionName(string level)
+        {
+            if (string.Equals(level, Protocol.PermissionReadonly, StringComparison.OrdinalIgnoreCase))
+                return Strings.Get("permission.level.readonly");
+            if (string.Equals(level, Protocol.PermissionTakeover, StringComparison.OrdinalIgnoreCase))
+                return Strings.Get("permission.level.takeover");
+            return Strings.Get("permission.level.limited");
         }
 
         private static void TintPermission(Button card, string id, string current)
