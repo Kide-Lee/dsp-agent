@@ -585,6 +585,12 @@ namespace IcarusII.UI
             SetText(keys + "key", Strings.Get("settings.keys.col.key"));
             SetText(keys + "set", Strings.Get("settings.keys.col.set"));
 
+            SetText("content/pane-sessions/head/tag", Strings.Get("settings.sessions.tag"));
+            SetText("content/pane-sessions/foot/hint", Strings.Get("settings.sessions.foot"));
+            SetText("content/pane-sessions/foot/path", Strings.Get("settings.sessions.foot.path"));
+            SetText("content/pane-tools/head/tag", Strings.Get("settings.tools.tag"));
+            SetText("content/pane-tools/foot/hint", Strings.Get("settings.tools.foot"));
+            SetText("content/pane-tools/foot/path", Strings.Get("settings.tools.foot.path"));
             SessionsHeadTitle.text = Strings.Get("settings.sessions.title");
             SessionsHeadSubtitle.text = Strings.Get("settings.sessions.subtitle");
             ToolsHeadTitle.text = Strings.Get("settings.tools.title");
