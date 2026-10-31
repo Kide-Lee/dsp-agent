@@ -224,6 +224,8 @@ namespace IcarusII.UI
                 };
                 foreach (var conversation in group.Conversations)
                 {
+                    // 0 条记录的「新会话」只是占位，不进入标题/导出/删除列表。
+                    if (conversation.MessageCount <= 0) continue;
                     if (!MatchesSearch(view, conversation)) continue;
                     view.Conversations.Add(conversation);
                 }
