@@ -397,6 +397,10 @@ namespace IcarusII.UI
         /// <summary>当前正在流式输出的思考块（null = 没在思考）。</summary>
         private Block _thinking;
         private readonly StringBuilder _thinkingText = new StringBuilder();
+        /// <summary>上一次真正写进 Text 的思考长度，配合逐帧渲染做节流。</summary>
+        private int _thinkingRenderKey = -1;
+        /// <summary>思考已经超出渲染上限，尾部会附一句省略提示。</summary>
+        private bool _thinkingTruncated;
 
         /// <summary>
         /// 右下角「思考」下拉框（prefab 里挂在 thinking-group/thinking-level；
@@ -416,6 +420,20 @@ namespace IcarusII.UI
 
         /// <summary>工具失败时的标题色。</summary>
         private static readonly Color WarnColor = new Color(1f, 0.47f, 0.32f, 1f);
+
+        /// <summary>
+        /// 单个思考块最多渲染的字符数。
+        /// 游戏 Text 每个字符 4 个顶点，而 uGUI 一个网格的上限是 65535 顶点
+        /// （约 1.6 万字符）；超过之后 Unity 会丢掉超出的三角形，后半段直接不显示。
+        /// 12000 留出富文本标签、换行与勾选框的余量。
+        /// </summary>
+        private const int ThinkingRenderMaxChars = 12000;
+
+        /// <summary>
+        /// 流式思考时只渲染尾部这么多字符：每帧重排整段长文本会拖慢主线程，
+        /// 而玩家在流式期间真正要看的就是最新几行。收尾时再由 EndThinking 渲染全文。
+        /// </summary>
+        private const int ThinkingStreamWindow = 2000;
 
         /// <summary>
         /// 输出区里的一个可折叠块（思考 / 工具）。
@@ -2589,6 +2607,8 @@ namespace IcarusII.UI
 
             // 模型发起工具调用 = 这一段思考结束了：先收起思考块，工具块排在它后面。
             if (_thinking != null) EndThinking();
+            // 工具调用之前的正文是过程正文：按时刻落到块序列里，别并进最终正文。
+            FreezeStreamSegment(CurrentStreamReply());
 
             Block existing;
             if (_toolBlocks.TryGetValue(callId, out existing) && existing.Go != null)
@@ -2790,6 +2810,10 @@ namespace IcarusII.UI
             if (_content == null) return;
             if (_thinking != null && _thinking.Go != null) return;
 
+            // 模型在一段正文之后又发起思考：先把那段正文按时刻收进块序列，
+            // 否则它会被并进最终正文，位置跑到所有工具块之后。
+            FreezeStreamSegment(CurrentStreamReply());
+
             Block block = null;
             if (_replyTemplate != null)
             {
@@ -2812,6 +2836,8 @@ namespace IcarusII.UI
                 expanded: true, titleColor: _accent, rebuild: false);
             _thinking = block;
             _thinkingText.Length = 0;
+            _thinkingRenderKey = -1;
+            _thinkingTruncated = false;
             _dirty = true;
         }
 
@@ -3014,10 +3040,41 @@ namespace IcarusII.UI
             if (_thinking == null || _thinking.Go == null) BeginThinking();
             if (_thinking == null) return;
 
-            _thinkingText.Append(delta);
-            ApplyRichText(_thinking.Body, _thinkingText.ToString(), RichOptions13, RichTextProfile.Body);
+            // 只累积增量，渲染交给逐帧的 RenderThinking：
+            // 每个 delta 都重排整段思考是 O(n²)，长思考会把主线程拖死。
+            if (_thinkingText.Length < ThinkingRenderMaxChars)
+            {
+                var room = ThinkingRenderMaxChars - _thinkingText.Length;
+                _thinkingText.Append(delta.Length <= room ? delta : delta.Substring(0, room));
+                if (_thinkingText.Length >= ThinkingRenderMaxChars) _thinkingTruncated = true;
+            }
+            else
+            {
+                // 超限之后仍然继续收到 delta：只标记一次，内容不再增长。
+                _thinkingTruncated = true;
+            }
             if (!_thinking.Body.gameObject.activeSelf) _thinking.Body.gameObject.SetActive(true);
             _dirty = true;
+        }
+
+        /// <summary>
+        /// 把当前思考增量刷到 Text。只在 Render 里调用，且长度没变化时直接返回。
+        /// 游戏 Text 每个字符 4 个顶点，超过 65535 顶点（约 1.6 万字符）会渲染失败，
+        /// 所以显示也有上限；超出的部分只留一句省略提示。
+        /// </summary>
+        private void RenderThinking()
+        {
+            if (_thinking == null || _thinking.Body == null) return;
+            var key = _thinkingText.Length * 2 + (_thinkingTruncated ? 1 : 0);
+            if (key == _thinkingRenderKey) return;
+            _thinkingRenderKey = key;
+
+            var full = _thinkingText.ToString();
+            var text = full.Length > ThinkingStreamWindow
+                ? "…" + full.Substring(full.Length - ThinkingStreamWindow)
+                : full;
+            if (_thinkingTruncated) text += Strings.Get("thinking.truncated");
+            ApplyRichText(_thinking.Body, text, RichOptions13, RichTextProfile.Body);
         }
 
         /// <summary>
@@ -3039,7 +3096,10 @@ namespace IcarusII.UI
             }
 
             var text = _thinkingText.ToString().Trim();
+            if (_thinkingTruncated) text += Strings.Get("thinking.truncated");
             _thinkingText.Length = 0;
+            _thinkingRenderKey = -1;
+            _thinkingTruncated = false;
             if (block.Go == null)
             {
                 if (finalize && _stream.Length == 0) FinalizeIdleReply();
@@ -3729,6 +3789,97 @@ namespace IcarusII.UI
             finally { _suppressPermissionEvent = false; }
         }
 
+
+        /// <summary>当前正在流式输出正文的那条回复（没有时返回 null）。</summary>
+        private ReplyView CurrentStreamReply()
+        {
+            if (_streamItem < 0 || _streamItem >= _items.Count) return null;
+            return _items[_streamItem].Reply;
+        }
+
+        /// <summary>
+        /// 正文被思考或工具调用打断时，把这一段正文按发生时刻收进折叠块容器，
+        /// 然后清空流缓冲。不这么做的话，中间正文会和最终正文拼成一段，
+        /// 位置也永远停在所有工具块之后。
+        /// </summary>
+        private void FreezeStreamSegment(ReplyView reply)
+        {
+            if (reply == null || _stream.Length == 0) return;
+
+            var text = _stream.ToString().Trim();
+            _stream.Length = 0;
+            _lastStreamRenderLength = -1;
+            if (reply.Body != null)
+            {
+                ReleaseLinkTargets(reply.Body);
+                reply.Body.text = string.Empty;
+            }
+            if (string.IsNullOrEmpty(text)) return;
+
+            AppendBodySegment(reply, text);
+            _dirty = true;
+        }
+
+        /// <summary>
+        /// 往折叠块容器末尾追加一段过程正文（直接显示，不折叠）。
+        /// 节点来自 prefab 的 tools/text-segment；老 prefab 没有模板时克隆正文样式兜底，
+        /// 仍然插进容器，保证它排在正确的时刻位置。
+        /// </summary>
+        private void AppendBodySegment(ReplyView reply, string rawText, bool trackLine = true)
+        {
+            if (reply == null || string.IsNullOrEmpty(rawText)) return;
+            if (reply.Tools == null) return;   // 没有顺序容器就没法按时刻排
+
+            var label = CreateBodySegmentLabel(reply);
+            if (label == null) return;
+
+            reply.Tools.gameObject.SetActive(true);
+            label.transform.SetAsLastSibling();
+            ApplyRichText(label, rawText, RichOptions14, RichTextProfile.Body);
+
+            // 历史回放正在遍历 _lines，补建节点时不能再往里插行（会重复补建同一轮）。
+            if (!trackLine) return;
+            _lines.Add(new Line
+            {
+                Kind = LineKind.Assistant,
+                Text = rawText,
+                TurnId = _currentTurnId,
+                Go = label.gameObject,
+            });
+            TrimHistory();
+        }
+
+        private Text CreateBodySegmentLabel(ReplyView reply)
+        {
+            if (reply == null || reply.Tools == null) return null;
+
+            var template = reply.Tools.Find("text-segment");
+            if (template != null)
+            {
+                var go = UnityEngine.Object.Instantiate(template.gameObject, reply.Tools);
+                go.name = "text-segment-" + (++_itemSeq);
+                go.SetActive(true);
+                var text = go.GetComponent<Text>();
+                if (text == null) { UnityEngine.Object.Destroy(go); return null; }
+                text.supportRichText = true;
+                text.useCheckBox = false;
+                text.raycastTarget = false;
+                return text;
+            }
+
+            if (reply.Body == null) return null;
+            var clone = UnityEngine.Object.Instantiate(reply.Body.gameObject, reply.Tools);
+            clone.name = "text-segment-" + (++_itemSeq);
+            clone.SetActive(true);
+            var label = clone.GetComponent<Text>();
+            if (label == null) { UnityEngine.Object.Destroy(clone); return null; }
+            label.supportRichText = true;
+            label.useCheckBox = false;
+            label.raycastTarget = false;
+            label.tableColWidths = new float[0];
+            label.tableRowHeights = new float[0];
+            return label;
+        }
 
         /// <summary>开始一段流式回复；后续 delta 会填进同一条消息。</summary>
         public void BeginStream(string speaker)
@@ -4504,6 +4655,11 @@ namespace IcarusII.UI
                     if (block == null) continue;
                     SetBlock(block, Strings.Get("thinking.title"), Summarize(step.Text, 48), step.Text,
                         expanded: false, titleColor: _textDim, rebuild: false);
+                }
+                else if (step.Kind == "text")
+                {
+                    if (string.IsNullOrEmpty(step.Text)) continue;
+                    AppendBodySegment(reply, step.Text, trackLine: false);
                 }
                 else if (step.Kind == "tool")
                 {
@@ -6783,6 +6939,8 @@ namespace IcarusII.UI
                         ApplyRichText(label, _stream.ToString(), RichOptions14, RichTextProfile.Body);
                 }
             }
+
+            RenderThinking();
 
             if (_suppressAutoScrollOnce) _suppressAutoScrollOnce = false;
             else ScrollToBottom();

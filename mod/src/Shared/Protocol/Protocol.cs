@@ -1022,9 +1022,12 @@ namespace IcarusII.Common.Protocol
     /// </summary>
     public sealed class HistoryStepInfo
     {
-        /// <summary><c>thinking</c> = 思考段；<c>tool</c> = 一次工具调用。</summary>
+        /// <summary>
+        /// <c>thinking</c> = 思考段；<c>text</c> = 一段过程正文；
+        /// <c>tool</c> = 一次工具调用。
+        /// </summary>
         public string Kind { get; set; }
-        /// <summary>思考正文（<c>thinking</c>）。</summary>
+        /// <summary>思考正文（<c>thinking</c>）或过程正文（<c>text</c>）。</summary>
         public string Text { get; set; }
         /// <summary>工具名（<c>tool</c>），由 UI 层映射成中文短名。</summary>
         public string Name { get; set; }
@@ -1042,7 +1045,7 @@ namespace IcarusII.Common.Protocol
         {
             if (value is null || !value.IsObject) return null;
             var kind = value["kind"].AsString(null);
-            if (kind == "thinking")
+            if (kind == "thinking" || kind == "text")
             {
                 var text = value["text"].AsString(null);
                 if (string.IsNullOrEmpty(text)) return null;

@@ -82,6 +82,7 @@ namespace IcarusII.I18n
             // 思考块 / 工具块（输出区里的可折叠条目）
             ["thinking.title"] = "思考",
             ["thinking.title.streaming"] = "思考中…",
+            ["thinking.truncated"] = "\n…（思考内容过长，已省略）",
             ["thinking.level.off"] = "关闭",
             ["thinking.level.low"] = "低",
             ["thinking.level.high"] = "高",

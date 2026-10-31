@@ -74,6 +74,7 @@ import {
   type ConversationSaveGroup,
   type ConversationIndexEntry,
   type HistoryToolStep,
+  type HistoryTextStep,
   type JsonObject,
   type ModelCatalogEntry,
   type ModelCatalogResult,
@@ -348,9 +349,11 @@ function contentText(content: unknown): string {
  * 把 pi 的 SessionEntry[] 投影成 UI 可回放的消息。
  *
  * - user / assistant 的可见文本：最多 `maxMessages` 条、单条 `maxText` 字符；
- * - assistant 顺带带上它之前的思考块和工具调用（`steps`，附录 A.6）：
+ * - assistant 顺带带上它之前的思考块、过程正文和工具调用（`steps`，附录 A.6）：
  *   一次提问里会有多个 assistant 步骤（思考+工具、再思考+工具…，最后一段带正文），
- *   中间那些没有正文的步骤先攒着，等最终回答落地时按发生顺序一起挂上去；
+ *   中间那些正文先按发生顺序攒进 `steps`，等最终回答落地时一起挂上去；
+ * - 一段正文后面跟着工具执行（同一消息里的 toolCall，或下一条 assistant 的正文）
+ *   就说明它只是过程正文，不能当回答；最后一条「没有被工具执行打断」的正文才是回答；
  * - 工具结果按 toolCallId 回填到对应的 `steps[]`；没有结果的（回答被中断）不填 ok；
  * - `compaction` 投影成一条 `kind:"compaction"` 的 assistant 记录（摘要只给 UI）；
  * - 分支摘要仍不回放。
@@ -363,9 +366,36 @@ export function extractHistoryMessages(
   maxText = 4000,
 ): HistoryMessage[] {
   const out: HistoryMessage[] = [];
-  // 当前提问里还没落地的思考/工具步骤；遇到下一条 user 消息时丢弃（那一轮没有正文）。
+  // 当前提问里按发生顺序攒下的步骤（思考 / 过程正文 / 工具），最终挂到回答上。
   let pending: HistoryStep[] = [];
+  // 本轮「还没被工具执行打断」的最后一段正文：它就是最终回答，其余正文留在 steps 里。
+  let answer: {
+    text: string;
+    steps: HistoryTextStep[];
+    entry: { timestamp?: unknown; message?: { timestamp?: unknown } };
+  } | null = null;
   const toolSteps = new Map<string, HistoryToolStep>();
+
+  /** 工具执行说明它之前的正文只是过程正文，不再是回答候选。 */
+  const demoteAnswer = (): void => {
+    answer = null;
+  };
+
+  /** 一轮结束：把回答和过程步骤分开落地；没有回答的轮次不生成消息。 */
+  const flushTurn = (): void => {
+    const current = answer;
+    const steps = pending;
+    pending = [];
+    answer = null;
+    if (!current) return;
+    const text = clipHistoryText(current.text, maxText);
+    if (!text) return;
+    const history: HistoryMessage = { role: 'assistant', text, ...timestampOf(current.entry) };
+    const answerSteps = new Set<HistoryStep>(current.steps);
+    const rest = steps.filter((step) => !answerSteps.has(step));
+    if (rest.length > 0) history.steps = rest;
+    out.push(history);
+  };
 
   for (const raw of entries) {
     if (!raw || typeof raw !== 'object') continue;
@@ -386,6 +416,7 @@ export function extractHistoryMessages(
     };
 
     if (entry.type === 'compaction') {
+      flushTurn();
       const summary = typeof entry.summary === 'string' ? entry.summary.trim() : '';
       if (summary) {
         const compaction: HistoryMessage = {
@@ -402,7 +433,6 @@ export function extractHistoryMessages(
         out.push(compaction);
       }
       // 压缩边界之前的中间步骤不属于下一条回答。
-      pending = [];
       toolSteps.clear();
       continue;
     }
@@ -412,7 +442,7 @@ export function extractHistoryMessages(
     const role = message.role;
 
     if (role === 'user') {
-      pending = [];
+      flushTurn();
       toolSteps.clear();
       const text = contentText(message.content).trim();
       if (!text) continue;
@@ -423,6 +453,7 @@ export function extractHistoryMessages(
     if (role === 'assistant') {
       const blocks = Array.isArray(message.content) ? message.content : [];
       const textParts: string[] = [];
+      const textSteps: HistoryTextStep[] = [];
       for (const block of blocks) {
         if (!block || typeof block !== 'object') continue;
         const item = block as {
@@ -434,13 +465,22 @@ export function extractHistoryMessages(
           arguments?: unknown;
         };
         if (item.type === 'text' && typeof item.text === 'string') {
+          const text = item.text.trim();
+          if (!text) continue;
           textParts.push(item.text);
+          const step: HistoryTextStep = {
+            kind: 'text',
+            text: clipHistoryText(text, HISTORY_TEXT_MAX),
+          };
+          pending.push(step);
+          textSteps.push(step);
         } else if (item.type === 'thinking' && typeof item.thinking === 'string') {
           const thinking = item.thinking.trim();
           if (thinking) {
             pending.push({ kind: 'thinking', text: clipHistoryText(thinking, HISTORY_THINKING_MAX) });
           }
         } else if (item.type === 'toolCall') {
+          demoteAnswer();
           const step: HistoryToolStep = {
             kind: 'tool',
             name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : 'tool',
@@ -452,26 +492,17 @@ export function extractHistoryMessages(
         }
       }
 
-      const finalText = textParts.join('\n').trim();
-      if (!finalText) continue; // 中间步骤：等最后一段带正文的回答一起回放
-
-      const history: HistoryMessage = {
-        role: 'assistant',
-        text: clipHistoryText(finalText, maxText),
-        ...timestampOf(entry),
-      };
-      if (pending.length > 0) {
-        history.steps = pending;
-        pending = [];
+      if (textSteps.length > 0) {
+        answer = { text: textParts.join('\n').trim(), steps: textSteps, entry };
       }
-      out.push(history);
       // toolSteps 保留到下一条 user 消息：结果可能在回答之后才写进会话。
       continue;
     }
 
     if (role === 'toolResult') {
       const callId = typeof message.toolCallId === 'string' ? message.toolCallId : '';
-      const step = callId ? toolSteps.get(callId) : undefined;
+      if (!callId) continue;
+      const step = toolSteps.get(callId);
       if (!step) continue;
       toolSteps.delete(callId);
       step.ok = message.isError !== true;
@@ -482,6 +513,8 @@ export function extractHistoryMessages(
       }
     }
   }
+
+  flushTurn();
 
   const recent = out.slice(-maxMessages);
   trimHistorySteps(recent);
@@ -576,6 +609,8 @@ const CONVERSATION_TITLE_SYSTEM_PROMPT = [
   '如果内容太少，也给一个简短概括，例如“新手开局咨询”。',
 ].join('\n');
 const HISTORY_THINKING_MAX = 4000;
+/** 一段过程正文（模型在思考/工具之间说的话）的上限。 */
+const HISTORY_TEXT_MAX = 2000;
 const HISTORY_TOOL_ARGS_MAX = 600;
 const HISTORY_TOOL_SUMMARY_MAX = 160;
 const HISTORY_TOOL_DETAIL_MAX = 2000;
@@ -686,7 +721,7 @@ function stepsChars(message: HistoryMessage): number {
   if (!message.steps) return 0;
   let total = 0;
   for (const step of message.steps) {
-    if (step.kind === 'thinking') total += step.text.length;
+    if (step.kind === 'thinking' || step.kind === 'text') total += step.text.length;
     else total += (step.args?.length ?? 0) + (step.detail?.length ?? 0) + (step.summary?.length ?? 0);
   }
   return total;

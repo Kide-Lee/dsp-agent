@@ -685,6 +685,17 @@ export interface HistoryThinkingStep {
   text: string;
 }
 
+/**
+ * 历史回答里的一段过程正文（协议附录 A.6 的 `steps`）。
+ *
+ * 模型在两次思考/工具调用之间说的话，按发生时刻与思考、工具步骤交错排列；
+ * 它不是最终回答（最终回答是 `HistoryMessage.text`）。
+ */
+export interface HistoryTextStep {
+  kind: 'text';
+  text: string;
+}
+
 /** 历史回答里的一次工具调用（协议附录 A.6 的 `steps`）。 */
 export interface HistoryToolStep {
   kind: 'tool';
@@ -699,7 +710,7 @@ export interface HistoryToolStep {
   detail?: string;
 }
 
-export type HistoryStep = HistoryThinkingStep | HistoryToolStep;
+export type HistoryStep = HistoryThinkingStep | HistoryTextStep | HistoryToolStep;
 
 /** `save.bound.history` 的一条可回放消息（M2.7，UI 历史恢复用）。 */
 export interface HistoryMessage {

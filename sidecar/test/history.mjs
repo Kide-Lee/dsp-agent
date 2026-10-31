@@ -211,6 +211,64 @@ check('第二轮思考也在列表里', steps[3]?.kind === 'thinking' && steps[3
 check('收尾思考在正文之前', steps[5]?.kind === 'thinking' && steps[5]?.text === '得出答案');
 check('user 消息不带 steps', withSteps[0]?.steps === undefined);
 
+// ---- 1c. 过程正文按时刻回放（附录 A.6 kind:"text"）----
+console.log('── 1c. 过程正文步骤 ──');
+const withTextSteps = extractHistoryMessages([
+  { type: 'message', message: { role: 'user', content: '看看电网', timestamp: 1 } },
+  {
+    type: 'message',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: '先看整体' },
+        { type: 'text', text: '我先看一下电网' },
+        { type: 'toolCall', id: 'u1', name: 'game_get_overview', arguments: {} },
+      ],
+      timestamp: 2,
+    },
+  },
+  {
+    type: 'message',
+    message: {
+      role: 'toolResult', toolCallId: 'u1', toolName: 'game_get_overview', isError: false,
+      content: [{ type: 'text', text: '电网正常' }],
+    },
+  },
+  {
+    type: 'message',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: '可以回答' }, { type: 'text', text: '电网正常。' }],
+      timestamp: 3,
+    },
+  },
+]);
+check('过程正文不单独成回答', withTextSteps.length === 2, JSON.stringify(withTextSteps));
+const textSteps = withTextSteps[1]?.steps ?? [];
+check('过程正文按发生顺序插入', textSteps[1]?.kind === 'text' && textSteps[1]?.text === '我先看一下电网',
+  JSON.stringify(textSteps));
+check('过程正文排在它之后的工具前面', textSteps[2]?.kind === 'tool' && textSteps[2]?.name === 'game_get_overview');
+check('回答只取最终正文', withTextSteps[1]?.text === '电网正常。');
+check('回答正文不重复进 steps',
+  !textSteps.some((step) => step.kind === 'text' && step.text === '电网正常。'), JSON.stringify(textSteps));
+
+const clippedTextStep = extractHistoryMessages([
+  { type: 'message', message: { role: 'user', content: 'q' } },
+  {
+    type: 'message',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'x'.repeat(3000) },
+        { type: 'toolCall', id: 'c1', name: 'game_get_overview', arguments: {} },
+      ],
+    },
+  },
+  { type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } },
+]);
+check('过程正文截断到 2000', clippedTextStep[1]?.steps?.[0]?.text === `${'x'.repeat(2000)}…`,
+  String(clippedTextStep[1]?.steps?.[0]?.text?.length));
+
 const interrupted = extractHistoryMessages([
   { type: 'message', message: { role: 'user', content: 'hi' } },
   {

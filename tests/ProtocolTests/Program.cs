@@ -754,6 +754,19 @@ namespace IcarusII.Tests
             Check("步骤四没有结果记录", withSteps.History[1].Steps[3].Ok == null);
             Eq("user 消息没有步骤", 0, withSteps.History[0].Steps.Count);
 
+            // 过程正文（kind:"text"）是排在思考/工具之间的独立步骤，不是回答本身。
+            var withTextStep = SaveBoundInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"3f2b\",\"history\":[" +
+                "{\"role\":\"user\",\"text\":\"看看电网\"}," +
+                "{\"role\":\"assistant\",\"text\":\"电网正常。\",\"steps\":[" +
+                "{\"kind\":\"thinking\",\"text\":\"先看整体\"}," +
+                "{\"kind\":\"text\",\"text\":\"我先看一下电网\"}," +
+                "{\"kind\":\"tool\",\"name\":\"game_get_overview\",\"ok\":true}]}]}"));
+            Eq("过程正文也能回放", 3, withTextStep.History[1].Steps.Count);
+            Eq("过程正文 kind", "text", withTextStep.History[1].Steps[1].Kind);
+            Eq("过程正文 text", "我先看一下电网", withTextStep.History[1].Steps[1].Text);
+            Eq("过程正文之后的工具仍在", "game_get_overview", withTextStep.History[1].Steps[2].Name);
+
             var noBound = SaveBoundInfo.Parse(null);
             Eq("null 载荷的安全默认", 0, noBound.MessageCount);
             Check("null 载荷的 SaveKey 为空", string.IsNullOrEmpty(noBound.SaveKey));
