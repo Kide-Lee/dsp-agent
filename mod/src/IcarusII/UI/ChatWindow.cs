@@ -1252,6 +1252,10 @@ namespace IcarusII.UI
             _content = content;
             _transcript = transcript;
             _input = input;
+            // 聊天窗的 ESC 只是让位/关窗，不是"取消编辑"。
+            // 游戏版 InputField 默认把 ESC 当取消：失焦时把文本回滚到聚焦前的内容，
+            // 刚输入的一段会整段消失。关掉它，草稿才能留下来。
+            if (_input != null) _input.escapeCancel = false;
 
             // 消息模板：content 里的 example-* 就是样式样板，运行期克隆它们。
             CaptureTemplates(content);
