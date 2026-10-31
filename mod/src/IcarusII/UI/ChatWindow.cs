@@ -113,6 +113,11 @@ namespace IcarusII.UI
         private Text _transcript;
         private ScrollRect _scroll;
         private InputField _input;
+        /// <summary>
+        /// 关窗时暂存的未发送草稿；null = 窗口没关过或草稿已被发送。
+        /// 游戏的 UIInputField 在 OnDisable 里会清掉文本，光靠"关窗不清空"留不住。
+        /// </summary>
+        private string _draftInput;
         /// <summary>输入栏根节点；ask 期间被 choose 替换（只切 active，不改尺寸）。</summary>
         private RectTransform _inputRoot;
         /// <summary>输出区根节点；尺寸/底边由 prefab 固定，运行期只做滚动。</summary>
@@ -910,6 +915,7 @@ namespace IcarusII.UI
             _transcript = null;
             _scroll = null;
             _input = null;
+            _draftInput = null;
             _lines.Clear();
             _items.Clear();
             _linkTargets.Clear();
@@ -1528,6 +1534,10 @@ namespace IcarusII.UI
 
             if (!open && _askPanel != null && _askPanel.IsShowing) _askPanel.Cancel();
 
+            // 关窗会 SetActive(false)，输入框的 OnDisable 会清掉文本；
+            // 必须在禁用之前把草稿抓到字段里，开窗时再塞回去。
+            if (!open && _input != null) _draftInput = _input.text;
+
             IsOpen = open;
             _root.SetActive(open);
             if (!open) { _wantInputFocus = false; _textMaterialRebound = false; HideToolMenu(); }
@@ -1663,6 +1673,12 @@ namespace IcarusII.UI
                 // 让游戏停止响应移动/建造输入。记录原值以便还原。
                 _savedInputing = Game.GameRefs.SetTextInputActive(true);
                 UiFactory.EnsureEventSystem();
+                // 先把关窗时暂存的草稿放回去，再按它的长度重种颜色表。
+                if (_input != null && _draftInput != null)
+                {
+                    _input.text = _draftInput;
+                    _input.caretPosition = _input.text.Length;
+                }
                 // 关窗时 InputField.OnDisable 会把逐字符颜色清成 0（= 调色板 0 号色，alpha≈0.157），
                 // 那样整段文字会被包成 `<color=#FFFFFF28>` → 乘上 Text.color 后基本透明。
                 // 开窗必须重种回"跟随默认色"。
@@ -7152,6 +7168,7 @@ namespace IcarusII.UI
 
             HideToolMenu();
             _input.text = string.Empty;
+            _draftInput = null;
             if (value.Length == 0) return;
 
             // 与单行路径一致：发送后主动失焦，玩家可直接按 R 关窗
@@ -8214,6 +8231,7 @@ namespace IcarusII.UI
             if (_input != null)
             {
                 _input.text = string.Empty;
+                _draftInput = null;
                 // 发送后主动失焦：玩家读完回复可直接按 R 关窗，
                 // 想继续追问再按 Enter 即可。
                 _input.DeactivateInputField();
