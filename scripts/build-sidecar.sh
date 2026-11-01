@@ -21,7 +21,7 @@ SIDECAR_DIR="$ROOT/sidecar"
 OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 BUILD_DIR="$OUT_DIR/.build"
 RUNTIME_DIR="${SIDECAR_RUNTIME_DIR:-$BUILD_DIR/runtimes}"
-NODE_VERSION="${NODE_VERSION:-24.18.0}"
+NODE_VERSION="${NODE_VERSION:-26.13.0}"
 SEA_FUSE="NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2"
 POSTJECT_VERSION="${POSTJECT_VERSION:-1.0.0-alpha.6}"
 
@@ -69,7 +69,7 @@ command -v npx >/dev/null 2>&1 || {
 #                       fileURLToPath(undefined) 抛 ERR_INVALID_ARG_TYPE
 #   --external:@mariozechner/clipboard : 可选的原生剪贴板，仅 TUI 使用，我们不需要
 log "打包 sidecar 为单文件 (esbuild)"
-npx --yes esbuild@"${ESBUILD_VERSION:-0.25.0}" "$SIDECAR_DIR/src/index.ts" \
+npx --yes esbuild@"${ESBUILD_VERSION:-0.28.2}" "$SIDECAR_DIR/src/index.ts" \
   --bundle --platform=node --format=cjs --target=node22 --minify \
   --external:@mariozechner/clipboard \
   --define:import.meta.url=import_meta_url \
@@ -85,7 +85,12 @@ cp "$BUILD_DIR/sidecar.cjs" "$SMOKE/"
 # ---------------------------------------------------------------- 2. 准备 Node 运行时
 fetch_node_runtime() {
   local platform="$1" arch="$2" out="$3"
-  [[ -x "$out" || -f "$out" ]] && { log "复用已有运行时 $out"; return; }
+  # 缓存按版本失效：跨平台产物无法用 --version 自证，所以用一个戳文件记录下载的是哪个版本。
+  local stamp="$out.version"
+  if [[ ( -x "$out" || -f "$out" ) && -f "$stamp" && "$(cat "$stamp")" = "$NODE_VERSION" ]]; then
+    log "复用已有运行时 $out（v$NODE_VERSION）"
+    return
+  fi
   local base="node-v${NODE_VERSION}-${platform}-${arch}"
   local url archive
   case "$platform" in
@@ -105,6 +110,7 @@ fetch_node_runtime() {
     win) cp "$RUNTIME_DIR/node.exe" "$out" ;;
     *)   cp "$RUNTIME_DIR/$base/bin/node" "$out" ;;
   esac
+  printf '%s' "$NODE_VERSION" > "$stamp"
 }
 
 # ---------------------------------------------------------------- 3. SEA + 注入
@@ -124,7 +130,36 @@ build_target() {
 { "main": "sidecar.cjs", "output": "sea-prep.blob",
   "disableExperimentalSEAWarning": true, "useSnapshot": false, "useCodeCache": false }
 EOF
-  ( cd "$BUILD_DIR" && node --experimental-sea-config sea-config.json )
+  # blob 头部带着生成它的 Node 的格式版本号，注入到另一个大版本的运行时上会在启动时断言失败
+  # （Node 26 上实测：SeaDeserializer::Read 触发 Assertion failed: (format_value) <= kModule）。
+  # 因此 blob 必须由**同版本**的 Node 生成：目标运行时本机能跑就用它，跨平台产物
+  #（如 Linux 上打 Windows）则用同版本的宿主平台运行时，不依赖宿主机装的是哪个 Node。
+  local blob_node="$runtime"
+  if ! "$runtime" --version >/dev/null 2>&1; then
+    local host_platform="" host_arch=""
+    case "$HOST_TARGET" in
+      linux-x64)    host_platform=linux;  host_arch=x64 ;;
+      darwin-x64)   host_platform=darwin; host_arch=x64 ;;
+      darwin-arm64) host_platform=darwin; host_arch=arm64 ;;
+    esac
+    if [[ -n "$host_platform" ]]; then
+      blob_node="$RUNTIME_DIR/node-${host_platform}-${host_arch}"
+      fetch_node_runtime "$host_platform" "$host_arch" "$blob_node"
+      log "注意：$target 运行时无法在本机执行，SEA blob 由同版本的宿主运行时生成"
+    else
+      blob_node="node"
+      local host_major target_major
+      host_major="$(node --version)"
+      host_major="${host_major%%.*}"
+      target_major="v${NODE_VERSION%%.*}"
+      [[ "$host_major" == "$target_major" ]] || {
+        echo "宿主 node $(node --version) 与目标运行时 v$NODE_VERSION 的大版本不同，SEA blob 无法互用；请用同大版本的 node 构建。" >&2
+        return 2
+      }
+      log "注意：$target 运行时无法在本机执行，SEA blob 由宿主 $(node --version) 生成"
+    fi
+  fi
+  ( cd "$BUILD_DIR" && "$blob_node" --experimental-sea-config sea-config.json )
 
   log "注入 SEA blob -> $(basename "$out")"
   cp "$runtime" "$out"
