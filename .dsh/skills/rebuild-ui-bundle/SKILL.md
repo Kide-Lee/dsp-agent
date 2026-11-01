@@ -50,4 +50,4 @@ grep -E 'tool-bar/(send-button|permission-group|thinking-group|model-group) +\['
 
 - `build-mod.sh` 只重打 DLL；只改 prefab 而不重打这个 bundle，游戏里看不到变化。
 - 需要有"只做加法"的移植（补聊天窗缺失部件）时，调 `IcarusIIBundleBuilder.AddPartsAndBuild()`。
-- 构建成功后：`package-release`，再 `update-steam-mod`，然后用 1080p 和一个非 1080p 分辨率进游戏验收。
+- 构建成功后：`package-release`，再 `update-steam-mod`（写 r2modman 配置档），然后用 1080p 和一个非 1080p 分辨率进游戏验收。

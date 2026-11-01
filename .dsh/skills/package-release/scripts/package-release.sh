@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 打包 IcarusII 发布产物：dist/pkg（Steam/手动安装），可选 Thunderstore zip。
+# 打包 IcarusII 发布产物：dist/pkg（r2modman 配置档/手动安装），可选 Thunderstore zip。
 #
 #   scripts/package-release.sh                       # 完整包
 #   scripts/package-release.sh --skip-sidecar        # 复用已有 sidecar exe
@@ -54,4 +54,4 @@ if [ "$THUNDER" = 1 ]; then
   log "zip：$(ls -1 dist/IcarusII-*.zip | tr '\n' ' ')"
 fi
 
-log "下一步：update-steam-mod（先 --dry-run），或按 docs/publishing.md 上传 Thunderstore"
+log "下一步：update-steam-mod（默认 r2modman 配置档，先 --dry-run），或按 docs/publishing.md 上传 Thunderstore"

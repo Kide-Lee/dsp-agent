@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 #
-# 把 IcarusII 安装到 Dyson Sphere Program 的游戏目录。
+# 把 IcarusII 安装到 Dyson Sphere Program 的游戏目录（手动安装）。
+#
+# r2modman 用户不要用本脚本：r2modman 从自己的配置档加载插件，
+# 请用 .dsh/skills/update-steam-mod/scripts/update-steam-mod.sh。
 #
 # 前提：**BepInEx 5 已安装**。本脚本不会替你装 BepInEx
-#       （除非显式加 --with-bepinex，那是开发自用路径）。
+#       （除非显式加 --with-bepinex，那是手动开发自用路径）。
 #
 # 用法：
 #   ./install.sh                          # 自动定位游戏目录

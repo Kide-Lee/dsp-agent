@@ -17,9 +17,27 @@ PYTHONPATH=.scratch/pylib python3 tools/build-kb.py \
 
 cd sidecar && npm install      # 首次
 scripts/build-sidecar.sh       # 生成自包含的 icarus-ii-sidecar.exe
-
-scripts/install.sh --with-bepinex
 ```
+
+### 部署到 r2modman
+
+r2modman 从自己的配置档加载 BepInEx，游戏根目录的 `BepInEx/plugins` 在 **Start modded** 下不生效。
+打完包后用：
+
+```bash
+.dsh/skills/update-steam-mod/scripts/update-steam-mod.sh --dry-run
+.dsh/skills/update-steam-mod/scripts/update-steam-mod.sh
+```
+
+默认写到 `~/.config/r2modmanPlus-local/DysonSphereProgram/profiles/<配置档>/BepInEx/plugins/IcarusII/`。
+只有一个装好 BepInEx 的配置档时自动选；多个用 `--profile`；数据目录不在默认位置用 `--r2modman-dir`。
+
+- 首次部署会把游戏目录的 `BepInEx/config/icarus-ii.cfg` 复制过来，目标已存在时不覆盖。
+- `--remove-legacy` 把游戏目录的旧插件移到 `dist/legacy-install/`，不直接删除。
+- 手动安装（不用 r2modman）仍可用 `scripts/install.sh --game-dir ...`，但本地开发不再走这条路。
+
+启动游戏用 r2modman 的 **Start modded**；日志在配置档的 `BepInEx/LogOutput.log`。
+sidecar 数据仍在 Proton 前缀的 `%APPDATA%\icarus-ii`，换部署位置不影响 key 和历史。
 
 ### 测试
 

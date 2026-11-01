@@ -69,6 +69,8 @@ NGA 戴森球版 / 百度贴吧 / B站（演示视频 + 专栏）/ 小黑盒。
 - [ ] `README.md` 里的 SHA256 与实际 `IcarusII.dll` / `icarus-ii-sidecar.exe` 一致
       （发版前重新算一遍，脚本暂不自动回填）
 - [ ] 游戏版本兼容性已验证（当前 `0.10.30.3100`）
+- [ ] 本地已部署到 r2modman 配置档并从 **Start modded** 启动，确认游戏内图标/窗口/工具与
+      `dist/pkg` 一致（skill：`update-steam-mod`）
 - [ ] 杀软误报：附 SHA256，必要时提交微软误报申诉
 - [ ] UI bundle 是否包含游戏自带贴图 → 决定发完整包还是 `-nogameassets`
 - [ ] 截图/GIF 上传到图床后填进 README（Thunderstore 不读本地图片）

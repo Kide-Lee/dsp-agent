@@ -45,4 +45,4 @@ description: 运行 IcarusII 的验证矩阵 —— mod 构建、sidecar 离线�
 ## 之后
 
 - UI/prefab 改动：接着跑 `rebuild-ui-bundle` skill，确认 `tool-bar` 锚点没有漂移。
-- 要部署：先 `package-release`，再 `update-steam-mod`。
+- 要部署：先 `package-release`，再 `update-steam-mod`（默认写 r2modman 配置档）。

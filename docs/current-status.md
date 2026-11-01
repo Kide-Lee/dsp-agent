@@ -77,7 +77,7 @@
 - `cd sidecar && npm test`：退出码 0（新增 config 权限往返、确认流程不隐藏写工具、脚本级确认按最高 risk 计算、本地蓝图写入确认）。
 - UI AssetBundle 与 `mod/unity/Prefab/ChatWindow.prefab`、`button-agent.prefab`（含图标）快照已同步；
   prefab 已含 `permission-group/permission-level` 与四档思考下拉框。
-- `scripts/package.sh` 成功；Steam 安装目录通过 SHA-256 校验更新。
+- `scripts/package.sh` 成功；r2modman 配置档通过 SHA-256 校验更新（游戏目录旧插件已移出）。
 - sidecar `config.json` 的 provider/model/key 迁移自检通过；玩家配置未被覆盖。
 - M4 实机验收：用户确认全部通过（M4a–M4j + 写操作）。
 - M5：离线构建/测试通过；实机验收待做。
@@ -109,7 +109,7 @@ M4 已收口，下一步从“继续验收”转为“发布与后续规划”�
 
 1. **M5 实机验收**：新档/旧档各启动一次，逐项确认丢弃、配方、存储、投料、取成品、tether、
    link 卡片、矿脉卡、脚本租约与撤销栈。
-2. **发布收尾**：确认 1.1.227 的 sidecar/UI/Thunderstore 产物与 Steam 安装一致。
+2. **发布收尾**：确认 1.1.227 的 sidecar/UI/Thunderstore 产物与 r2modman 配置档里的安装一致。
 3. **清理已知限制**：优先上下文压缩后的历史删除、高产量/多副产物蓝图。
 4. **M5 之后**：合成器队列、仪表盘等候选能力仍需逐条设计（D1–D5 已拍板）；
    见 [../design.md §20](../design.md#20-候选能力清单m5待实现)。

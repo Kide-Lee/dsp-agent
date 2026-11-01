@@ -2,7 +2,7 @@
 # 拉取构建期依赖（目前只有 BepInEx 的参考程序集）。
 #
 # 只需要跑一次。产物放在 <repo>/.deps/bepinex，仅供**编译**引用；
-# 真正安装到游戏目录由 scripts/install.sh（玩家侧）或 scripts/dev-install.sh（开发侧）负责。
+# 真正部署由 .dsh/skills/update-steam-mod/scripts/update-steam-mod.sh（默认 r2modman 配置档）或 scripts/install.sh（手动安装）负责。
 #
 # 版本锁定说明：**编译期固定用 5.4.17（社区 Thunderstore 包同款）**。
 #

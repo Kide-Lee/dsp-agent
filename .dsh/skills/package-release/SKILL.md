@@ -1,6 +1,6 @@
 ---
 name: package-release
-description: 构建并打包 IcarusII 发布产物到 dist/pkg（Steam/手动安装），可选再打 Thunderstore zip，能安全复用已有产物。准备发布或部署到 Steam 之前使用。
+description: 构建并打包 IcarusII 发布产物到 dist/pkg（r2modman 配置档/手动安装），可选再打 Thunderstore zip，能安全复用已有产物。准备发布或部署 mod 之前使用。
 ---
 
 # 打包 IcarusII 发布版
@@ -11,7 +11,7 @@ description: 构建并打包 IcarusII 发布产物到 dist/pkg（Steam/手动安
 .dsh/skills/package-release/scripts/package-release.sh --with-thunderstore
 ```
 
-产物：`dist/pkg/IcarusII/`（`update-steam-mod` 和 `install.sh` 使用的目录结构），加 `--with-thunderstore` 时另有 `dist/IcarusII-<version>.zip`。
+产物：`dist/pkg/IcarusII/`（`update-steam-mod` 和 `install.sh` 使用的目录结构；前者默认写 r2modman 配置档），加 `--with-thunderstore` 时另有 `dist/IcarusII-<version>.zip`。
 
 ## `package.sh` 做了什么
 
@@ -61,6 +61,6 @@ description: 构建并打包 IcarusII 发布产物到 dist/pkg（Steam/手动安
 
 ## 打包后
 
-- 部署：用 `update-steam-mod` 技能（先 `--dry-run`）。提前退出游戏。
+- 部署：用 `update-steam-mod` 技能（默认写 r2modman 配置档；手动安装加 `--game-dir`；先 `--dry-run`）。提前退出游戏。
 - Thunderstore 上传：见 `docs/publishing.md`；不要手改 `dist/`。
 - 脚本会打印文件清单和总大小；发布前确认 sidecar exe 与 UI bundle 都在。

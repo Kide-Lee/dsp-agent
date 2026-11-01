@@ -61,7 +61,7 @@ IcarusII 是《戴森球计划》的 Agent。它包括：
 1. 根据改动范围运行相关测试（skill：`verify-changes`）。
 2. 按改动类型构建 mod DLL、sidecar 和/或 UI bundle；prefab/UI 改动用 skill `rebuild-ui-bundle`。
 3. 运行 scripts/package.sh 打包（skill：`package-release`）。
-4. 运行 .dsh/skills/update-steam-mod/scripts/update-steam-mod.sh 部署，并确认 SHA-256 校验通过（skill：`update-steam-mod`）。
+4. 运行 .dsh/skills/update-steam-mod/scripts/update-steam-mod.sh 部署到 r2modman 配置档（默认；手动安装用 `--game-dir`），并确认 SHA-256 校验通过（skill：`update-steam-mod`）。
 5. 检查提交差异，执行 git add 和 git commit；提交后确认 git status --short 为空。
 提交信息约定：
 - 用 `feat:` / `fix:` / `refactor:` / `style:` / `docs:` / `release:` 前缀，主题可中文。

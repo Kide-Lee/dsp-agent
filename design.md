@@ -163,7 +163,7 @@ API Key 是外部服务凭证，mod 无从得知，**这一步不可自动化**�
 
 ```
 ① 关闭游戏
-② 运行 install.sh（Windows: install.bat，或直接解压 zip）
+② 运行 install.sh（或直接解压 zip）
    ├─ 从 steamapps/libraryfolders.vdf 定位游戏目录
    ├─ 检测运行形态（原生 Windows / Proton）
    ├─ 复制 BepInEx 5 + BepInEx/plugins/IcarusII/
@@ -172,6 +172,10 @@ API Key 是外部服务凭证，mod 无从得知，**这一步不可自动化**�
 ```
 
 之后的使用体验就是"丢进去，能用"。安装脚本同时提供**纯解压版**（不含步骤②的自动注册表写入），供不想跑脚本的玩家手动处理。
+
+> 现状（2026-11）：玩家主路径是 Thunderstore + r2modman。r2modman 把 BepInEx 放在自己的配置档，
+> 用 Doorstop 参数把插件根指到 `profiles/<配置档>/BepInEx`；游戏根目录只保留 Doorstop 代理（`winhttp.dll` / `doorstop_config.ini`）。
+> 下面的 `install.sh` 流程仅用于手动安装/无管理器场景，开发部署用 `update-steam-mod` 脚本写配置档。
 
 ---
 
@@ -1238,9 +1242,8 @@ icarus-ii/
 │   ├── build-mod.sh
 │   ├── build-sidecar.sh          # esbuild bundle + SEA 注入，多平台（已验证，见 §7.1.1）
 │   ├── package.sh                # 生成 dist/ 发布包
-│   ├── install.sh                # 玩家侧安装器：定位游戏目录 + 复制 + 写 Proton DLL 覆盖（§2.3.4）
-│   ├── install.bat               # 同上，Windows
-│   └── dev-link.sh               # 开发期符号链接到游戏目录
+│   ├── install.sh                # 手动安装器：定位游戏目录 + 复制 + 写 Proton DLL 覆盖（§2.3.4）
+│   └── package-thunderstore.sh   # Thunderstore / r2modman 发布包
 └── dist/                         # 发布产物（不入库）
 ```
 
@@ -1271,7 +1274,7 @@ icarus-ii/
 **开发流程**
 
 1. 修改游戏目录 `Managed/` 下 DLL 后，`Directory.Build.props` 指向它编译。
-2. `dev-link.sh` 把 DLL 软链到游戏 `BepInEx/plugins/`，重启游戏即生效。
+2. 用 `.dsh/skills/update-steam-mod/scripts/update-steam-mod.sh` 把 DLL/sidecar/UI 部署到 r2modman 配置档，重启游戏即生效。
 3. sidecar 支持 `--port` + `tsx watch` 热重载；协议变更时先改 `protocol.ts`，mod 侧 `Protocol.cs` 与之对齐（用一份 JSON Schema 双向生成或对照测试）。
 
 ---
