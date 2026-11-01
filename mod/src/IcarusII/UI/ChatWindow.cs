@@ -472,6 +472,10 @@ namespace IcarusII.UI
             public Text Summary;
             public Text Body;
             public bool Expanded;
+            /// <summary>流式思考期间正文已经撑到的高度（0 = 没钉住）；只增不减。</summary>
+            public float BodyHeight;
+            /// <summary>上一次量到正文宽度；用来判断排版是否已经给出真实宽度。</summary>
+            public float BodyWidth;
 
             /// <summary>工具块用：调用参数摘要（展开时显示）。</summary>
             public string Args;
@@ -2918,6 +2922,7 @@ namespace IcarusII.UI
             _thinkingText.Length = 0;
             _thinkingRenderKey = -1;
             _thinkingTruncated = false;
+            UnpinThinkingBodyHeight(block);
             _dirty = true;
         }
 
@@ -3155,6 +3160,42 @@ namespace IcarusII.UI
                 : full;
             if (_thinkingTruncated) text += Strings.Get("thinking.truncated");
             ApplyRichText(_thinking.Body, text, RichOptions13, RichTextProfile.Body);
+            PinThinkingBodyHeight(_thinking);
+        }
+
+        /// <summary>
+        /// 思考块正文只长不回缩：流式期间渲染的只是尾部窗口，窗口每滑动一次换行数就变，
+        /// 块高度会跟着忽高忽低。这里把正文高度钉在已经出现过的最大值上。
+        /// </summary>
+        private void PinThinkingBodyHeight(Block block)
+        {
+            var body = block != null ? block.Body : null;
+            if (body == null) return;
+            // 关窗时 Canvas 不排版，rect 停在 prefab 的占位尺寸上，按它量出来的高度不可信。
+            if (_root == null || !_root.activeInHierarchy) return;
+
+            // 刚建出来的块要等一帧排版才有真实宽度：宽度没稳定前先只记下来，不钉。
+            var width = body.rectTransform.rect.width;
+            if (width <= 1f || !Mathf.Approximately(block.BodyWidth, width))
+            {
+                block.BodyWidth = width;
+                return;
+            }
+
+            var layout = body.GetComponent<LayoutElement>();
+            if (layout == null) layout = body.gameObject.AddComponent<LayoutElement>();
+            block.BodyHeight = Mathf.Max(block.BodyHeight, body.preferredHeight);
+            if (!Mathf.Approximately(layout.preferredHeight, block.BodyHeight))
+                layout.preferredHeight = block.BodyHeight;
+        }
+
+        /// <summary>解除正文高度钉住，让 Text 按当前全文重新算高（收尾渲染全文、开始下一段时用）。</summary>
+        private void UnpinThinkingBodyHeight(Block block)
+        {
+            if (block == null) return;
+            block.BodyHeight = 0f;
+            var layout = block.Body != null ? block.Body.GetComponent<LayoutElement>() : null;
+            if (layout != null) layout.preferredHeight = -1f;
         }
 
         /// <summary>
@@ -3169,6 +3210,8 @@ namespace IcarusII.UI
         {
             var block = _thinking;
             _thinking = null;
+            // 收尾要显示全文：先解除流式期间的高度上限，不能把全文裁在 2000 字窗口的高度里。
+            UnpinThinkingBodyHeight(block);
             if (block == null)
             {
                 if (finalize && _stream.Length == 0) FinalizeIdleReply();
