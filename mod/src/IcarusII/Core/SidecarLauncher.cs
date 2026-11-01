@@ -229,31 +229,47 @@ namespace IcarusII.Core
             return false;
         }
 
+        /// <summary>与桥无关的固定能力；`mod.bridge.v1` 由是否有启用的 mod 决定。</summary>
+        private static readonly string[] BaseCapabilities =
+        {
+            "ui.chat",
+            IcarusII.Common.Protocol.Protocol.CapabilityGameRead,
+            IcarusII.Common.Protocol.Protocol.CapabilityGameEntity,
+            IcarusII.Common.Protocol.Protocol.CapabilityGameProgress,
+            IcarusII.Common.Protocol.Protocol.CapabilityGameView,
+            IcarusII.Common.Protocol.Protocol.CapabilityGameAnalyze,
+            IcarusII.Common.Protocol.Protocol.CapabilityUiAsk,
+            IcarusII.Common.Protocol.Protocol.CapabilityGameWrite,
+            IcarusII.Common.Protocol.Protocol.CapabilityGameSandbox,
+            IcarusII.Common.Protocol.Protocol.CapabilityGameDrop,
+            IcarusII.Common.Protocol.Protocol.CapabilityGameBuild,
+            IcarusII.Common.Protocol.Protocol.CapabilityGameStorage,
+            IcarusII.Common.Protocol.Protocol.CapabilityGameTether,
+            IcarusII.Common.Protocol.Protocol.CapabilityGameTodo,
+            IcarusII.Common.Protocol.Protocol.CapabilityScriptWrite,
+            IcarusII.Common.Protocol.Protocol.CapabilityRichTextV2,
+            IcarusII.Common.Protocol.Protocol.CapabilityUiTree,
+        };
+
+        /// <summary>当前能力集合；没有启用的 mod 时不声明 mod.bridge.v1。</summary>
+        internal static string[] BuildCapabilities()
+        {
+            if (!ModBridge.Enabled) return (string[])BaseCapabilities.Clone();
+            var list = new List<string>(BaseCapabilities)
+            {
+                IcarusII.Common.Protocol.Protocol.CapabilityModBridge,
+            };
+            return list.ToArray();
+        }
+
+        /// <summary>当前要交给 sidecar 的插件列表；没有启用的 mod 时为空。</summary>
+        internal static ExtensionSummary[] BuildExtensions()
+        {
+            return ModBridge.Enabled ? ModBridge.Extensions() : new ExtensionSummary[0];
+        }
+
         private SidecarOptions BuildOptions(string host, int port, string token)
         {
-            var capabilities = new List<string>
-            {
-                "ui.chat",
-                IcarusII.Common.Protocol.Protocol.CapabilityGameRead,
-                IcarusII.Common.Protocol.Protocol.CapabilityGameEntity,
-                IcarusII.Common.Protocol.Protocol.CapabilityGameProgress,
-                IcarusII.Common.Protocol.Protocol.CapabilityGameView,
-                IcarusII.Common.Protocol.Protocol.CapabilityGameAnalyze,
-                IcarusII.Common.Protocol.Protocol.CapabilityUiAsk,
-                IcarusII.Common.Protocol.Protocol.CapabilityGameWrite,
-                IcarusII.Common.Protocol.Protocol.CapabilityGameSandbox,
-                IcarusII.Common.Protocol.Protocol.CapabilityGameDrop,
-                IcarusII.Common.Protocol.Protocol.CapabilityGameBuild,
-                IcarusII.Common.Protocol.Protocol.CapabilityGameStorage,
-                IcarusII.Common.Protocol.Protocol.CapabilityGameTether,
-                IcarusII.Common.Protocol.Protocol.CapabilityGameTodo,
-                IcarusII.Common.Protocol.Protocol.CapabilityScriptWrite,
-                IcarusII.Common.Protocol.Protocol.CapabilityRichTextV2,
-                IcarusII.Common.Protocol.Protocol.CapabilityUiTree,
-            };
-            if (_config.AllowThirdPartyTools)
-                capabilities.Add(IcarusII.Common.Protocol.Protocol.CapabilityModBridge);
-
             return new SidecarOptions
             {
                 Host = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host.Trim(),
@@ -262,10 +278,8 @@ namespace IcarusII.Core
                 ModVersion = Plugin.PluginVersion,
                 GameVersion = Game.GameRefs.GameVersion,
                 GameLanguage = Game.GameRefs.LanguageCode,
-                Capabilities = capabilities.ToArray(),
-                Extensions = _config.AllowThirdPartyTools
-                    ? ModBridge.Extensions()
-                    : new ExtensionSummary[0],
+                Capabilities = BuildCapabilities(),
+                Extensions = BuildExtensions(),
                 ConnectTimeoutMs = Math.Max(500, _config.ConnectTimeoutMs),
                 MinBackoffMs = 1000,
                 MaxBackoffMs = 30000,

@@ -55,6 +55,7 @@ import {
   parseToolsSetPayload,
   parseConversationsExportPayload,
   parseConversationTargetPayload,
+  parseClientStatePayload,
   parseConfirmResultPayload,
   errorRetryable,
   parseConfigSetPayload,
@@ -176,6 +177,29 @@ function stableJson(value: unknown): string {
 
 function hashArgs(args: JsonObject): string {
   return createHash('sha256').update(stableJson(args)).digest('hex');
+}
+
+/** 适配器创建确认里给人看的摘要（最多列 5 条）。 */
+function summarizeAdapterTools(value: unknown): string {
+  if (!Array.isArray(value) || value.length === 0) return '（无）';
+  const lines: string[] = [];
+  for (const item of value.slice(0, 5)) {
+    if (typeof item !== 'object' || item === null) continue;
+    const row = item as Record<string, unknown>;
+    const name = typeof row['name'] === 'string' ? row['name'] : '?';
+    const invoke = row['invoke'];
+    let target = '?';
+    if (typeof invoke === 'object' && invoke !== null) {
+      const call = invoke as Record<string, unknown>;
+      const type = typeof call['type'] === 'string' ? call['type'] : '?';
+      const method = typeof call['method'] === 'string' ? call['method'] : '?';
+      target = `${type}.${method}`;
+    }
+    const risk = typeof row['risk'] === 'number' ? row['risk'] : 0;
+    lines.push(`${name} → ${target}（risk ${risk}）`);
+  }
+  if (value.length > 5) lines.push(`…共 ${value.length} 个`);
+  return lines.length > 0 ? lines.join('；') : '（无）';
 }
 
 function describeConfirmation(
@@ -300,9 +324,23 @@ function describeConfirmation(
       return {
         title: '修改其他 mod 的配置？',
         body: `mod：${fmt(args['guid'])}\n` +
-          `配置：${fmt(args['section'])}/${fmt(args['key'])}\n` +
-          `新值：${fmt(args['value'])}\n` +
+          `配置：${fmt(args['section'])}/${fmt(args['key'])}` +
+          `\n新值：${fmt(args['value'])}\n` +
           '会写入该 mod 的配置文件，可能立即改变游戏行为；可撤销，部分 mod 需要重启生效。',
+      };
+    case 'mods_adapter_create':
+      return {
+        title: '为 mod 创建适配器？',
+        body: `mod：${fmt(args['guid'])}\n` +
+          `工具：${summarizeAdapterTools(args['tools'])}\n` +
+          '会把绑定写入 config/icarus-ii/bridge 并热载；创建后下一轮才可用。' +
+          'AI 只能按方法名推断风险，生成的能力最低按 risk 1 处理；不放心可把该 mod 档位调成只读。',
+      };
+    case 'mods_adapter_delete':
+      return {
+        title: '删除 mod 适配器？',
+        body: `mod：${fmt(args['guid'])}\n` +
+          '只删除 config/icarus-ii/bridge 下的适配器；随包与内置适配器不受影响。撤销可恢复。',
       };
     default:
       return { title: '确认写操作？', body: `${name}\n${stableJson(args)}` };
@@ -478,6 +516,9 @@ export class Session {
       case MessageType.Hello:
         this.handleHello(env);
         return;
+      case MessageType.Extensions:
+        this.handleExtensions(env);
+        return;
       case MessageType.Ping:
         this.handlePing(env);
         return;
@@ -642,6 +683,52 @@ export class Session {
       this.logger.warn('知识库缓存加载失败', errorFields(err));
     }
     if (payload.saveKey) this.ensureKnowledge();
+  }
+
+  /**
+   * B.1.9：mod 在设置里开关插件、或创建/删除适配器后推送新的能力/扩展列表。
+   * 与 hello 走同一条同步路径：插件列表变化时在回合边界重建工具集。
+   */
+  private handleExtensions(env: import('./protocol.js').ParsedEnvelope): void {
+    if (this._state !== 'ready' || !this.helloPayload) {
+      this.logger.debug('忽略未握手时的 extensions 推送');
+      return;
+    }
+    const state = parseClientStatePayload(env.payload);
+    this.helloPayload = {
+      ...this.helloPayload,
+      capabilities: state.capabilities,
+      extensions: state.extensions,
+    };
+    try {
+      this.options.agent.onClientCapabilities?.(state.capabilities, state.extensions);
+    } catch (err) {
+      this.logger.warn('同步扩展推送失败', errorFields(err));
+      return;
+    }
+    this.logger.info('收到扩展列表推送', {
+      capabilities: state.capabilities.length,
+      extensions: state.extensions.map((extension) => extension.id),
+    });
+  }
+
+  /** 写操作属于哪个第三方插件；非第三方工具返回 undefined。 */
+  private modGuidForTool(name: string, args: JsonObject): string | undefined {
+    if (
+      name === 'mods_config_list' ||
+      name === 'mods_config_get' ||
+      name === 'mods_config_set' ||
+      name === 'mods_adapter_create' ||
+      name === 'mods_adapter_delete'
+    ) {
+      const guid = args['guid'];
+      return typeof guid === 'string' && guid.length > 0 ? guid : undefined;
+    }
+    if (!name.startsWith('mod_')) return undefined;
+    for (const extension of this.helloPayload?.extensions ?? []) {
+      if (name.startsWith(`mod_${extension.id}_`)) return extension.guid;
+    }
+    return undefined;
   }
 
   private rejectHandshake(
@@ -1843,6 +1930,9 @@ export class Session {
             body: copy.body,
             risk: risk as 1 | 2,
             timeoutMs: 60000,
+            ...(this.modGuidForTool(name, args)
+              ? { modGuid: this.modGuidForTool(name, args) as string }
+              : {}),
             ...(override?.maxWrites ? { maxWrites: override.maxWrites } : {}),
             ...(override?.writeNames ? { writeNames: override.writeNames } : {}),
           } satisfies ConfirmRequestPayload),

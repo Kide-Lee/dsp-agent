@@ -45,8 +45,8 @@
 | 首次配置引导 | 取消聊天输入框的密钥录入态；`missing_key` / `invalid_key` / `unreachable` 时在聊天窗提示点击右上角设置按钮，由设置页「模型」页提交 Key。未配置时发送提问会被拦截并再次指向设置页，不再把输入当成 Key |
 | 输入工具条修复 | 图标 / 复选框 / 文字颜色改为按点击工具条前的光标/选区插入：工具栏按钮带 Unity `Button`，点击会让 InputField 失焦并把内部 caret 清 0；现在运行期记住最后聚焦时的选区并在插入前恢复 |
 | 提示词装配重构 | 单一人格文本在 `sidecar/prompts/system.zh.md`，构建时生成 TS 常量（`gen-prompts.mjs`；legacy 富文本版已移除）；`{{顾问字幕42}}` 这类引用在构建期从游戏 `Locale/<lcid>/base.txt` 取值并规范化，缺条目/`$LKEY` 直接失败；人格不再手写工具清单，能力段落与 `promptGuidelines` 按本轮注册表生成；新增 `--system-prompt-file`（仅调试/评测）与 `test/prompts.mjs` 护栏 |
-| 第三方 mod 桥 P0 | `mod.bridge.v1`：`hello.extensions` + `mods_list` + 每个插件一个 `mod_<id>_config`（action=list/get/set）。工具与插件同生命周期：插件卸载/加载失败后下一条 hello 不再列出它，sidecar 重建会话、工具从上下文消失。只读写 BepInEx 配置，默认关闭（`[Bridge] AllowThirdPartyTools`，无 UI 开关）；离线构建/测试通过，待实机 |
-| 第三方 mod 桥 P2 | manifest 加载器：外部 `icarus-ii/bridge/<guid>.json` / 插件目录 `IcarusII.tools.json`，版本不匹配或 risk 2 缺 `undo` 时工具不注册；内置参考适配器 DSPCalculator / LSTM / BulletTime（UXAssist 的公开 API 只有存档钩子，已替换）；`mods_api_list` 供 AI 起草 manifest（只读，JSON 由玩家落盘）。只调声明插件自己程序集的公开静态方法；离线构建/测试通过，待实机 |
+| 第三方 mod 桥 P0 | `mod.bridge.v1`：`hello.extensions` + `mods_list` + 每个已启用插件一个 `mod_<id>_config`（action=list/get/set）。逐插件开关在 设置 → 工具 → mod 页签，默认关闭；关掉后 AI 完全看不到该插件。开关/适配器变化走 `extensions` 推送，回合边界重建会话。每个插件默认 `limited` 权限档位，可在行内切换。离线构建/测试通过，待实机 |
+| 第三方 mod 桥 P2 | manifest 加载器：外部 `icarus-ii/bridge/<guid>.json` / 插件目录 `IcarusII.tools.json`，版本不匹配或 risk 2 缺 `undo` 时工具不注册；内置参考适配器 DSPCalculator / LSTM / BulletTime（UXAssist 的公开 API 只有存档钩子，已替换）。`mods_api_list` 拿候选方法，`mods_adapter_create` 把 AI 给出的结构化绑定校验后写入并热载（`source=ai`、版本绑定、risk 最低 1），`mods_adapter_delete` 删除并支持撤销。设置页每行标注适配器来源（未创建/内置/随包/手写/AI 生成/版本不匹配）。离线构建/测试通过，待实机 |
 | 第三方 mod 桥 P3 | `ui.tree.v1`：`ui_snapshot` 枚举 uGUI `Selectable`（路径/类型/文字/可用性），`ui_click` 按路径派发合成 `PointerClick`；不读像素、不做 OS 输入、不抢焦点；`ui_click` risk 2、不可撤销，点完须再快照复核。离线构建/测试通过，待实机 |
 | 第三方 mod 桥 P4 | SDK 文档 `docs/third-party-mod-bridge.md` + 示例 `docs/examples/bridge-example/`（插件源码 + manifest）；说明 manifest 字段、调用约束、版本/失败与验证步骤 |
 | 设定页功能（M6） | 通用页版本/诊断、快捷键自由绑键（打开/发送/换行，含字符拦截与组字保护）、会话跨存档索引/搜索/重命名/删除/导出、工具开关（`disabledTools`，同时覆盖 `run_script` 白名单）、关于页二维码与复制；协议见附录 A.14。离线构建/测试通过，待实机验收 |
@@ -100,8 +100,9 @@
   只在玩家明确选择时使用，切换后聊天窗会给出提示。
 - 上下文压缩后的历史回合删除仍受 pi 会话 entry 类型限制，见
   [context-compression.md](context-compression.md)。
-- 第三方 mod 桥的工具按已加载插件自动生成，默认启用；可用 `mods_tools_disable/enable` 按插件隐藏/恢复（下一轮生效）。安装/卸载 mod 需要重启游戏才会改变工具集合（BepInEx 不支持热加载）。
-  桥默认关闭，仍只能用 `[Bridge] AllowThirdPartyTools` 手动开启，设置页不提供总开关。
+- 第三方 mod 桥按插件开关生成工具：默认全部关闭，在 设置 → 工具 → mod 里逐个启用；关掉即从 AI 侧完全消失。
+  开关与适配器变化用 `extensions` 推送即时生效，不需要重启游戏；安装/卸载 mod 本身仍需重启（BepInEx 不支持热加载）。
+  每个插件默认 `limited` 权限档位，行内可切换 `readonly` / `limited` / `takeover`。
 
 ## 4. 接下来做什么
 

@@ -142,6 +142,8 @@ namespace IcarusII.Game.Tools
             Register(new ModsConfigGetTool());
             Register(new ModsConfigSetTool());
             Register(new ModsApiListTool());
+            Register(new ModsAdapterCreateTool());
+            Register(new ModsAdapterDeleteTool());
             Register(new UiSnapshotTool());
             Register(new UiClickTool());
         }

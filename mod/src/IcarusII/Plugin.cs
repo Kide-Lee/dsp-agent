@@ -45,9 +45,6 @@ namespace IcarusII
         internal static Plugin Instance { get; private set; }
         internal static ManualLogSource Log { get; private set; }
 
-        /// <summary>第三方 mod 桥是否启用（来自 BepInEx 配置，只读）。</summary>
-        internal static bool BridgeEnabled => Instance?._config?.AllowThirdPartyTools == true;
-
         private PluginConfig _config;
         private MainThreadDispatcher _dispatcher;
         private SidecarLauncher _launcher;
@@ -337,6 +334,28 @@ namespace IcarusII
             {
                 Log.LogError($"准备 sidecar 时异常：{ex}");
                 Post(() => ShowHint(Strings.Get("plugin.hint.launch_failed", ex.Message)));
+            }
+        }
+
+        /// <summary>
+        /// 插件开关或适配器变化后，把最新的能力/扩展列表推给 sidecar。
+        /// 断线时忽略——下一条 hello 会带上最新状态。
+        /// </summary>
+        internal void NotifyExtensionsChanged()
+        {
+            var client = _client;
+            if (client is null) return;
+            try
+            {
+                var payload = Protocol.BuildClientState(
+                    SidecarLauncher.BuildCapabilities(),
+                    SidecarLauncher.BuildExtensions());
+                if (!client.Send(Protocol.Extensions, payload))
+                    Log?.LogDebug("[mods] sidecar 未就绪，插件列表变化留给下次 hello");
+            }
+            catch (Exception ex)
+            {
+                Log?.LogWarning($"[mods] 推送插件列表失败：{ex.Message}");
             }
         }
 
@@ -853,8 +872,11 @@ namespace IcarusII
             //   只读  → 所有写操作都要玩家确认；
             //   受限  → 只自动放行 risk 1（低风险、可逆），risk 2 仍弹确认；
             //   接管  → 全部自动同意。
+            // 第三方 mod 工具用该插件自己的档位（默认受限），不跟随全局档位。
             // 自动同意也走 TryRegister/TryResolve，一次性令牌与工具白名单照常校验。
-            var permission = _config != null ? _config.PermissionLevel : Protocol.DefaultPermission;
+            var permission = string.IsNullOrEmpty(request.ModGuid)
+                ? (_config != null ? _config.PermissionLevel : Protocol.DefaultPermission)
+                : Game.Tools.ModPolicy.PermissionFor(request.ModGuid);
             if (Protocol.AutoApprovesWrite(permission, request.Risk))
             {
                 if (!_confirmation.TryRegister(request, out var autoError))

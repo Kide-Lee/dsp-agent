@@ -332,6 +332,28 @@ namespace IcarusII.Tests
             Eq("mods_list 工具名", "mods_list", Protocol.ToolModsList);
             Eq("mods_config_set 工具名", "mods_config_set", Protocol.ToolModsConfigSet);
             Check("mods_config_set 记为写工具", Protocol.IsWriteTool(Protocol.ToolModsConfigSet));
+            Check("mods_adapter_create 记为写工具", Protocol.IsWriteTool(Protocol.ToolModsAdapterCreate));
+            Check("mods_adapter_delete 记为写工具", Protocol.IsWriteTool(Protocol.ToolModsAdapterDelete));
+
+            var clientState = Protocol.BuildClientState(
+                new[] { Protocol.CapabilityModBridge },
+                new[]
+                {
+                    new ExtensionSummary { Id = "aux", Guid = "Auxilaryfunction", ConfigCount = 3 },
+                });
+            Eq("extensions 推送 capabilities[0]", Protocol.CapabilityModBridge,
+                clientState["capabilities"][0].AsString());
+            Eq("extensions 推送 extensions 数量", 1, clientState["extensions"].Count);
+            Eq("extensions 推送工具名", "extensions", Protocol.Extensions);
+
+            var clientStateEmpty = Protocol.BuildClientState(new string[0], null);
+            Check("空推送也显式写 extensions 数组", clientStateEmpty["extensions"].IsArray);
+            Eq("空推送 extensions 长度为 0", 0, clientStateEmpty["extensions"].Count);
+
+            var confirmWithMod = ConfirmRequestInfo.Parse(JsonValue.Parse(
+                "{\"requestId\":\"r\",\"callId\":\"c\",\"tool\":\"mod_aux_open\",\"token\":\"t\"," +
+                "\"modGuid\":\"Auxilaryfunction\"}"));
+            Check("confirm 解析 modGuid", confirmWithMod is not null && confirmWithMod.ModGuid == "Auxilaryfunction");
 
             // 顺序敏感：parse 后按 type 分派是客户端主路径
             var wire = env.ToJson();

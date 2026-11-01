@@ -43,6 +43,8 @@ export const WRITE_TOOL_NAMES = [
   'game_undo_last_write',
   'game_copy_blueprint',
   'mods_config_set',
+  'mods_adapter_create',
+  'mods_adapter_delete',
   'ui_click',
 ] as const;
 
@@ -76,6 +78,8 @@ const WRITE_TOOL_RISK: Record<string, 1 | 2> = {
   game_undo_last_write: 1,
   game_copy_blueprint: 1,
   mods_config_set: 1,
+  mods_adapter_create: 2,
+  mods_adapter_delete: 2,
   ui_click: 2,
 };
 

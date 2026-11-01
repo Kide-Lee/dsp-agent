@@ -11,7 +11,7 @@
 
 1. 用 BepInEx 5.4.17 的 `BepInEx.dll` 编译 `ExampleBridgePlugin.cs` 为 `ExampleBridge.dll`。
 2. 把 DLL 与 `IcarusII.tools.json` 一起放进 r2modman 配置档（或手动安装的游戏目录）的 `BepInEx/plugins/ExampleBridge/`。
-3. 在 `BepInEx/config/icarus-ii.cfg` 里把 `[Bridge] AllowThirdPartyTools` 改成 `true`，重启游戏。
+3. 打开游戏内的 设置 → 工具 → mod，启用 ExampleBridge。
 4. 让 AI 调 `mods_list`，应能看到 `com.example.bridge`；工具名是 `mod_com_example_bridge_add`。
 
 ## 说明

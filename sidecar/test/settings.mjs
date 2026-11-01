@@ -150,7 +150,7 @@ console.log('── 4. toolCatalog 元数据 ──');
     check('risk=0', overview?.risk === 0);
     check('source=builtin', overview?.source === 'builtin' && overview?.sourceName === '内置');
     const script = catalog.find((entry) => entry.name === 'run_script');
-    check('run_script group=script', script?.group === 'script');
+    check('run_script group=other', script?.group === 'other');
     check('run_script risk=1', script?.risk === 1);
     check('run_script enabled=true', script?.enabled === true);
     agent.dispose();

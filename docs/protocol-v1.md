@@ -86,10 +86,10 @@
   (`EGoalLevel.Off`) 时原生面板仍不会展示目标；`game_todo_add` / `game_todo_list`
   会返回 `goalPanelOff=true`，由模型提醒玩家打开目标设置，改为“关键节点”或
   “事无巨细”。
-- `mod.bridge.v1`：mod 支持第三方 mod 桥（P0）：`hello.extensions` + `mods_list` +
-  每个插件一个 `mod_<id>_config`。由 `BepInEx/config/icarus-ii.cfg` 的
-  `[Bridge] AllowThirdPartyTools` 控制，**默认关闭**；关闭时不声明该能力、不发扩展列表，
-  sidecar 也就不注册这些工具。该桥只读写 BepInEx 配置，不调用第三方代码；manifest/SDK 属于后续阶段。
+- `mod.bridge.v1`：mod 支持第三方 mod 桥：`hello.extensions` + `mods_list` +
+  每个已启用插件一个 `mod_<id>_config`，以及可选的适配器工具。
+  **没有任何插件启用时，mod 不声明该能力、不发扩展列表**；启停由玩家在
+  设置 → 工具 → mod 里逐插件控制，不需要改配置文件。
 - `ui.tree.v1`：mod 支持 uGUI 控件树快照与合成点击（`ui_snapshot` / `ui_click`，P3）。
   只枚举 uGUI 的 `Selectable`，不读像素、不做 OS 输入；`ui_click` 是 risk 2 写操作。
 
@@ -1012,6 +1012,11 @@ sidecar 生成 32 字节随机 token（16 进制），把
 token 仍然由 mod 签发/校验，一次性和绑定关系不放松。权限档位只影响插件运行期，
 不会改写会话历史或游戏存档。
 
+第三方 mod 工具（`mod_<id>_*`、`mods_config_set`、`mods_adapter_create` / `mods_adapter_delete`）
+**不使用全局档位**，而用该插件自己的档位（默认 `limited`，玩家在 设置 → 工具 → mod 里切换）。
+sidecar 在 `confirm_request.payload.modGuid` 里写明归属，mod 据此选择档位；
+`modGuid` 缺省时按全局档位处理。
+
 `run_script` 的写模式使用**脚本写租约**：`tool` 为 `run_script`，`argsHash` 是脚本
 SHA-256，并可带 `maxWrites`（1–10000）与 `writeNames`（脚本里出现的写工具名）。
 玩家同意后，mod 在 300 秒内只允许该 token + 同一脚本哈希 + `writeNames` 内的工具，
@@ -1034,6 +1039,8 @@ SHA-256，并可带 `maxWrites`（1–10000）与 `writeNames`（脚本里出现
     "body": "科技：电磁学\n可能浪费当前研究已投入的进度。",
     "risk": 2,
     "timeoutMs": 60000,
+    // 仅第三方 mod 工具可选：归属插件 GUID（B.1.6）。
+    "modGuid": "Auxilaryfunction",
     // 仅脚本租约（tool=run_script）时可选；普通写操作不带这两个字段。
     "maxWrites": 10000,
     "writeNames": ["game_set_recipe", "game_feed_input"]
@@ -1749,9 +1756,9 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 
 ### B.1.6 第三方 mod 桥（`mod.bridge.v1`，P0）
 
-> 每个已加载的第三方插件对应一个配置工具；**工具与插件同生命周期**：
-> 插件被卸载或加载失败时，下一条 `hello` 的 `extensions` 不再包含它，sidecar 重建会话，
-> 对应工具从模型上下文里消失，而不是留一个调用时才报错的空壳。
+> 每个第三方插件对应一个配置工具；**工具与插件开关同生命周期**：
+> 玩家在 设置 → 工具 → mod 里关掉插件后，下一条 `extensions` 推送不再包含它，
+> sidecar 重建会话，对应工具从模型上下文里消失。
 
 `hello.extensions`（可选）：
 
@@ -1764,20 +1771,22 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 
 - `id` 由 mod 从 GUID 归一化并保证唯一（`[a-z0-9_]{1,24}`），用于工具名。
 - 老 sidecar 忽略该字段；老 mod 不发，桥工具不出现。
+- **没有启用的插件时，mod 不声明 `mod.bridge.v1`、不发 `extensions`**；开关在 mod 侧，
+  不在能力串里。默认所有插件都是关闭的。
+- 同一个插件内，配置写与 manifest 调用默认按 `limited` 处理；玩家可逐插件切换
+  `readonly` / `limited` / `takeover`。`confirm_request.modGuid` 标明归属（见 A.12）。
 
 模型可见工具：
 
 | 工具 | risk | 参数 | 说明 |
 | --- | --- | --- | --- |
-| `mods_list` | 0 | 无 | 列出已加载插件：`guid` / `name` / `version` / `assembly` / `configCount` / `loadFailed` |
-| `mods_api_list` | 0 | `guid` | 只读列出该插件程序集里可被 manifest 调用的公开静态方法（类型/方法/参数/返回），供起草适配器 |
-| `mods_tools_enable` | 0 | `id` | 启用某个插件的工具（默认已启用）；下一轮生效 |
-| `mods_tools_disable` | 0 | `id` | 禁用某个插件的工具，避免占用上下文；不卸载插件、不改配置；下一轮生效 |
+| `mods_list` | 0 | 无 | 只列出**已启用**的插件：`guid` / `id` / `name` / `version` / `assembly` / `configCount` / `loadFailed` / `adapter` / `adapterTools` |
+| `mods_api_list` | 0 | `guid` | 只读列出该插件程序集里可被适配器调用的公开静态方法（类型/方法/参数/返回） |
+| `mods_adapter_create` | 2 | `guid`、`tools[]`、`replace?` | 把公开静态方法绑定成工具，写入 `config/icarus-ii/bridge/<guid>.json` 并热载（见 B.1.7） |
+| `mods_adapter_delete` | 2 | `guid` | 删除该文件的适配器并热载；撤销可恢复 |
 | `mod_<id>_config` | 0 或 1 | `action`（list/get/set）、`section?`、`key?`、`value?`、`offset?`、`limit?` | 只操作 `id` 对应的那个插件；`set` 为 risk 1 |
 
 - `mod_<id>_config` 只对 `extensions` 里 `configCount > 0` 的插件生成；插件不在列表里就没有这个工具。
-- 默认所有插件工具都启用；`mods_tools_disable` 后该插件的工具不再生成，`enable` 恢复。
-  切换在回合边界重建会话，下一轮生效。
 - 工具是 sidecar 侧的绑定：实际下发给 mod 的是内部工具 `mods_config_list` / `mods_config_get` / `mods_config_set` 加固定 `guid`。
   这三个内部工具不广告给模型，只作为桥的线级原语存在。
 - `mods_config_set` 在写工具表里（risk 1）：走 A.12 确认与一次性令牌；写入前记录旧值并压入撤销栈，
@@ -1787,19 +1796,20 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 - 只读 BepInEx 的公开元数据（`Chainloader.PluginInfos`、`ConfigFile`），不反射调用任何第三方方法。
 - 忽略 `icarus-ii` 自身，避免模型改自己的配置。
 - `loadFailed=true`（`PluginInfo.Instance == null`）的插件只出现在 `mods_list` 里，不产生 `mod_<id>_config`。
-- 关闭 `[Bridge] AllowThirdPartyTools` 时 mod 不声明本能力、不发 `extensions`；即使被直接调用也返回 `tool_unavailable`。
 - 列表只包含插件元数据与配置项，不读取第三方 mod 的文件内容。
+- `adapter`：`none` / `builtin` / `bundled` / `external` / `ai` / `mismatch` / `invalid` / `unavailable`。
 
 `mods_list` 返回示例：
 
 ```jsonc
 {
   "mods": [
-    { "guid": "Auxilaryfunction", "name": "Auxilaryfunction", "version": "3.1.1",
-      "assembly": "Auxilaryfunction", "configCount": 72, "loadFailed": false }
+    { "guid": "Auxilaryfunction", "id": "auxilaryfunction", "name": "Auxilaryfunction",
+      "version": "3.1.1", "assembly": "Auxilaryfunction", "configCount": 72,
+      "loadFailed": false, "adapter": "none", "adapterTools": 0 }
   ],
   "count": 1,
-  "display": "已加载 1 个第三方插件"
+  "display": "已启用 1 个第三方插件"
 }
 ```
 
@@ -1872,8 +1882,11 @@ manifest 格式：
 - 没有 `undo` 的写工具会把撤销栈顶标记为不可撤销，避免 `game_undo_last_write` 跳过它。
 - 工具与插件同生命周期：插件不加载时，`extensions` 里没有它，工具也不存在。
 - 参考适配器（DSPCalculator / LSTM / BulletTime）是内置样例；外部 manifest 优先。
-- AI 起草：先调 `mods_api_list`，把候选方法整理成 manifest JSON 交给玩家；**不会自动写文件**，
-  玩家自行放到 `BepInEx/config/icarus-ii/bridge/<guid>.json` 或插件目录。
+- AI 起草：先调 `mods_api_list` 拿真实签名，再用 `mods_adapter_create` 提交**结构化绑定**；
+  mod 校验类型/方法/参数白名单后写入 `BepInEx/config/icarus-ii/bridge/<guid>.json`，玩家在确认卡里批准。
+- AI 生成的文件带 `"source": "ai"`，`pluginVersion` 固定为 `==<当前版本>`；插件更新后版本不匹配即禁用。
+- AI 不能指定 `risk: 0`：生成的能力最低按 risk 1 处理；`risk 2` 必须声明 `undo`。
+- 写入后 mod 调用 `ModManifest.Reset()` 并推送 B.1.9，下一轮工具才可用。
 
 ### B.1.8 uGUI 控件树（`ui.tree.v1`，P3）
 
@@ -1888,6 +1901,25 @@ manifest 格式：
   不修改鼠标位置、不抢焦点。
 - 自绘/`OnGUI` 界面不会被枚举；点完必须再用 `ui_snapshot` 复核，没有变化就如实报告。
 - `ui_click` 会把撤销栈顶标记为不可撤销，避免 `game_undo_last_write` 跳过它去撤销更早的操作。
+
+### B.1.9 扩展列表推送（`extensions`，mod → sidecar）
+
+玩家在设置里开关插件、或创建/删除适配器后，mod 主动补发一次列表，避免重连或重启游戏：
+
+```jsonc
+{
+  "v": 1, "id": "m-42", "type": "extensions",
+  "payload": {
+    "capabilities": ["ui.chat", "game.read.v1", "…", "mod.bridge.v1"],
+    "extensions": [ /* 与 hello.extensions 同构；空数组 = 清空 */ ]
+  }
+}
+```
+
+- 只在已握手后接受；未握手时 sidecar 忽略。
+- sidecar 把它当作一次能力/列表变化：更新 host，按回合边界重建会话，下一轮工具集生效。
+- 老 sidecar 按未知类型忽略（协议 §2），不影响连接。
+- 能力集合里去掉 `mod.bridge.v1` 等价于“所有插件都关闭”，sidecar 会撤下全部桥工具。
 
 ### B.2 `tool_call`（sidecar → mod）
 

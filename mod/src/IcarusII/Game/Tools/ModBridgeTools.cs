@@ -21,17 +21,17 @@ namespace IcarusII.Game.Tools
         /// <summary>本插件 GUID；桥永远不把自己暴露给模型。</summary>
         internal const string SelfGuid = "icarus-ii";
 
-        internal static bool Enabled => Plugin.BridgeEnabled;
+        internal static bool Enabled => Plugins().Count > 0;
 
         internal static void RequireEnabled()
         {
             if (!Enabled)
                 throw new InvalidOperationException(
-                    "第三方 mod 桥未启用（BepInEx/config/icarus-ii.cfg 的 [Bridge] AllowThirdPartyTools=false）");
+                    "没有启用任何其他 mod（在 设置 → 工具 → mod 里开启要交给 AI 的插件）");
         }
 
-        /// <summary>当前已加载的第三方插件，按 GUID 排序。</summary>
-        internal static List<PluginInfo> Plugins()
+        /// <summary>本机已加载的全部第三方插件，按 GUID 排序；设置页要看到它们。</summary>
+        internal static List<PluginInfo> AllPlugins()
         {
             var list = new List<PluginInfo>();
             foreach (var pair in Chainloader.PluginInfos)
@@ -48,11 +48,33 @@ namespace IcarusII.Game.Tools
             return list;
         }
 
+        /// <summary>允许 AI 发现与操作的插件；关闭的插件不出现在任何工具里。</summary>
+        internal static List<PluginInfo> Plugins()
+        {
+            var list = new List<PluginInfo>();
+            foreach (var info in AllPlugins())
+                if (ModPolicy.IsEnabled(info.Metadata.GUID)) list.Add(info);
+            return list;
+        }
+
         internal static PluginInfo Find(string guid)
         {
             if (string.IsNullOrWhiteSpace(guid)) return null;
             var wanted = guid.Trim();
             foreach (var info in Plugins())
+            {
+                if (string.Equals(info.Metadata.GUID, wanted, StringComparison.OrdinalIgnoreCase))
+                    return info;
+            }
+            return null;
+        }
+
+        /// <summary>不要求已启用；删除适配器这类清理操作要用它。</summary>
+        internal static PluginInfo FindAny(string guid)
+        {
+            if (string.IsNullOrWhiteSpace(guid)) return null;
+            var wanted = guid.Trim();
+            foreach (var info in AllPlugins())
             {
                 if (string.Equals(info.Metadata.GUID, wanted, StringComparison.OrdinalIgnoreCase))
                     return info;
@@ -175,7 +197,7 @@ namespace IcarusII.Game.Tools
         /// <summary>插件 GUID → 工具名片段；与 Extensions() 使用同一套规则。</summary>
         internal static string IdFor(PluginInfo info)
         {
-            var plugins = Plugins();
+            var plugins = AllPlugins();
             if (_ids is null || _idsCount != plugins.Count)
             {
                 _ids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -220,8 +242,7 @@ namespace IcarusII.Game.Tools
             return candidate;
         }
 
-        internal static string AssemblyName(PluginInfo info)
-        {
+        internal static string AssemblyName(PluginInfo info)        {
             try
             {
                 var name = info?.Instance?.GetType().Assembly.GetName().Name;
@@ -262,19 +283,24 @@ namespace IcarusII.Game.Tools
             foreach (var info in ModBridge.Plugins())
             {
                 var item = JsonValue.NewObject();
-                item.Set("guid", info.Metadata.GUID ?? string.Empty);
+                var guid = info.Metadata.GUID ?? string.Empty;
+                var adapter = ModManifest.StatusFor(guid);
+                item.Set("guid", guid);
+                item.Set("id", ModBridge.IdFor(info));
                 item.Set("name", info.Metadata.Name ?? string.Empty);
                 item.Set("version", info.Metadata.Version?.ToString() ?? string.Empty);
                 item.Set("assembly", ModBridge.AssemblyName(info));
                 item.Set("configCount", info.Instance?.Config is null ? 0 : ModBridge.Entries(info).Count);
                 item.Set("loadFailed", info.Instance is null);
+                item.Set("adapter", ModAdapters.KindName(adapter.Kind));
+                item.Set("adapterTools", adapter.ToolCount);
                 mods.Add(item);
             }
 
             var data = JsonValue.NewObject();
             data.Set("mods", mods);
             data.Set("count", mods.Count);
-            data.Set("display", $"已加载 {mods.Count} 个第三方插件");
+            data.Set("display", $"已启用 {mods.Count} 个第三方插件");
             return new GameToolJobResult { Data = data };
         }
     }

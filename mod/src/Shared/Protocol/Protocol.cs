@@ -42,6 +42,8 @@ namespace IcarusII.Common.Protocol
 
         // 消息类型（mod → sidecar）
         public const string Hello = "hello";
+        /// <summary>mod → sidecar：能力/扩展列表变化时补发一次（B.1.9）；旧端按未知类型忽略。</summary>
+        public const string Extensions = "extensions";
         public const string Prompt = "prompt";
         public const string Ping = "ping";
         public const string Pong = "pong";
@@ -277,6 +279,8 @@ namespace IcarusII.Common.Protocol
         public const string ToolModsConfigGet = "mods_config_get";
         public const string ToolModsConfigSet = "mods_config_set";
         public const string ToolModsApiList = "mods_api_list";
+        public const string ToolModsAdapterCreate = "mods_adapter_create";
+        public const string ToolModsAdapterDelete = "mods_adapter_delete";
         public const string ToolUiSnapshot = "ui_snapshot";
         public const string ToolUiClick = "ui_click";
 
@@ -355,6 +359,9 @@ namespace IcarusII.Common.Protocol
             ToolCopyBlueprint,
             // 第三方 mod 配置写入；可撤销，risk 1。
             ToolModsConfigSet,
+            // 第三方 mod 适配器创建/删除：改的是 AI 的能力面，risk 2。
+            ToolModsAdapterCreate,
+            ToolModsAdapterDelete,
             // 合成点击：语义未知、不可撤销，risk 2。
             ToolUiClick,
         };
@@ -512,6 +519,54 @@ namespace IcarusII.Common.Protocol
             return env;
         }
 
+        /// <summary>`hello.extensions` 与 `extensions` 推送共用的序列化。</summary>
+        public static JsonValue BuildExtensions(ExtensionSummary[] extensions)
+        {
+            var list = JsonValue.NewArray();
+            if (extensions is null) return list;
+            foreach (var extension in extensions)
+            {
+                if (extension is null) continue;
+                var item = JsonValue.NewObject();
+                item.Set("id", extension.Id ?? string.Empty);
+                item.Set("guid", extension.Guid ?? string.Empty);
+                item.Set("name", extension.Name ?? string.Empty);
+                item.Set("version", extension.Version ?? string.Empty);
+                item.Set("configCount", extension.ConfigCount);
+                if (extension.Tools is not null && extension.Tools.Length > 0)
+                {
+                    var tools = JsonValue.NewArray();
+                    foreach (var tool in extension.Tools)
+                    {
+                        if (tool is null || string.IsNullOrEmpty(tool.Name)) continue;
+                        var toolJson = JsonValue.NewObject();
+                        toolJson.Set("name", tool.Name);
+                        toolJson.Set("label", tool.Label ?? tool.Name);
+                        toolJson.Set("description", tool.Description ?? string.Empty);
+                        toolJson.Set("risk", tool.Risk);
+                        toolJson.Set("timeoutMs", tool.TimeoutMs > 0 ? tool.TimeoutMs : 8000);
+                        toolJson.Set("parameters",
+                            tool.Parameters is not null ? tool.Parameters : JsonValue.NewObject());
+                        tools.Add(toolJson);
+                    }
+                    if (tools.Count > 0) item.Set("tools", tools);
+                }
+                list.Add(item);
+            }
+            return list;
+        }
+
+        /// <summary>B.1.9：能力/扩展列表推送的负载（显式写空数组表示清空）。</summary>
+        public static JsonValue BuildClientState(string[] capabilities, ExtensionSummary[] extensions)
+        {
+            var p = JsonValue.NewObject();
+            var caps = JsonValue.NewArray();
+            if (capabilities is not null) foreach (var c in capabilities) caps.Add(c);
+            p.Set("capabilities", caps);
+            p.Set("extensions", BuildExtensions(extensions));
+            return p;
+        }
+
         public static JsonValue BuildHello(string token, string modVersion, string gameVersion,
             string gameLanguage, string[] capabilities, string saveKey,
             ExtensionSummary[] extensions = null)
@@ -528,39 +583,7 @@ namespace IcarusII.Common.Protocol
 
             // 第三方 mod 桥：工具与插件同生命周期；没装/没启用时不写这个字段。
             if (extensions is not null && extensions.Length > 0)
-            {
-                var list = JsonValue.NewArray();
-                foreach (var extension in extensions)
-                {
-                    if (extension is null) continue;
-                    var item = JsonValue.NewObject();
-                    item.Set("id", extension.Id ?? string.Empty);
-                    item.Set("guid", extension.Guid ?? string.Empty);
-                    item.Set("name", extension.Name ?? string.Empty);
-                    item.Set("version", extension.Version ?? string.Empty);
-                    item.Set("configCount", extension.ConfigCount);
-                    if (extension.Tools is not null && extension.Tools.Length > 0)
-                    {
-                        var tools = JsonValue.NewArray();
-                        foreach (var tool in extension.Tools)
-                        {
-                            if (tool is null || string.IsNullOrEmpty(tool.Name)) continue;
-                            var toolJson = JsonValue.NewObject();
-                            toolJson.Set("name", tool.Name);
-                            toolJson.Set("label", tool.Label ?? tool.Name);
-                            toolJson.Set("description", tool.Description ?? string.Empty);
-                            toolJson.Set("risk", tool.Risk);
-                            toolJson.Set("timeoutMs", tool.TimeoutMs > 0 ? tool.TimeoutMs : 8000);
-                            toolJson.Set("parameters",
-                                tool.Parameters is not null ? tool.Parameters : JsonValue.NewObject());
-                            tools.Add(toolJson);
-                        }
-                        if (tools.Count > 0) item.Set("tools", tools);
-                    }
-                    list.Add(item);
-                }
-                p.Set("extensions", list);
-            }
+                p.Set("extensions", BuildExtensions(extensions));
 
             // saveKey 允许为 null（尚未进入存档）；显式写出 null，避免“缺字段”与“解绑”两种语义。
             p.Set("saveKey", saveKey is null ? JsonValue.Null : JsonValue.Of(saveKey));
@@ -1801,6 +1824,8 @@ namespace IcarusII.Common.Protocol
         public string Body { get; private set; }
         public int Risk { get; private set; }
         public int TimeoutMs { get; private set; }
+        /// <summary>B.1.6：写操作属于哪个第三方插件；非第三方工具为空。</summary>
+        public string ModGuid { get; private set; }
         /// <summary>脚本写租约允许的写调用次数；0 = 普通单次确认。</summary>
         public int MaxWrites { get; private set; }
         /// <summary>脚本确认时列出的写工具名；租约只允许这些工具。</summary>
@@ -1829,6 +1854,7 @@ namespace IcarusII.Common.Protocol
                 Body = payload["body"].AsString(string.Empty),
                 Risk = payload["risk"].AsInt(1),
                 TimeoutMs = timeout,
+                ModGuid = payload["modGuid"].AsString(null),
                 MaxWrites = Math.Max(0, Math.Min(10000, payload["maxWrites"].AsInt(0))),
             };
             var writeNames = payload["writeNames"];

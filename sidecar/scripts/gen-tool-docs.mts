@@ -220,7 +220,7 @@ function capabilityMap(): Map<string, string> {
   const map = new Map<string, string>();
   for (const capability of CAPABILITIES) {
     for (const name of toolNamesForCapabilities([capability])) {
-      if ((name.startsWith('game_') || name === 'mods_list' || name.startsWith('ui_')) && !map.has(name)) map.set(name, capability);
+      if ((name.startsWith('game_') || name.startsWith('mods_') || name.startsWith('ui_')) && !map.has(name)) map.set(name, capability);
     }
   }
   return map;

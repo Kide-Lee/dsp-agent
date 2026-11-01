@@ -44,6 +44,9 @@ export const BRIDGE_TOOL_NAMES = [
   'mods_config_list',
   'mods_config_get',
   'mods_config_set',
+  'mods_api_list',
+  'mods_adapter_create',
+  'mods_adapter_delete',
 ] as const;
 
 export const GAME_TOOL_NAMES = [
@@ -98,9 +101,9 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_todo_add: CAPABILITY_GAME_TODO,
   game_todo_remove: CAPABILITY_GAME_TODO,
   mods_list: CAPABILITY_MOD_BRIDGE,
-  mods_tools_enable: CAPABILITY_MOD_BRIDGE,
-  mods_tools_disable: CAPABILITY_MOD_BRIDGE,
   mods_api_list: CAPABILITY_MOD_BRIDGE,
+  mods_adapter_create: CAPABILITY_MOD_BRIDGE,
+  mods_adapter_delete: CAPABILITY_MOD_BRIDGE,
   ui_snapshot: CAPABILITY_UI_TREE,
   ui_click: CAPABILITY_UI_TREE,
   game_undo_last_write: CAPABILITY_GAME_WRITE,
@@ -585,8 +588,6 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       parameters: Type.Object({}),
       timeoutMs: 5000,
     }),
-    extensionControlTool(host, 'mods_tools_enable', '启用 mod 工具', true),
-    extensionControlTool(host, 'mods_tools_disable', '禁用 mod 工具', false),
     gameTool(host, {
       name: 'mods_api_list',
       label: 'mod 可调用方法',
@@ -595,13 +596,81 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '用于给没有 manifest 的 mod 起草适配器；只读元数据，不执行任何代码。',
       promptGuidelines: [
         '玩家要求为某个 mod 生成适配、且它没有 manifest 时使用。',
-        '只把这里列出的方法写进 manifest，不要猜方法名或参数。',
-        'manifest 由你用 JSON 输出，让玩家放到 BepInEx/config/icarus-ii/bridge/<guid>.json；助手不会自动写这个文件。',
+        '只把这里列出的方法写进 tools，不要猜方法名或参数。',
+        '配置能解决的问题优先用配置；适配器只用于“要执行一次动作”的场景。',
       ],
       parameters: Type.Object({
         guid: Type.String({ description: '插件 GUID，来自 mods_list' }),
       }),
       timeoutMs: 5000,
+    }),
+    gameTool(host, {
+      name: 'mods_adapter_create',
+      label: '创建 mod 适配器',
+      description:
+        '把某个第三方 mod 的公开静态方法绑定成工具，写入 BepInEx/config/icarus-ii/bridge/<guid>.json 并热载。' +
+        '写操作：执行前玩家必须确认；创建后下一轮生效。',
+      promptGuidelines: [
+        '先调 mods_api_list 拿真实的方法签名；用 mods_list 的 adapter 字段判断是否已有适配器。',
+        '一次只为一个 mod 创建，工具数量控制在 1-3 个，优先只读或可逆的方法。',
+        'risk 由 AI 推断不可靠：生成的一律至少 risk 1；risk 2 必须提供 undo。',
+        '参数类型只支持 int/long/float/double/bool/string/enum；不要绑定对象或委托。',
+        '创建前把“调用哪个方法、参数是什么、风险几”讲清楚，等玩家确认。',
+      ],
+      parameters: Type.Object({
+        guid: Type.String({ description: '插件 GUID，来自 mods_list' }),
+        tools: Type.Array(
+          Type.Object(
+            {
+              name: Type.String({ description: '短名，只允许小写字母/数字/下划线' }),
+              title: Type.Optional(Type.String({ description: '显示名' })),
+              description: Type.Optional(Type.String({ description: '模型看到的说明' })),
+              risk: Type.Optional(Type.Integer({ minimum: 0, maximum: 2 })),
+              timeoutMs: Type.Optional(Type.Integer({ minimum: 500, maximum: 30000 })),
+              parameters: Type.Optional(Type.Object({}, { additionalProperties: true })),
+              invoke: Type.Object(
+                {
+                  type: Type.String({ description: '插件程序集里的类型全名' }),
+                  method: Type.String({ description: '公开静态方法名' }),
+                  args: Type.Optional(Type.Array(Type.Any(), { description: '参数映射' })),
+                },
+                { additionalProperties: true },
+              ),
+              undo: Type.Optional(
+                Type.Object(
+                  {
+                    type: Type.String(),
+                    method: Type.String(),
+                    args: Type.Optional(Type.Array(Type.Any())),
+                  },
+                  { additionalProperties: true },
+                ),
+              ),
+            },
+            { additionalProperties: true },
+          ),
+          { description: '要绑定的工具列表，最多 12 个', minItems: 1, maxItems: 12 },
+        ),
+        replace: Type.Optional(Type.Boolean({ description: '覆盖已有适配器，默认 false' })),
+      }),
+      timeoutMs: 8000,
+      risk: 2,
+    }),
+    gameTool(host, {
+      name: 'mods_adapter_delete',
+      label: '删除 mod 适配器',
+      description:
+        '删除 config/icarus-ii/bridge 下的适配器文件并热载；随包与内置适配器不受影响。' +
+        '写操作：执行前玩家必须确认，撤销可恢复文件。',
+      promptGuidelines: [
+        '只在玩家要求撤销/清理某个 AI 生成的适配器时使用。',
+        '删除后该 mod 的动作工具立即消失，但配置工具仍然可用。',
+      ],
+      parameters: Type.Object({
+        guid: Type.String({ description: '插件 GUID，来自 mods_list' }),
+      }),
+      timeoutMs: 5000,
+      risk: 2,
     }),
     gameTool(host, {
       name: 'ui_snapshot',
@@ -640,12 +709,13 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       name: 'mods_list',
       label: '已装 mod 列表',
       description:
-        '列出除本 mod 以外、当前已加载的 BepInEx 插件：GUID、名称、版本、程序集、配置项数量、是否加载失败。' +
+        '列出除本 mod 以外、当前已启用的 BepInEx 插件：GUID、id、名称、版本、程序集、配置项数量、是否加载失败、适配器状态。' +
         '需要操作玩家安装的其他 mod 时先调用它，不要凭玩家口述猜 mod 是否存在。',
       promptGuidelines: [
         '玩家提到“我装的某个 mod”“帮我开关某个 mod 的功能”时先调用。',
         'loadFailed=true 的插件只报告，不要尝试读写它的配置。',
-        '工具不存在说明玩家没有在 icarus-ii.cfg 的 [Bridge] AllowThirdPartyTools 打开桥。',
+        '工具不存在说明玩家还没在设置 → 工具 → mod 里启用任何 mod。',
+        '想看某个 mod 有没有可调用的动作，看它返回的 adapter 字段：none 表示只能读配置。',
       ],
       parameters: Type.Object({}),
       timeoutMs: 5000,
@@ -659,7 +729,6 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
   });
   if (host.has(CAPABILITY_MOD_BRIDGE)) {
     for (const extension of host.extensionList ?? []) {
-      if (!host.isExtensionEnabled(extension.id)) continue;
       if (extension.configCount > 0) filtered.push(createExtensionConfigTool(host, extension));
       for (const tool of extension.tools ?? []) filtered.push(createExtensionInvokeTool(host, tool));
     }
@@ -685,34 +754,6 @@ function createExtensionInvokeTool(host: GameToolHost, tool: ExtensionTool): Too
         signal,
         risk: tool.risk,
       });
-      return { content: buildToolContent(result), details: result };
-    },
-  };
-}
-
-/** 启用/禁用某个扩展的工具；只改工具集，不碰插件本身。 */
-function extensionControlTool(
-  host: GameToolHost,
-  name: string,
-  label: string,
-  enabled: boolean,
-): ToolDefinition {
-  return {
-    name,
-    label,
-    description: `${label}；下一轮会话生效。默认所有已加载插件都启用。`,
-    promptGuidelines: [
-      '只有玩家明确要求时才切换；禁用不会卸载插件，也不会改配置。',
-      'id 来自 mods_list；不要猜。',
-    ],
-    parameters: Type.Object({ id: Type.String({ description: '扩展 id' }) }),
-    executionMode: 'sequential',
-    async execute(_toolCallId, params) {
-      const id = String((params as Record<string, unknown> | null)?.['id'] ?? '');
-      const changed = host.setExtensionEnabled(id, enabled);
-      const result: ToolResultPayload = changed
-        ? { ok: true, data: { display: `${label}：${id}，下一轮生效` }, error: null, meta: {} }
-        : toolError('invalid_args', `没有这个扩展，或状态未变化：${id}`);
       return { content: buildToolContent(result), details: result };
     },
   };
@@ -856,10 +897,9 @@ export function toolGroupOf(name: string): ToolGroup {
   if ((KB_TOOL_NAMES as readonly string[]).includes(name)) return 'kb';
   if ((WIKI_TOOL_NAMES as readonly string[]).includes(name)) return 'kb';
   if ((BLUEPRINT_TOOL_NAMES as readonly string[]).includes(name)) return 'blueprint';
-  if (name === SCRIPT_TOOL_NAME) return 'script';
   if (name === UI_ASK_TOOL_NAME || (UI_ASK_TOOL_NAME_ALIASES as readonly string[]).includes(name)) return 'ask';
   if (name.startsWith('game_')) return toolRiskOf(name) > 0 ? 'game.write' : 'game.read';
-  if (name.startsWith('mods_') || name.startsWith('ui_')) return 'other';
+  // 脚本、界面点击与其余杂项合并为「其他」。
   return 'other';
 }
 

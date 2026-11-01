@@ -583,7 +583,8 @@ namespace IcarusII.UI
 
             SetText("content/pane-tools/body/toolbar/chip-kb/label", Strings.Get("settings.tools.chip.kb"));
             SetText("content/pane-tools/body/toolbar/chip-bp/label", Strings.Get("settings.tools.chip.bp"));
-            SetText("content/pane-tools/body/toolbar/chip-script/label", Strings.Get("settings.tools.chip.script"));
+            SetText("content/pane-tools/body/toolbar/chip-script/label", Strings.Get("settings.tools.chip.other"));
+            SetText("content/pane-tools/body/toolbar/chip-third/label", Strings.Get("settings.tools.chip.mod"));
         }
 
         private void SetText(string path, string text)

@@ -8,6 +8,39 @@ using IcarusII.Common.Protocol;
 
 namespace IcarusII.Game.Tools
 {
+    /// <summary>适配器（manifest）的来源与状态；设置页与 mods_list 共用。</summary>
+    internal enum AdapterKind
+    {
+        /// <summary>没有适配器，只能读配置。</summary>
+        None,
+        /// <summary>IcarusII 内置的参考适配器。</summary>
+        Builtin,
+        /// <summary>插件目录随包的 IcarusII.tools.json。</summary>
+        Bundled,
+        /// <summary>玩家手写在 config/icarus-ii/bridge/ 下的适配器。</summary>
+        External,
+        /// <summary>AI 生成并写入的适配器。</summary>
+        Ai,
+        /// <summary>声明了版本范围，与当前插件版本不匹配。</summary>
+        VersionMismatch,
+        /// <summary>文件存在但解析失败或与插件不匹配。</summary>
+        Invalid,
+        /// <summary>插件没有成功加载，无法判断。</summary>
+        Unavailable,
+    }
+
+    internal sealed class AdapterStatus
+    {
+        public AdapterKind Kind;
+        public int ToolCount;
+        public string Detail;
+
+        internal static AdapterStatus Of(AdapterKind kind, int toolCount = 0, string detail = null)
+        {
+            return new AdapterStatus { Kind = kind, ToolCount = toolCount, Detail = detail };
+        }
+    }
+
     /// <summary>manifest 里的一个调用：目标类型/方法 + 参数映射。</summary>
     internal sealed class ManifestCall
     {
@@ -48,6 +81,8 @@ namespace IcarusII.Game.Tools
         public string Guid;
         public string Assembly;
         public string VersionRange;
+        /// <summary>来源标记；AI 生成的适配器写 "ai"。</summary>
+        public string Source;
         public List<ManifestTool> Tools = new List<ManifestTool>();
     }
 
@@ -67,9 +102,11 @@ namespace IcarusII.Game.Tools
             new Dictionary<string, ManifestTool>(StringComparer.Ordinal);
         private static readonly Dictionary<string, PluginInfo> ByToolPlugin =
             new Dictionary<string, PluginInfo>(StringComparer.Ordinal);
+        private static readonly Dictionary<string, AdapterStatus> Status =
+            new Dictionary<string, AdapterStatus>(StringComparer.OrdinalIgnoreCase);
         private static bool _loaded;
 
-        /// <summary>插件加载/卸载后调用；下次访问时重建。</summary>
+        /// <summary>插件加载/卸载或适配器文件变化后调用；下次访问时重建。</summary>
         internal static void Reset() => _loaded = false;
 
         internal static void EnsureLoaded()
@@ -79,54 +116,99 @@ namespace IcarusII.Game.Tools
             ByGuid.Clear();
             ByToolName.Clear();
             ByToolPlugin.Clear();
-            if (!ModBridge.Enabled) return;
+            Status.Clear();
 
-            foreach (var info in ModBridge.Plugins())
+            var anyEnabled = ModBridge.Enabled;
+            foreach (var info in ModBridge.AllPlugins())
             {
-                if (info.Instance is null) continue;
-                Manifest manifest;
-                try
-                {
-                    manifest = LoadExternal(info) ?? ReferenceAdapters.For(info);
-                }
-                catch (Exception ex)
-                {
-                    Plugin.Log?.LogWarning($"[mods] manifest 加载失败：{info.Metadata.GUID}：{ex.Message}");
-                    continue;
-                }
-                if (manifest is null) continue;
-                if (!VersionMatches(info, manifest.VersionRange))
-                {
-                    Plugin.Log?.LogWarning(
-                        $"[mods] manifest 版本不匹配，禁用：{info.Metadata.GUID} 需要 {manifest.VersionRange}");
-                    continue;
-                }
-
-                var id = ModBridge.IdFor(info);
-                var accepted = new List<ManifestTool>();
-                foreach (var tool in manifest.Tools)
-                {
-                    if (tool is null || string.IsNullOrEmpty(tool.Name)) continue;
-                    if (tool.Risk >= 2 && tool.Undo is null)
-                    {
-                        Plugin.Log?.LogWarning($"[mods] risk 2 工具缺少 undo，跳过：{tool.Name}");
-                        continue;
-                    }
-                    tool.Name = $"mod_{id}_{ModBridge.Slug(tool.Name)}";
-                    if (ByToolName.ContainsKey(tool.Name)) continue;
-                    accepted.Add(tool);
-                }
-                if (accepted.Count == 0) continue;
-                manifest.Tools = accepted;
-                ByGuid[manifest.Guid ?? info.Metadata.GUID] = manifest;
-                foreach (var tool in accepted)
-                {
-                    ByToolName[tool.Name] = tool;
-                    ByToolPlugin[tool.Name] = info;
-                }
+                var guid = info.Metadata.GUID ?? string.Empty;
+                if (guid.Length == 0) continue;
+                LoadOne(info, guid, anyEnabled);
             }
             if (ByToolName.Count > 0)
                 Plugin.Log?.LogInfo($"[mods] 已加载 {ByToolName.Count} 个 manifest 工具");
+        }
+
+        private static void LoadOne(PluginInfo info, string guid, bool anyEnabled)
+        {
+            if (info.Instance is null)
+            {
+                Status[guid] = AdapterStatus.Of(AdapterKind.Unavailable, 0, "插件未成功加载");
+                return;
+            }
+
+            Manifest manifest;
+            AdapterKind kind;
+            try
+            {
+                var external = LoadExternal(info);
+                if (external.Failure is not null)
+                {
+                    Status[guid] = external.Failure;
+                    return;
+                }
+                manifest = external.Manifest;
+                kind = external.Kind;
+                if (manifest is null)
+                {
+                    manifest = ReferenceAdapters.For(info);
+                    kind = AdapterKind.Builtin;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log?.LogWarning($"[mods] manifest 加载失败：{guid}：{ex.Message}");
+                Status[guid] = AdapterStatus.Of(AdapterKind.Invalid, 0, ex.Message);
+                return;
+            }
+
+            if (manifest is null)
+            {
+                Status[guid] = AdapterStatus.Of(AdapterKind.None);
+                return;
+            }
+            if (!VersionMatches(info, manifest.VersionRange))
+            {
+                Plugin.Log?.LogWarning(
+                    $"[mods] manifest 版本不匹配，禁用：{guid} 需要 {manifest.VersionRange}");
+                Status[guid] = AdapterStatus.Of(AdapterKind.VersionMismatch, 0, manifest.VersionRange);
+                return;
+            }
+
+            var accepted = AcceptTools(info, guid, manifest);
+            var status = AdapterStatus.Of(kind, accepted.Count);
+            Status[guid] = status;
+            if (accepted.Count == 0) return;
+            if (!anyEnabled || !ModPolicy.IsEnabled(guid)) return;
+
+            manifest.Tools = accepted;
+            ByGuid[guid] = manifest;
+            foreach (var tool in accepted)
+            {
+                ByToolName[tool.Name] = tool;
+                ByToolPlugin[tool.Name] = info;
+            }
+        }
+
+        private static List<ManifestTool> AcceptTools(PluginInfo info, string guid, Manifest manifest)
+        {
+            var accepted = new List<ManifestTool>();
+            var id = ModBridge.IdFor(info);
+            foreach (var tool in manifest.Tools)
+            {
+                if (tool is null || string.IsNullOrEmpty(tool.Name)) continue;
+                if (tool.Risk >= 2 && tool.Undo is null)
+                {
+                    Plugin.Log?.LogWarning($"[mods] risk 2 工具缺少 undo，跳过：{tool.Name}");
+                    continue;
+                }
+                var full = $"mod_{id}_{ModBridge.Slug(tool.Name)}";
+                if (ByToolName.ContainsKey(full)) continue;
+                if (accepted.Exists(item => string.Equals(item.Name, full, StringComparison.Ordinal))) continue;
+                tool.Name = full;
+                accepted.Add(tool);
+            }
+            return accepted;
         }
 
         internal static IReadOnlyList<ManifestTool> ToolsFor(string guid)
@@ -137,6 +219,14 @@ namespace IcarusII.Game.Tools
                 : Array.Empty<ManifestTool>();
         }
 
+        internal static AdapterStatus StatusFor(string guid)
+        {
+            EnsureLoaded();
+            return Status.TryGetValue(guid ?? string.Empty, out var status)
+                ? status
+                : AdapterStatus.Of(AdapterKind.None);
+        }
+
         internal static bool TryResolve(string toolName, out PluginInfo plugin, out ManifestTool tool)
         {
             plugin = null;
@@ -144,8 +234,9 @@ namespace IcarusII.Game.Tools
             if (!ModBridge.Enabled) return false;
             EnsureLoaded();
             if (string.IsNullOrEmpty(toolName)) return false;
-            return ByToolName.TryGetValue(toolName, out tool)
-                && ByToolPlugin.TryGetValue(toolName, out plugin);
+            if (!ByToolName.TryGetValue(toolName, out tool)) return false;
+            if (!ByToolPlugin.TryGetValue(toolName, out plugin)) return false;
+            return plugin?.Metadata is not null && ModPolicy.IsEnabled(plugin.Metadata.GUID);
         }
 
         /// <summary>Protocol.ExtraWriteTool 的钩子：risk &gt; 0 的 manifest 工具需要确认令牌。</summary>
@@ -156,42 +247,85 @@ namespace IcarusII.Game.Tools
 
         // ---------------------------------------------------------------- 加载
 
-        private static Manifest LoadExternal(PluginInfo info)
+        private sealed class LoadedExternal
         {
-            foreach (var path in ExternalPaths(info))
-            {
-                try
-                {
-                    if (!File.Exists(path)) continue;
-                    var manifest = Parse(File.ReadAllText(path));
-                    if (manifest is null)
-                    {
-                        Plugin.Log?.LogWarning($"[mods] manifest 解析失败：{path}");
-                        continue;
-                    }
-                    if (!Matches(info, manifest))
-                    {
-                        Plugin.Log?.LogWarning($"[mods] manifest 与插件不匹配：{path}");
-                        continue;
-                    }
-                    return manifest;
-                }
-                catch (Exception ex)
-                {
-                    Plugin.Log?.LogWarning($"[mods] 读取 manifest 失败：{path}：{ex.Message}");
-                }
-            }
-            return null;
+            public Manifest Manifest;
+            public AdapterKind Kind;
+            public AdapterStatus Failure;
         }
 
-        private static IEnumerable<string> ExternalPaths(PluginInfo info)
+        private static LoadedExternal LoadExternal(PluginInfo info)
         {
-            var configRoot = Path.Combine(Paths.ConfigPath ?? ".", "icarus-ii", "bridge");
-            var guid = info.Metadata.GUID ?? string.Empty;
-            yield return Path.Combine(configRoot, guid + ".json");
-            var location = info.Location;
+            var result = new LoadedExternal { Kind = AdapterKind.External };
+            var configPath = ExternalPathFor(info.Metadata.GUID);
+            var bundledPath = BundledPathFor(info);
+
+            if (configPath is not null && File.Exists(configPath))
+            {
+                var manifest = ReadManifest(configPath, info, out var error);
+                if (manifest is null)
+                {
+                    result.Failure = AdapterStatus.Of(AdapterKind.Invalid, 0, error);
+                    return result;
+                }
+                result.Manifest = manifest;
+                result.Kind = string.Equals(manifest.Source, "ai", StringComparison.OrdinalIgnoreCase)
+                    ? AdapterKind.Ai
+                    : AdapterKind.External;
+                return result;
+            }
+
+            if (bundledPath is not null && File.Exists(bundledPath))
+            {
+                var manifest = ReadManifest(bundledPath, info, out var error);
+                if (manifest is null)
+                {
+                    result.Failure = AdapterStatus.Of(AdapterKind.Invalid, 0, error);
+                    return result;
+                }
+                result.Manifest = manifest;
+                result.Kind = AdapterKind.Bundled;
+            }
+            return result;
+        }
+
+        private static Manifest ReadManifest(string path, PluginInfo info, out string error)
+        {
+            error = null;
+            try
+            {
+                var manifest = Parse(File.ReadAllText(path));
+                if (manifest is null)
+                {
+                    error = "解析失败";
+                    return null;
+                }
+                if (!Matches(info, manifest))
+                {
+                    error = "与插件不匹配";
+                    return null;
+                }
+                return manifest;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return null;
+            }
+        }
+
+        internal static string ExternalPathFor(string guid)
+        {
+            if (string.IsNullOrEmpty(guid)) return null;
+            var root = Path.Combine(Paths.ConfigPath ?? ".", "icarus-ii", "bridge");
+            return Path.Combine(root, guid + ".json");
+        }
+
+        private static string BundledPathFor(PluginInfo info)
+        {
+            var location = info?.Location;
             var dir = string.IsNullOrEmpty(location) ? null : Path.GetDirectoryName(location);
-            if (!string.IsNullOrEmpty(dir)) yield return Path.Combine(dir, "IcarusII.tools.json");
+            return string.IsNullOrEmpty(dir) ? null : Path.Combine(dir, "IcarusII.tools.json");
         }
 
         private static bool Matches(PluginInfo info, Manifest manifest)
@@ -214,6 +348,7 @@ namespace IcarusII.Game.Tools
                 Guid = root["pluginGuid"].AsString(null),
                 Assembly = root["pluginAssembly"].AsString(null),
                 VersionRange = root["pluginVersion"].AsString(null),
+                Source = root["source"].AsString(null),
             };
             foreach (var item in root["tools"].Items)
             {
@@ -371,10 +506,7 @@ namespace IcarusII.Game.Tools
             }
         }
     }
-}
 
-namespace IcarusII.Game.Tools
-{
     /// <summary>把一条 manifest 工具接到 dispatcher；只在桥启用时可用。</summary>
     internal sealed class ManifestToolHandler : IGameToolHandler
     {
@@ -396,7 +528,9 @@ namespace IcarusII.Game.Tools
 
         private GameToolJobResult Run(JsonValue args)
         {
-            ModBridge.RequireEnabled();
+            var guid = _plugin?.Metadata?.GUID;
+            if (!ModPolicy.IsEnabled(guid))
+                throw new InvalidOperationException($"插件未启用：{guid}");
             var result = ModManifest.Invoke(_plugin, _tool.Invoke, args);
             var data = JsonValue.NewObject();
             data.Set("display", $"{_tool.Label}：已执行");

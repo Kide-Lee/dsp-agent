@@ -33,6 +33,8 @@ export const CLOSE_MESSAGE_TOO_BIG = 1009; // frame_too_large（RFC 6455 语义�
 export const MessageType = {
   // mod → sidecar
   Hello: 'hello',
+  /** B.1.9：能力/扩展列表变化后补发；旧端按未知类型忽略。 */
+  Extensions: 'extensions',
   Prompt: 'prompt',
   Ping: 'ping',
   ConfigSet: 'config.set',
@@ -207,6 +209,8 @@ export interface ConfirmRequestPayload {
   body: string;
   risk: 1 | 2;
   timeoutMs: number;
+  /** B.1.6：写操作属于哪个第三方插件；mod 用它决定该插件的权限档位。 */
+  modGuid?: string;
   /** run_script 的脚本写租约：允许的写调用次数；0/缺省 = 普通单次确认。 */
   maxWrites?: number;
   /** 脚本确认时列出的写工具名；租约只允许这些工具。 */
@@ -523,6 +527,17 @@ export function parseHelloPayload(payload: JsonObject): HelloPayload | null {
     gameLanguage: asString(payload['gameLanguage'], 'unknown'),
     capabilities: asStringArray(payload['capabilities']),
     saveKey: typeof saveKeyValue === 'string' ? saveKeyValue : null,
+    extensions: parseExtensions(payload['extensions']),
+  };
+}
+
+/** B.1.9：能力/扩展推送的负载；缺字段一律按空处理。 */
+export function parseClientStatePayload(payload: JsonObject): {
+  capabilities: string[];
+  extensions: ExtensionSummary[];
+} {
+  return {
+    capabilities: asStringArray(payload['capabilities']),
     extensions: parseExtensions(payload['extensions']),
   };
 }
@@ -1722,7 +1737,6 @@ export const TOOL_GROUPS = [
   'game.write',
   'kb',
   'blueprint',
-  'script',
   'ask',
   'thirdparty',
   'other',

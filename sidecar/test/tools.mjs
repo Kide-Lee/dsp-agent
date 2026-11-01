@@ -83,8 +83,9 @@ function makeAgent(host, callOptions = {}, opts = {}) {
   const state = { result: null, calls: 0, requiredTool: undefined };
   const agent = {
     info: { provider: 'test', model: 'test', available: true },
-    onClientCapabilities(caps) {
+    onClientCapabilities(caps, extensions = []) {
       host.setCapabilities(caps);
+      host.setExtensions(extensions);
     },
     toolCatalog() {
       return [{ name: 'game_get_overview', label: '存档概览', description: '测试目录项' }];
@@ -774,8 +775,12 @@ async function run() {
     const names = toolNamesForCapabilities([CAPABILITY_MOD_BRIDGE], [extension]);
     check('声明能力+插件时广告 mods_list', names.includes('mods_list'));
     check('声明能力+插件时广告 mods_api_list', names.includes('mods_api_list'));
-    check('声明能力+插件时广告 mods_tools_enable', names.includes('mods_tools_enable'));
-    check('声明能力+插件时广告 mods_tools_disable', names.includes('mods_tools_disable'));
+    check('声明能力+插件时广告 mods_adapter_create', names.includes('mods_adapter_create'));
+    check('声明能力+插件时广告 mods_adapter_delete', names.includes('mods_adapter_delete'));
+    check('未声明能力时不广告 mods_adapter_create', !toolNamesForCapabilities([], [extension]).includes('mods_adapter_create'));
+    check('适配器创建记为写工具', isWriteToolName('mods_adapter_create'));
+    check('适配器创建 risk=2', writeToolRisk('mods_adapter_create') === 2);
+    check('适配器删除 risk=2', writeToolRisk('mods_adapter_delete') === 2);
     check('声明能力+插件时广告 mod_aux_config', names.includes('mod_aux_config'));
     check('未声明能力时不广告 mod_aux_config', !toolNamesForCapabilities([], [extension]).includes('mod_aux_config'));
     check('没有插件时不广告 mod_aux_config', !toolNamesForCapabilities([CAPABILITY_MOD_BRIDGE], []).includes('mod_aux_config'));
@@ -810,16 +815,7 @@ async function run() {
     check('manifest 工具使用插件给的 schema', manifestTool?.parameters?.type === 'object');
     check('manifest 工具描述来自 manifest', String(manifestTool?.description ?? '').includes('测试用'));
 
-    // 启用/禁用：工具集随之变化；默认启用。
-    const toggleHost = new GameToolHost();
-    toggleHost.setCapabilities([CAPABILITY_MOD_BRIDGE]);
-    toggleHost.setExtensions([extension]);
-    check('默认启用时工具存在', createGameTools(toggleHost).some((item) => item.name === 'mod_aux_config'));
-    check('禁用扩展返回 true', toggleHost.setExtensionEnabled('aux', false) === true);
-    check('禁用后工具消失', !createGameTools(toggleHost).some((item) => item.name === 'mod_aux_config'));
-    check('重复禁用返回 false', toggleHost.setExtensionEnabled('aux', false) === false);
-    check('重新启用返回 true', toggleHost.setExtensionEnabled('aux', true) === true);
-    check('重新启用后工具恢复', createGameTools(toggleHost).some((item) => item.name === 'mod_aux_config'));
+    // 插件开关由 mod 侧过滤 extensions 实现；sidecar 只看列表。
 
     // 卸载插件：下一条 hello 不再列出它，工具随之消失。
     host.setExtensions([]);
@@ -855,6 +851,38 @@ async function run() {
       check('ui_click 已注册', !!click);
       check('ui_click 需要 path', !!click?.parameters?.properties?.path);
     }
+
+    // B.1.9：extensions 推送要真的更新 host 的插件列表。
+    const pushed = makeSession();
+    pushed.session.handleFrame(Buffer.from(JSON.stringify(hello([CAPABILITY_MOD_BRIDGE]))), false);
+    pushed.session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-ext',
+          type: 'extensions',
+          payload: { capabilities: [CAPABILITY_MOD_BRIDGE], extensions: [extension] },
+        }),
+      ),
+      false,
+    );
+    check('extensions 推送后 host 有插件', pushed.host.extensionList.length === 1);
+    check(
+      'extensions 推送后工具名包含 mod_aux_config',
+      toolNamesForCapabilities(pushed.host.capabilityList, pushed.host.extensionList).includes('mod_aux_config'),
+    );
+    pushed.session.handleFrame(
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          id: 'm-ext2',
+          type: 'extensions',
+          payload: { capabilities: [CAPABILITY_MOD_BRIDGE], extensions: [] },
+        }),
+      ),
+      false,
+    );
+    check('空 extensions 推送清空插件', pushed.host.extensionList.length === 0);
 
     const withoutExt = makeSession();
     withoutExt.session.handleFrame(Buffer.from(JSON.stringify(hello([CAPABILITY_MOD_BRIDGE]))), false);

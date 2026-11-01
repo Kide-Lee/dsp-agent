@@ -561,3 +561,18 @@ manifest 只是把**已经存在的方法**暴露成工具：
 ### A.5 判断
 
 技术上「能」的部分是跨进程发 `prompt` 和同进程调公开方法；「不能」的部分是把它当子代理用——没有 API、没有身份、没有确认归属。而这三样补齐的复杂度，远高于把能力直接做成工具。多 agent 真正有价值的形态是「一个主 agent + 多个无 LLM 的能力单元」，不是一个完整 agent 去驱动另一个完整 agent。
+
+**P5 实现说明（2026-11-01）**
+
+- 移除全局 cfg 开关 `[Bridge] AllowThirdPartyTools`；是否声明 `mod.bridge.v1` 完全由
+  “是否至少启用了一个插件”推导（`ModPolicy.AnyEnabled`）。没有界面总开关。
+- 工具页新增 `mod` 页签：逐插件一行，显示名称 / GUID / 版本 / 配置项数 / 适配器来源，
+  右侧开关决定“AI 能否发现它”与“它的工具是否生成”；关掉即完全不可见。
+- “其他”和“脚本”合并为一个分类；`mod` 工具不再出现在通用工具列表里，只由 mod 页签管理。
+- 每个插件有独立权限档位，默认 `limited`，点行内标签循环切换；`confirm_request.modGuid`
+  把写操作归属告诉 mod，mod 用该插件的档位而不是全局档位。
+- 适配器闭环：`mods_api_list` 拿签名 → `mods_adapter_create` 提交结构化绑定 → 玩家确认 →
+  写入 `config/icarus-ii/bridge/<guid>.json` → 热载。AI 生成的文件带 `source=ai`、
+  `pluginVersion==当前版本`，risk 最低 1，risk 2 必须 undo；`mods_adapter_delete` 可删除并撤销。
+- 新增协议消息 `extensions`（B.1.9）：开关插件、创建/删除适配器后即时把能力/扩展列表推给
+  sidecar，回合边界重建会话，不再需要重启游戏（装/卸 mod 本身仍需重启）。

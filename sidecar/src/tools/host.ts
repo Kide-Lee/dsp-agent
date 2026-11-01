@@ -79,11 +79,10 @@ export class GameToolHost {
   private capabilities: string[] = [];
   private sandboxEnabled = false;
   private extensions: ExtensionSummary[] = [];
-  private disabledExtensions = new Set<string>();
   /** A.14.1：被玩家关掉的工具名；过滤点是 tools()/allTools()，脚本白名单同源。 */
   private disabledTools = new Set<string>();
   private cachedTools: ToolDefinition[] | null = null;
-  /** 工具集变化（启用/禁用扩展）时通知 agent 在回合边界重建会话。 */
+  /** 工具集变化（扩展列表变化）时通知 agent 在回合边界重建会话。 */
   onToolsetChanged?: () => void;
   /** 调试直调期间把 host 调用标记为 internal，mod 不显示普通工具卡。 */
   private debugMode = false;
@@ -124,9 +123,6 @@ export class GameToolHost {
       });
     if (same) return false;
     this.extensions = normalized;
-    for (const id of [...this.disabledExtensions]) {
-      if (!normalized.some((extension) => extension.id === id)) this.disabledExtensions.delete(id);
-    }
     this.cachedTools = null;
     return true;
   }
@@ -161,23 +157,6 @@ export class GameToolHost {
     return this.disabledTools.has(name);
   }
 
-  isExtensionEnabled(id: string): boolean {
-    return !this.disabledExtensions.has(id);
-  }
-
-  /** 启用/禁用某个扩展的工具；变化时清缓存并请求重建。 */
-  setExtensionEnabled(id: string, enabled: boolean): boolean {
-    if (!this.extensions.some((extension) => extension.id === id)) return false;
-    if (enabled) {
-      if (!this.disabledExtensions.delete(id)) return false;
-    } else {
-      if (this.disabledExtensions.has(id)) return false;
-      this.disabledExtensions.add(id);
-    }
-    this.cachedTools = null;
-    this.onToolsetChanged?.();
-    return true;
-  }
 
   /**
    * 本次载入是否启用游戏沙盒工具。返回是否真的变化；

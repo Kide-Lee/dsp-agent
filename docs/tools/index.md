@@ -11,10 +11,10 @@
 
 | 工具 | label | 能力位 | 风险 | 超时 | 一句话 |
 | --- | --- | --- | --- | --- | --- |
-| [`mods_api_list`](index.md#mods_api_list) | mod 可调用方法 | 本地 | 只读 | — | 只读列出某个插件程序集里可被 manifest 调用的公开静态方法：类型、方法、参数、返回值。 |
-| [`mods_list`](index.md#mods_list) | 已装 mod 列表 | `mod.bridge.v1` | 只读 | — | 列出除本 mod 以外、当前已加载的 BepInEx 插件：GUID、名称、版本、程序集、配置项数量、是否加载失败。 |
-| [`mods_tools_disable`](index.md#mods_tools_disable) | 禁用 mod 工具 | 本地 | 只读 | — | 禁用 mod 工具；下一轮会话生效。 |
-| [`mods_tools_enable`](index.md#mods_tools_enable) | 启用 mod 工具 | 本地 | 只读 | — | 启用 mod 工具；下一轮会话生效。 |
+| [`mods_adapter_create`](index.md#mods_adapter_create) | 创建 mod 适配器 | `mod.bridge.v1` | risk 2 | 8000ms | 把某个第三方 mod 的公开静态方法绑定成工具，写入 BepInEx/config/icarus-ii/bridge/<guid>.json 并热载。 |
+| [`mods_adapter_delete`](index.md#mods_adapter_delete) | 删除 mod 适配器 | `mod.bridge.v1` | risk 2 | 8000ms | 删除 config/icarus-ii/bridge 下的适配器文件并热载；随包与内置适配器不受影响。 |
+| [`mods_api_list`](index.md#mods_api_list) | mod 可调用方法 | `mod.bridge.v1` | 只读 | — | 只读列出某个插件程序集里可被 manifest 调用的公开静态方法：类型、方法、参数、返回值。 |
+| [`mods_list`](index.md#mods_list) | 已装 mod 列表 | `mod.bridge.v1` | 只读 | — | 列出除本 mod 以外、当前已启用的 BepInEx 插件：GUID、id、名称、版本、程序集、配置项数量、是否加载失败、适配器状态。 |
 | [`ui_click`](index.md#ui_click) | 点击界面控件 | `ui.tree.v1` | risk 2 | 8000ms | 按 ui_snapshot 给出的路径派发一次合成点击（PointerClick）。 |
 | [`ui_snapshot`](index.md#ui_snapshot) | 界面控件 | `ui.tree.v1` | 只读 | — | 列出当前可见的 uGUI 可交互控件：层级路径、类型、显示文字、是否可用、Toggle/InputField 的值。 |
 | [`game_get_overview`](game-read.md#game_get_overview) | 存档概览 | `game.read.v1` | 只读 | 5000ms | 读取当前存档概览：存档名、游戏时刻、当前行星/星系、玩家经纬度、是否暂停。 |
@@ -99,14 +99,14 @@ mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告�
 | `game.view.v1` | 1 | `game_capture_view` |
 | `game.analyze.v1` | 1 | `game_analyze_area` |
 | `game.todo.v1` | 4 | `game_todo_templates`、`game_todo_list`、`game_todo_add` |
-| 本地（始终注册） | 16 | `mods_tools_enable`、`mods_tools_disable`、`mods_api_list` |
+| `mod.bridge.v1` | 4 | `mods_api_list`、`mods_adapter_create`、`mods_adapter_delete` |
 | `ui.tree.v1` | 2 | `ui_snapshot`、`ui_click` |
-| `mod.bridge.v1` | 1 | `mods_list` |
 | `game.write.v1` | 4 | `game_place_marker`、`game_open_panel`、`game_set_research` |
 | `game.drop.v1` | 1 | `game_drop_item` |
 | `game.build.v1` | 4 | `game_set_recipe`、`game_set_assembler_batch`、`game_feed_input` |
 | `game.storage.v1` | 5 | `game_storage_set_filter`、`game_storage_set_limit`、`game_storage_move` |
 | `game.tether.v1` | 3 | `game_tether_add`、`game_tether_clear`、`game_tether_list` |
+| 本地（始终注册） | 13 | `ask_user`、`run_script`、`kb_search` |
 
 ### 不在模型工具列表里的工具
 
