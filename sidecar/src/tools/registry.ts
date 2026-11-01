@@ -613,11 +613,11 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       label: '创建 mod 适配器',
       description:
         '把某个第三方 mod 的公开静态方法绑定成工具，写入 BepInEx/config/icarus-ii/bridge/<guid>.json 并热载。' +
-        '写操作：执行前玩家必须确认；创建后下一轮生效。工具风险固定为 risk 2（每次确认），AI 不能调整。',
+        '写操作：执行前玩家必须确认；创建后下一轮生效。生成的能力每次调用都会请求玩家确认。',
       promptGuidelines: [
         '先调 mods_api_list 拿真实的方法签名；用 mods_list 的 adapter 字段判断是否已有适配器。',
         '一次只为一个 mod 创建，工具数量控制在 1-3 个，优先只读或可逆的方法。',
-        '不要填写 risk：AI 不能调整工具权限，生成的能力一律由系统按 risk 2 处理（每次确认）。',
+        '工具权限由玩家在设置里控制，你只负责选方法和参数。',
         '参数类型只支持 int/long/float/double/bool/string/enum；不要绑定对象或委托。',
         'parameters 的 type 必须写 integer/number/boolean/string/array/object，写 int/bool 会导致上游拒绝整个工具表。',
         '创建前把“调用哪个方法、参数是什么”讲清楚，等玩家确认。',

@@ -195,8 +195,7 @@ function summarizeAdapterTools(value: unknown): string {
       const method = typeof call['method'] === 'string' ? call['method'] : '?';
       target = `${type}.${method}`;
     }
-    const risk = typeof row['risk'] === 'number' ? row['risk'] : 0;
-    lines.push(`${name} → ${target}（risk ${risk}）`);
+    lines.push(`${name} → ${target}`);
   }
   if (value.length > 5) lines.push(`…共 ${value.length} 个`);
   return lines.length > 0 ? lines.join('；') : '（无）';
@@ -334,7 +333,7 @@ function describeConfirmation(
         body: `mod：${fmt(args['guid'])}\n` +
           `工具：${summarizeAdapterTools(args['tools'])}\n` +
           '会把绑定写入 config/icarus-ii/bridge 并热载；创建后下一轮才可用。' +
-          'AI 只能按方法名推断风险，生成的能力一律按 risk 2 处理（每次确认）；想放行可把该 mod 档位调成接管。',
+          'AI 只能按方法名推断功能，生成的能力每次调用都会请求确认；想放行可把该 mod 的权限档位调成接管。',
       };
     case 'mods_adapter_delete':
       return {
