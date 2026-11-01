@@ -304,6 +304,9 @@ namespace IcarusII.UI
 
         private bool Matches(ToolCatalogEntryInfo entry)
         {
+            // 顶栏分类：分组筛选必须在这里生效；Render 只负责按 GroupOrder 分节。
+            if (_group is not null && GroupOf(entry) != _group) return false;
+
             var query = (_search ?? string.Empty).Trim();
             if (query.Length == 0) return true;
             if (!string.IsNullOrEmpty(entry.Name)
