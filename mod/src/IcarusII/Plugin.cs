@@ -79,8 +79,7 @@ namespace IcarusII
         /// <summary>权限档位在本地改过、但还没成功发给 sidecar（下次 ready 时补发）。</summary>
         private bool _permissionLevelDirty;
 
-        /// <summary>扩展列表的周期检查：插件可能在 Start 里才注册配置项。</summary>
-        private float _nextModsCheck;
+        /// <summary>最近一次推送给 sidecar 的扩展列表指纹。</summary>
         private string _lastModsSnapshot;
 
         /// <summary>最近一个已渲染终稿的 promptId，用于对重复的 message{final} 去重。</summary>
@@ -204,8 +203,6 @@ namespace IcarusII
             if (_initFailed) return;
 
             _dispatcher.Drain(MainThreadBudgetMs, ex => Log.LogError($"主线程任务异常：{ex}"));
-
-            RefreshModExtensions();
 
             // 先同步存档绑定：换档后旧工具调用必须在同帧被取消，不能带着新档的数据返回。
             SyncSaveBinding();
@@ -373,15 +370,13 @@ namespace IcarusII
 
         /// <summary>
         /// 有些插件在 Start（而不是 Awake）里才 Config.Bind，hello 时配置项还是 0。
-        /// 每两秒比较一次插件集合/配置项/工具名，有变化就补发扩展列表。
+        /// 只在“即将需要工具列表”的时机比较一次：连接就绪、玩家发送、处理工具调用前。
         /// </summary>
         private void RefreshModExtensions()
         {
-            if (Time.unscaledTime < _nextModsCheck) return;
-            _nextModsCheck = Time.unscaledTime + 2f;
             var snapshot = ModBridge.Snapshot();
             if (string.Equals(snapshot, _lastModsSnapshot, StringComparison.Ordinal)) return;
-            if (NotifyExtensionsChanged()) _lastModsSnapshot = snapshot;
+            NotifyExtensionsChanged();
         }
 
         private void OnClientStateChanged(ConnectionState state, string detail)
@@ -402,6 +397,7 @@ namespace IcarusII
                         // 新连接上服务端对存档一无所知，必须重新绑定
                         _saveSynced = false;
                         UI.SettingsPageView.ServerVersion = ServerVersion;
+                        RefreshModExtensions();
                         break;
                     case ConnectionState.Backoff:
                         ServerVersion = null;
@@ -738,6 +734,7 @@ namespace IcarusII
                     break;
 
                 case Protocol.ToolCall:
+                    RefreshModExtensions();
                     OnToolCall(payload, replyTo);
                     break;
 
@@ -2343,6 +2340,7 @@ namespace IcarusII
                 _agentRunning = true;
                 _chat.SetBusy(true);
             }
+            RefreshModExtensions();
             var requiredTool = _chat.GetRequiredTool(text);
             var id = _client.SendPrompt(text, _chat.ActiveConversationId, requiredTool,
                 steering ? Protocol.PromptModeSteer : null);
