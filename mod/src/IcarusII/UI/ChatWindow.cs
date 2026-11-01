@@ -1613,7 +1613,7 @@ namespace IcarusII.UI
         /// `&lt;color=#FFFFFF28&gt;` 标签，再乘 Text.color 就几乎全透明——
         /// 表现就是"输入框里打字，text 变了、光标在，但一个字形都看不见"。
         /// </summary>
-        private static void SeedInputCharColors(InputField f, string why, int minChars = 0)
+        internal static void SeedInputCharColors(InputField f, string why, int minChars = 0)
         {
             if (f == null) return;
             try
@@ -1653,7 +1653,7 @@ namespace IcarusII.UI
         /// 处理顺序见方法体三步：置脏 → 直接按 UpdateMaterial 的做法绑定 → 强制一次
         /// canvas 更新。三步缺一不可（前两步单独做都不会生效，实测）。
         /// </summary>
-        private static void RebindInputTextMaterial(Text t, string why)
+        internal static void RebindInputTextMaterial(Text t, string why)
         {
             if (t == null) return;
             try

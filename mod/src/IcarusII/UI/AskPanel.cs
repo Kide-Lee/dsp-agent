@@ -68,6 +68,9 @@ namespace IcarusII.UI
         private bool _showing;
         private bool _suppressToggle;
         private bool _suppressCustom;
+        private bool _suppressCustomToggle;
+        private bool _imeWasComposing;
+        private InputField.OnValidateInput _previousCustomValidator;
         private bool _multiSelect;
         private bool _customSelected;
         private bool _reviewMode;
@@ -142,14 +145,25 @@ namespace IcarusII.UI
             _customNumber = FindText(_customRow, "number");
             var inputTf = _customRow.Find("input");
             _customInput = inputTf != null ? inputTf.GetComponent<InputField>() : null;
+            var customHit = _customRow.Find("hit");
             var customCheckbox = _customRow.Find("checkbox");
             _customCheckbox = customCheckbox != null ? customCheckbox.GetComponent<Image>() : null;
-            _customToggle = customCheckbox != null ? customCheckbox.GetComponent<Toggle>() : null;
-            if (_customInput != null)
+            _customToggle = customHit != null ? customHit.GetComponent<Toggle>() : null;
+            if (_customToggle == null || customHit.GetComponent<UIToggle>() == null
+                || _customRow.Find("selected-bg") == null)
             {
-                _customInput.onValueChanged.AddListener(OnCustomChanged);
-                _customInput.onEndEdit.AddListener(OnCustomEndEdit);
+                Plugin.Log.LogWarning("[ask] answer-input 缺少 hit/Toggle/UIToggle/selected-bg");
+                return false;
             }
+            if (_customInput == null || _customInput.lineType != InputField.LineType.MultiLineNewline)
+            {
+                Plugin.Log.LogWarning("[ask] answer-input/input 必须是 MultiLineNewline 的 InputField");
+                return false;
+            }
+            _customToggle.onValueChanged.AddListener(OnCustomToggleChanged);
+            _customInput.onValueChanged.AddListener(OnCustomChanged);
+            _previousCustomValidator = _customInput.onValidateInput;
+            _customInput.onValidateInput = ValidateCustomChar;
 
             _submitButton = FindButton(chooseRoot, "voting-device/btn-grop/agree-button");
             _skipButton = FindButton(chooseRoot, "voting-device/btn-grop/skip-button");
@@ -194,6 +208,8 @@ namespace IcarusII.UI
             _confirmMode = false;
             _showing = true;
             gameObject.SetActive(true);
+            if (_customInput != null)
+                ChatWindow.RebindInputTextMaterial(_customInput.textComponent, "作答面板");
             ApplyQuestion(0, restoreFocus: false);
         }
 
@@ -203,8 +219,10 @@ namespace IcarusII.UI
             _showing = false;
             _reviewMode = false;
             _confirmMode = false;
+            _imeWasComposing = false;
             _selectedOptions.Clear();
             _customSelected = false;
+            UpdateCustomCheckbox();
             if (_explainRoot != null) _explainRoot.SetActive(false);
             _optionRoot.gameObject.SetActive(true);
             if (_skipButton != null) _skipButton.gameObject.SetActive(true);
@@ -356,9 +374,13 @@ namespace IcarusII.UI
 
             if (_customInput != null)
             {
+                // OnDisable（隐藏选项区/关窗）会把逐字符颜色清成 0，
+                // 0 指向调色板 0 号色；不重种的话下一次 Append 会越界抛异常。
+                ChatWindow.SeedInputCharColors(_customInput, "作答", 512);
                 SetCustomText(state.Custom);
                 _customInput.DeactivateInputField();
             }
+            _imeWasComposing = false;
             _customSelected = state.CustomSelected && showCustom;
             UpdateCustomCheckbox();
 
@@ -386,6 +408,7 @@ namespace IcarusII.UI
             }
 
             if (_customCheckbox != null) _customCheckbox.gameObject.SetActive(_multiSelect);
+            if (_customToggle != null) _customToggle.group = _multiSelect ? null : _toggleGroup;
         }
 
         /// <summary>
@@ -578,11 +601,17 @@ namespace IcarusII.UI
             if (!_multiSelect) ClearToggles();
         }
 
-        private void OnCustomEndEdit(string value)
+        /// <summary>
+        /// 自定义行整行可点：hit 上的 Toggle 负责选中态，选中后把焦点交给输入框。
+        /// 程序化同步 isOn 时用 _suppressCustomToggle 挡住，避免打字过程中反复 ActivateInputField。
+        /// </summary>
+        private void OnCustomToggleChanged(bool isOn)
         {
-            if (!_showing || _confirmMode || _reviewMode) return;
-            var enter = UnityEngine.Input.GetKeyDown(KeyCode.Return) || UnityEngine.Input.GetKeyDown(KeyCode.KeypadEnter);
-            if (enter) SubmitCurrent();
+            if (_suppressCustomToggle || !_showing || _confirmMode || _reviewMode) return;
+            _customSelected = isOn;
+            if (!isOn) return;
+            if (!_multiSelect) ClearToggles();
+            FocusCustom();
         }
 
         private void Update()
@@ -591,16 +620,27 @@ namespace IcarusII.UI
 
             if (_customInput != null && _customInput.isFocused)
             {
-                if (!_multiSelect && _selectedOptions.Count > 0) ClearToggles();
-                if (!_customSelected && !string.IsNullOrEmpty(_customInput.text))
+                if (!_customSelected)
                 {
                     _customSelected = true;
                     UpdateCustomCheckbox();
                 }
+                if (!_multiSelect && _selectedOptions.Count > 0) ClearToggles();
+
+                // 输入法组字中的回车是“选候选词”，不能提交。
+                // 组字在 EventSystem 里提交的顺序不固定，所以上一帧还在组字时也跳过。
+                bool composing = !string.IsNullOrEmpty(_customInput.compositionString);
+                if (EnterDown() && !composing && !_imeWasComposing)
+                {
+                    SubmitCurrent();
+                    return;
+                }
+                _imeWasComposing = composing;
                 return;
             }
 
-            if (UnityEngine.Input.GetKeyDown(KeyCode.Return) || UnityEngine.Input.GetKeyDown(KeyCode.KeypadEnter))
+            _imeWasComposing = false;
+            if (EnterDown())
             {
                 SubmitCurrent();
                 return;
@@ -668,6 +708,7 @@ namespace IcarusII.UI
             if (_customInput == null) return;
             if (!_multiSelect) ClearToggles();
             _customSelected = true;
+            _imeWasComposing = false;
             UpdateCustomCheckbox();
             var es = EventSystem.current;
             if (es != null) es.SetSelectedGameObject(_customInput.gameObject);
@@ -708,9 +749,39 @@ namespace IcarusII.UI
 
         private void UpdateCustomCheckbox()
         {
-            // 显隐/勾选动画由 checkbox 上的原生 Toggle + UIToggle 负责；
+            // 显隐/勾选动画由 hit 上的原生 Toggle + UIToggle 负责；
             // mod 只同步 isOn 这个状态。
-            if (_customToggle != null) _customToggle.isOn = _customSelected;
+            if (_customToggle == null || _customToggle.isOn == _customSelected) return;
+            _suppressCustomToggle = true;
+            try
+            {
+                _customToggle.isOn = _customSelected;
+            }
+            finally
+            {
+                _suppressCustomToggle = false;
+            }
+        }
+
+        /// <summary>
+        /// 自定义答案按单行显示，但输入框必须用 MultiLineNewline：
+        /// 单行 InputField 会把回车当成 Finishing 并失焦，输入法还在组字时选词就会被中断。
+        /// 换行字符在这里拦掉，视觉上仍是单行。
+        /// </summary>
+        private char ValidateCustomChar(string current, int charIndex, char added)
+        {
+            if (_previousCustomValidator is not null)
+            {
+                var chained = _previousCustomValidator(current, charIndex, added);
+                if (chained == '\0' || chained != added) return chained;
+            }
+            if (added == '\n' || added == '\r' || added == '\t') return '\0';
+            return added;
+        }
+
+        private static bool EnterDown()
+        {
+            return UnityEngine.Input.GetKeyDown(KeyCode.Return) || UnityEngine.Input.GetKeyDown(KeyCode.KeypadEnter);
         }
 
         private static bool DigitDown(int digit)
