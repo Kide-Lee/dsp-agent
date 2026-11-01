@@ -92,7 +92,7 @@ namespace IcarusII.UI
             if (chooseRoot == null) return false;
 
             _questionText = FindText(chooseRoot, "voting-device/question/text");
-            _numberText = FindText(chooseRoot, "voting-device/question/num");
+            _numberText = FindText(chooseRoot, "voting-device/question/count");
             _optionRoot = chooseRoot.Find("voting-device/answer-grop") as RectTransform;
             if (_questionText == null || _optionRoot == null)
             {

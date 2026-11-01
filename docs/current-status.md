@@ -54,6 +54,8 @@
 ### M4 收尾修复
 
 - 确认页第一次打开时 `AskPanel.Update()` 越界：已修复。
+- 题目序号 `question/count`：之前绑到了不存在的 `question/num`，序号一直是 prefab 的
+  示例“1 / 5”；现在绑定 `count`，按 `当前题 / 总题数` 更新，汇总页与确认页显示“确认”。
 - 选项 hover/选中/复选框：全部由 prefab 原生 `Toggle` / `UIToggle` 参数驱动，
   没有自定义按钮动画脚本。
 - 选项 hover 高亮残留：原生 `UIButton` 的 `normalColor` 若是纯透明 `(0,0,0,0)`，
