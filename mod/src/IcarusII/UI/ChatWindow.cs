@@ -4936,6 +4936,21 @@ namespace IcarusII.UI
             RebuildConversationIndex();
         }
 
+        /// <summary>
+        /// 会话被 sidecar 丢弃后从左侧索引移除（新建但没发过消息的空会话，切走就没意义了）。
+        /// 只接受非活动会话，避免把当前正文的归属删掉。
+        /// </summary>
+        public void RemoveConversation(string conversationId)
+        {
+            if (string.IsNullOrEmpty(conversationId)) return;
+            if (conversationId == _activeConversationId) return;
+            int removed = _conversations.RemoveAll(c => c != null && c.Id == conversationId);
+            if (removed == 0) return;
+            _conversationExpanded.Remove(conversationId);
+            _conversationVisible.Remove(conversationId);
+            RebuildConversationIndex();
+        }
+
         /// <summary>模型总结标题到达：只改左侧该会话的标题，不重放正文、不重建索引。</summary>
         public void UpdateConversationTitle(string conversationId, string title)
         {

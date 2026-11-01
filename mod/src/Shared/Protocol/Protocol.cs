@@ -1318,6 +1318,8 @@ namespace IcarusII.Common.Protocol
         public bool Ok { get; private set; }
         public bool Existed { get; private set; }
         public int MessageCount { get; private set; }
+        /// <summary>conversation.switched 里被丢弃的空会话 id（附录 A.13，可选）。</summary>
+        public string DiscardedConversationId { get; private set; }
         public ConversationInfo Conversation { get; private set; }
         public List<ConversationInfo> Conversations { get; private set; } = new List<ConversationInfo>();
         public List<HistoryMessageInfo> History { get; private set; } = new List<HistoryMessageInfo>();
@@ -1334,6 +1336,7 @@ namespace IcarusII.Common.Protocol
             r.Ok = payload["ok"].AsBool(true);
             r.Existed = payload["existed"].AsBool(false);
             r.MessageCount = payload["messageCount"].AsInt(0);
+            r.DiscardedConversationId = payload["discardedConversationId"].AsString(null);
             r.Conversation = ConversationInfo.Parse(payload["conversation"]);
             if (string.IsNullOrEmpty(r.ConversationId) && r.Conversation is not null)
                 r.ConversationId = r.Conversation.Id;

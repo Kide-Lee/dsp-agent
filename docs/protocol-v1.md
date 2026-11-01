@@ -1080,6 +1080,9 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 - 新建但还没有发过消息的会话没有 session 文件（pi 只在第一条 user/assistant 消息时落盘）。
   sidecar 在内存里把它作为空会话保留，并在同一存档的 `save.bound.conversations`
   里用 `id + title="新会话" + records=[]` 表示；它仍然可以通过 `active.json` 恢复。
+- 空会话只在它是**活动会话**时存在：切到别的会话后 sidecar 直接丢弃它（它没有
+  session 文件，留着也打不开），下一次 `conversation.create` 会生成新的 draft id。
+  丢弃通过 `conversation.switched.discardedConversationId` 告诉 mod，见下。
 - 会话标题由 sidecar 生成：第一条问答完成后异步调用一次模型，把这次对话的主题
   总结成一行短标题，写入 pi 的 `session_info.name`；生成失败时退回第一条用户消息
   截断，保证可用。标题生成不阻塞主回答，也不进入主模型上下文。
@@ -1165,14 +1168,18 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
     "conversation": { /* 同 conversation.create.conversation */ },
     "existed": true,
     "messageCount": 2,
+    "discardedConversationId": "conv_9a…",
     "history": [ /* 该会话历史，字段同 A.6 */ ]
   }
 }
 ```
 
-- 会话不存在时返回 `error{code:"conversation_not_found"}`。
+- 会话不存在时返回 `error{code:"conversation_not_found"}`；此时活动会话不变。
 - `conversation.title` 优先取该会话的 `session_info.name`（玩家改名或模型总结），
   没有时才退回第一条用户消息；切走再切回不会丢掉玩家改过的标题。
+- `discardedConversationId`（可选）只在「切换前那个活动会话是没落盘的空会话」时出现：
+  sidecar 已经把那个 draft 丢掉了，mod 收到后把它从左侧索引里移除。老 mod 忽略该
+  字段，列表里会留下一个点不开的空会话（切过去会得到 `conversation_not_found`）。
 - 切换成功后，下一次 `prompt` 的 `conversationId` 必须是该 id；sidecar 会用它
   校验/路由（见下）。
 

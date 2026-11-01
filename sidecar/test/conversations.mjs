@@ -82,8 +82,15 @@ function makeAgent() {
     switchConversation: async (_key, id) => {
       const found = list.find((c) => c.id === id);
       if (!found) return { ok: false, error: 'conversation_not_found' };
+      // 切走一个没落盘的空会话时，引擎会丢弃它并把 id 回传给 UI。
+      const discardedConversationId = activeId === 'conv-new' && id !== activeId ? activeId : null;
       activeId = id;
-      return { ok: true, conversation: found, history: historyFor(id) };
+      return {
+        ok: true,
+        conversation: found,
+        history: historyFor(id),
+        ...(discardedConversationId ? { discardedConversationId } : {}),
+      };
     },
     renameConversation: async (_key, id, title) => {
       const found = list.find((c) => c.id === id);
@@ -160,6 +167,11 @@ console.log('── 1. Session 消息 ──');
   const switched = await waitFrame(socket, 'conversation.switched');
   check('conversation.switch 回执', switched?.payload?.conversationId === 'conv-b');
   check('conversation.switch 带回历史', switched?.payload?.history?.length === 2);
+  check(
+    'conversation.switch 带回被丢弃的空会话',
+    switched?.payload?.discardedConversationId === 'conv-new',
+    JSON.stringify(switched?.payload?.discardedConversationId),
+  );
 
   session.handleFrame(Buffer.from(JSON.stringify({
     v: 1, id: 'c-3', type: 'conversation.delete', payload: { conversationId: 'conv-a' },
@@ -240,6 +252,19 @@ console.log('── 2. PiAgent 会话文件 ──');
     check('切换到 A', switched.ok === true);
     check('切换后历史属于 A', switched.history?.[0]?.text === '第一条提问 A');
     check('切换后 active=A', agent.getActiveConversationId() === 'conv-a');
+    check(
+      '切走空会话时回传被丢弃的 id',
+      switched.discardedConversationId === created.conversation?.id,
+      JSON.stringify(switched.discardedConversationId),
+    );
+    const afterDiscard = await agent.getConversations('saveA');
+    check('被丢弃的空会话不再出现在列表', !afterDiscard.some((c) => c.id === created.conversation?.id));
+    const backToDraft = await agent.switchConversation('saveA', created.conversation?.id);
+    check(
+      '切回被丢弃的空会话失败',
+      backToDraft.ok === false && backToDraft.error === 'conversation_not_found',
+      JSON.stringify(backToDraft),
+    );
 
     const bPath = pi.SessionManager.findById(dataDir, 'conv-b', sessionDir);
     const renamed = await agent.renameConversation('saveA', 'conv-b', '  物流站标题  ');
@@ -256,6 +281,7 @@ console.log('── 2. PiAgent 会话文件 ──');
     check('重复切到同一会话标题保留', sameB.conversation?.title === '物流站标题', JSON.stringify(sameB.conversation?.title));
     const backToA = await agent.switchConversation('saveA', 'conv-a');
     check('切回 A 成功', backToA.ok === true);
+    check('两个已落盘会话之间切换不回传丢弃 id', backToA.discardedConversationId === undefined);
 
     const deleted = await agent.deleteConversation('saveA', 'conv-b');
     check('删除非活动会话', deleted.ok === true);

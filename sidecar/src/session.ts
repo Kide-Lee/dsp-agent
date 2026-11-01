@@ -1188,6 +1188,9 @@ export class Session {
           existed: history.length > 0,
           messageCount: history.length,
           history,
+          ...(result.discardedConversationId
+            ? { discardedConversationId: result.discardedConversationId }
+            : {}),
         }),
       }),
     );

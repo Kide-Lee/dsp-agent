@@ -930,6 +930,8 @@ export function buildConversationSwitchedPayload(args: {
   existed: boolean;
   messageCount: number;
   history?: readonly HistoryMessage[];
+  /** A.13：切换前那个没落盘的空会话被丢弃时，回传它，mod 据此删掉列表里的行。 */
+  discardedConversationId?: string | null;
 }): JsonObject {
   return {
     saveKey: args.saveKey,
@@ -937,6 +939,7 @@ export function buildConversationSwitchedPayload(args: {
     conversation: args.conversation,
     existed: args.existed,
     messageCount: args.messageCount,
+    ...(args.discardedConversationId ? { discardedConversationId: args.discardedConversationId } : {}),
     history: args.history ?? [],
   };
 }

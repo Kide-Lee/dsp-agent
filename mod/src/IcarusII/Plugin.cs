@@ -1754,6 +1754,9 @@ namespace IcarusII
                 }
                 _chat.ClearTranscript();
                 _chat.UpsertConversation(info.Conversation, true);
+                // 切走时 sidecar 丢掉了那个没落盘的空会话：把它的行从左侧删掉，
+                // 否则它会留在列表里，点回去只会得到 conversation_not_found。
+                _chat.RemoveConversation(info.DiscardedConversationId);
                 ReplayHistory(info.History);
                 _historyReplayedFor = ReplayKey(info.SaveKey ?? _saveKey, info.Conversation.Id);
                 _chat.SetStatus(Strings.Get("status.ready"), OkColor);

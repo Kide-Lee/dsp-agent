@@ -261,6 +261,7 @@ export interface AgentRunner {
     ok: boolean;
     conversation?: ConversationInfo;
     history?: HistoryMessage[];
+    discardedConversationId?: string;
     error?: string;
   }>;
   /** A.13：玩家重命名会话（写入 pi session_info）。 */
@@ -2082,6 +2083,8 @@ export class PiAgent implements AgentRunner {
     ok: boolean;
     conversation?: ConversationInfo;
     history?: HistoryMessage[];
+    /** 切换前那个没落盘的空会话已被丢弃时，回传它的 id（A.13）。 */
+    discardedConversationId?: string;
     error?: string;
   }> {
     if (!saveKey) return { ok: false, error: 'no_save' };
@@ -2107,6 +2110,15 @@ export class PiAgent implements AgentRunner {
     const file = pi.SessionManager.findById(this.dataDir, conversationId, sessionDir);
     if (!file) return { ok: false, error: 'conversation_not_found' };
 
+    // 空会话只在它是活动会话时存在：切走时它没有 session 文件可回，直接丢弃。
+    // 不丢的话左侧会留下一个点不开的行（切回去只会得到 conversation_not_found）。
+    // 判据是「文件不存在」而不是只看 draft 标记：首轮 prompt 抛错时标记可能还是 true，
+    // 但文件已经写出来了，那种会话切得回去，不能删它的行。
+    const discardable =
+      this.activeConversationDraft &&
+      activeId !== null &&
+      !pi.SessionManager.findById(this.dataDir, activeId, sessionDir);
+    const discardedConversationId = discardable ? activeId : null;
     this.activeConversationId = conversationId;
     this.activeConversationDraft = false;
     this.activeConversationDraftTitle = null;
@@ -2121,7 +2133,12 @@ export class PiAgent implements AgentRunner {
       modified: new Date(),
       history,
     });
-    return { ok: true, conversation, history };
+    return {
+      ok: true,
+      conversation,
+      history,
+      ...(discardedConversationId ? { discardedConversationId } : {}),
+    };
   }
 
   async renameConversation(saveKey: string | null, conversationId: string, rawTitle: string): Promise<{

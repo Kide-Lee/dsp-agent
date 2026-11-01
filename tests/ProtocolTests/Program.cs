@@ -806,6 +806,15 @@ namespace IcarusII.Tests
             Eq("conversation.switched id", "conv-a", switched.ConversationId);
             Eq("conversation.switched conversation", "量子芯片", switched.Conversation.Title);
             Eq("conversation.switched history", 1, switched.History.Count);
+            Check("conversation.switched 无丢弃字段时为空", string.IsNullOrEmpty(switched.DiscardedConversationId));
+
+            // 附录 A.13：切走一个没落盘的空会话，sidecar 回传丢弃的 id。
+            var switchedWithDrop = ConversationEventInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"3f2a\",\"conversationId\":\"conv-a\",\"existed\":true,\"messageCount\":1," +
+                "\"discardedConversationId\":\"conv-9a\"," +
+                "\"conversation\":{\"id\":\"conv-a\",\"title\":\"量子芯片\",\"recordCount\":1,\"records\":[]}," +
+                "\"history\":[]}"));
+            Eq("conversation.switched discardedConversationId", "conv-9a", switchedWithDrop.DiscardedConversationId);
 
             var updated = ConversationEventInfo.Parse(JsonValue.Parse(
                 "{\"saveKey\":\"3f2a\",\"conversationId\":\"conv-a\",\"title\":\"量子芯片产线规划\"}"));
