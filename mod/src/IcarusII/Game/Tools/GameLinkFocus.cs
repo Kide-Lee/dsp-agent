@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 namespace IcarusII.Game.Tools
@@ -15,11 +16,15 @@ namespace IcarusII.Game.Tools
             if (target == null) return false;
             try
             {
+                Plugin.Log.LogInfo($"[link] 聚焦 {target.Kind} planet={target.PlanetId} target={target.TargetId}");
                 if (target.Kind == "building") return FocusBuilding(target);
                 if (target.Kind == "vein") return FocusVein(target);
                 if (target.Kind == "planet") return FocusPlanet(target);
             }
-            catch { /* 切场景/UI 重建瞬间忽略 */ }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[link] 聚焦 {target.Kind} 失败：{ex.GetType().Name}: {ex.Message}");
+            }
             return false;
         }
 
@@ -73,14 +78,22 @@ namespace IcarusII.Game.Tools
             if (uiGame == null || galaxy == null) return false;
             var planet = galaxy.PlanetById(target.PlanetId);
             if (planet == null) return false;
+
+            Plugin.Log.LogInfo($"[link] 打开星图前 starmap={(uiGame.starmap == null ? "null" : "有")}");
             uiGame.OpenStarmap();
             if (uiGame.starmap == null) return false;
+            Plugin.Log.LogInfo($"[link] 星图已开 inited={uiGame.starmap.inited} active={uiGame.starmap.active}");
+
             uiGame.starmap.SetViewStar(planet.star, true);
+            Plugin.Log.LogInfo($"[link] SetViewStar 完成 star={planet.star?.id ?? -1}");
+
             var camera = uiGame.starmap.screenCameraController;
             if (camera == null) return false;
             var radius = planet.realRadius * 0.00025 * 6.0;
+            if (!(radius > 0)) return uiGame.starmap.active;
             camera.SetViewTarget(planet, null, null, null, VectorLF3.zero,
                 radius, radius, true, false);
+            Plugin.Log.LogInfo($"[link] SetViewTarget 完成 radius={radius:F3}");
             return true;
         }
     }
