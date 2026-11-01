@@ -54,7 +54,7 @@
 | [`game_todo_list`](game-assist.md#game_todo_list) | 当前游戏目标 | `game.todo.v1` | 只读 | 5000ms | 读取 AI 创建的原生游戏目标（含轮内待办）及当前值/目标值/阶段，以及目标面板当前是否真的没有显示。 |
 | [`game_todo_remove`](game-assist.md#game_todo_remove) | 删除游戏目标 | `game.todo.v1` | risk 2 | 8000ms | 删除 AI 创建的原生游戏目标；groupId 删除整组，goalId 删除单个子目标。 |
 | [`game_todo_templates`](game-assist.md#game_todo_templates) | 目标模板 | `game.todo.v1` | 只读 | 5000ms | 列出游戏原生 GoalProto 目标模板：id、名称、判断器、等级、父分组和默认参数。 |
-| [`game_todo_write`](game-assist.md#game_todo_write) | 更新待办 | `game.todo.write.v1` | risk 1 | 5000ms | 把当前任务清单整份写入游戏左侧目标面板的第一组“AI 待办”。 |
+| [`game_todo_write`](game-assist.md#game_todo_write) | 更新待办 | `game.todo.write.v1` | 只读 | 5000ms | 把当前任务清单整份写入游戏左侧目标面板的第一组“AI 待办”。 |
 | [`kb_get`](kb.md#kb_get) | 知识库条目 | 本地 | 只读 | — | 按类别 + id/名称/SID 精确读取一条知识库条目（物品、配方、科技、建筑、矿脉、提示、教程、里程碑、指引、术语等）。 |
 | [`kb_plan`](kb.md#kb_plan) | 产线规划 | 本地 | 只读 | — | 给定目标物品的每分钟产量，算出要建多少台什么机器、总功率、每条输入要几条传送带，并复用 kb_recipe_tree 给出原料与副产物。 |
 | [`kb_recipe_tree`](kb.md#kb_recipe_tree) | 配方树 | 本地 | 只读 | — | 按游戏本体的主配方递归展开一个物品，计算直接输入、原料总量与副产物。 |

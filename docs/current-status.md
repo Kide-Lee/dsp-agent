@@ -38,7 +38,7 @@
 | M5 link 卡片持久化 | sidecar 按「提问 + 回答」写入 `link-cards.jsonl`，历史 `linkCards` 回放（含矿脉卡）；建筑卡统计、星球备忘录、图标解析已接 |
 | M5 link 卡片详情 | 聊天窗每次打开刷新一次卡片快照；建筑按装配/电力/采矿/传送带/分拣/分流/监测/喷涂/存储/配送/物流站/武器/护盾/弹射/发射井等类型生成描述与角标 |
 | M5 link 卡片 | 运行期接 `cards-group` 三模板；整卡聚焦、`定位/已定位` 双向连线；多行 ContentSizeFitter；建筑统计/星球备忘录与图标已接 |
-| M5 游戏目标 | D3 改为 B：注入原生 GoalProto/GoalSystem，复用左侧 UIGoalPanel；`game_todo_templates/list/add/remove`，触发器复用原生 GoalDeterminator；定义存 Global TodoModule JSON。2026-10-27 修正即时显示：Level=Off、插队首、补跑 `DetermineOnPatch/OnLoad`；2026-11-01 起“自由探索”下也展开面板、只显示 AI 目标（`[Goals] ShowAiGoalsInFreeExplore`，默认 true），关闭该开关才回到 `goalPanelOff=true`；同日补沙盒存档支持：有 AI 目标时绕过沙盒门禁并补 `GoalLogic.Init`（`[Goals] ShowAiGoalsInSandbox`，默认 true），否则沙盒存档连目标系统都不会初始化；同日加轮内待办 `game_todo_write`（risk 1）：整表替换原生面板固定第一组“AI 待办”，空数组清空，玩家可跳过单项 |
+| M5 游戏目标 | D3 改为 B：注入原生 GoalProto/GoalSystem，复用左侧 UIGoalPanel；`game_todo_templates/list/add/remove`，触发器复用原生 GoalDeterminator；定义存 Global TodoModule JSON。2026-10-27 修正即时显示：Level=Off、插队首、补跑 `DetermineOnPatch/OnLoad`；2026-11-01 起“自由探索”下也展开面板、只显示 AI 目标（`[Goals] ShowAiGoalsInFreeExplore`，默认 true），关闭该开关才回到 `goalPanelOff=true`；同日补沙盒存档支持：有 AI 目标时绕过沙盒门禁并补 `GoalLogic.Init`（`[Goals] ShowAiGoalsInSandbox`，默认 true），否则沙盒存档连目标系统都不会初始化；同日加轮内待办 `game_todo_write`（risk 0，只读权限）：整表替换原生面板固定第一组“AI 待办”，空数组清空，玩家可跳过单项 |
 | M5 矿脉卡片 | 复用建筑卡模板：矿脉图标/#id、标题、储量+经纬度、星系/行星、定位；支持 `dsp://entity/vein/<planet>/<vein>` 与历史持久化 |
 | M5 方位指示（tether） | 已实现 `game_tether_add/list/clear`，最多 20 个目标；本星球多建筑多线，跨行星原生导航一次一个、落地后切换；换档/断线清理；离线测试通过，待实机 |
 | Game Menu 聊天入口 | 右下角 Game Menu 的截图键正上方新增聊天入口按钮（`button-agent.prefab` 随 UI bundle 分发）；Game Menu 是 `DSPGame.unity` 里的场景对象，运行期按 `UIGameMenu.buttonS` 锚定并绑定打开聊天窗；离线构建通过，待实机验收 |

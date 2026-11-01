@@ -40,7 +40,6 @@ export const WRITE_TOOL_NAMES = [
   'game_tether_clear',
   'game_todo_add',
   'game_todo_remove',
-  'game_todo_write',
   'game_take_output',
   'game_undo_last_write',
   'game_copy_blueprint',
@@ -76,7 +75,6 @@ const WRITE_TOOL_RISK: Record<string, 1 | 2> = {
   game_tether_clear: 1,
   game_todo_add: 2,
   game_todo_remove: 2,
-  game_todo_write: 1,
   game_take_output: 2,
   game_undo_last_write: 1,
   game_copy_blueprint: 1,
@@ -497,7 +495,8 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       description:
         '把当前任务清单整份写入游戏左侧目标面板的第一组“AI 待办”。' +
         '每次调用替换上一次的列表（空数组清空）；状态 pending / in_progress / completed，' +
-        '完成项在面板里打勾并划线，玩家也可以随时跳过某一条。',
+        '完成项在面板里打勾并划线，玩家也可以随时跳过某一条。' +
+        '按只读权限登记：不改变游戏状态，也不会请求玩家确认。',
       promptGuidelines: [
         '开始一项需要多步完成的工作前先写待办；一步就能做完的琐事不要用。',
         '每次更新都提交完整列表，不要只发变化项；做完一步就把它改成 completed。',
@@ -517,7 +516,7 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         ),
       }),
       timeoutMs: 5000,
-      risk: 1,
+      risk: 0,
     }),
     writeTool(host, {
       name: 'game_undo_last_write',
