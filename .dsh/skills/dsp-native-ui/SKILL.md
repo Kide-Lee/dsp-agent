@@ -75,10 +75,40 @@ UI Root
 
 字段：`button`（可选 uGUI Button）、`input`、`eventReceiver`、`data`（int 负载）、`audios`（enter/down/up 音效名）、`tips`（TipSettings）、`transitions[]`、`tipTitleFormatString` / `tipTextFormatString`。
 
-- 事件：`onClick`（`Action<int>`，收到的是 `data`）、`onClickEnable`、`BindOnClickSafe(Action<int>)`。
+- 事件：`onClick`（`Action<int>`，收到的是 `data`）、`onClickEnable`、`BindOnClickSafe(Action<int>)`（幂等，重复绑定不叠加）。
 - `transitions[]` 决定观感：`target` 是 Graphic，配 `normalColor/mouseoverColor/pressedColor/disabledColor`、`damp`、`mouseoverSize/pressedSize`。
 - `button` 为空也能工作（自己实现 Pointer 接口）；一旦挂 Button，它会把 `enabled/interactable` 当作禁用条件。
 - 命中靠 Graphic 的 `raycastTarget`：按钮底图必须 true，装饰性子节点设 false。
+
+**配颜色只有一条铁律：`target` 的静息色不能是纯透明 `(0,0,0,0)`。**
+
+`UIButton.LateUpdate` 里 `normalColor` 为纯透明时会被当成“没设置”，并改用**当前颜色**作为目标色；此时若底色本身也是纯透明，离开时“目标色 == 当前色”，整段插值被跳过，hover 色就永久留下（鼠标离开后整行/整个按钮一直亮着）。
+
+正确写法：底色与 `normalColor` 用**同一色相 + alpha = 0**。
+
+| 用途 | `target.color` 与 `normalColor` | `mouseoverColor` |
+| --- | --- | --- |
+| 列表行（透明底、悬停上蓝） | `(0.453, 0.798, 0.915, 0)` | `(0.453, 0.798, 0.915, 0.12)` |
+| 白色系高亮 | `(1, 1, 1, 0)` | `(1, 1, 1, 0.08)` |
+
+其它要点：
+
+- `damp = 0`：颜色在 PointerEnter/Exit 回调里立刻写；`damp > 0`：由 `LateUpdate` 插值，`damp = 1` 等于立即到位。
+- 挂 `Button` 时把 `Button.transition = None`；否则 uGUI 的 ColorTint 会和 `transitions[]` 同时写同一个 Graphic。
+- 禁用态由 `button.enabled/interactable` 驱动到 `disabledColor`，`disabledColor` 同样别用纯透明。
+- `highlighted`（锁定/高亮态）只由 `input.isFocused` 驱动，并会用 `highlightColorOverride`；给按钮配了 `input` 就要接受这个语义。
+- `OnDisable` 会重置 hover/press 状态并收掉 tooltip，所以整块面板 `SetActive(false)` 再打开是安全的；残留问题几乎都来自上面的 `normalColor`。
+
+**tooltip**：`tips.corner != 0` 且 `tips.tipTitle`（或 `itemId`）非空时，悬停 `tips.delay`（默认 0.2s）后弹 `UIButtonTip` / `UISimpleGeneralTip`，还要 `UIRoot.tipLevel >= tips.level` 才显示。从游戏节点抄来的行往往带着示例文案（例如“选项 1 / 选择这个答案”），改成自己的或把 `corner` 置 0 关掉。
+
+**失败模式对照**：
+
+| 现象 | 原因 |
+| --- | --- |
+| 鼠标离开后底色/文字色不复位 | `normalColor` 是纯透明（见上） |
+| 点击没反应 | 没有 `raycastTarget=true` 的 Graphic，或 `button` 被禁用 |
+| 没有 hover 音效/缩放/tooltip | 只挂了 `Button`，缺 `UIButton` |
+| 悬停弹出无关文案 | 从游戏抄来的 `tips` 没清 |
 
 ### UIComboBox（39 个）
 
@@ -125,6 +155,8 @@ UI Root
 7. 场景切换后 `UIRoot` 重建：挂在它下面的窗口会被销毁，需要重新创建/绑定。
 8. 运行期改 `RectTransform` 尺寸来"修布局"：违反 prefab-first，改 prefab。
 9. 图标用 emoji：禁止，复用游戏 sprite 或找同风格美术。
+10. `UIButton.transitions[].normalColor` 或它的 `target` 底色是纯透明 `(0,0,0,0)`：hover 色永远退不回去，鼠标离开后一直亮着（见「UIButton」，改 prefab，别在运行期兜底）。
+11. 挂了 `Button` 却没把 `Button.transition` 设成 `None`：uGUI 的 ColorTint 和 `UIButton.transitions` 抢同一个 Graphic。
 
 ## 验证
 

@@ -28,6 +28,60 @@ public class UIButton : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
 
 `TipSettings` 字段：`topLevel`、`simpleGeneralTipPrefab`、`level`、`delay`、`itemId`、`itemCount`、`itemInc`、`tipSprite`、`tipTitle`、`tipText`、`corner`、`offset`、`width`、`type`。
 
+### 颜色状态机（反编译 `UIButton.LateUpdate` / `OnPointer*` / `Start` / `OnDisable`）
+
+- 指针事件只做两件事：置 `isPointerEnter` / `isPointerDown`、`updating = true`，`damp == 0` 时顺带立刻写一次颜色。
+- 真正的颜色计算在 `LateUpdate`，`updating` 为 false 时整段跳过；所有 `transition` 都收敛（`flag2 == false`）后 `updating = false`。
+- 目标色优先级：禁用（`button.enabled == false || interactable == false`）> 按下 > 悬停 > 普通；`highlighted`（来自 `input.isFocused`）会再乘 `highlight*Multiplier`，或直接换成 `highlightColorOverride`。
+- **`normalColor` 为 `(0,0,0,0)` 时会被当作“未设置”并替换成 `target.color` 的当前值**；如果 `target.color` 也是纯透明，离开时就“目标色 == 当前色”，`sqrMagnitude == 0` 直接 `continue`，颜色停在 hover 值。
+- `Start()` 里的 `Init()` 只在 `normalColor` 为纯透明时用 `target.color` 回填一次；底色和 `normalColor` 都纯透明时这条回填也救不回来。
+- `OnDisable()` 重置 `isPointerEnter` / `isPointerDown`、隐藏 tooltip；`OnEnable()` 置 `updating = true` 重算颜色。所以整块 UI 反复 `SetActive` 不会留下 hover。
+- `damp` 是每帧插值系数：`0` 走即时写色，`1` 等价立即到位，`0.1~0.2` 是常见的柔和过渡。
+- tooltip 在 `LateUpdate` 里创建：`tips.corner != 0` 且（`tipTitle` 非空 或 `itemId != 0`）、`UIRoot.tipLevel >= tips.level`，悬停超过 `tips.delay` 后弹 `UIButtonTip` / `UISimpleGeneralTip` / `UIItemTip`；`OnPointerExit` 里 `SetActive(false)`。
+
+### 正确配置
+
+```csharp
+// 静息色必须非纯透明：同色相 + alpha 0，hover 只改透明度
+var rest = new Color(0.453f, 0.798f, 0.915f, 0f);   // 例：选项行
+var btn = row.GetComponent<Button>();
+btn.transition = Selectable.Transition.None;        // 颜色由 UIButton 独占
+btn.targetGraphic = bg;
+
+var native = row.gameObject.AddComponent<UIButton>();
+native.button = btn;
+native.transitions = new[]
+{
+    new UIButton.Transition
+    {
+        target = bg, damp = 0.12f,
+        normalColor = rest,
+        mouseoverColor = new Color(rest.r, rest.g, rest.b, 0.12f),
+        pressedColor   = new Color(rest.r, rest.g, rest.b, 0.18f),
+        disabledColor  = new Color(rest.r, rest.g, rest.b, 0.05f),
+        mouseoverSize = 1f, pressedSize = 1f,
+    }
+};
+bg.color = rest;                                    // 两边一致，不依赖 Init 回填
+```
+
+prefab 里批量检查“`normalColor` 纯透明”的写法（MCP `execute_code`）：
+
+```csharp
+foreach (var mb in prefab.GetComponentsInChildren<MonoBehaviour>(true))
+{
+    if (mb == null || mb.GetType().Name != "UIButton") continue;
+    var trs = (Array)mb.GetType().GetField("transitions").GetValue(mb);
+    var et = trs.GetType().GetElementType();
+    for (int i = 0; i < trs.Length; i++)
+    {
+        var n = (Color)et.GetField("normalColor").GetValue(trs.GetValue(i));
+        if (n.r == 0f && n.g == 0f && n.b == 0f && n.a == 0f)
+            Debug.Log($"{mb.name}[{i}] normalColor 是纯透明");
+    }
+}
+```
+
 用法（ChatWindow 折叠 header，运行时补 UIButton）：
 
 ```csharp
