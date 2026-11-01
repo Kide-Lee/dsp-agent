@@ -23,6 +23,8 @@
     <Compile Include="../../mod/src/IcarusII/Core/ConfirmationService.cs" Link="ConfirmationService.cs" />
     <!-- A.14.7：快捷键组合的解析/格式化/字符判定刻意不依赖 UnityEngine -->
     <Compile Include="../../mod/src/IcarusII/Input/KeyChord.cs" Link="KeyChord.cs" />
+    <!-- 目标面板的等级覆盖状态机不依赖 UnityEngine，恢复错了会改掉玩家的目标设置 -->
+    <Compile Include="../../mod/src/IcarusII/Game/GoalLevelSwap.cs" Link="GoalLevelSwap.cs" />
   </ItemGroup>
 
 </Project>

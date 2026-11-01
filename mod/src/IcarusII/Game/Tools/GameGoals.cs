@@ -90,6 +90,27 @@ namespace IcarusII.Game.Tools
         private static bool _applied;
         private static Dictionary<int, string> _notes;
 
+        /// <summary>队列里是否还有未完成的 AI 目标分组；目标面板据此决定是否接管“自由探索”。</summary>
+        public static bool HasActiveAiGoals()
+        {
+            if (!_applied || _store == null || _store.goals.Count == 0) return false;
+
+            var data = GameMain.data;
+            var system = data != null ? data.goalSystem : null;
+            if (system == null || system.goalDatas == null || system.goalQueue == null) return false;
+
+            for (int i = 0; i < _store.goals.Count; i++)
+            {
+                var goal = _store.goals[i];
+                if (goal == null) continue;
+
+                var group = system.GetGoalDataById(goal.groupId);
+                if (group != null && group.stage == EGoalStage.Enabled && system.IsGoalInQueue(goal.groupId))
+                    return true;
+            }
+            return false;
+        }
+
         public static void Reset()
         {
             _saveKey = null;
@@ -532,14 +553,15 @@ namespace IcarusII.Game.Tools
         }
 
         /// <summary>
-        /// 玩家把“目标建议”选成“自由探索”(EGoalLevel.Off) 时，原生 UIGoalPanel 不会
-        /// 展示任何目标。只在关闭时返回一个标记，由模型提醒玩家打开目标显示。
+        /// 玩家把“目标建议”选成“自由探索”(EGoalLevel.Off) 且模组没有接管显示时，
+        /// 原生 UIGoalPanel 不会展示任何目标；此时返回标记，由模型提醒玩家打开目标显示。
         /// </summary>
         private static void AppendGoalPanelState(JsonValue data)
         {
             var desc = GameMain.data != null ? GameMain.data.gameDesc : null;
-            if (desc != null && desc.goalLevel == EGoalLevel.Off)
-                data.Set("goalPanelOff", true);
+            if (desc == null || desc.goalLevel != EGoalLevel.Off) return;
+            if (GoalPanelOverride.Enabled && HasActiveAiGoals()) return;
+            data.Set("goalPanelOff", true);
         }
 
         private static void HideGoal(int id)

@@ -23,9 +23,12 @@ namespace IcarusII
     /// <summary>
     /// 插件入口。
     ///
-    /// 刻意**不注册任何 Harmony 补丁**：所有接入点都是游戏暴露的公开类型/成员
-    /// （UIRoot / GameMain / VFInput / PlayerAction_Build），因此游戏更新时
-    /// 最坏情况是编译失败或功能降级，而不是崩溃（design.md §6.1）。
+    /// 接入点默认只用游戏暴露的公开类型/成员
+    /// （UIRoot / GameMain / VFInput / PlayerAction_Build），游戏更新时最坏情况是
+    /// 编译失败或功能降级（design.md §6.1）。
+    /// 唯一的例外是目标面板：原生把 goalLevel == Off 写死在 UIGoalPanel 的私有状态里，
+    /// 不改这三处显示方法就无法在“自由探索”下展示 AI 目标。补丁只在存在 AI 目标时
+    /// 临时改写等级并在同一帧恢复，失败会自行注销（GoalPanelOverride）。
     /// </summary>
     [BepInPlugin(Guid, PluginName, PluginVersion)]
     [BepInProcess("DSPGAME.exe")]
@@ -146,6 +149,7 @@ namespace IcarusII
                 _config = new PluginConfig(Config);
                 // manifest 工具的写判定；桥关闭时 manifest 不会加载，钩子恒为 false。
                 IcarusII.Common.Protocol.Protocol.ExtraWriteTool = Game.Tools.ModManifest.IsWrite;
+                GoalPanelOverride.Apply(_config.ShowAiGoalsInFreeExplore);
                 _dispatcher = new MainThreadDispatcher();
                 _tools = new GameToolDispatcher(Log);
                 _hotkey = new HotkeyService(_config);

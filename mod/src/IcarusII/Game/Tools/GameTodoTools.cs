@@ -45,7 +45,7 @@ namespace IcarusII.Game.Tools
                 WriteActionStack.MarkNonUndoable("新增游戏目标");
                 var message = "已新增 " + data["count"].AsInt(0).ToString(CultureInfo.InvariantCulture) + " 个游戏目标";
                 if (data["goalPanelOff"].AsBool(false))
-                    message += "；自由探索模式不显示目标，请打开目标显示";
+                    message += "；目标面板当前关闭（自由探索且未接管显示），请打开目标显示";
                 return Ok(message, data);
             }
             catch (Exception ex)

@@ -53,6 +53,9 @@ namespace IcarusII.Tests
             Section("设定页（A.14）");
             SettingsProtocolTests.Run();
 
+            Section("目标面板等级覆盖");
+            GoalPanelSwapTests.Run();
+
             Console.WriteLine();
             if (_failures == 0)
             {

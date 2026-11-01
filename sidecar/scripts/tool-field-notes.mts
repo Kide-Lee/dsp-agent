@@ -460,13 +460,13 @@ export const TOOL_FIELD_NOTES: Record<string, Record<string, FieldNote>> = {
         '`current` / `target` / `stage`',
     ],
     count: ['integer', '目标数量'],
-    goalPanelOff: ['boolean', '玩家把目标显示设为“自由探索”；true 时提醒玩家打开'],
+    goalPanelOff: ['boolean', '目标面板确实没有显示；true 时提醒玩家打开'],
     display: ['string', '一行摘要'],
   },
 
   game_todo_add: {
     count: ['integer', '新增的目标数'],
-    goalPanelOff: ['boolean', '目标面板被关闭（自由探索），需要提醒玩家'],
+    goalPanelOff: ['boolean', '目标面板确实没有显示（自由探索且模组未接管），需要提醒玩家'],
     display: ['string', '一行确认摘要'],
   },
 

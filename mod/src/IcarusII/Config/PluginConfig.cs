@@ -52,6 +52,10 @@ namespace IcarusII.Config
         public string PositionMode { get; private set; }
         public bool AutoFocusInput { get; private set; }
 
+        // [Goals]
+        /// <summary>自由探索下只要存在 AI 目标就展开原生目标面板；关闭后完全保留原生行为。</summary>
+        public bool ShowAiGoalsInFreeExplore { get; private set; }
+
         // [Agent]
         /// <summary>
         /// 思考档位：off / minimal / low / medium / high / xhigh / max。
@@ -195,6 +199,11 @@ namespace IcarusII.Config
             AutoFocusInput = cfg.Bind("UI", "AutoFocusInput", false,
                 "true = 打开窗口时自动聚焦输入框（可直接打字，但此时 R 是文字输入、不能关窗）。\n" +
                 "false = 需按 Enter 或点击窗口后开始输入；R 可随时开关窗口（默认）。").Value;
+
+            ShowAiGoalsInFreeExplore = cfg.Bind("Goals", "ShowAiGoalsInFreeExplore", true,
+                "玩家把“目标建议”设为“自由探索”时，只要存在 AI 创建的目标，左侧目标面板仍然展开；\n" +
+                "原生目标仍按等级筛选，不会跟着回来。\n" +
+                "false = 完全保留原生“自由探索 = 关闭目标显示”的行为。").Value;
 
             _thinkingLevelEntry = cfg.Bind("Agent", "ThinkingLevel", "high",
                 "思考档位：off | low | high | max（聊天窗只暴露这四档）。\n" +

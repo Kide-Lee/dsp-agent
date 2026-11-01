@@ -396,7 +396,7 @@ API Key 是外部服务凭证，mod 无从得知，**这一步不可自动化**�
 public sealed class Plugin : BaseUnityPlugin
 ```
 
-**注入方式**：不使用 Harmony 去"劫持"游戏逻辑，而是注册自己的 `ManualBehaviour` 到 `UIRoot`，并挂一个 `Update` 驱动。
+**注入方式**：默认不使用 Harmony 去"劫持"游戏逻辑，而是注册自己的 `ManualBehaviour` 到 `UIRoot`，并挂一个 `Update` 驱动。
 
 游戏侧已核实的可用锚点：
 
@@ -414,7 +414,7 @@ public sealed class Plugin : BaseUnityPlugin
 | 底层按键 | `WinInput.GetKey(VKey.R)`、`VKey` 枚举 | 兜底（注意无焦点也返回） |
 | 建造工具状态 | `GameMain.mainPlayer.controller.actionBuild` → `active` / `activeTool : BuildTool` | **R 键避让判定**（见 §6.2） |
 
-> 仅在"必须拦截原逻辑"时才上 Harmony。首批功能不需要 Harmony 补丁——这显著降低版本升级的破坏面。
+> 仅在"必须拦截原逻辑"时才上 Harmony。当前只有一处：`UIGoalPanel` 把 `goalLevel == Off` 写死在三个显示方法里，外部无法在"自由探索"下展开目标面板（见 D3）。补丁只在存在 AI 目标时把等级临时视为 `Key`，同一帧恢复，注册失败会自行注销并保持原生行为。
 
 ### 6.2 热键与输入焦点
 
@@ -1349,7 +1349,7 @@ host/port/dataDir/token 由启动参数与 runtime.json 管理，不再写进 co
 | --- | --- | --- | --- |
 | R1 | **`R` 与"旋转建筑"键位重叠** | 中 | **已确认冲突并已设计避让**（§6.2.2：`actionBuild.activeTool` 门控 + 可选 `Ctrl+R`）；M0 实测确认旋转的实际绑键与是否还有第三个动作占用裸 `R` |
 | R2 | **Proton 下 sidecar 自动启动** | 中 | **已解决**：随包分发 Windows 自包含 exe（PE），Wine 内 `Process.Start` 直接可拉起（§7.1.2）；`connectOnly` + systemd 作为备选。Windows 产物的 Wine 冒烟测试留 M0 |
-| R3 | **游戏更新导致 API 失效** | 高 | 只依赖已核实的公开类型/成员；避免 Harmony 补丁；版本不匹配时降级为只读并提示 |
+| R3 | **游戏更新导致 API 失效** | 高 | 只依赖已核实的公开类型/成员；Harmony 补丁限定在 `UIGoalPanel` 三处显示方法、注册失败即注销；版本不匹配时降级为只读并提示 |
 | R4 | **pi SDK 版本演进** | 中 | 锁定 `1.4.0`；`AgentRuntime` 抽象隔离，必要时可切 dsh ACP |
 | R5 | **大存档状态采集体积** | 中 | 强制聚合 + 分页 + 结果上限；sidecar 统一裁剪；FTS/缓存 |
 | R6 | **LDB 导出体积与时间** | 低 | **已实现**：只导出必要字段、分帧/分块、按 `gameVersion+locale` 缓存；全量 ~750KB，实测离线生成/索引通过 |
@@ -1598,7 +1598,7 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 | --- | --- | --- | --- |
 | D1 | 第 9 条"摧毁背包物品"是否实现？ | A 不做；B 改"丢弃到地面"；C 仅沙盒 + 二次确认 + 不可撤销 | **B 丢弃**。实现用 `Player.TakeItemFromPlayer(..., true, ...)` 从背包取出，再 `Player.ThrowTrash(..., life=0)`；物品以可拾回的 trash 落地/漂浮。按 risk 2 实现；确认卡标注"可撤销（需手动拾回）"，不是一键撤销。这不属于 R7 的"无法撤销" |
 | D2 | 第 12 条"自动驾驶"与 §1.2"不做全自动代打"冲突 | A 改为"确认后的一次性长任务"；B 保持 §1.2 不做；C 独立扩展模块 | **B 暂不做**。长任务/自动驾驶仍不排期。2026-10-27 新增的「接管」权限只免除**单次写操作确认**，不是长任务自动驾驶：仍由玩家逐轮提问、模型逐步调用工具，且可随时切回只读/受限 |
-| D3 | 第 11 条"游戏目标"用原生还是 mod 侧 | A 原生 `TodoModule` + mod 侧有界触发器；B 注入 `GoalProto`；C 只在聊天窗做任务卡 | **B（2026-10-26 改）**。用户要求复用原生左侧 `UIGoalPanel`；注入 `GoalProto`/`GoalData`，触发器复用原生 `GoalDeterminator`；目标定义存 Global TodoModule JSON，读档重注入。**2026-10-27 修正**：AI 目标按 `EGoalLevel.Off` 注入并插到 `goalQueue` 队首（原生面板最多显示 2 个分组），注入后立即补跑 `DetermineOnPatch`/`DetermineOnLoad`；否则 `GD_UnlockTech` 等判断器的 `targetValue` 为 0，面板会把它当“忽略/无进度”而不显示。玩家选“自由探索”时面板仍不显示，`game_todo_add`/`game_todo_list` 返回 `goalPanelOff=true`，由模型提醒玩家打开目标设置，不强行改玩家偏好 |
+| D3 | 第 11 条"游戏目标"用原生还是 mod 侧 | A 原生 `TodoModule` + mod 侧有界触发器；B 注入 `GoalProto`；C 只在聊天窗做任务卡 | **B（2026-10-26 改）**。用户要求复用原生左侧 `UIGoalPanel`；注入 `GoalProto`/`GoalData`，触发器复用原生 `GoalDeterminator`；目标定义存 Global TodoModule JSON，读档重注入。**2026-10-27 修正**：AI 目标按 `EGoalLevel.Off` 注入并插到 `goalQueue` 队首（原生面板最多显示 2 个分组），注入后立即补跑 `DetermineOnPatch`/`DetermineOnLoad`；否则 `GD_UnlockTech` 等判断器的 `targetValue` 为 0，面板会把它当“忽略/无进度”而不显示。玩家选“自由探索”时面板仍不显示，`game_todo_add`/`game_todo_list` 返回 `goalPanelOff=true`，由模型提醒玩家打开目标设置，不强行改玩家偏好。**2026-11-01 改**：玩家选“自由探索”时不再放弃显示——Harmony 补丁在存在 AI 目标时让 `UIGoalPanel` 的三个显示方法按非 Off 渲染，`DetermineEntry` 不动，原生目标仍被 `IsLevelPass` 挡掉，因此该模式只显示 AI 目标；开关 `icarus-ii.cfg` 的 `[Goals] ShowAiGoalsInFreeExplore` 默认 `true`，关闭后恢复原生行为并重新出现 `goalPanelOff=true` |
 | D4 | 高频 risk 2 的确认方式 | A 批量工具，一次确认、一次撤销；B 会话级租约（需改 §9.3）；C 每次确认 | **A 批量工具**。补充：`game_get_entity` 是高频**读**工具（risk 0），不走确认，但要按读侧优化：字段裁剪、按实体/帧缓存、批量 id、结果上限（2026-10-24 已实现 fields/entityIds，缓存沿用 dispatcher 5s） |
 | D5 | 新增工具的能力串粒度 | A 每族一个新能力串 + `save_bind.sandbox`；B hello 里带工具清单；C 继续复用 `game.write.v1`/`game.read.v1` | **A**。新增工具按族拆能力串；不继续复用粗粒度能力串 |
 
@@ -1678,7 +1678,7 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 - **读侧配套**：AI 需要发现"附近实体、当前 tether、当前任务、仪表盘现状"；`game_get_entities` 没有距离过滤，`game_analyze_area` 有（center 默认玩家、`includeEntities`），但 limit 100 且是 XZ 球，建议补 `game_get_nearby`；`game_get_entity` 也归入高频读侧，优化口径见上一条。
 - **长任务/并发**：D2=B 暂不做自动驾驶；若未来重启，需要 start/progress/cancel/event，且要能被玩家输入抢占、切档取消，当前没有这套协议。
 - **状态可见性**：tether/任务/目标/仪表盘改动都要有 `game_get_*` 或系统提示注入，否则模型无法"取消/避免重复"。
-- **第三方代码**：第 12 条提到的现成自动驾驶 mod 不直接复制；本仓库仍只用公开 API、无 Harmony（`AGENTS.md` 2.3），如确需参考源码，先做许可审查并记录在 `THIRD-PARTY.md`。
+- **第三方代码**：第 12 条提到的现成自动驾驶 mod 不直接复制；本仓库仍只用公开 API，唯一的 Harmony 补丁是目标面板显示（D3），如确需参考源码，先做许可审查并记录在 `THIRD-PARTY.md`。
 - **性能/隐私/i18n/测试**：矿脉/范围扫描走分帧预算；连线/标记可能进截图（需确认图层）；目标文案和卡片文案进 i18n；范围外、实体失效、背包满、沙盒关闭、翘曲器不足都要有离线测试。
 
 ### 20.6 排序与 spike
