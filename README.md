@@ -361,7 +361,7 @@ sidecar 自己的运行期配置（供应商、模型、蓝图目录、Wiki 端�
 | 从 Steam 启动没有 mod | 用 r2modman 的 **Start modded** 启动；r2modman 的配置档不会注入 Steam 直接启动 |
 | 按 `R` 没反应 | 看 r2modman 配置档（手动安装为游戏目录）里的 `BepInEx/LogOutput.log` 有没有 `[热键]`/`聊天窗口已创建` |
 | 窗口显示"未连接" | 日志里搜 `[sidecar]`；确认 `icarus-ii-sidecar.exe` 在配置档的 `BepInEx/plugins/IcarusII/sidecar/` |
-| 设置窗口里没有「模型」页 | mod 没加载；查日志里有没有 `Icarus II 1.1.227 已加载` |
+| 设置窗口里没有「模型」页 | mod 没加载；查日志里有没有 `Icarus II 1.1.247 已加载` |
 | 中文显示成方块 | 日志里看字体来源；`borrowed-from-game-ui` 正常，`builtin-arial(no-cjk)` 说明没借到游戏字体 |
 | BepInEx 完全没加载 | 用 r2modman 时先确认是 `Start modded`；手动安装 + Proton 下多半是 `winhttp` 覆盖没生效 |
 | 建造时按 R 弹窗 | 检查 `HotkeyRequireNoBuildTool` 是否为 `true` |

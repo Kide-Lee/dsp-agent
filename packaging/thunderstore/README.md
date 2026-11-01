@@ -97,7 +97,7 @@ r2modman 的配置档不会注入 Steam 直接启动。
 
 **按 `R` 没反应**
 在 r2modman 里打开 **Settings → Locations → Browse profile folder**，
-看 `BepInEx/LogOutput.log` 里有没有 `Icarus II 1.1.227 已加载`。
+看 `BepInEx/LogOutput.log` 里有没有 `Icarus II 1.1.247 已加载`。
 没有 → BepInEx 没生效（依赖没装好 / 启动方式不对）；有 → 建造模式下 `R` 会主动让位给游戏
 （旋转建筑），退出建造模式再按。星图、戴森球编辑器等全屏界面也不响应。
 
@@ -148,11 +148,11 @@ QQ 群 **1091497260**（伊卡洛斯二号研发中心）。
 
 ---
 
-## 文件校验（1.1.227）
+## 文件校验（1.1.247）
 
 ```
-icarus-ii-sidecar.exe   SHA256 abc1f0a7f9bb24631d0c3ef14b8fbddb00fa33f8afdf9023cabe753ed7c71505
-IcarusII.dll            SHA256 0a4653925bdc1e4ba402813e005752ab262c8bb8e89f80216433d28d4a0c9e8c
+icarus-ii-sidecar.exe   SHA256 ea173e28274c6227ccf9f5aa069ab2b3d0df706d06d1bd55c8bcfbbed31f3368
+IcarusII.dll            SHA256 c547dfefda180a373629465e93eb64ba0a1e08dc552b76cc6d773b9a97a77540
 ```
 
 ---
