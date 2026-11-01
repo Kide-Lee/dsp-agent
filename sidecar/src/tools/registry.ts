@@ -593,10 +593,14 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       label: 'mod 可调用方法',
       description:
         '只读列出某个插件程序集里可被 manifest 调用的公开静态方法：类型、方法、参数、返回值。' +
+        '同时返回 uiTexts（该插件窗口里的文字）与 configHints（配置项说明），' +
         '用于给没有 manifest 的 mod 起草适配器；只读元数据，不执行任何代码。',
       promptGuidelines: [
         '玩家要求为某个 mod 生成适配、且它没有 manifest 时使用。',
+        '先读 uiTexts 与 configHints 理解功能，方法名只是线索；不要凭方法名猜语义。',
+        'uiTexts 为空时，让玩家先打开该 mod 的窗口再调一次。',
         '只把这里列出的方法写进 tools，不要猜方法名或参数。',
+        'parameters 必须用标准 JSON Schema 类型：object/array/string/number/integer/boolean；不要写 int/bool/float 这类别名。',
         '配置能解决的问题优先用配置；适配器只用于“要执行一次动作”的场景。',
       ],
       parameters: Type.Object({
@@ -615,6 +619,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '一次只为一个 mod 创建，工具数量控制在 1-3 个，优先只读或可逆的方法。',
         'risk 由 AI 推断不可靠：生成的一律至少 risk 1；risk 2 必须提供 undo。',
         '参数类型只支持 int/long/float/double/bool/string/enum；不要绑定对象或委托。',
+        'parameters 的 type 必须写 integer/number/boolean/string/array/object，写 int/bool 会导致上游拒绝整个工具表。',
         '创建前把“调用哪个方法、参数是什么、风险几”讲清楚，等玩家确认。',
       ],
       parameters: Type.Object({

@@ -357,12 +357,18 @@ namespace IcarusII.Game.Tools
                 if (count >= MaxMethods) break;
             }
 
+            var uiTexts = ModInsight.UiTexts(info);
+            var hints = ModInsight.ConfigHints(info);
             var data = JsonValue.NewObject();
             data.Set("guid", info.Metadata.GUID ?? string.Empty);
             data.Set("methods", methods);
             data.Set("count", count);
+            data.Set("uiTexts", uiTexts);
+            data.Set("configHints", hints);
             data.Set("truncated", count >= MaxMethods);
-            data.Set("display", $"列出 {count} 个可调用方法" + (count >= MaxMethods ? "（已截断）" : string.Empty));
+            data.Set("display",
+                $"列出 {count} 个可调用方法 · {uiTexts.Count} 条界面文字 · {hints.Count} 条配置说明" +
+                (count >= MaxMethods ? "（已截断）" : string.Empty));
             return new GameToolJobResult { Data = data, Truncated = count >= MaxMethods };
         }
 

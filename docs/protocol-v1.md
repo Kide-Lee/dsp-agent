@@ -1781,7 +1781,7 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | 工具 | risk | 参数 | 说明 |
 | --- | --- | --- | --- |
 | `mods_list` | 0 | 无 | 只列出**已启用**的插件：`guid` / `id` / `name` / `version` / `assembly` / `configCount` / `loadFailed` / `adapter` / `adapterTools` |
-| `mods_api_list` | 0 | `guid` | 只读列出该插件程序集里可被适配器调用的公开静态方法（类型/方法/参数/返回） |
+| `mods_api_list` | 0 | `guid` | 只读列出该插件程序集里可被适配器调用的公开静态方法（类型/方法/参数/返回），并附 `uiTexts` / `configHints` 帮助理解功能 |
 | `mods_adapter_create` | 2 | `guid`、`tools[]`、`replace?` | 把公开静态方法绑定成工具，写入 `config/icarus-ii/bridge/<guid>.json` 并热载（见 B.1.7） |
 | `mods_adapter_delete` | 2 | `guid` | 删除该文件的适配器并热载；撤销可恢复 |
 | `mod_<id>_config` | 0 或 1 | `action`（list/get/set）、`section?`、`key?`、`value?`、`offset?`、`limit?` | 只操作 `id` 对应的那个插件；`set` 为 risk 1 |
@@ -1798,6 +1798,10 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 - `loadFailed=true`（`PluginInfo.Instance == null`）的插件只出现在 `mods_list` 里，不产生 `mod_<id>_config`。
 - 列表只包含插件元数据与配置项，不读取第三方 mod 的文件内容。
 - `adapter`：`none` / `builtin` / `bundled` / `external` / `ai` / `mismatch` / `invalid` / `unavailable`。
+- `mods_api_list` 的 `uiTexts` 来自归属该插件程序集的 MonoBehaviour / Canvas 下的 Text（最多 60 条），
+  `configHints` 来自配置项 `Description`（最多 40 条）；都只读，不调用第三方代码。
+- 适配器工具的 `parameters` 按标准 JSON Schema 校验：`int/bool/float` 等别名会规范成
+  `integer/boolean/number`，非法结构的那条工具不会注册，避免污染工具表导致上游整次请求失败。
 
 `mods_list` 返回示例：
 

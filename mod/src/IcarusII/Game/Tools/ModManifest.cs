@@ -105,9 +105,17 @@ namespace IcarusII.Game.Tools
         private static readonly Dictionary<string, AdapterStatus> Status =
             new Dictionary<string, AdapterStatus>(StringComparer.OrdinalIgnoreCase);
         private static bool _loaded;
+        private static int _version;
+
+        /// <summary>适配器集合的版本；设置页用它感知 AI 新建/删除适配器。</summary>
+        internal static int Version => _version;
 
         /// <summary>插件加载/卸载或适配器文件变化后调用；下次访问时重建。</summary>
-        internal static void Reset() => _loaded = false;
+        internal static void Reset()
+        {
+            _loaded = false;
+            _version++;
+        }
 
         internal static void EnsureLoaded()
         {
@@ -175,8 +183,11 @@ namespace IcarusII.Game.Tools
                 return;
             }
 
+            var declared = manifest.Tools.Count;
             var accepted = AcceptTools(info, guid, manifest);
-            var status = AdapterStatus.Of(kind, accepted.Count);
+            var status = accepted.Count == 0 && declared > 0
+                ? AdapterStatus.Of(AdapterKind.Invalid, 0, "所有工具的参数 schema 都无效")
+                : AdapterStatus.Of(kind, accepted.Count);
             Status[guid] = status;
             if (accepted.Count == 0) return;
             if (!anyEnabled || !ModPolicy.IsEnabled(guid)) return;
@@ -202,6 +213,13 @@ namespace IcarusII.Game.Tools
                     Plugin.Log?.LogWarning($"[mods] risk 2 工具缺少 undo，跳过：{tool.Name}");
                     continue;
                 }
+                var schema = ParameterSchema.Normalize(tool.Parameters, out var schemaError);
+                if (schema is null)
+                {
+                    Plugin.Log?.LogWarning($"[mods] 工具参数 schema 非法，跳过：{tool.Name}：{schemaError}");
+                    continue;
+                }
+                tool.Parameters = schema;
                 var full = $"mod_{id}_{ModBridge.Slug(tool.Name)}";
                 if (ByToolName.ContainsKey(full)) continue;
                 if (accepted.Exists(item => string.Equals(item.Name, full, StringComparison.Ordinal))) continue;

@@ -122,6 +122,8 @@ namespace IcarusII.UI
                 _loaded = true;
                 Render();
             }
+            if (_group == ModGroup && _modVersion != ModManifest.Version) Render();
+
             var state = ModelSettingsTab.TakeToolsStateResult();
             if (state != null && state.Ok)
             {
@@ -138,6 +140,7 @@ namespace IcarusII.UI
         private float _nextRetry;
         private string _status;
         private float _statusUntil;
+        private int _modVersion = -1;
 
         private void PullFromModelTab()
         {
@@ -296,6 +299,7 @@ namespace IcarusII.UI
                 _view.ToolsLegend.text =
                     $"{Strings.Get("settings.tools.mod.legend")}  " +
                     Strings.Get("settings.tools.mod.count", mods.Count, enabled);
+            _modVersion = ModManifest.Version;
         }
 
         private bool Matches(ToolCatalogEntryInfo entry)

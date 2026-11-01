@@ -132,6 +132,13 @@ mod 列表每行会写明适配器来自哪里：`未创建` / `内置` / `随�
 `mods_api_list` 拿签名 → AI 提议结构化绑定 → 玩家在确认卡里批准 → 写入配置目录并热载。
 AI 生成的能力最低按 risk 1 处理，risk 2 必须声明 undo；插件更新后版本不匹配会自动禁用。
 
+`mods_api_list` 除了方法签名，还会带回 `uiTexts`（该插件窗口里的文字）和
+`configHints`（配置项说明），AI 应先读这些再决定绑定哪个方法。
+如果 `uiTexts` 为空，先让玩家打开该 mod 的窗口再试。
+
+`parameters` 必须写标准 JSON Schema 类型（`object/array/string/number/integer/boolean`）；
+`int`、`bool` 这类别名会被 mod 自动规范化，无法修复的结构会让那条工具不注册。
+
 ## 6. 安全与失败
 
 - `risk > 0` 的工具走 IcarusII 的确认卡 + 一次性令牌；`risk 2` 还要求 `undo`，否则不注册。

@@ -346,6 +346,26 @@ namespace IcarusII.Tests
             Eq("extensions 推送 extensions 数量", 1, clientState["extensions"].Count);
             Eq("extensions 推送工具名", "extensions", Protocol.Extensions);
 
+            var intSchema = ParameterSchema.Normalize(JsonValue.Parse(
+                "{\"type\":\"object\",\"properties\":{\"count\":{\"type\":\"int\"}}}"), out var intError);
+            Check("schema 把 int 规范成 integer",
+                intSchema is not null && intSchema["properties"]["count"]["type"].AsString() == "integer");
+            Check("schema 规范化不报错", intError is null);
+
+            var anySchema = ParameterSchema.Normalize(JsonValue.Parse(
+                "{\"type\":\"object\",\"properties\":{\"a\":{\"anyOf\":[{\"type\":\"bool\"}]}}}"), out _);
+            Check("schema 递归规范化 anyOf",
+                anySchema is not null && anySchema["properties"]["a"]["anyOf"][0]["type"].AsString() == "boolean");
+
+            var badRoot = ParameterSchema.Normalize(JsonValue.Parse("{\"type\":\"int\"}"), out var badRootError);
+            Check("schema 拒绝非 object 根", badRoot is null && !string.IsNullOrEmpty(badRootError));
+
+            var nullSchema = ParameterSchema.Normalize(null, out _);
+            Check("schema 缺省为空对象", nullSchema is not null && nullSchema["type"].AsString() == "object");
+
+            var dropped = ParameterSchema.Normalize(JsonValue.Parse("{\"type\":\"object\",\"unknownKeyword\":1}"), out _);
+            Check("schema 丢弃未知关键字", dropped is not null && !dropped.Has("unknownKeyword"));
+
             var clientStateEmpty = Protocol.BuildClientState(new string[0], null);
             Check("空推送也显式写 extensions 数组", clientStateEmpty["extensions"].IsArray);
             Eq("空推送 extensions 长度为 0", 0, clientStateEmpty["extensions"].Count);

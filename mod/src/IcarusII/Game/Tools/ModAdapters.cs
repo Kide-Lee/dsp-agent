@@ -174,7 +174,7 @@ namespace IcarusII.Game.Tools
             tool.Set("description", item["description"].AsString(string.Empty));
             tool.Set("risk", risk);
             tool.Set("timeoutMs", timeout);
-            tool.Set("parameters", item["parameters"].IsObject ? item["parameters"] : EmptySchema());
+            tool.Set("parameters", NormalizeSchema(item["parameters"]));
 
             var invoke = NormalizeCall(info, item["invoke"], "invoke");
             tool.Set("invoke", invoke);
@@ -187,11 +187,11 @@ namespace IcarusII.Game.Tools
             return tool;
         }
 
-        private static JsonValue EmptySchema()
+        private static JsonValue NormalizeSchema(JsonValue node)
         {
-            var schema = JsonValue.NewObject();
-            schema.Set("type", "object");
-            schema.Set("properties", JsonValue.NewObject());
+            var schema = ParameterSchema.Normalize(node, out var error);
+            if (schema is null)
+                throw new InvalidOperationException($"parameters schema 无效：{error}");
             return schema;
         }
 

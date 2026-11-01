@@ -48,6 +48,7 @@
 | 第三方 mod 桥 P0 | `mod.bridge.v1`：`hello.extensions` + `mods_list` + 每个已启用插件一个 `mod_<id>_config`（action=list/get/set）。逐插件开关在 设置 → 工具 → mod 页签，默认关闭；关掉后 AI 完全看不到该插件。开关/适配器变化走 `extensions` 推送，回合边界重建会话。每个插件默认 `limited` 权限档位，可在行内切换。离线构建/测试通过，待实机 |
 | 第三方 mod 桥 P2 | manifest 加载器：外部 `icarus-ii/bridge/<guid>.json` / 插件目录 `IcarusII.tools.json`，版本不匹配或 risk 2 缺 `undo` 时工具不注册；内置参考适配器 DSPCalculator / LSTM / BulletTime（UXAssist 的公开 API 只有存档钩子，已替换）。`mods_api_list` 拿候选方法，`mods_adapter_create` 把 AI 给出的结构化绑定校验后写入并热载（`source=ai`、版本绑定、risk 最低 1），`mods_adapter_delete` 删除并支持撤销。设置页每行标注适配器来源（未创建/内置/随包/手写/AI 生成/版本不匹配）。离线构建/测试通过，待实机 |
 | 第三方 mod 桥 P3 | `ui.tree.v1`：`ui_snapshot` 枚举 uGUI `Selectable`（路径/类型/文字/可用性），`ui_click` 按路径派发合成 `PointerClick`；不读像素、不做 OS 输入、不抢焦点；`ui_click` risk 2、不可撤销，点完须再快照复核。离线构建/测试通过，待实机 |
+| 第三方 mod 桥修复 | AI 生成的适配器参数 schema 会规范化（`int→integer` 等）并过滤非法工具，避免上游 `Invalid schema` 导致新会话整轮 400；`mods_api_list` 增加 `uiTexts` / `configHints` 帮助 AI 理解功能；设置页在适配器新建/删除后自动刷新 |
 | 第三方 mod 桥 P4 | SDK 文档 `docs/third-party-mod-bridge.md` + 示例 `docs/examples/bridge-example/`（插件源码 + manifest）；说明 manifest 字段、调用约束、版本/失败与验证步骤 |
 | 设定页功能（M6） | 通用页版本/诊断、快捷键自由绑键（打开/发送/换行，含字符拦截与组字保护）、会话跨存档索引/搜索/重命名/删除/导出、工具开关（`disabledTools`，同时覆盖 `run_script` 白名单）、关于页二维码与复制；协议见附录 A.14。离线构建/测试通过，待实机验收 |
 
