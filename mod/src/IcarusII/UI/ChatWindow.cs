@@ -5279,7 +5279,11 @@ namespace IcarusII.UI
                 var label = row.transform.Find("link/label")?.GetComponent<Text>();
                 if (label != null)
                 {
-                    label.text = IndexLabel(record.Text, 210f);
+                    // 按标签自己的字号和实际宽度截断：拿 _fontSize 推算会比 prefab 里的
+                    // 真实字号小，正文标签又是 Overflow，结果记录会画到左栏外面去。
+                    float maxWidth = label.rectTransform.rect.width;
+                    if (maxWidth <= 20f) maxWidth = 210f;
+                    label.text = FitLabel(record.Text, label.fontSize, maxWidth - 4f);
                     label.color = _accent;
                 }
                 var hover = row.GetComponent<ChatIndexRowHover>();
@@ -5724,20 +5728,6 @@ namespace IcarusII.UI
                 .Trim();
             var chars = text.ToCharArray();
             return chars.Length <= 40 ? text : new string(chars, 0, 40).TrimEnd();
-        }
-
-        private string IndexLabel(string text, float maxWidth)
-        {
-            var s = (text ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
-            if (s.Length > 80) s = s.Substring(0, 80);
-
-            var fontSize = Mathf.Max(10, _fontSize - 2);
-            maxWidth = Mathf.Max(60f, maxWidth);
-            if (EstimateTextWidth(s, fontSize) <= maxWidth) return s;
-
-            while (s.Length > 0 && EstimateTextWidth(s + "…", fontSize) > maxWidth)
-                s = s.Substring(0, s.Length - 1);
-            return s + "…";
         }
 
         private void RemoveActiveConversationRecord(string text, long timestampMs)
