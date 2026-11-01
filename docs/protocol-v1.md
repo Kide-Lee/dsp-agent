@@ -95,8 +95,9 @@
 - `game.todo.write.v1`：mod 支持轮内待办：`game_todo_write` 把整份列表
   （`pending` / `in_progress` / `completed`）写进原生目标面板**固定第一组**“AI 待办”：
   每次调用整表替换，空数组清空该组；条目标题就是待办文字，完成项显示勾选与删除线，
-  玩家可以在面板里跳过单项。它按只读工具登记（risk 0）：任何权限档下都不弹确认；
-  与 `game.todo.v1` 的模板目标共用同一套 GoalProto/GoalData，但不共用分组。
+  玩家可以在面板里跳过单项。它按只读工具登记（risk 0）：任何权限档下都不弹确认。
+  一轮结束时 sidecar 会用内部调用清空该组（不发确认、不产生工具卡片），
+  因此清单只在本轮显示；与 `game.todo.v1` 的模板目标共用同一套 GoalProto/GoalData，但不共用分组。
   该能力也让“自由探索”和沙盒存档的显示接管把待办组当作 AI 目标处理。
 - `mod.bridge.v1`：mod 支持第三方 mod 桥：`hello.extensions` + `mods_list` +
   每个已启用插件一个 `mod_<id>_config`，以及可选的适配器工具。

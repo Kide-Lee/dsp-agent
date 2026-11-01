@@ -877,6 +877,9 @@ interface RunState {
   requiredToolAttempts: number;
   /** 进入强制模式前的 active tools；满足要求后恢复，避免影响后续工具调用。 */
   savedTools: string[] | null;
+
+  /** 本轮是否写过待办；写过才在收尾时清空原生目标面板里的待办组。 */
+  todoWritten: boolean;
 }
 
 /**
@@ -2818,6 +2821,7 @@ export class PiAgent implements AgentRunner {
       requiredToolSatisfied: false,
       requiredToolAttempts: 0,
       savedTools: null,
+      todoWritten: false,
     };
     this.active = run;
 
@@ -2962,6 +2966,18 @@ export class PiAgent implements AgentRunner {
           this.logger.debug('恢复工具集失败', errorFields(err));
         }
         run.savedTools = null;
+      }
+      // 一轮结束：本轮写过的待办从游戏目标面板撤掉，不把清单留到下一轮。
+      if (run.todoWritten) {
+        try {
+          await this.host.call('game_todo_write', { todos: [] }, {
+            timeoutMs: 3000,
+            risk: 0,
+            internal: true,
+          });
+        } catch (err) {
+          this.logger.debug('清空待办失败', errorFields(err));
+        }
       }
       this.host.unbind(emit);
       this.active = null;
@@ -3942,6 +3958,9 @@ export class PiAgent implements AgentRunner {
       }
 
       case 'tool_execution_end': {
+        if (event.toolName === 'game_todo_write' && !event.isError) {
+          run.todoWritten = true;
+        }
         // 强制工具已被调用：恢复完整工具集，并允许后续文本正常流式输出。
         if (run.requiredTool && event.toolName === run.requiredTool && !run.requiredToolSatisfied) {
           run.requiredToolSatisfied = true;

@@ -496,6 +496,7 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         '把当前任务清单整份写入游戏左侧目标面板的第一组“AI 待办”。' +
         '每次调用替换上一次的列表（空数组清空）；状态 pending / in_progress / completed，' +
         '完成项在面板里打勾并划线，玩家也可以随时跳过某一条。' +
+        '本轮结束时 sidecar 会自动把清单从面板撤掉，下一轮要显示就重新写。' +
         '按只读权限登记：不改变游戏状态，也不会请求玩家确认。',
       promptGuidelines: [
         '开始一项需要多步完成的工作前先写待办；一步就能做完的琐事不要用。',
