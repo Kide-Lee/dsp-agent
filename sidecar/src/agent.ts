@@ -154,8 +154,13 @@ export interface AgentEmitter {
   status(state: StatusState, detail?: string): void;
   /** `stream` 帧；delta 为空时不发送。 */
   stream(channel: StreamChannel, delta: string, replyTo: string | null): void;
-  /** `message` 帧。 */
-  message(text: string, replyTo: string | null, final?: boolean): void;
+  /** `message` 帧。`interrupted` = 本轮被玩家中断（附录 A.15）。 */
+  message(
+    text: string,
+    replyTo: string | null,
+    final?: boolean,
+    options?: { interrupted?: boolean },
+  ): void;
   /** `error` 帧；`message` 必须已脱敏（不含 apiKey）。 */
   error(code: ErrorCode, message: string, replyTo: string | null): void;
   /** 主动推送一次 `config.state`（上游推导出的状态变化，附录 A.1）。 */
@@ -197,6 +202,13 @@ export interface AgentRunner {
     emit: AgentEmitter,
     requiredTool?: string | null,
   ): Promise<void>;
+  /** A.15：中断当前正在生成的回合；返回是否真的中断了一个回合。 */
+  abort?(): Promise<boolean>;
+  /**
+   * A.15：插话。当前回合在跑时把这句话投递进该回合并返回 true；
+   * 没有回合在跑（或实现不支持）时返回 false，由调用方退回普通提问。
+   */
+  steer?(text: string): Promise<boolean>;
   /**
    * 本次连接实际可用的工具目录（M4l，供 ready.payload.toolCatalog / 聊天窗工具列表）。
    * 老实现可以不提供。
@@ -1304,6 +1316,8 @@ export class PiAgent implements AgentRunner {
   private runtime: ModelRuntime | null = null;
   private unsubscribe: (() => void) | null = null;
   private active: RunState | null = null;
+  /** A.15：本轮被玩家中断过；收尾时据此发 interrupted 终稿而不是 error。 */
+  private abortRequested = false;
   /** 回合运行中收到 config.set 时，延后到回合结束再重建会话。 */
   private pendingTeardown = false;
   /** 当前绑定的存档；每个存档使用独立的 session 目录。 */
@@ -2717,6 +2731,7 @@ export class PiAgent implements AgentRunner {
     requiredTool: string | null = null,
   ): Promise<void> {
     const task = async (): Promise<void> => {
+      this.abortRequested = false;
       try {
         await this.runOnce(text, promptId, emit, requiredTool);
       } finally {
@@ -2728,6 +2743,37 @@ export class PiAgent implements AgentRunner {
     const next = previous.then(task, task);
     this.chain = next.catch(() => undefined);
     return next;
+  }
+
+  /** A.15：中断当前回合。pi 的 abort() 会等到空闲，收尾由 runOnce 负责。 */
+  async abort(): Promise<boolean> {
+    const session = this.session;
+    if (!session || !this.active) return false;
+    this.abortRequested = true;
+    this.active.stopReason = 'aborted';
+    try {
+      await session.abort();
+      return true;
+    } catch (err) {
+      this.logger.warn('中断当前回合失败', errorFields(err));
+      return false;
+    }
+  }
+
+  /**
+   * A.15：插话到当前回合。没有回合在跑时返回 false，由调用方按普通提问处理。
+   */
+  async steer(text: string): Promise<boolean> {
+    const session = this.session;
+    if (!session || !this.active || this.abortRequested) return false;
+    try {
+      await session.steer(text);
+      this.logger.info('插话已投递', { chars: text.length });
+      return true;
+    } catch (err) {
+      this.logger.warn('插话失败', errorFields(err));
+      return false;
+    }
   }
 
   private async runOnce(
@@ -2885,8 +2931,13 @@ export class PiAgent implements AgentRunner {
         run.error = `本轮要求调用工具 ${run.requiredTool}，但模型没有调用。`;
       }
     } catch (err) {
-      run.error = run.error ?? describeError(err);
-      run.stopReason = 'error';
+      if (this.abortRequested) {
+        // 中断引起的异常不是失败：收尾走 interrupted 终稿（附录 A.15）。
+        run.stopReason = 'aborted';
+      } else {
+        run.error = run.error ?? describeError(err);
+        run.stopReason = 'error';
+      }
       this.logger.error('pi 会话执行失败', {
         promptId,
         ...safeErrorFields(err, data.apiKey),
@@ -2907,7 +2958,9 @@ export class PiAgent implements AgentRunner {
 
     if (!emit.isActive()) return;
 
-    const failed = run.stopReason === 'error' || run.stopReason === 'aborted';
+    // A.15：玩家中断的回合不是失败——保留已生成文本，按 interrupted 终稿收尾。
+    const interrupted = run.stopReason === 'aborted' || this.abortRequested;
+    const failed = run.stopReason === 'error';
     // 强制工具没被调用是“本轮要求未被满足”，不是上游故障：不能把配置状态改成 unreachable。
     const requiredMissing =
       !!run.requiredTool &&
@@ -2932,6 +2985,9 @@ export class PiAgent implements AgentRunner {
         emit.configState(view);
       }
       emit.error(failure.code, safe, promptId);
+    } else if (interrupted) {
+      this.logger.info('本轮被玩家中断', { promptId, chars: run.text.length });
+      emit.message(run.text, promptId, true, { interrupted: true });
     } else {
       if (this.store.view().state !== 'ready') {
         // 上一次失败留下的 invalid_key / unreachable 已被成功请求证伪。
@@ -2981,6 +3037,7 @@ export class PiAgent implements AgentRunner {
     const userTurns = session.messages.filter((message) => message.role === 'user').length;
     if (
       !failed &&
+      !interrupted &&
       run.text.trim().length > 0 &&
       run.saveKey &&
       titleRuntime &&
@@ -3850,9 +3907,12 @@ export class PiAgent implements AgentRunner {
         // 助手消息结束 ⇒ 以最终消息为准（流式增量可能被重试截断过）。
         const finalText = assistantText(message);
         if (finalText.length > 0) run.text = finalText;
-        if (message.stopReason === 'error' || message.stopReason === 'aborted') {
-          run.stopReason = message.stopReason;
+        if (message.stopReason === 'error') {
+          run.stopReason = 'error';
           run.error = message.errorMessage ?? run.error ?? '上游返回错误';
+        } else if (message.stopReason === 'aborted') {
+          // 玩家中断：保留已生成文本，不产生 error（附录 A.15）。
+          run.stopReason = 'aborted';
         }
         return;
       }

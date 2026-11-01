@@ -435,17 +435,34 @@ namespace IcarusII.Common.Transport
             try { ConfigChanged?.Invoke(next); } catch (Exception ex) { EmitLog($"配置回调异常：{ex.Message}"); }
         }
 
-        public string SendPrompt(string text, string conversationId = null, string requiredTool = null)
+        public string SendPrompt(string text, string conversationId = null, string requiredTool = null,
+            string mode = null)
         {
             var env = Protocol.Protocol.Envelope(
                 Protocol.Protocol.Prompt,
-                Protocol.Protocol.BuildPrompt(text, conversationId, requiredTool),
+                Protocol.Protocol.BuildPrompt(text, conversationId, requiredTool, mode),
                 NextId(), null);
 
             if (_state != ConnectionState.Ready) return null;
             _sendQueue.Enqueue(env);
             try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
             return env["id"].AsString();
+        }
+
+        /// <summary>
+        /// A.15：中断当前回合。没有回合在跑时 sidecar 静默忽略；
+        /// 连接未就绪时返回 false（不发帧）。
+        /// </summary>
+        public bool SendAbort()
+        {
+            if (_state != ConnectionState.Ready) return false;
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.Abort,
+                Protocol.Protocol.BuildAbort(),
+                NextId(), null);
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return true;
         }
 
         /// <summary>

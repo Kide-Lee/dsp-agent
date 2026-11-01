@@ -59,6 +59,8 @@ namespace IcarusII
         private string _pluginDir;
         private bool _uiInitialized;
         private bool _streaming;
+        /// <summary>A.15：AI 正在回答（从提交到 idle）。输入框为空时按钮显示「中断」。</summary>
+        private bool _agentRunning;
         private string _pendingHint;
         private volatile bool _sidecarStartAttempted;
         private bool _uiCreateFailureLogged;
@@ -158,6 +160,7 @@ namespace IcarusII
                 _chat.ConversationSwitchRequested += OnConversationSwitchRequested;
                 _chat.ConversationDeleteRequested += OnConversationDeleteRequested;
                 _chat.ConversationRenameRequested += OnConversationRenameRequested;
+                _chat.BreakRequested += OnBreakRequested;
                 _chat.BlueprintCardActionRequested += OnBlueprintCardAction;
                 _chat.AskCompleted += OnAskCompleted;
                 _chat.AskCancelled += OnAskCancelled;
@@ -365,6 +368,8 @@ namespace IcarusII
                         _regenerateDeleteId.Clear();
                         CancelPendingDebug();
                         _chat.ClearToolCatalog();
+                        _agentRunning = false;
+                        _chat.SetBusy(false);
                         _chat.SetStatus(Strings.Get("status.backoff") + " " + detail, WarnColor);
                         break;
                     default:
@@ -379,6 +384,8 @@ namespace IcarusII
                         _regenerateDeleteId.Clear();
                         CancelPendingDebug();
                         _chat.ClearToolCatalog();
+                        _agentRunning = false;
+                        _chat.SetBusy(false);
                         _chat.SetStatus(Strings.Get("status.disconnected"), null);
                         break;
                 }
@@ -411,6 +418,13 @@ namespace IcarusII
                 case Protocol.Status:
                 {
                     var state = payload["state"].AsString("");
+                    // A.15：回答中（含 aborting）显示「中断」，idle 换回「发送」。
+                    bool running = state != Protocol.StateIdle;
+                    if (_agentRunning != running)
+                    {
+                        _agentRunning = running;
+                        _chat.SetBusy(running);
+                    }
                     if (state == Protocol.StateThinking || state == Protocol.StateTools)
                     {
                         // 这里**不**提前创建回答条目：思考块/工具块先入输出区，
@@ -628,6 +642,19 @@ namespace IcarusII
                         var part = block["text"].AsString("");
                         if (string.IsNullOrEmpty(part)) continue;
                         finalText = string.IsNullOrEmpty(finalText) ? part : finalText + "\n" + part;
+                    }
+
+                    // A.15：玩家中断的回合。已经流出的正文保留，只加「已停止」标记，
+                    // 不当错误、不回存游戏时间。
+                    if (payload["interrupted"].AsBool(false))
+                    {
+                        _chat.EndInterrupted();
+                        _streaming = false;
+                        if (!string.IsNullOrEmpty(replyTo)) _promptById.Remove(replyTo);
+                        _agentRunning = false;
+                        _chat.SetBusy(false);
+                        _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+                        break;
                     }
 
                     _chat.EndThinking(finalize: true);
@@ -2246,6 +2273,15 @@ namespace IcarusII
                 return;
             }
 
+            // A.15：正在回答时，这句话是插话。先把流式块收尾，
+            // 否则后续增量会续写进上一个块；然后按 mode=steer 投递进当前回合。
+            bool steering = _agentRunning;
+            if (steering && _streaming)
+            {
+                _chat.EndStream();
+                _streaming = false;
+            }
+
             _chat.AppendUser(text);   // 用户消息走气泡样式
 
             if (_client == null || _client.State != ConnectionState.Ready)
@@ -2254,16 +2290,37 @@ namespace IcarusII
                 return;
             }
 
-            _streaming = false;
+            if (!steering)
+            {
+                _streaming = false;
+                _agentRunning = true;
+                _chat.SetBusy(true);
+            }
             var requiredTool = _chat.GetRequiredTool(text);
-            var id = _client.SendPrompt(text, _chat.ActiveConversationId, requiredTool);
+            var id = _client.SendPrompt(text, _chat.ActiveConversationId, requiredTool,
+                steering ? Protocol.PromptModeSteer : null);
             if (id == null)
             {
                 _chat.AppendSystem(Strings.Get("plugin.send.changed"));
                 return;
             }
+            if (steering)
+            {
+                // 插话没有自己的终稿：正文并入当前回合，不能登记成待回包提问。
+                return;
+            }
             _promptById[id] = text;
             _chat.SetStatus(Strings.Get("status.thinking"), AccentColor);
+        }
+
+        /// <summary>A.15：玩家点了「中断」。sidecar 收尾后回 interrupted 终稿。</summary>
+        private void OnBreakRequested()
+        {
+            if (_chat == null) return;
+            if (_client == null || _client.State != ConnectionState.Ready) return;
+            if (!_agentRunning) return;
+            if (!_client.SendAbort())
+                _chat.AppendSystem(Strings.Get("plugin.send.offline"));
         }
 
         // ---------------------------------------------------------------- 杂项

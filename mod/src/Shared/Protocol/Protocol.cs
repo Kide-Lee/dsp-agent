@@ -46,6 +46,8 @@ namespace IcarusII.Common.Protocol
         public const string Ping = "ping";
         public const string Pong = "pong";
         public const string Abort = "abort";
+        /// <summary>A.15：prompt.mode 的插话取值。</summary>
+        public const string PromptModeSteer = "steer";
 
         // 消息类型（sidecar → mod）
         public const string Ready = "ready";
@@ -566,14 +568,24 @@ namespace IcarusII.Common.Protocol
             return p;
         }
 
-        public static JsonValue BuildPrompt(string text, string conversationId, string requiredTool = null)
+        /// <param name="mode">A.15：null/空 = 普通提问；"steer" = 插话到当前回合。</param>
+        public static JsonValue BuildPrompt(string text, string conversationId, string requiredTool = null,
+            string mode = null)
         {
             var p = JsonValue.NewObject();
             p.Set("text", text ?? string.Empty);
             if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
             // M4l：玩家用 /<工具名> 指定本轮必须调用的工具。空值不写，老端忽略。
             if (!string.IsNullOrEmpty(requiredTool)) p.Set("requiredTool", requiredTool);
+            // A.15：插话。空值不写，老 sidecar 按普通提问处理。
+            if (!string.IsNullOrEmpty(mode)) p.Set("mode", mode);
             return p;
+        }
+
+        /// <summary>A.15：中断当前回合（空负载）。</summary>
+        public static JsonValue BuildAbort()
+        {
+            return JsonValue.NewObject();
         }
 
         /// <summary>

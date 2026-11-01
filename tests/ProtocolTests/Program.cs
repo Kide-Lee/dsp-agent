@@ -785,6 +785,16 @@ namespace IcarusII.Tests
             Eq("conversation.switch payload", "conv-a",
                 Protocol.BuildConversationTarget("conv-a")["conversationId"].AsString());
 
+            // ---- 附录 A.15：打断与插话 ----
+            Eq("abort 类型名", "abort", Protocol.Abort);
+            Eq("abort 空载荷", 0, Protocol.BuildAbort().Count);
+            Eq<string>("prompt.mode 缺省不写", null,
+                Protocol.BuildPrompt("你好", "conv-a")["mode"].AsString());
+            Eq("prompt.mode=steer", "steer",
+                Protocol.BuildPrompt("插一句", "conv-a", null, Protocol.PromptModeSteer)["mode"].AsString());
+            Eq("prompt.mode=steer 保留原文", "插一句",
+                Protocol.BuildPrompt("插一句", "conv-a", null, Protocol.PromptModeSteer)["text"].AsString());
+
             var multi = SaveBoundInfo.Parse(JsonValue.Parse(
                 "{\"saveKey\":\"3f2a\",\"activeConversationId\":\"conv-a\"," +
                 "\"conversations\":[{" +

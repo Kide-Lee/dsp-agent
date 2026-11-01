@@ -484,6 +484,9 @@ export class Session {
       case MessageType.Prompt:
         this.handlePrompt(env);
         return;
+      case MessageType.Abort:
+        this.handleAbort(env);
+        return;
       case MessageType.ToolDebug:
         this.handleToolDebug(env);
         return;
@@ -1470,8 +1473,40 @@ export class Session {
       chars: prompt.text.length,
       conversationId: prompt.conversationId,
       requiredTool: prompt.requiredTool,
+      mode: prompt.mode,
     });
 
+    // A.15：插话必须立刻投递到运行中的回合，不能进串行链（那会等当前回合结束）。
+    if (prompt.mode === 'steer' && this.options.agent.steer) {
+      void this.steerOrPrompt(prompt, promptId);
+      return;
+    }
+    this.startPromptRun(prompt, promptId);
+  }
+
+  /** A.15：先尝试插话；没有运行中的回合就退回普通提问，不能把玩家的话丢掉。 */
+  private async steerOrPrompt(
+    prompt: import('./protocol.js').PromptPayload,
+    promptId: string | null,
+  ): Promise<void> {
+    try {
+      const steered = await this.options.agent.steer!(prompt.text);
+      if (steered) {
+        this.logger.info('插话已投递给运行中的回合', { promptId, chars: prompt.text.length });
+        return;
+      }
+    } catch (err) {
+      this.logger.warn('插话失败，按普通提问处理', { promptId, ...errorFields(err) });
+    }
+    this.logger.info('插话时没有运行中的回合，按普通提问处理', { promptId });
+    this.startPromptRun(prompt, promptId);
+  }
+
+  /** 串联一轮 prompt：知识库就绪 → agent.run。 */
+  private startPromptRun(
+    prompt: import('./protocol.js').PromptPayload,
+    promptId: string | null,
+  ): void {
     // 串行化：保证同一 prompt 的 status/stream/message 不被交错的下一轮切开。
     const emit = this.createEmitter();
     const run = this.promptChain.then(async () => {
@@ -1487,6 +1522,35 @@ export class Session {
       this.logger.error('agent 执行失败', errorFields(err));
       this.sendError('internal', 'agent failed', promptId);
     });
+  }
+
+  /** A.15：玩家中断当前回合。没有回合在跑时静默忽略。 */
+  private handleAbort(env: import('./protocol.js').ParsedEnvelope): void {
+    if (this._state !== 'ready') {
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+    const abort = this.options.agent.abort;
+    if (!abort) {
+      this.sendError('internal', '当前 agent 不支持中断', env.id || null);
+      return;
+    }
+    this.logger.info('收到 abort');
+    // 不排队：中断必须立刻作用在当前回合上（排队会等回合结束，等于没断）。
+    void abort
+      .call(this.options.agent)
+      .then((stopped) => {
+        if (!stopped || this._state !== 'ready') return;
+        this.sendEnvelope(
+          buildEnvelope({
+            type: MessageType.Status,
+            payload: buildStatusPayload('aborting'),
+          }),
+        );
+      })
+      .catch((err: unknown) => {
+        this.logger.warn('中断失败', errorFields(err));
+      });
   }
 
   /**
@@ -1916,7 +1980,7 @@ export class Session {
         );
       },
 
-      message(text, replyTo, final = true) {
+      message(text, replyTo, final = true, options = {}) {
         session.sendEnvelope(
           buildEnvelope({
             type: MessageType.Message,
@@ -1924,6 +1988,7 @@ export class Session {
             payload: buildMessagePayload([{ type: 'text', text }], {
               role: 'assistant',
               final,
+              ...(options.interrupted ? { interrupted: true } : {}),
             }),
           }),
         );

@@ -96,13 +96,15 @@ export const MessageType = {
   ConfirmRequest: 'confirm_request',
   ConfirmResult: 'confirm_result',
   ConfirmRelease: 'confirm_release',
+  // A.15：玩家中断当前回合（mod → sidecar）
+  Abort: 'abort',
 } as const;
 
 export type MessageTypeName = (typeof MessageType)[keyof typeof MessageType];
 
 /** 服务端未实现、必须忽略的已预留类型（协议 §4.9）。 */
 export const RESERVED_TYPES: readonly string[] = [
-  'abort',
+  'game_event',
   'game_event',
   'ui_event',
   'session',
@@ -580,12 +582,15 @@ export interface PromptPayload {
   conversationId: string | null;
   /** M4l：本轮必须调用的工具名；null = 不强制。 */
   requiredTool: string | null;
+  /** A.15：缺省/queue = 普通提问；steer = 插话到当前回合。 */
+  mode: 'queue' | 'steer';
 }
 
 /**
  * 解析 prompt 负载（协议 §4.4）。
  * `text` 缺失按空串处理；存在但不是 string ⇒ 返回 null（bad_request）。
  * `requiredTool` 存在但不是 string ⇒ 返回 null；空串按未指定处理。
+ * `mode` 只认 `"queue"` / `"steer"`；缺省按 `"queue"`。
  */
 export function parsePromptPayload(payload: JsonObject): PromptPayload | null {
   const textValue = payload['text'];
@@ -600,6 +605,11 @@ export function parsePromptPayload(payload: JsonObject): PromptPayload | null {
     return null;
   }
 
+  const modeValue = payload['mode'];
+  if (modeValue !== undefined && modeValue !== null && modeValue !== 'queue' && modeValue !== 'steer') {
+    return null;
+  }
+
   const conversationId = payload['conversationId'];
   const requiredTool =
     typeof requiredToolValue === 'string' && requiredToolValue.trim().length > 0
@@ -611,6 +621,7 @@ export function parsePromptPayload(payload: JsonObject): PromptPayload | null {
     conversationId:
       typeof conversationId === 'string' && conversationId.length > 0 ? conversationId : null,
     requiredTool,
+    mode: modeValue === 'steer' ? 'steer' : 'queue',
   };
 }
 
@@ -1905,11 +1916,12 @@ export function buildStreamPayload(channel: StreamChannel, delta: string): JsonO
 
 export function buildMessagePayload(
   content: readonly ContentBlock[],
-  options: { role?: 'assistant'; final?: boolean } = {},
+  options: { role?: 'assistant'; final?: boolean; interrupted?: boolean } = {},
 ): JsonObject {
   return {
     role: options.role ?? 'assistant',
     final: options.final ?? true,
+    ...(options.interrupted ? { interrupted: true } : {}),
     content: content.map((block) => ({ ...block })),
   };
 }

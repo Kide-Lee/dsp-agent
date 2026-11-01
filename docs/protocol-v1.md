@@ -138,11 +138,14 @@
   "payload": {
     "text": "怎么提高产量？",
     "conversationId": "sess_…",
-    "requiredTool": "game_get_production"   // 可选（M4l）
+    "requiredTool": "game_get_production",   // 可选（M4l）
+    "mode": "steer"                          // 可选（A.15）：插话
   } }
 ```
 
 `conversationId` 可选；缺省表示使用连接当前会话。
+
+`mode` 可选（附录 A.15）：缺省/`"queue"` = 普通提问；`"steer"` = 插话到当前回合。
 
 `requiredTool` 可选（M4l）：玩家在输入框里用 `/<工具名>` 指定“本轮必须调用这个工具”。
 - 取值是 `ready.payload.tools` 里的模型可见工具名；缺省或 `null` 表示不强制。
@@ -223,6 +226,9 @@
 `content` 元素类型：M0 仅 `{"type":"text","text":…}`；M1+ 增加
 `{"type":"tool","callId":…,"name":…,"state":"running|ok|error","summary":…}`。
 
+可选 `"interrupted": true`（附录 A.15）：这条是本轮被玩家中断时的终稿，
+`content` 里是中断前已经生成的部分文本（可能为空）。
+
 ### 4.7 `ping` / `pong` — 双向
 
 ```jsonc
@@ -260,8 +266,10 @@
 
 ### 4.9 预留（M0 不实现，仅占位以免 v1 被破坏）
 
-`abort`（mod → sidecar）、`tool_call` / `tool_result`（双向）、`confirm_request` / `confirm_result`（双向）、`confirm_release`（sidecar → mod，脚本租约释放）、`game_event`（mod → sidecar）、`ui_event`（mod → sidecar）、`session`（sidecar → mod）。
+`tool_call` / `tool_result`（双向）、`confirm_request` / `confirm_result`（双向）、`confirm_release`（sidecar → mod，脚本租约释放）、`game_event`（mod → sidecar）、`ui_event`（mod → sidecar）、`session`（sidecar → mod）。
 字段定义见 design.md §5.3；实现出现在 M1/M4。
+
+`abort`（mod → sidecar）原先也在这里；现在已实现，见附录 A.15。
 
 ## 5. M0 的最小闭环
 
@@ -1455,6 +1463,52 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 - 取值是 `Ctrl+Alt+Shift+KeyCode` 形式，`KeyCode` 用 Unity 名字（`Return`、`F8`、`A`）。
 - 解析失败或三项重复时回落到默认值并记一条 warning；这些规则只在本地生效，
   不经过协议。
+
+### A.15 打断与插话（abort / prompt.mode / message.interrupted）
+
+**需求**：AI 正在回答时，输入框右侧的「发送」换成「中断」；点它立刻停下当前回合，
+已经流出的回答**保留**，并在回答下面标一句「已停止」。输入框重新有内容时按钮换回
+「发送」，这一下的行为是**插话**——把这句话投递进当前回合，而不是排队等下一轮。
+
+#### `abort`（mod → sidecar）
+
+```jsonc
+{ "v": 1, "id": "m-90", "type": "abort", "payload": {} }
+```
+
+- 中断当前正在生成的回合；没有回合在跑时忽略（不报错、不改变任何状态，也不回帧）。
+- 确实有回合在跑时，sidecar 先回 `status{state:"aborting"}`，再用一条
+  `message{final:true, interrupted:true}` 收尾，最后 `status{state:"idle"}`。
+- 已经流出的部分回答必须保留：sidecar 用 pi 的中断语义停流，把已生成文本作为
+  该回合的终稿发出，**不得**改发 `error`，否则 UI 会把“玩家自己停的”显示成失败。
+- 被中断的回合不生成会话标题，也不回存游戏时间。
+
+#### `prompt.mode`（mod → sidecar，可选）
+
+```jsonc
+{ "v": 1, "id": "m-91", "type": "prompt",
+  "payload": { "text": "顺便看一下电力", "conversationId": "conv_7c1e…", "mode": "steer" } }
+```
+
+- 缺省或 `"queue"`：普通提问，开一个新回合。
+- `"steer"`：插话。当前有回合在跑时，这句话被投递进**当前回合**
+  （模型在下一个步骤边界看到它），回复沿用原回合的 `replyTo`；
+  没有回合在跑时按普通提问处理，不能报错丢弃。
+- 插话不会产生自己的 `message` 终稿；它是一句用户消息，会正常进入会话历史。
+- 老 sidecar 不认识 `mode`，按普通提问排队；老 mod 不发该字段，行为不变。
+
+#### `message.interrupted`（sidecar → mod，可选）
+
+```jsonc
+{ "v": 1, "id": "s-90", "type": "message", "replyTo": "m-89",
+  "payload": { "role": "assistant", "final": true, "interrupted": true,
+               "content": [ { "type": "text", "text": "……已经生成的部分" } ] } }
+```
+
+- 只在「玩家中断」的回合出现；`content` 是中断前已经生成的部分文本（可能为空）。
+- mod 收到后：结束当前流式块、保留已渲染文本、在回答下面显示「已停止」，
+  不显示错误提示、不把这一轮当失败。
+- 老 mod 忽略该字段，行为退化为普通终稿（文本仍保留，只是没有「已停止」标记）。
 
 ## 附录 B：只读游戏工具（M2）与知识库工具（M3）
 

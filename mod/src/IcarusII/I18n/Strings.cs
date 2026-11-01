@@ -109,6 +109,7 @@ namespace IcarusII.I18n
             // 助手回复底部（时间 + 复制）
             ["reply.time"] = "游戏时间 {0}",
             ["reply.copy"] = "复制",
+            ["reply.stopped"] = "已停止",
             ["reply.link.opening"] = "正在浏览器中打开链接…",
             ["reply.link.open_failed"] = "无法打开浏览器，链接已复制到剪贴板",
 

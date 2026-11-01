@@ -507,6 +507,8 @@ namespace IcarusII.UI
             public readonly List<GameObject> BodyExtras = new List<GameObject>();
             public GameObject Footer;
             public Text Time;
+            /// <summary>「已停止」标记：本轮被玩家中断时显示（A.15）。</summary>
+            public Text Stopped;
             public Button Copy;
             public Text CopyLabel;
             public RectTransform ThinkingRoot;
@@ -633,6 +635,10 @@ namespace IcarusII.UI
         private int _currentTurnId;
         private int _focusedTurnId;
         private bool _awaitingResponse;
+        /// <summary>AI 正在回答：为 true 时输入框为空就显示「中断」，有内容则显示「发送」（A.15）。</summary>
+        private bool _busy;
+        private Button _sendButton;
+        private Button _breakButton;
 
         // ---- 工具列表（输入框上方的 popup；静态结构在 prefab，运行期只绑数据） ----
         private readonly List<ToolMenuItem> _toolCatalog = new List<ToolMenuItem>();
@@ -1283,16 +1289,31 @@ namespace IcarusII.UI
             WireSettingsButton(panel);
 
             // 发送按钮（tool-bar 右侧那个"发送"）：点击 = 提交当前输入
-            var sendButton = FindComponent<Button>(panel,
+            _sendButton = FindComponent<Button>(panel,
                 "input/editor/tool-bar/send-button", "tool-bar/send-button", "send-button", "SendButton");
-            if (sendButton != null)
+            if (_sendButton != null)
             {
-                sendButton.onClick.AddListener(SubmitPendingInput);
+                _sendButton.onClick.AddListener(SubmitPendingInput);
             }
             else
             {
                 Plugin.Log.LogInfo("prefab 里没有发送按钮，改用 Enter 发送（Ctrl+Enter 换行）。");
             }
+
+            // 中断按钮（A.15）：和发送按钮同位，AI 回答中且输入框为空时替身显示。
+            _breakButton = FindComponent<Button>(panel,
+                "input/editor/tool-bar/break-button", "tool-bar/break-button", "break-button", "BreakButton");
+            if (_breakButton != null)
+            {
+                _breakButton.onClick.AddListener(OnBreakClicked);
+                _breakButton.gameObject.SetActive(false);
+            }
+            else
+            {
+                Plugin.Log.LogInfo("prefab 里没有中断按钮，AI 回答期间无法一键停止。");
+            }
+            if (input != null) input.onValueChanged.AddListener(_ => RefreshSendButtons());
+            RefreshSendButtons();
 
             // 工具条：插入图标 / 复选框 / 文字颜色 —— 全部调**游戏自己的** API
             // （照原生 UISmartInputField 的做法），所以弹窗、图标表、调色板都和原生一致。
@@ -1882,6 +1903,9 @@ namespace IcarusII.UI
 
         /// <summary>玩家点了左侧“+ 新会话”。</summary>
         public event Action ConversationCreateRequested;
+
+        /// <summary>玩家点了「中断」：请求 sidecar 停下当前回合（A.15）。</summary>
+        public event Action BreakRequested;
 
         /// <summary>玩家点了另一个会话里的记录：请求切换会话（A.13）。</summary>
         public event Action<string> ConversationSwitchRequested;
@@ -4010,6 +4034,41 @@ namespace IcarusII.UI
             _dirty = true;
         }
 
+        /// <summary>
+        /// A.15：本轮被玩家中断。把已经流出的部分回答收尾并标「已停止」，
+        /// 不写成错误提示——这是玩家自己的操作，不是失败。
+        /// </summary>
+        public void EndInterrupted()
+        {
+            EndThinking(finalize: true);
+            if (_streamItem >= 0 && _streamItem < _items.Count)
+            {
+                var reply = _items[_streamItem].Reply;
+                EndStream();
+                MarkStopped(reply);
+                return;
+            }
+            // 还没流出正文（例如模型还在思考就被停下）：没有回答条目可挂，用一行提示收尾。
+            AppendSystem(Strings.Get("reply.stopped"));
+        }
+
+        private void MarkStopped(ReplyView reply)
+        {
+            if (reply == null) return;
+            if (reply.Footer != null) reply.Footer.SetActive(true);
+            if (reply.Stopped != null)
+            {
+                reply.Stopped.text = Strings.Get("reply.stopped");
+                reply.Stopped.gameObject.SetActive(true);
+            }
+            else
+            {
+                // 旧 UI bundle 的 footer 里还没有 stopped 节点：退化成一行提示，标记不能丢。
+                AppendSystem(Strings.Get("reply.stopped"));
+            }
+            _dirty = true;
+        }
+
         // ---------------------------------------------------------------- 回复模板绑定
 
         /// <summary>
@@ -6118,6 +6177,12 @@ namespace IcarusII.UI
             {
                 view.Footer = footer.gameObject;
                 view.Time = FindChildText(footer, "time");
+                view.Stopped = FindChildText(footer, "stopped");
+                if (view.Stopped != null)
+                {
+                    view.Stopped.text = Strings.Get("reply.stopped");
+                    view.Stopped.gameObject.SetActive(false);
+                }
                 view.Copy = footer.Find("copy") != null ? footer.Find("copy").GetComponent<Button>() : null;
                 view.CopyLabel = FindChildText(footer, "copy/label");
                 if (view.CopyLabel != null) view.CopyLabel.text = Strings.Get("reply.copy");
@@ -7258,6 +7323,52 @@ namespace IcarusII.UI
             catch (Exception ex)
             {
                 Plugin.Log.LogError($"提交失败：{ex}");
+            }
+        }
+
+        /// <summary>
+        /// A.15：AI 回答中，输入框为空 → 显示「中断」，有内容 → 换回「发送」。
+        /// 两个按钮在 prefab 里同位，所以只切 active。
+        /// </summary>
+        public void SetBusy(bool busy)
+        {
+            _busy = busy;
+            RefreshSendButtons();
+        }
+
+        private bool HasPendingInput()
+        {
+            if (_input == null) return false;
+            var text = _input.text;
+            return text != null && text.Trim().Length > 0;
+        }
+
+        private void RefreshSendButtons()
+        {
+            bool typing = HasPendingInput();
+            if (_sendButton != null)
+            {
+                bool showSend = !_busy || typing;
+                if (_sendButton.gameObject.activeSelf != showSend)
+                    _sendButton.gameObject.SetActive(showSend);
+            }
+            if (_breakButton != null)
+            {
+                bool showBreak = _busy && !typing;
+                if (_breakButton.gameObject.activeSelf != showBreak)
+                    _breakButton.gameObject.SetActive(showBreak);
+            }
+        }
+
+        private void OnBreakClicked()
+        {
+            try
+            {
+                BreakRequested?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[UI] 中断请求失败：{ex.Message}");
             }
         }
 
