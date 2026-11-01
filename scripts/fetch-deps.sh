@@ -4,14 +4,19 @@
 # 只需要跑一次。产物放在 <repo>/.deps/bepinex，仅供**编译**引用；
 # 真正部署由 .dsh/skills/update-steam-mod/scripts/update-steam-mod.sh（默认 r2modman 配置档）或 scripts/install.sh（手动安装）负责。
 #
-# 版本锁定说明：**编译期固定用 5.4.17（社区 Thunderstore 包同款）**。
+# 版本锁定说明：**编译期固定用社区包当前版本**（2026-11-01 为 5.4.17）。
 #
-# 为什么不跟 5.4.23.5：BepInEx 会检查插件引用的 BepInEx 版本，
-# "插件目标的版本 > 正在运行的版本" 时会打印
+# 为什么跟社区包、不跟上游最新（上游 2026-11-01 是 5.4.23.6）：
+# BepInEx 会检查插件引用的 BepInEx 版本，"插件目标的版本 > 正在运行的版本" 时会打印
 #   Plugin [x] targets a wrong version of BepInEx (…)
-# 社区绝大多数玩家装的是 5.4.17，用 5.4.23.5 编译等于给自己刷一条吓人的警告。
+# 玩家通过 r2modman / Thunderstore 装的都是 xiaoye97-BepInEx，它至今只有 5.4.17 一个版本；
+# 该社区里 400 个依赖 BepInEx 的 mod 最新版全部声明 5.4.17。
+# 所以编译目标高于它等于给自己刷一条吓人的警告。
 #
-# 5.4.23.5 的 changelog 那条 "Fix for unity 2022.3.62f3 not having
+# 这个判断不是写死的：scripts/check-deps.mjs 每次打包都会向 Thunderstore 查社区包版本，
+# 编译目标高于社区版本会阻塞打包，社区发新版只提示、是否跟进由人决定。
+#
+# 5.4.23.x 的 changelog 那条 "Fix for unity 2022.3.62f3 not having
 # get_graphicsDeviceID" **不影响本项目**：那段代码只在
 # Application.isBatchMode 取不到时才会碰 graphicsDeviceID，
 # 而本游戏（Unity 2022.3.62f3）两个 getter 都在。

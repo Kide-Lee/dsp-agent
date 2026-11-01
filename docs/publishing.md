@@ -4,15 +4,19 @@
 
 ## 一、打包
 
+出包一律走 `package-release` 技能（`.dsh/skills/package-release/scripts/package-release.sh`），
+它会在打包前检查依赖版本；直接跑底层脚本会跳过这一步。
+
 ```bash
 # 完整包（含 UI bundle）→ dist/IcarusII-<ver>.zip
-scripts/package-thunderstore.sh
+.dsh/skills/package-release/scripts/package-release.sh --with-thunderstore
 
 # 不含 UI bundle 的变体（不重分发游戏美术资源）→ dist/IcarusII-<ver>-nogameassets.zip
-SKIP_UI=1 scripts/package-thunderstore.sh
+.dsh/skills/package-release/scripts/package-release.sh --with-thunderstore --skip-ui
 
 # 手动安装包（Nexus / 网盘）→ dist/IcarusII-<ver>-manual.zip
-scripts/package.sh && (cd dist/pkg && zip -r ../../dist/IcarusII-<ver>-manual.zip IcarusII)
+.dsh/skills/package-release/scripts/package-release.sh \
+  && (cd dist/pkg && zip -r ../../dist/IcarusII-<ver>-manual.zip IcarusII)
 ```
 
 元数据源文件在 `packaging/thunderstore/`：

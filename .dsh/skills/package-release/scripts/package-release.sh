@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # 打包 IcarusII 发布产物：dist/pkg（r2modman 配置档/手动安装），可选 Thunderstore zip。
 #
-#   scripts/package-release.sh                       # 完整包
+#   scripts/package-release.sh                       # 完整包（含依赖版本检查）
 #   scripts/package-release.sh --skip-sidecar        # 复用已有 sidecar exe
 #   scripts/package-release.sh --with-thunderstore   # 额外打 Thunderstore zip
 #   scripts/package-release.sh --with-thunderstore --skip-ui   # zip 不含 UI 资源包
 #   scripts/package-release.sh --skip-build          # Thunderstore 阶段不重新编译
+#   scripts/package-release.sh --update-deps         # 依赖过期时自动更新并跑 sidecar 校验
 
 set -euo pipefail
 
@@ -20,6 +21,8 @@ SKIP_SIDECAR=0
 THUNDER=0
 SKIP_UI=0
 SKIP_BUILD=0
+SKIP_DEP_CHECK=0
+UPDATE_DEPS=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -27,10 +30,31 @@ for arg in "$@"; do
     --with-thunderstore) THUNDER=1 ;;
     --skip-ui) SKIP_UI=1 ;;
     --skip-build) SKIP_BUILD=1 ;;
-    -h|--help) sed -n '2,8p' "$SELF"; exit 0 ;;
+    --update-deps) UPDATE_DEPS=1 ;;
+    --skip-dep-check) SKIP_DEP_CHECK=1 ;;
+    -h|--help) sed -n '2,9p' "$SELF"; exit 0 ;;
     *) die "未知参数：$arg" ;;
   esac
 done
+
+# 依赖检查：每次打包都跑，避免带着过期依赖发布。
+# 只有同大版本可更新项会阻塞；跨大版本（如 Node 运行时）只提示，由人决定。
+if [ "$SKIP_DEP_CHECK" = 0 ]; then
+  command -v node >/dev/null 2>&1 \
+    || die "找不到 node，依赖检查与 sidecar 构建都需要它；把 Node.js 的 bin 目录加入 PATH"
+  log "检查依赖版本"
+  if ! node scripts/check-deps.mjs --check; then
+    [ "$UPDATE_DEPS" = 1 ] \
+      || die "依赖不是最新：先跑 node scripts/check-deps.mjs --update 与 verify-changes 再打包，或加 --update-deps 自动更新并校验"
+    log "更新依赖"
+    node scripts/check-deps.mjs --update
+    log "更新后跑 sidecar 校验"
+    ( cd sidecar && npm run typecheck && npm test ) \
+      || die "依赖更新后校验失败，不要把这次更新带进发布包"
+  fi
+else
+  log "跳过依赖检查（--skip-dep-check）"
+fi
 
 log "打包 dist/pkg（SKIP_SIDECAR=$SKIP_SIDECAR）"
 SKIP_SIDECAR="$SKIP_SIDECAR" scripts/package.sh
