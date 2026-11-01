@@ -61,6 +61,7 @@ namespace IcarusII.Game.Tools
                     _applied = false;
                     _notes = null;
                     _nextId = CustomIdStart;
+                    _sandboxInitFailedFor = null;
                 }
                 if (!_loaded)
                 {
@@ -78,7 +79,11 @@ namespace IcarusII.Game.Tools
                         _applied = true;
                     }
                 }
-                if (_applied) RefreshNotes();
+                if (_applied)
+                {
+                    EnsureGoalLogic();
+                    RefreshNotes();
+                }
             }
             catch (Exception ex)
             {
@@ -89,6 +94,8 @@ namespace IcarusII.Game.Tools
 
         private static bool _applied;
         private static Dictionary<int, string> _notes;
+        /// <summary>沙盒里补初始化失败过的存档；同一存档不再重试，避免每帧刷日志。</summary>
+        private static string _sandboxInitFailedFor;
 
         /// <summary>队列里是否还有未完成的 AI 目标分组；目标面板据此决定是否接管“自由探索”。</summary>
         public static bool HasActiveAiGoals()
@@ -111,6 +118,41 @@ namespace IcarusII.Game.Tools
             return false;
         }
 
+        /// <summary>
+        /// 沙盒存档里原生不会初始化 GoalLogic；存在 AI 目标时补一次，让判断器和面板活过来。
+        /// 同一个存档失败后不再重试，避免每帧重建。
+        /// </summary>
+        private static void EnsureGoalLogic()
+        {
+            if (!GoalPanelOverride.SandboxEnabled) return;
+
+            var scenario = GameMain.gameScenario;
+            var logic = scenario != null ? scenario.goalLogic : null;
+            if (logic == null || logic.isInit) return;
+            if (!HasActiveAiGoals()) return;
+            if (_sandboxInitFailedFor == _saveKey) return;
+
+            try
+            {
+                logic.Init(GameMain.data);
+            }
+            catch (Exception ex)
+            {
+                _sandboxInitFailedFor = _saveKey;
+                Plugin.Log.LogWarning("沙盒存档启用目标系统失败：" + ex.Message);
+                return;
+            }
+
+            if (!logic.isInit)
+            {
+                _sandboxInitFailedFor = _saveKey;
+                Plugin.Log.LogWarning("沙盒存档启用目标系统失败：GoalLogic.Init 未生效");
+                return;
+            }
+
+            Plugin.Log.LogInfo("沙盒存档已启用目标系统：显示 AI 目标");
+        }
+
         public static void Reset()
         {
             _saveKey = null;
@@ -119,6 +161,7 @@ namespace IcarusII.Game.Tools
             _applied = false;
             _needsApply = false;
             _notes = null;
+            _sandboxInitFailedFor = null;
         }
 
         public static JsonValue Templates()
@@ -298,7 +341,7 @@ namespace IcarusII.Game.Tools
             var data = GameMain.data;
             var system = data.goalSystem;
             var logic = GameMain.gameScenario != null ? GameMain.gameScenario.goalLogic : null;
-            if (system == null || logic == null || !logic.isInit) return false;
+            if (system == null || logic == null) return false;
 
             var groups = new Dictionary<int, string>();
             for (int i = 0; i < _store.goals.Count; i++)
@@ -320,12 +363,15 @@ namespace IcarusII.Game.Tools
                 EnsureGoalData(_store.goals[i].goalId, false);
 
             EnsureQueue(groups);
-            foreach (var pair in groups)
-                EnsureDeterminator(pair.Key);
-            for (int i = 0; i < _store.goals.Count; i++)
-                EnsureDeterminator(_store.goals[i].goalId);
-            foreach (var pair in groups)
-                EnsureDeterminator(pair.Key);
+            if (logic.isInit)
+            {
+                foreach (var pair in groups)
+                    EnsureDeterminator(pair.Key);
+                for (int i = 0; i < _store.goals.Count; i++)
+                    EnsureDeterminator(_store.goals[i].goalId);
+                foreach (var pair in groups)
+                    EnsureDeterminator(pair.Key);
+            }
 
             return true;
         }
@@ -560,7 +606,7 @@ namespace IcarusII.Game.Tools
         {
             var desc = GameMain.data != null ? GameMain.data.gameDesc : null;
             if (desc == null || desc.goalLevel != EGoalLevel.Off) return;
-            if (GoalPanelOverride.Enabled && HasActiveAiGoals()) return;
+            if (GoalPanelOverride.PanelShowsInOffMode()) return;
             data.Set("goalPanelOff", true);
         }
 

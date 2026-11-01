@@ -88,6 +88,10 @@
   该行为由 `icarus-ii.cfg` 的 `[Goals] ShowAiGoalsInFreeExplore` 控制，默认 `true`；
   设为 `false` 后完全恢复原生行为，此时 `game_todo_add` / `game_todo_list` 才会返回
   `goalPanelOff=true`，由模型提醒玩家把目标设置改为“关键节点”或“事无巨细”。
+  沙盒存档（沙盒工具开启且科技全解锁）里游戏会通过 `GoalTools.CheckSandbox1KeyUnlockTech()`
+  关闭整个目标系统；只要存在未完成的 AI 目标，mod 会让该门禁返回 false 并补一次
+  `GoalLogic.Init`，由 `[Goals] ShowAiGoalsInSandbox`（默认 `true`）控制；关闭时保留原生
+  “沙盒无目标”，AI 目标不会显示。此时如果目标设置不是“自由探索”，原生目标也会一起回来。
 - `mod.bridge.v1`：mod 支持第三方 mod 桥：`hello.extensions` + `mods_list` +
   每个已启用插件一个 `mod_<id>_config`，以及可选的适配器工具。
   **没有任何插件启用时，mod 不声明该能力、不发扩展列表**；启停由玩家在

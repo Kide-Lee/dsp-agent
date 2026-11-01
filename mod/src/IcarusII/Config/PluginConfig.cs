@@ -56,6 +56,9 @@ namespace IcarusII.Config
         /// <summary>自由探索下只要存在 AI 目标就展开原生目标面板；关闭后完全保留原生行为。</summary>
         public bool ShowAiGoalsInFreeExplore { get; private set; }
 
+        /// <summary>沙盒存档里只要存在 AI 目标就重新启用原生目标系统；关闭后保留沙盒“无目标”。</summary>
+        public bool ShowAiGoalsInSandbox { get; private set; }
+
         // [Agent]
         /// <summary>
         /// 思考档位：off / minimal / low / medium / high / xhigh / max。
@@ -204,6 +207,11 @@ namespace IcarusII.Config
                 "玩家把“目标建议”设为“自由探索”时，只要存在 AI 创建的目标，左侧目标面板仍然展开；\n" +
                 "原生目标仍按等级筛选，不会跟着回来。\n" +
                 "false = 完全保留原生“自由探索 = 关闭目标显示”的行为。").Value;
+
+            ShowAiGoalsInSandbox = cfg.Bind("Goals", "ShowAiGoalsInSandbox", true,
+                "沙盒存档里（沙盒工具开启且科技全解锁）游戏会关闭整个目标系统；\n" +
+                "true = 只要存在 AI 创建的目标，就重新启用目标系统并显示 AI 目标；\n" +
+                "false = 保留原生“沙盒无目标”，AI 目标不会出现在面板里。").Value;
 
             _thinkingLevelEntry = cfg.Bind("Agent", "ThinkingLevel", "high",
                 "思考档位：off | low | high | max（聊天窗只暴露这四档）。\n" +
