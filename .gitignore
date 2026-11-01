@@ -9,9 +9,15 @@ dist/
 .scratch/
 
 # sidecar
-sidecar/node_modules/
 sidecar/dist/
 *.tsbuildinfo
+
+# 第三方依赖（包管理器安装的目录，不入库；上游源码快照如 sidecar/vendor/ 仍入库）
+node_modules/
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
 
 # 运行期数据（开发时可能落在仓库内）
 .dev-data/
