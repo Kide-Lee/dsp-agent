@@ -74,6 +74,8 @@ namespace IcarusII.UI
             var builder = new StringBuilder(text.Length);
             foreach (var rawLine in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
             {
+                // 顾问字幕面板画不了表格，表格行只会留下一排竖线，整行跳过。
+                if (IsTableRow(rawLine)) continue;
                 var line = StripBullet(GameRichText.Format(rawLine, RichTextProfile.Body).Plain);
                 if (line.Length == 0) continue;
                 if (builder.Length > 0 && !EndsWithPause(builder)) builder.Append('；');
@@ -90,6 +92,21 @@ namespace IcarusII.UI
         private static bool EndsWithPause(StringBuilder builder)
         {
             return builder.Length > 0 && "：:，,；;、。！!？?".IndexOf(builder[builder.Length - 1]) >= 0;
+        }
+
+        /// <summary>Markdown 表格的数据行（以 | 开头）和分隔行（| --- | :---: |）。</summary>
+        private static bool IsTableRow(string line)
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0) return false;
+            if (trimmed[0] == '|') return true;
+            if (trimmed.IndexOf('|') < 0) return false;
+            foreach (var ch in trimmed)
+            {
+                if (ch == '|' || ch == '-' || ch == ':' || ch == ' ') continue;
+                return false;
+            }
+            return true;
         }
 
         private static string StripBullet(string line)
