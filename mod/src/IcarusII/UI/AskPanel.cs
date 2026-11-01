@@ -73,11 +73,6 @@ namespace IcarusII.UI
         private bool _reviewMode;
         private bool _confirmMode;
         private int _index;
-        /// <summary>面板里所有原生 UIButton（选项行、提交/跳过/返回/拒绝），hover 兜底用。</summary>
-        private UIButton[] _hoverables;
-        private Canvas _canvas;
-        /// <summary>本次作答里已经记过一次“补清 hover”的日志，避免每次划过选项都刷屏。</summary>
-        private bool _hoverRescued;
 
         public event Action<List<AskAnswer>> Completed;
         public event Action Cancelled;
@@ -177,8 +172,6 @@ namespace IcarusII.UI
             if (_backButton != null) _backButton.onClick.AddListener(Back);
             if (_rejectButton != null) _rejectButton.onClick.AddListener(RejectCurrent);
 
-            _hoverables = chooseRoot.GetComponentsInChildren<UIButton>(true);
-            _canvas = chooseRoot.GetComponentInParent<Canvas>();
             _bound = true;
             Hide();
             return true;
@@ -193,7 +186,6 @@ namespace IcarusII.UI
             }
             if (questions == null || questions.Count == 0) return;
 
-            _hoverRescued = false;
             _questions = questions;
             _states.Clear();
             for (int i = 0; i < _questions.Count; i++) _states.Add(new QuestionState());
@@ -591,33 +583,6 @@ namespace IcarusII.UI
             if (!_showing || _confirmMode || _reviewMode) return;
             var enter = UnityEngine.Input.GetKeyDown(KeyCode.Return) || UnityEngine.Input.GetKeyDown(KeyCode.KeypadEnter);
             if (enter) SubmitCurrent();
-        }
-
-        /// <summary>
-        /// 选项行的高亮由游戏原生 UIButton 的指针事件驱动，颜色只靠 OnPointerExit 恢复。
-        /// 指针在行上时如果面板被重新布局/切换，或指针移出游戏窗口，PointerExit 可能收不到，
-        /// 行底色就停在 hover 态；这里按指针真实位置兜底清一次。
-        /// </summary>
-        private void LateUpdate()
-        {
-            if (!_showing || _hoverables == null) return;
-            Vector2 pointer = UnityEngine.Input.mousePosition;
-            // 窗口失焦后指针位置不再更新，按"已经离开"处理，否则会一直停在最后一次的 hover 上。
-            bool focused = Application.isFocused;
-            Camera cam = _canvas != null && _canvas.renderMode != RenderMode.ScreenSpaceOverlay
-                ? _canvas.worldCamera
-                : null;
-            for (int i = 0; i < _hoverables.Length; i++)
-            {
-                var hover = _hoverables[i];
-                if (hover == null || !hover._isPointerEnter) continue;
-                if (!(hover.transform is RectTransform rt) || !rt.gameObject.activeInHierarchy) continue;
-                if (focused && RectTransformUtility.RectangleContainsScreenPoint(rt, pointer, cam)) continue;
-                hover.OnPointerExit(null);
-                if (_hoverRescued) continue;
-                _hoverRescued = true;
-                Plugin.Log.LogInfo("[ask] hover 没收到 PointerExit，已按指针位置清除：" + rt.name);
-            }
         }
 
         private void Update()

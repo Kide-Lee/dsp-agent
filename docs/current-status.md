@@ -56,9 +56,10 @@
 - 确认页第一次打开时 `AskPanel.Update()` 越界：已修复。
 - 选项 hover/选中/复选框：全部由 prefab 原生 `Toggle` / `UIToggle` 参数驱动，
   没有自定义按钮动画脚本。
-- 选项 hover 残留：原生 `UIButton` 的颜色只在 `OnPointerExit` 里恢复，指针移出窗口
-  或面板在指针下切换时会收不到 exit，行底色停在 hover 态；`AskPanel.LateUpdate`
-  按指针实际位置（含窗口失焦）兜底清一次，并记一条日志便于确认是否真的丢了事件。
+- 选项 hover 高亮残留：原生 `UIButton` 的 `normalColor` 若是纯透明 `(0,0,0,0)`，
+  `LateUpdate` 会把它当成“未设置”而沿用当前颜色，离开时就恢复成 hover 色。
+  prefab 里 9 处这类 transition 已把目标底色与 `normalColor` 改成同色相的 alpha=0 值
+  （如选项行 `74CBE900`），hover 只改透明度，离开即回到透明。
 - `explain` 内容垂直居中；第一题「跳过」居中，最后一题仍显示「下一个」。
 - 建筑/玩家位置统一为 `location`：星系/行星/经纬度，不再输出会随行星转动变化的 x/y/z。
 - 卡片点击聚焦：当前行星/建筑/矿脉先进行星视图，再用游戏原生
