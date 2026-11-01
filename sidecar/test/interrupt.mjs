@@ -46,21 +46,28 @@ const config = {
 function makeAgent(options = {}) {
   const calls = { abort: 0, steer: [], run: [] };
   let running = options.running === true;
+  let release = null;
   const agent = {
     info: { provider: 'test', model: 'test', available: true },
+    isRunning: () => running,
     run: async (text, promptId, emit) => {
       calls.run.push(text);
       running = true;
       emit.status('thinking');
-      await delay(5);
+      if (options.blocking) {
+        // 一直跑到 abort 放行，模拟真实流式回合。
+        await new Promise((resolve) => { release = resolve; });
+      } else {
+        await delay(5);
+      }
       emit.message(`回答-${text}`, promptId, true);
+      emit.status('idle');
       running = false;
     },
     abort: async () => {
       calls.abort += 1;
-      const stopped = running;
-      running = false;
-      return stopped;
+      release?.();
+      return true;
     },
     steer: async (text) => {
       calls.steer.push(text);
@@ -118,10 +125,11 @@ console.log('── 2. abort ──');
   const { agent, calls, setRunning } = makeAgent();
   const { socket, session } = await newSession(agent);
 
+  // 没有回合在跑：什么都不做（不能凭空发一个 aborting 把界面卡在“回答中”）。
   setRunning(false);
   session.handleFrame(Buffer.from(JSON.stringify({ v: 1, id: 'a-0', type: 'abort', payload: {} })), false);
   await delay(10);
-  check('空闲时 abort 也调用 agent.abort', calls.abort === 1);
+  check('空闲时 abort 不调用 agent.abort', calls.abort === 0);
   check('空闲时 abort 不回 status', frameOf(socket, 'status') === undefined);
 
   setRunning(true);
@@ -130,6 +138,28 @@ console.log('── 2. abort ──');
   const status = frameOf(socket, 'status');
   check('回答中 abort 回 status', status !== undefined);
   check('status.state = aborting', status?.payload?.state === 'aborting');
+  check('abort 调用了 agent.abort', calls.abort === 1);
+}
+
+// ---- 2b. aborting 必须在终稿和 idle 之前 ----
+console.log('── 2b. aborting 的帧序 ──');
+{
+  const { agent } = makeAgent({ blocking: true });
+  const { socket, session } = await newSession(agent);
+
+  session.handleFrame(Buffer.from(JSON.stringify({
+    v: 1, id: 'p-ab', type: 'prompt',
+    payload: { text: '慢慢说', conversationId: 'conv-a' },
+  })), false);
+  await delay(20);
+  session.handleFrame(Buffer.from(JSON.stringify({ v: 1, id: 'a-2', type: 'abort', payload: {} })), false);
+  await delay(40);
+
+  const order = socket.frames
+    .filter((f) => f.type === 'status' || f.type === 'message')
+    .map((f) => (f.type === 'message' ? 'message' : `status:${f.payload.state}`))
+    .join(',');
+  check('帧序 = thinking,aborting,message,idle', order === 'status:thinking,status:aborting,message,status:idle', order);
 }
 
 // ---- 3. 插话 ----

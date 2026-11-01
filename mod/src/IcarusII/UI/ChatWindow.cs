@@ -640,6 +640,20 @@ namespace IcarusII.UI
         private Button _sendButton;
         private Button _breakButton;
 
+        // ---- 输入区高度（内容驱动，上限后交给 prefab 里的滚动条） ----
+        private const float InputAreaMinHeight = 100f;
+        private const float InputAreaMaxHeight = 240f;
+        /// <summary>输入区上下留白：文本高度之外的那一圈。</summary>
+        private const float InputAreaPadding = 10f;
+        private LayoutElement _inputAreaLayout;
+        private ScrollRect _inputScroll;
+        private RectTransform _inputScrollContent;
+        private RectTransform _inputTextRect;
+        private int _lastInputLength = -1;
+        private float _lastInputWidth = -1f;
+        /// <summary>文本刚变过：接下来几帧再量一次，等 InputField 把文本排版更新完。</summary>
+        private int _inputAreaRefreshFrames;
+
         // ---- 工具列表（输入框上方的 popup；静态结构在 prefab，运行期只绑数据） ----
         private readonly List<ToolMenuItem> _toolCatalog = new List<ToolMenuItem>();
         private RectTransform _toolMenu;
@@ -1262,6 +1276,7 @@ namespace IcarusII.UI
             // 游戏版 InputField 默认把 ESC 当取消：失焦时把文本回滚到聚焦前的内容，
             // 刚输入的一段会整段消失。关掉它，草稿才能留下来。
             if (_input != null) _input.escapeCancel = false;
+            BindInputArea(input);
 
             // 消息模板：content 里的 example-* 就是样式样板，运行期克隆它们。
             CaptureTemplates(content);
@@ -5630,6 +5645,19 @@ namespace IcarusII.UI
         }
 
         /// <summary>标题相关的 Text（输入框、overText、左栏每一行）共用游戏图标表。</summary>
+        /// <summary>
+        /// 聊天输入框也要挂全局图标表：prefab 里那份图标表是空的（见 TryGetPreferredIconMapping），
+        /// 换上全局表之后 `\tag;` 才会被 Text 解析成图标，否则只是原样字符。
+        /// </summary>
+        private void AssignInputIconMapping(UnityEngine.UI.Youthcat.TextIconMapping mapping)
+        {
+            if (mapping == null || _input == null) return;
+            var field = _input.textComponent;
+            if (field == null || ReferenceEquals(field.iconMapping, mapping)) return;
+            field.iconMapping = mapping;
+            field.SetVerticesDirty();
+        }
+
         private void AssignTitleIconMapping(UnityEngine.UI.Youthcat.TextIconMapping mapping)
         {
             if (mapping == null) return;
@@ -6402,6 +6430,7 @@ namespace IcarusII.UI
             }
             var icons = general;
             AssignTitleIconMapping(icons);
+            AssignInputIconMapping(icons);
 
             var valid = GetValidIconTags();
             if (valid == null || valid.Count == 0)
@@ -7029,6 +7058,9 @@ namespace IcarusII.UI
             // 图标表可能比窗口/消息晚就绪（主菜单 → 存档加载）；低频补齐即可。
             if (IsOpen && ++_iconMapTick % 30 == 0) EnsureIconMappings();
 
+            // 输入区随内容长高：粘贴长文本要撑开，超过上限交给滚动条。
+            if (IsOpen) UpdateInputAreaIfNeeded();
+
             // A.14.7：非回车键的发送/换行绑定在这里轮询；回车仍走 OnInputNewLine。
             if (IsOpen) PollKeyBindings();
 
@@ -7334,6 +7366,76 @@ namespace IcarusII.UI
         {
             _busy = busy;
             RefreshSendButtons();
+        }
+
+        /// <summary>
+        /// 输入区高度要跟着内容走，所以先记住 prefab 里那几个节点：
+        /// `content-column/input`（高度由 LayoutElement 决定）、输入框自己的 ScrollRect 与 content。
+        /// </summary>
+        private void BindInputArea(InputField input)
+        {
+            if (input == null) return;
+            var inputRt = input.transform as RectTransform;
+            var fieldRt = inputRt != null ? inputRt.parent as RectTransform : null;   // InputField
+            _inputScrollContent = fieldRt != null ? fieldRt.parent as RectTransform : null;
+            var viewport = _inputScrollContent != null ? _inputScrollContent.parent as RectTransform : null;
+            _inputScroll = viewport != null ? viewport.parent != null
+                ? viewport.parent.GetComponent<ScrollRect>() : null : null;
+            var editor = _inputScroll != null ? _inputScroll.transform.parent as RectTransform : null;
+            var area = editor != null ? editor.parent as RectTransform : null;
+            _inputAreaLayout = area != null ? area.GetComponent<LayoutElement>() : null;
+            _inputTextRect = input.textComponent != null ? input.textComponent.rectTransform : null;
+            if (_inputAreaLayout == null || _inputScrollContent == null || _inputTextRect == null)
+            {
+                Plugin.Log.LogInfo("[UI] 输入区节点没找齐，长文本不会自动撑高。");
+                return;
+            }
+            _inputAreaLayout.minHeight = InputAreaMinHeight;
+            UpdateInputAreaHeight(false);
+        }
+
+        private void UpdateInputAreaIfNeeded()
+        {
+            if (_input == null || _inputAreaLayout == null) return;
+            var text = _input.text;
+            int length = text != null ? text.Length : 0;
+            float width = _inputTextRect != null ? _inputTextRect.rect.width : 0f;
+            bool changed = length != _lastInputLength || !Mathf.Approximately(width, _lastInputWidth);
+            if (!changed && _inputAreaRefreshFrames <= 0) return;
+            _lastInputLength = length;
+            _lastInputWidth = width;
+            if (changed) _inputAreaRefreshFrames = 2;
+            else _inputAreaRefreshFrames--;
+            UpdateInputAreaHeight(changed);
+        }
+
+        /// <summary>
+        /// 按文本实际高度撑开输入区；到上限后不再长高，改由 prefab 里那条竖向滚动条滚。
+        /// </summary>
+        private void UpdateInputAreaHeight(bool scrollToCaret)
+        {
+            if (_input == null || _inputAreaLayout == null || _inputTextRect == null) return;
+            var field = _input.textComponent;
+            if (field == null) return;
+
+            float textHeight = field.preferredHeight;
+            if (textHeight <= 0f) return;
+            float areaHeight = Mathf.Clamp(textHeight + InputAreaPadding, InputAreaMinHeight, InputAreaMaxHeight);
+            if (!Mathf.Approximately(_inputAreaLayout.preferredHeight, areaHeight))
+                _inputAreaLayout.preferredHeight = areaHeight;
+
+            // ScrollRect 的 content 只有比 viewport 高才滚得动。
+            var viewport = _inputScrollContent.parent as RectTransform;
+            if (viewport == null) return;
+            float viewportHeight = viewport.rect.height;
+            float contentHeight = Mathf.Max(textHeight + InputAreaPadding, viewportHeight);
+            float delta = contentHeight - viewportHeight;
+            if (!Mathf.Approximately(_inputScrollContent.sizeDelta.y, delta))
+                _inputScrollContent.sizeDelta = new Vector2(_inputScrollContent.sizeDelta.x, delta);
+
+            // 光标停在末尾（粘贴/续写）时跟到底部，否则新内容会落在视口外面。
+            if (scrollToCaret && _inputScroll != null && _input.caretPosition >= (_input.text != null ? _input.text.Length : 0))
+                _inputScroll.verticalNormalizedPosition = 0f;
         }
 
         private bool HasPendingInput()

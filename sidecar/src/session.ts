@@ -1530,27 +1530,29 @@ export class Session {
       this.sendError('unauthorized', 'handshake not completed', env.id || null);
       return;
     }
-    const abort = this.options.agent.abort;
+    const agent = this.options.agent;
+    const abort = agent.abort;
     if (!abort) {
       this.sendError('internal', '当前 agent 不支持中断', env.id || null);
       return;
     }
+    if (agent.isRunning && !agent.isRunning()) {
+      this.logger.info('收到 abort，但没有运行中的回合，忽略');
+      return;
+    }
     this.logger.info('收到 abort');
+    // abort() 要等 agent 空闲才返回，那时 interrupted 终稿和 idle 已经发出去了；
+    // aborting 必须在中断动作之前发，否则会排在 idle 后面，把界面重新置成「回答中」。
+    this.sendEnvelope(
+      buildEnvelope({
+        type: MessageType.Status,
+        payload: buildStatusPayload('aborting'),
+      }),
+    );
     // 不排队：中断必须立刻作用在当前回合上（排队会等回合结束，等于没断）。
-    void abort
-      .call(this.options.agent)
-      .then((stopped) => {
-        if (!stopped || this._state !== 'ready') return;
-        this.sendEnvelope(
-          buildEnvelope({
-            type: MessageType.Status,
-            payload: buildStatusPayload('aborting'),
-          }),
-        );
-      })
-      .catch((err: unknown) => {
-        this.logger.warn('中断失败', errorFields(err));
-      });
+    void abort.call(agent).catch((err: unknown) => {
+      this.logger.warn('中断失败', errorFields(err));
+    });
   }
 
   /**

@@ -205,6 +205,12 @@ export interface AgentRunner {
   /** A.15：中断当前正在生成的回合；返回是否真的中断了一个回合。 */
   abort?(): Promise<boolean>;
   /**
+   * A.15：是否有回合正在跑。
+   * `abort()` 要等 agent 空闲才返回，那时收尾帧已经发出去了，
+   * 所以 `status{aborting}` 必须靠这个同步判断先发，不能等 abort 的返回值。
+   */
+  isRunning?(): boolean;
+  /**
    * A.15：插话。当前回合在跑时把这句话投递进该回合并返回 true；
    * 没有回合在跑（或实现不支持）时返回 false，由调用方退回普通提问。
    */
@@ -2743,6 +2749,11 @@ export class PiAgent implements AgentRunner {
     const next = previous.then(task, task);
     this.chain = next.catch(() => undefined);
     return next;
+  }
+
+  /** A.15：是否有回合正在跑。 */
+  isRunning(): boolean {
+    return this.active !== null;
   }
 
   /** A.15：中断当前回合。pi 的 abort() 会等到空闲，收尾由 runOnce 负责。 */
