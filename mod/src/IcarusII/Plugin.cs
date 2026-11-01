@@ -370,7 +370,7 @@ namespace IcarusII
 
         /// <summary>
         /// 有些插件在 Start（而不是 Awake）里才 Config.Bind，hello 时配置项还是 0。
-        /// 只在“即将需要工具列表”的时机比较一次：连接就绪、玩家发送、处理工具调用前。
+        /// 只在“即将需要工具列表”的时机比较一次：连接就绪、玩家发送。
         /// </summary>
         private void RefreshModExtensions()
         {
@@ -734,7 +734,6 @@ namespace IcarusII
                     break;
 
                 case Protocol.ToolCall:
-                    RefreshModExtensions();
                     OnToolCall(payload, replyTo);
                     break;
 
