@@ -110,6 +110,15 @@ namespace IcarusII
         }
         private PendingAsk _pendingAsk;
 
+        /// <summary>聊天窗关着时收到的 ask_user；开窗后再把作答面板放出来。</summary>
+        private List<AskQuestion> _pendingAskQuestions;
+
+        /// <summary>聊天窗关着时收到的写操作确认；开窗后再把确认页放出来。</summary>
+        private ConfirmRequestInfo _pendingConfirm;
+
+        /// <summary>后台事件 → 游戏原生顾问字幕（不受「顾问提示」开关影响）。</summary>
+        private AdvisorNotifier _advisor;
+
         /// <summary>写操作确认令牌（sidecar 生成、mod 校验、单次使用）。</summary>
         private readonly ConfirmationService _confirmation = new ConfirmationService();
 
@@ -153,6 +162,7 @@ namespace IcarusII
                 _dispatcher = new MainThreadDispatcher();
                 _tools = new GameToolDispatcher(Log);
                 _hotkey = new HotkeyService(_config);
+                _advisor = new AdvisorNotifier(_hotkey);
                 _chat = new ChatWindow();
                 _chat.Submitted += OnUserSubmitted;
                 _chat.ThinkingLevelChanged += OnThinkingLevelChanged;
@@ -238,6 +248,7 @@ namespace IcarusII
             if (!GameRefs.IsInGame)
             {
                 if (_chat.IsOpen) _chat.SetOpen(false);
+                _advisor.DismissAll();
                 return;
             }
 
@@ -287,6 +298,10 @@ namespace IcarusII
                 Log.LogInfo($"[热键] {_hotkey.Key} 已按下但被拒绝：{blockedBy}");
                 Log.LogInfo($"[热键]   判定依据：{GameRefs.DescribeHotkeyGate()}");
             }
+
+            // 顾问提示放在最后：刚打开的窗口会在 OnWindowOpened 里清空提示，
+            // 同帧不该再弹出。
+            _advisor.Tick();
         }
 
         /// <summary>
@@ -303,6 +318,7 @@ namespace IcarusII
         {
             try { CancelPendingAsk("插件卸载", Protocol.CodeCancelled); } catch { /* ignore */ }
             try { CancelPendingConfirm("插件卸载"); _confirmation.Clear(); GameTether.Clear(); } catch { /* ignore */ }
+            try { _advisor?.DismissAll(); } catch { /* ignore */ }
             try { AgentMenuButton.Reset(); } catch (Exception ex) { Log?.LogWarning($"清理 Game Menu 入口失败：{ex.Message}"); }
             try { _chat?.Destroy(); } catch (Exception ex) { Log?.LogWarning($"清理 UI 失败：{ex.Message}"); }
             try { _tools?.CancelAll("插件卸载"); } catch { /* ignore */ }
@@ -726,6 +742,9 @@ namespace IcarusII
                         _client?.SendReplyTime(prompt, finalText, ChatWindow.CurrentGameClock());
                         _promptById.Remove(replyTo);
                     }
+
+                    // 窗口关着时用顾问字幕提醒「回完了」；开着就已经看见了。
+                    if (!_chat.IsOpen) _advisor.NotifyReply(prompt, finalText);
                     break;
                 }
 
@@ -864,6 +883,20 @@ namespace IcarusII
                 return;
             }
 
+            // 窗口关着：不抢焦点开窗，先用顾问字幕提示，等玩家自己按热键进来。
+            if (!_chat.IsOpen)
+            {
+                _pendingAskQuestions = questions;
+                _pendingAsk = new PendingAsk
+                {
+                    CallId = call.CallId,
+                    Deadline = Time.realtimeSinceStartup + call.TimeoutMs / 1000f,
+                };
+                _advisor.NotifyAsk(questions);
+                Log.LogInfo($"[ask] 窗口关闭，已用顾问提示通知玩家（{questions.Count} 题）。");
+                return;
+            }
+
             _chat.SetOpen(true);
             if (!_chat.ShowAsk(questions))
             {
@@ -933,6 +966,16 @@ namespace IcarusII
                 Log.LogWarning($"[confirm] 无法登记确认请求：{error}");
                 return;
             }
+
+            // 窗口关着：不抢焦点开窗，先用顾问字幕提示；确认页等玩家按热键进来再放。
+            if (!_chat.IsOpen)
+            {
+                _pendingConfirm = request;
+                _advisor.NotifyConfirm(request.Title, request.Body);
+                Log.LogInfo($"[confirm] 窗口关闭，已用顾问提示通知玩家 {request.Tool} callId={request.CallId}");
+                return;
+            }
+
             if (!_chat.ShowConfirmation(request.Title, request.Body))
             {
                 _confirmation.TryResolve(request.RequestId, false, out _);
@@ -957,6 +1000,7 @@ namespace IcarusII
                 return;
             }
             SendConfirmResult(resolved, accepted);
+            ClearPendingConfirm();
             _chat?.SetStatus(Strings.Get("status.ready"), accepted ? OkColor : WarnColor);
         }
 
@@ -984,6 +1028,7 @@ namespace IcarusII
             if (request == null) return;
             _confirmation.TryResolve(request.RequestId, false, out _);
             SendConfirmResult(request, false);
+            ClearPendingConfirm();
             _chat?.CancelAsk();
             _chat?.SetStatus(Strings.Get("status.ready"), WarnColor);
             Log.LogInfo($"[confirm] 取消确认：{reason}");
@@ -994,8 +1039,16 @@ namespace IcarusII
             var expired = _confirmation.Expire();
             if (expired == null) return;
             SendConfirmResult(expired, false);
+            ClearPendingConfirm();
             _chat?.CancelAsk();
             _chat?.SetStatus(Strings.Get("status.ready"), WarnColor);
+        }
+
+        /// <summary>确认页收尾：清掉「开窗后再放」的暂存和还没消失的顾问字幕。</summary>
+        private void ClearPendingConfirm()
+        {
+            _pendingConfirm = null;
+            _advisor?.Dismiss(AdvisorNotifier.ConfirmTipId);
         }
 
         private void OnAskCompleted(List<AskAnswer> answers)
@@ -1003,6 +1056,7 @@ namespace IcarusII
             var pending = _pendingAsk;
             if (pending == null) return;
             _pendingAsk = null;
+            ClearPendingAsk();
             _client?.SendToolResult(pending.CallId, true, BuildAskAnswers(answers),
                 null, null, JsonValue.NewObject());
             _chat?.SetStatus(Strings.Get("status.ready"), OkColor);
@@ -1013,6 +1067,7 @@ namespace IcarusII
             var pending = _pendingAsk;
             if (pending == null) return;
             _pendingAsk = null;
+            ClearPendingAsk();
             _client?.SendToolResult(pending.CallId, false, JsonValue.Null,
                 Protocol.CodeCancelled, "玩家取消了提问", JsonValue.NewObject());
             _chat?.SetStatus(Strings.Get("status.ready"), OkColor);
@@ -1024,10 +1079,18 @@ namespace IcarusII
             var pending = _pendingAsk;
             if (pending == null) return;
             _pendingAsk = null;
+            ClearPendingAsk();
             _chat?.CancelAsk();
             _client?.SendToolResult(pending.CallId, false, JsonValue.Null, code, reason,
                 JsonValue.NewObject());
             _chat?.SetStatus(Strings.Get("status.ready"), OkColor);
+        }
+
+        /// <summary>作答收尾：清掉「开窗后再放」的暂存和还没消失的顾问字幕。</summary>
+        private void ClearPendingAsk()
+        {
+            _pendingAskQuestions = null;
+            _advisor?.Dismiss(AdvisorNotifier.AskTipId);
         }
 
         private void CheckAskTimeout()
@@ -1930,6 +1993,10 @@ namespace IcarusII
 
         private void OnWindowOpened()
         {
+            // 顾问提示的使命就是「把玩家叫进来」，开窗即撤；后台攒下的作答/确认页在这里补上。
+            _advisor.DismissAll();
+            ShowDeferredPrompt();
+
             // 空记录时给一句欢迎语：一块什么都没有的深色面板看着像没做完，
             // 而且玩家也不知道这个窗口到底能问什么。
             if (!_welcomeShown && _chat.TranscriptEmpty)
@@ -1947,6 +2014,41 @@ namespace IcarusII
             // 首次打开时补一条提示，避免玩家不知道窗口有没有在工作
             if (_client.State == ConnectionState.Ready) return;
             _chat.SetStatus(Strings.Get("status.connecting"), null);
+        }
+
+        /// <summary>
+        /// 补上窗口关着时收到的作答/确认面板。两者互斥（confirm 内部也用同一块 choose 面板），
+        /// 所以先确认、后作答。
+        /// </summary>
+        private void ShowDeferredPrompt()
+        {
+            if (_pendingConfirm != null)
+            {
+                var request = _pendingConfirm;
+                _pendingConfirm = null;
+                if (_confirmation.Current == null) return;
+                if (!_chat.ShowConfirmation(request.Title, request.Body))
+                {
+                    _confirmation.TryResolve(request.RequestId, false, out _);
+                    SendConfirmResult(request, false);
+                    return;
+                }
+                _chat.SetStatus(Strings.Get("confirm.waiting"), AccentColor);
+                return;
+            }
+
+            if (_pendingAskQuestions == null) return;
+            var questions = _pendingAskQuestions;
+            _pendingAskQuestions = null;
+            var pending = _pendingAsk;
+            if (pending == null) return;
+            if (!_chat.ShowAsk(questions))
+            {
+                _pendingAsk = null;
+                SendAskError(pending.CallId, Protocol.CodeToolUnavailable, "作答面板不可用");
+                return;
+            }
+            _chat.SetStatus(Strings.Get("ask.waiting"), AccentColor);
         }
 
         /// <summary>

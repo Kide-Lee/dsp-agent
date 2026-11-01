@@ -25,6 +25,8 @@
     <Compile Include="../../mod/src/IcarusII/Input/KeyChord.cs" Link="KeyChord.cs" />
     <!-- 目标面板的等级覆盖状态机不依赖 UnityEngine，恢复错了会改掉玩家的目标设置 -->
     <Compile Include="../../mod/src/IcarusII/Game/GoalLevelSwap.cs" Link="GoalLevelSwap.cs" />
+    <!-- 顾问提示的截断/转义/快捷键着色不依赖 UnityEngine，面板宽度全靠这里压字数 -->
+    <Compile Include="../../mod/src/IcarusII/UI/AdvisorText.cs" Link="AdvisorText.cs" />
   </ItemGroup>
 
 </Project>

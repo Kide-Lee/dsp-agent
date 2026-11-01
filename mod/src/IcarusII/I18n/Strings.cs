@@ -40,6 +40,14 @@ namespace IcarusII.I18n
             ["confirm.step"] = "确认",
             ["confirm.agree"] = "同意",
             ["confirm.reject"] = "拒绝",
+            // 顾问提示：聊天窗关着时的后台通知。{2} 是着色后的快捷键，见 AdvisorText.HotkeyMarkup。
+            ["advisor.notice.reply"] =
+                "我已回复「{0}」，请过目：\n{1}\n请您按{2}键进入工业机甲终端查看完整内容。",
+            ["advisor.notice.confirm"] =
+                "工程师，我请求{0}：\n{1}\n请您按{2}键进入工业机甲终端进行授权。",
+            ["advisor.notice.ask"] =
+                "我需要您为如下事项做出抉择：\n{0}\n请您按{1}键进入工业机甲终端作出批示。",
+            ["advisor.notice.unknown_question"] = "你的问题",
             ["config.missing_key"] =
                 "尚未配置 AI。请点击窗口右上角的设置按钮，在「模型」页填写 API Key 并保存。",
             ["config.invalid_key"] =
