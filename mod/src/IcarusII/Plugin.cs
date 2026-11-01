@@ -79,6 +79,10 @@ namespace IcarusII
         /// <summary>权限档位在本地改过、但还没成功发给 sidecar（下次 ready 时补发）。</summary>
         private bool _permissionLevelDirty;
 
+        /// <summary>扩展列表的周期检查：插件可能在 Start 里才注册配置项。</summary>
+        private float _nextModsCheck;
+        private string _lastModsSnapshot;
+
         /// <summary>最近一个已渲染终稿的 promptId，用于对重复的 message{final} 去重。</summary>
         private string _lastFinalReplyTo;
         /// <summary>请求 id → 用户提问原文；final 到达时用来回存该回答的游戏时间。</summary>
@@ -200,6 +204,8 @@ namespace IcarusII
             if (_initFailed) return;
 
             _dispatcher.Drain(MainThreadBudgetMs, ex => Log.LogError($"主线程任务异常：{ex}"));
+
+            RefreshModExtensions();
 
             // 先同步存档绑定：换档后旧工具调用必须在同帧被取消，不能带着新档的数据返回。
             SyncSaveBinding();
@@ -341,22 +347,41 @@ namespace IcarusII
         /// 插件开关或适配器变化后，把最新的能力/扩展列表推给 sidecar。
         /// 断线时忽略——下一条 hello 会带上最新状态。
         /// </summary>
-        internal void NotifyExtensionsChanged()
+        internal bool NotifyExtensionsChanged()
         {
             var client = _client;
-            if (client is null) return;
+            if (client is null) return false;
             try
             {
                 var payload = Protocol.BuildClientState(
                     SidecarLauncher.BuildCapabilities(),
                     SidecarLauncher.BuildExtensions());
-                if (!client.Send(Protocol.Extensions, payload))
-                    Log?.LogDebug("[mods] sidecar 未就绪，插件列表变化留给下次 hello");
+                if (client.Send(Protocol.Extensions, payload))
+                {
+                    _lastModsSnapshot = ModBridge.Snapshot();
+                    return true;
+                }
+                Log?.LogDebug("[mods] sidecar 未就绪，插件列表变化留给下次 hello");
+                return false;
             }
             catch (Exception ex)
             {
                 Log?.LogWarning($"[mods] 推送插件列表失败：{ex.Message}");
+                return false;
             }
+        }
+
+        /// <summary>
+        /// 有些插件在 Start（而不是 Awake）里才 Config.Bind，hello 时配置项还是 0。
+        /// 每两秒比较一次插件集合/配置项/工具名，有变化就补发扩展列表。
+        /// </summary>
+        private void RefreshModExtensions()
+        {
+            if (Time.unscaledTime < _nextModsCheck) return;
+            _nextModsCheck = Time.unscaledTime + 2f;
+            var snapshot = ModBridge.Snapshot();
+            if (string.Equals(snapshot, _lastModsSnapshot, StringComparison.Ordinal)) return;
+            if (NotifyExtensionsChanged()) _lastModsSnapshot = snapshot;
         }
 
         private void OnClientStateChanged(ConnectionState state, string detail)

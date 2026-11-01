@@ -573,6 +573,6 @@ manifest 只是把**已经存在的方法**暴露成工具：
   把写操作归属告诉 mod，mod 用该插件的档位而不是全局档位。
 - 适配器闭环：`mods_api_list` 拿签名 → `mods_adapter_create` 提交结构化绑定 → 玩家确认 →
   写入 `config/icarus-ii/bridge/<guid>.json` → 热载。AI 生成的文件带 `source=ai`、
-  `pluginVersion==当前版本`，risk 最低 1，risk 2 必须 undo；`mods_adapter_delete` 可删除并撤销。
+  `pluginVersion==当前版本`，生成的能力一律按 risk 2（每次确认）；`mods_adapter_delete` 可删除并撤销。
 - 新增协议消息 `extensions`（B.1.9）：开关插件、创建/删除适配器后即时把能力/扩展列表推给
   sidecar，回合边界重建会话，不再需要重启游戏（装/卸 mod 本身仍需重启）。

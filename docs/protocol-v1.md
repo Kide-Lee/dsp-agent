@@ -1889,7 +1889,8 @@ manifest 格式：
 - AI 起草：先调 `mods_api_list` 拿真实签名，再用 `mods_adapter_create` 提交**结构化绑定**；
   mod 校验类型/方法/参数白名单后写入 `BepInEx/config/icarus-ii/bridge/<guid>.json`，玩家在确认卡里批准。
 - AI 生成的文件带 `"source": "ai"`，`pluginVersion` 固定为 `==<当前版本>`；插件更新后版本不匹配即禁用。
-- AI 不能指定 `risk: 0`：生成的能力最低按 risk 1 处理；`risk 2` 必须声明 `undo`。
+- AI 生成的能力**一律按 risk 2**（每次确认），AI 不能设置 `risk`；玩家可以在该 mod 的权限档位里改成接管来放行。
+- 手写/随包 manifest 的 `risk 2` 仍必须声明 `undo`。
 - 写入后 mod 调用 `ModManifest.Reset()` 并推送 B.1.9，下一轮工具才可用。
 
 ### B.1.8 uGUI 控件树（`ui.tree.v1`，P3）

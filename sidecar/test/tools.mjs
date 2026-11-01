@@ -781,6 +781,14 @@ async function run() {
     check('适配器创建记为写工具', isWriteToolName('mods_adapter_create'));
     check('适配器创建 risk=2', writeToolRisk('mods_adapter_create') === 2);
     check('适配器删除 risk=2', writeToolRisk('mods_adapter_delete') === 2);
+
+    const adapterHost = new GameToolHost();
+    adapterHost.setCapabilities([CAPABILITY_MOD_BRIDGE]);
+    const createTool = createGameTools(adapterHost).find((item) => item.name === 'mods_adapter_create');
+    check('适配器创建已注册', !!createTool);
+    check('适配器 schema 不暴露 risk', createTool?.parameters?.properties?.risk === undefined);
+    check('适配器 schema 需要 guid', !!createTool?.parameters?.properties?.guid);
+    check('适配器 schema 需要 tools', !!createTool?.parameters?.properties?.tools);
     check('声明能力+插件时广告 mod_aux_config', names.includes('mod_aux_config'));
     check('未声明能力时不广告 mod_aux_config', !toolNamesForCapabilities([], [extension]).includes('mod_aux_config'));
     check('没有插件时不广告 mod_aux_config', !toolNamesForCapabilities([CAPABILITY_MOD_BRIDGE], []).includes('mod_aux_config'));

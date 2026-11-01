@@ -334,7 +334,7 @@ function describeConfirmation(
         body: `mod：${fmt(args['guid'])}\n` +
           `工具：${summarizeAdapterTools(args['tools'])}\n` +
           '会把绑定写入 config/icarus-ii/bridge 并热载；创建后下一轮才可用。' +
-          'AI 只能按方法名推断风险，生成的能力最低按 risk 1 处理；不放心可把该 mod 档位调成只读。',
+          'AI 只能按方法名推断风险，生成的能力一律按 risk 2 处理（每次确认）；想放行可把该 mod 档位调成接管。',
       };
     case 'mods_adapter_delete':
       return {

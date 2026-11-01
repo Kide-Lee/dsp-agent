@@ -19,7 +19,6 @@ namespace IcarusII.Game.Tools
     internal static class ModAdapters
     {
         internal const int MaxToolsPerAdapter = 12;
-        internal const int MinAiRisk = 1;
         private const int MinTimeoutMs = 500;
         private const int MaxTimeoutMs = 30000;
 
@@ -163,8 +162,9 @@ namespace IcarusII.Game.Tools
             if (!used.Add(full))
                 throw new InvalidOperationException($"工具名重复：{full}");
 
-            var risk = item["risk"].AsInt(0);
-            risk = Math.Max(MinAiRisk, Math.Min(2, risk));
+            // AI 只能按方法名猜风险；生成的绑定一律按 risk 2（每次确认），
+            // 玩家可以在该 mod 的权限档位里改成接管来放行。
+            const int risk = 2;
             var timeout = item["timeoutMs"].AsInt(8000);
             timeout = Math.Max(MinTimeoutMs, Math.Min(MaxTimeoutMs, timeout));
 
@@ -262,6 +262,17 @@ namespace IcarusII.Game.Tools
             {
                 var name = arg.AsString(string.Empty);
                 if (name.Length == 0) throw new InvalidOperationException($"{label} 的参数映射不能是空字符串");
+                // AI 常写 ${key} / $key；统一折成 {"arg": "key"}。
+                if (name[0] == '$')
+                {
+                    var inner = name.Length > 3 && name[1] == '{' && name[name.Length - 1] == '}'
+                        ? name.Substring(2, name.Length - 3)
+                        : name.Substring(1);
+                    if (inner.Length == 0) throw new InvalidOperationException($"{label} 的参数引用不能为空");
+                    var reference = JsonValue.NewObject();
+                    reference.Set("arg", inner);
+                    return reference;
+                }
                 return JsonValue.Of(name);
             }
             if (!arg.IsObject) throw new InvalidOperationException($"{label} 的参数映射必须是字符串或对象");

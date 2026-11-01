@@ -205,10 +205,13 @@ namespace IcarusII.Game.Tools
         {
             var accepted = new List<ManifestTool>();
             var id = ModBridge.IdFor(info);
+            var aiGenerated = string.Equals(manifest.Source, "ai", StringComparison.OrdinalIgnoreCase);
             foreach (var tool in manifest.Tools)
             {
                 if (tool is null || string.IsNullOrEmpty(tool.Name)) continue;
-                if (tool.Risk >= 2 && tool.Undo is null)
+                // AI 生成的绑定没有 undo，但一律按 risk 2 确认；手写/随包仍要求 risk 2 带 undo。
+                if (aiGenerated && tool.Risk < 2) tool.Risk = 2;
+                if (tool.Risk >= 2 && tool.Undo is null && !aiGenerated)
                 {
                     Plugin.Log?.LogWarning($"[mods] risk 2 工具缺少 undo，跳过：{tool.Name}");
                     continue;
@@ -475,6 +478,16 @@ namespace IcarusII.Game.Tools
             return ToJson(result);
         }
 
+        /// <summary>兼容 AI 常写的 `${name}` / `$name`；普通字符串按同名参数处理。</summary>
+        private static string ArgName(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value[0] != '$') return value;
+            var inner = value.Length > 3 && value[1] == '{' && value[value.Length - 1] == '}'
+                ? value.Substring(2, value.Length - 3)
+                : value.Substring(1);
+            return inner.Length > 0 ? inner : value;
+        }
+
         private static List<JsonValue> BuildArguments(JsonValue toolArgs, JsonValue mapping)
         {
             var list = new List<JsonValue>();
@@ -483,7 +496,7 @@ namespace IcarusII.Game.Tools
             {
                 if (item.IsString)
                 {
-                    list.Add(toolArgs[item.AsString(string.Empty)]);
+                    list.Add(toolArgs[ArgName(item.AsString(string.Empty))]);
                     continue;
                 }
                 if (!item.IsObject) { list.Add(JsonValue.Null); continue; }

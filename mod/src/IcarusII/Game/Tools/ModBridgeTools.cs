@@ -82,6 +82,25 @@ namespace IcarusII.Game.Tools
             return null;
         }
 
+        /// <summary>
+        /// 扩展列表的指纹：插件集合 + 配置项数量 + manifest 工具名。
+        /// 有些插件在 Start 里才 Config.Bind，hello 时还是 0；插件主循环用它发现变化后补发。
+        /// </summary>
+        internal static string Snapshot()
+        {
+            var sb = new StringBuilder();
+            foreach (var info in Plugins())
+            {
+                var guid = info.Metadata.GUID ?? string.Empty;
+                sb.Append(guid).Append('|');
+                sb.Append(Entries(info).Count).Append('|');
+                foreach (var tool in ModManifest.ToolsFor(guid))
+                    sb.Append(tool.Name).Append(',');
+                sb.Append(';');
+            }
+            return sb.ToString();
+        }
+
         /// <summary>某个插件声明的全部配置项，按 section/key 排序；未加载成功时返回空。</summary>
         internal static List<ConfigEntryBase> Entries(PluginInfo info)
         {
