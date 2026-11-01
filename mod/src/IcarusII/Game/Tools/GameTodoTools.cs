@@ -72,4 +72,33 @@ namespace IcarusII.Game.Tools
             return Ok("已删除游戏目标");
         }
     }
+
+    /// <summary>轮内待办：整表替换原生面板第一组“AI 待办”。risk 1，玩家可直接跳过条目。</summary>
+    internal sealed class TodoWriteTool : WriteToolBase
+    {
+        public override string Name => "game_todo_write";
+
+        protected override GameToolJobResult Execute(JsonValue args)
+        {
+            if (!GameRefs.IsInGame || GameMain.data == null) throw Fail("当前不在游戏内");
+            GameGoals.Tick();
+            try
+            {
+                var data = GameGoals.WriteTodo(args);
+                var counts = data["counts"];
+                var message = "待办已更新：" +
+                              data["count"].AsInt(0).ToString(CultureInfo.InvariantCulture) + " 条（完成 " +
+                              counts["completed"].AsInt(0).ToString(CultureInfo.InvariantCulture) + "）";
+                if (counts["skipped"].AsInt(0) > 0)
+                    message += "；玩家已跳过 " + counts["skipped"].AsInt(0).ToString(CultureInfo.InvariantCulture) + " 条";
+                if (data["goalPanelOff"].AsBool(false))
+                    message += "；目标面板当前关闭（自由探索且未接管显示），请打开目标显示";
+                return Ok(message, data);
+            }
+            catch (Exception ex)
+            {
+                throw Fail(ex.Message);
+            }
+        }
+    }
 }

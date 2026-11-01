@@ -43,6 +43,7 @@ const CAPABILITIES = [
   'game.storage.v1',
   'game.tether.v1',
   'game.todo.v1',
+  'game.todo.write.v1',
   'mod.bridge.v1',
   'ui.tree.v1',
 ] as const;
@@ -100,10 +101,11 @@ const GROUPS: DocGroup[] = [
   },
   {
     file: 'game-assist.md',
-    title: '辅助 · 方位指示与游戏目标',
+    title: '辅助 · 方位指示、目标与待办',
     intro:
-      'tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”面板，不是 mod 自己的清单。',
-    capabilities: ['game.tether.v1', 'game.todo.v1'],
+      'tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”面板，不是 mod 自己的清单；' +
+      'game_todo_write 把轮内待办整表写入原生面板的第一组。',
+    capabilities: ['game.tether.v1', 'game.todo.v1', 'game.todo.write.v1'],
   },
   {
     file: 'kb.md',
@@ -169,8 +171,14 @@ const MANUAL_FIELDS: Record<string, CsInfo & { source: string }> = {
   game_todo_list: {
     timeoutMs: 5000,
     topFields: ['goals', 'count'],
-    allFields: ['groupId', 'goalId', 'group', 'title', 'templateId', 'current', 'target', 'stage'],
+    allFields: ['groupId', 'goalId', 'group', 'title', 'templateId', 'current', 'target', 'stage', 'todo'],
     source: 'GameGoals.List()',
+  },
+  game_todo_write: {
+    timeoutMs: 5000,
+    topFields: ['group', 'todos', 'count', 'counts'],
+    allFields: ['id', 'content', 'status'],
+    source: 'GameGoals.WriteTodo() / GameGoals.TodoResult()',
   },
 };
 

@@ -7,7 +7,7 @@
 
 ## 工具清单
 
-共 56 个模型可见工具。
+共 57 个模型可见工具。
 
 | 工具 | label | 能力位 | 风险 | 超时 | 一句话 |
 | --- | --- | --- | --- | --- | --- |
@@ -51,9 +51,10 @@
 | [`game_tether_clear`](game-assist.md#game_tether_clear) | 清除方位 | `game.tether.v1` | risk 1 | 8000ms | 清除本 mod 建立的所有方位指示（导航朝向和建筑追踪线）。 |
 | [`game_tether_list`](game-assist.md#game_tether_list) | 方位列表 | `game.tether.v1` | 只读 | 5000ms | 列出当前方位指示（行星/建筑/矿脉及名称）。 |
 | [`game_todo_add`](game-assist.md#game_todo_add) | 新增游戏目标 | `game.todo.v1` | risk 2 | 8000ms | 在原生左侧“游戏目标”面板新增目标。 |
-| [`game_todo_list`](game-assist.md#game_todo_list) | 当前游戏目标 | `game.todo.v1` | 只读 | 5000ms | 读取 AI 创建的原生游戏目标及当前值/目标值/阶段，以及目标面板当前是否真的没有显示。 |
+| [`game_todo_list`](game-assist.md#game_todo_list) | 当前游戏目标 | `game.todo.v1` | 只读 | 5000ms | 读取 AI 创建的原生游戏目标（含轮内待办）及当前值/目标值/阶段，以及目标面板当前是否真的没有显示。 |
 | [`game_todo_remove`](game-assist.md#game_todo_remove) | 删除游戏目标 | `game.todo.v1` | risk 2 | 8000ms | 删除 AI 创建的原生游戏目标；groupId 删除整组，goalId 删除单个子目标。 |
 | [`game_todo_templates`](game-assist.md#game_todo_templates) | 目标模板 | `game.todo.v1` | 只读 | 5000ms | 列出游戏原生 GoalProto 目标模板：id、名称、判断器、等级、父分组和默认参数。 |
+| [`game_todo_write`](game-assist.md#game_todo_write) | 更新待办 | `game.todo.write.v1` | risk 1 | 5000ms | 把当前任务清单整份写入游戏左侧目标面板的第一组“AI 待办”。 |
 | [`kb_get`](kb.md#kb_get) | 知识库条目 | 本地 | 只读 | — | 按类别 + id/名称/SID 精确读取一条知识库条目（物品、配方、科技、建筑、矿脉、提示、教程、里程碑、指引、术语等）。 |
 | [`kb_plan`](kb.md#kb_plan) | 产线规划 | 本地 | 只读 | — | 给定目标物品的每分钟产量，算出要建多少台什么机器、总功率、每条输入要几条传送带，并复用 kb_recipe_tree 给出原料与副产物。 |
 | [`kb_recipe_tree`](kb.md#kb_recipe_tree) | 配方树 | 本地 | 只读 | — | 按游戏本体的主配方递归展开一个物品，计算直接输入、原料总量与副产物。 |
@@ -77,7 +78,7 @@
 | [game-progress.md](game-progress.md) | 只读 · 进度、截图与区域分析 | 3 |
 | [game-write-basic.md](game-write-basic.md) | 写操作 · 标记、面板、研究与丢弃 | 5 |
 | [game-write-build.md](game-write-build.md) | 写操作 · 配方、投料与仓储 | 9 |
-| [game-assist.md](game-assist.md) | 辅助 · 方位指示与游戏目标 | 7 |
+| [game-assist.md](game-assist.md) | 辅助 · 方位指示、目标与待办 | 8 |
 | [kb.md](kb.md) | 知识库（sidecar 本地） | 4 |
 | [wiki.md](wiki.md) | Wiki（sidecar 本地，联网） | 2 |
 | [blueprint.md](blueprint.md) | 蓝图（本地文件 + 社区站点） | 5 |
@@ -106,6 +107,7 @@ mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告�
 | `game.build.v1` | 4 | `game_set_recipe`、`game_set_assembler_batch`、`game_feed_input` |
 | `game.storage.v1` | 5 | `game_storage_set_filter`、`game_storage_set_limit`、`game_storage_move` |
 | `game.tether.v1` | 3 | `game_tether_add`、`game_tether_clear`、`game_tether_list` |
+| `game.todo.write.v1` | 1 | `game_todo_write` |
 | 本地（始终注册） | 13 | `ask_user`、`run_script`、`kb_search` |
 
 ### 不在模型工具列表里的工具

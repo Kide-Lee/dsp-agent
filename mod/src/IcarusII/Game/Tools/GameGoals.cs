@@ -19,6 +19,15 @@ namespace IcarusII.Game.Tools
         private const string StorePrefix = "icarus2-goals:";
         private const string StoreTitle = "Icarus II 目标";
 
+        /// <summary>待办固定占用目标 id 900 起的独立段；id 小于原生目标（1000+），面板排序时排在第一。</summary>
+        private const int TodoGroupId = 900;
+        private const int TodoItemIdStart = 901;
+        private const int TodoItemLimit = 20;
+        private const string TodoStatusPending = "pending";
+        private const string TodoStatusInProgress = "in_progress";
+        private const string TodoStatusCompleted = "completed";
+        private const string TodoStatusSkipped = "skipped";
+
         [Serializable]
         private sealed class StoredGoal
         {
@@ -30,10 +39,20 @@ namespace IcarusII.Game.Tools
             public long[] parameters;
         }
 
+        /// <summary>轮内待办的一项；id 固定落在 901+，text 是显示文案，status 是三态。</summary>
+        [Serializable]
+        private sealed class StoredTodo
+        {
+            public int id;
+            public string text;
+            public string status;
+        }
+
         [Serializable]
         private sealed class StoredSet
         {
             public List<StoredGoal> goals = new List<StoredGoal>();
+            public List<StoredTodo> todos = new List<StoredTodo>();
         }
 
         private static StoredSet _store;
@@ -97,25 +116,31 @@ namespace IcarusII.Game.Tools
         /// <summary>沙盒里补初始化失败过的存档；同一存档不再重试，避免每帧刷日志。</summary>
         private static string _sandboxInitFailedFor;
 
-        /// <summary>队列里是否还有未完成的 AI 目标分组；目标面板据此决定是否接管“自由探索”。</summary>
+        /// <summary>队列里是否还有未完成的 AI 目标分组（含待办组）；目标面板据此决定是否接管“自由探索”。</summary>
         public static bool HasActiveAiGoals()
         {
-            if (!_applied || _store == null || _store.goals.Count == 0) return false;
+            if (!_applied || _store == null) return false;
+            if (_store.goals.Count == 0 && (_store.todos == null || _store.todos.Count == 0)) return false;
 
             var data = GameMain.data;
             var system = data != null ? data.goalSystem : null;
             if (system == null || system.goalDatas == null || system.goalQueue == null) return false;
 
+            if (IsGroupActive(system, TodoGroupId)) return true;
+
             for (int i = 0; i < _store.goals.Count; i++)
             {
                 var goal = _store.goals[i];
                 if (goal == null) continue;
-
-                var group = system.GetGoalDataById(goal.groupId);
-                if (group != null && group.stage == EGoalStage.Enabled && system.IsGoalInQueue(goal.groupId))
-                    return true;
+                if (IsGroupActive(system, goal.groupId)) return true;
             }
             return false;
+        }
+
+        private static bool IsGroupActive(GoalSystem system, int groupId)
+        {
+            var group = system.GetGoalDataById(groupId);
+            return group != null && group.stage == EGoalStage.Enabled && system.IsGoalInQueue(groupId);
         }
 
         /// <summary>
@@ -213,6 +238,27 @@ namespace IcarusII.Game.Tools
                     row.Set("target", gd != null ? gd.targetValue : 0);
                     row.Set("stage", gd != null ? (int)gd.stage : 0);
                     arr.Add(row);
+                }
+
+                if (_store.todos != null)
+                {
+                    for (int i = 0; i < _store.todos.Count; i++)
+                    {
+                        var t = _store.todos[i];
+                        if (t == null || string.IsNullOrEmpty(t.text)) continue;
+                        var gd = GameMain.data.goalSystem.GetGoalDataById(t.id);
+                        var row = JsonValue.NewObject();
+                        row.Set("groupId", TodoGroupId);
+                        row.Set("goalId", t.id);
+                        row.Set("group", TodoGroupTitle());
+                        row.Set("title", t.text);
+                        row.Set("templateId", 0);
+                        row.Set("current", gd != null ? gd.currentValue : 0);
+                        row.Set("target", gd != null ? gd.targetValue : 0);
+                        row.Set("stage", gd != null ? (int)gd.stage : 0);
+                        row.Set("todo", true);
+                        arr.Add(row);
+                    }
                 }
             }
             var data = JsonValue.NewObject();
@@ -337,42 +383,47 @@ namespace IcarusII.Game.Tools
 
         private static bool ApplyAll()
         {
-            if (_store == null || _store.goals.Count == 0) return true;
+            if (_store == null || (_store.goals.Count == 0 && (_store.todos == null || _store.todos.Count == 0)))
+                return true;
             var data = GameMain.data;
             var system = data.goalSystem;
             var logic = GameMain.gameScenario != null ? GameMain.gameScenario.goalLogic : null;
             if (system == null || logic == null) return false;
 
-            var groups = new Dictionary<int, string>();
-            for (int i = 0; i < _store.goals.Count; i++)
+            if (_store.goals.Count > 0)
             {
-                var g = _store.goals[i];
-                if (g == null) continue;
-                if (!groups.ContainsKey(g.groupId)) groups[g.groupId] = g.group ?? "游戏目标";
-            }
-
-            foreach (var pair in groups)
-                EnsureGroupProto(pair.Key, pair.Value);
-            for (int i = 0; i < _store.goals.Count; i++)
-                EnsureChildProto(_store.goals[i]);
-            RebuildGoalTable();
-
-            foreach (var pair in groups)
-                EnsureGoalData(pair.Key, true);
-            for (int i = 0; i < _store.goals.Count; i++)
-                EnsureGoalData(_store.goals[i].goalId, false);
-
-            EnsureQueue(groups);
-            if (logic.isInit)
-            {
-                foreach (var pair in groups)
-                    EnsureDeterminator(pair.Key);
+                var groups = new Dictionary<int, string>();
                 for (int i = 0; i < _store.goals.Count; i++)
-                    EnsureDeterminator(_store.goals[i].goalId);
+                {
+                    var g = _store.goals[i];
+                    if (g == null) continue;
+                    if (!groups.ContainsKey(g.groupId)) groups[g.groupId] = g.group ?? "游戏目标";
+                }
+
                 foreach (var pair in groups)
-                    EnsureDeterminator(pair.Key);
+                    EnsureGroupProto(pair.Key, pair.Value);
+                for (int i = 0; i < _store.goals.Count; i++)
+                    EnsureChildProto(_store.goals[i]);
+                RebuildGoalTable();
+
+                foreach (var pair in groups)
+                    EnsureGoalData(pair.Key, true);
+                for (int i = 0; i < _store.goals.Count; i++)
+                    EnsureGoalData(_store.goals[i].goalId, false);
+
+                EnsureQueue(groups);
+                if (logic.isInit)
+                {
+                    foreach (var pair in groups)
+                        EnsureDeterminator(pair.Key);
+                    for (int i = 0; i < _store.goals.Count; i++)
+                        EnsureDeterminator(_store.goals[i].goalId);
+                    foreach (var pair in groups)
+                        EnsureDeterminator(pair.Key);
+                }
             }
 
+            EnsureTodoGroup();
             return true;
         }
 
@@ -610,6 +661,294 @@ namespace IcarusII.Game.Tools
             data.Set("goalPanelOff", true);
         }
 
+        /// <summary>
+        /// 轮内待办：整份列表替换原生面板第一组“AI 待办”。
+        /// 条目按文本复用目标 id，已完成的条目保持 Completed，玩家跳过的条目保持 Ignored。
+        /// </summary>
+        public static JsonValue WriteTodo(JsonValue args)
+        {
+            if (GameMain.data == null || GameMain.data.goalSystem == null)
+                throw new InvalidOperationException("目标系统尚未就绪");
+
+            var items = args["todos"];
+            int count = items != null ? items.Count : 0;
+            if (count > TodoItemLimit)
+                throw new InvalidOperationException($"待办最多 {TodoItemLimit.ToString(CultureInfo.InvariantCulture)} 条");
+
+            if (_store == null) _store = new StoredSet();
+            var old = _store.todos ?? new List<StoredTodo>();
+            var byText = new Dictionary<string, StoredTodo>(StringComparer.Ordinal);
+            for (int i = 0; i < old.Count; i++)
+            {
+                var t = old[i];
+                if (t == null || string.IsNullOrEmpty(t.text)) continue;
+                if (!byText.ContainsKey(t.text)) byText[t.text] = t;
+            }
+
+            var next = new List<StoredTodo>(count);
+            var used = new HashSet<int>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            for (int i = 0; i < count; i++)
+            {
+                var item = items[i];
+                var text = (item["content"].AsString(null) ?? string.Empty).Trim();
+                if (text.Length == 0) throw new InvalidOperationException("待办内容不能为空");
+                if (text.Length > 200) throw new InvalidOperationException("待办内容最多 200 字");
+                if (text.IndexOf('\n') >= 0 || text.IndexOf('\r') >= 0)
+                    throw new InvalidOperationException("待办内容不能换行");
+                if (!seen.Add(text))
+                    throw new InvalidOperationException("待办内容不能重复：" + text);
+
+                int id = 0;
+                if (byText.TryGetValue(text, out var existing) && existing.id > 0 && !used.Contains(existing.id))
+                    id = existing.id;
+                if (id <= 0) id = NextTodoId(used);
+                used.Add(id);
+
+                next.Add(new StoredTodo
+                {
+                    id = id,
+                    text = text,
+                    status = NormalizeTodoStatus(item["status"].AsString(null)),
+                });
+            }
+
+            _store.todos = next;
+            EnsureTodoGroup();
+            SaveStore();
+            _needsApply = false;
+            _applied = true;
+            return TodoResult();
+        }
+
+        private static string NormalizeTodoStatus(string status)
+        {
+            if (string.Equals(status, TodoStatusCompleted, StringComparison.Ordinal)) return TodoStatusCompleted;
+            if (string.Equals(status, TodoStatusInProgress, StringComparison.Ordinal)) return TodoStatusInProgress;
+            return TodoStatusPending;
+        }
+
+        private static int NextTodoId(HashSet<int> used)
+        {
+            for (int i = 0; i < TodoItemLimit; i++)
+            {
+                int id = TodoItemIdStart + i;
+                if (!used.Contains(id)) return id;
+            }
+            throw new InvalidOperationException("待办数量超过上限");
+        }
+
+        /// <summary>把 store 里的待办同步成原生组与子目标；空列表时隐藏整组。</summary>
+        private static void EnsureTodoGroup()
+        {
+            if (_store == null || GameMain.data == null || GameMain.data.goalSystem == null) return;
+            var system = GameMain.data.goalSystem;
+            if (_store.todos == null) _store.todos = new List<StoredTodo>();
+
+            if (_store.todos.Count == 0)
+            {
+                var existing = system.GetGoalDataById(TodoGroupId);
+                if (existing != null)
+                {
+                    existing.stage = EGoalStage.Disabled;
+                    existing.SetProgress(0, 0);
+                }
+                RemoveGroupFromQueue(TodoGroupId);
+                return;
+            }
+
+            var groupProto = EnsureTodoGroupProto();
+            var live = new List<int>(_store.todos.Count);
+            for (int i = 0; i < _store.todos.Count; i++)
+            {
+                var t = _store.todos[i];
+                if (t == null || string.IsNullOrEmpty(t.text)) continue;
+                EnsureTodoItemProto(t);
+                live.Add(t.id);
+            }
+            groupProto.Childs = live.ToArray();
+            RebuildGoalTable();
+
+            EnsureGoalData(TodoGroupId, true);
+            int target = 0;
+            int done = 0;
+            for (int i = 0; i < _store.todos.Count; i++)
+            {
+                var t = _store.todos[i];
+                if (t == null || string.IsNullOrEmpty(t.text)) continue;
+                EnsureGoalData(t.id, false);
+                var data = system.GetGoalDataById(t.id);
+                if (data == null) continue;
+
+                bool completed = string.Equals(t.status, TodoStatusCompleted, StringComparison.Ordinal);
+                if (completed)
+                {
+                    data.isManualIgnore = false;
+                    data.SetProgress(1, 1);
+                    data.stage = EGoalStage.Completed;
+                    target++;
+                    done++;
+                    continue;
+                }
+                if (data.stage == EGoalStage.Ignored && data.isManualIgnore)
+                {
+                    data.SetProgress(0, 1);
+                    continue;
+                }
+                data.isManualIgnore = false;
+                data.SetProgress(0, 1);
+                data.stage = EGoalStage.Enabled;
+                target++;
+            }
+
+            for (int i = 0; i < TodoItemLimit; i++)
+            {
+                int id = TodoItemIdStart + i;
+                if (live.Contains(id)) continue;
+                var stale = system.GetGoalDataById(id);
+                if (stale == null) continue;
+                stale.stage = EGoalStage.Disabled;
+                stale.SetProgress(0, 0);
+            }
+
+            var group = system.GetGoalDataById(TodoGroupId);
+            if (group == null) return;
+            group.SetProgress(done, target);
+            if (target == 0) group.stage = EGoalStage.Ignored;
+            else group.stage = done >= target ? EGoalStage.Completed : EGoalStage.Enabled;
+
+            if (group.stage != EGoalStage.Enabled)
+            {
+                RemoveGroupFromQueue(TodoGroupId);
+                return;
+            }
+
+            EnsureQueue(new Dictionary<int, string> { { TodoGroupId, TodoGroupTitle() } });
+            var logic = GameMain.gameScenario != null ? GameMain.gameScenario.goalLogic : null;
+            if (logic != null && logic.isInit) EnsureDeterminator(TodoGroupId);
+        }
+
+        private static GoalProto EnsureTodoGroupProto()
+        {
+            var p = LDB.goals.Select(TodoGroupId);
+            if (p == null)
+            {
+                p = new GoalProto
+                {
+                    ID = TodoGroupId,
+                    SID = "ICARUSII_TODO_GROUP",
+                    Level = EGoalLevel.Off,
+                    ParentId = 0,
+                    DeterminatorName = "GD_Group",
+                    DeterminatorParams = new long[0],
+                    DisplayParams = new double[0],
+                    Childs = new int[0],
+                };
+                AddProto(p);
+            }
+            p.Name = TodoGroupTitle();
+            p.name = TodoGroupTitle();
+            p.Level = EGoalLevel.Off;
+            p.ParentId = 0;
+            p.DeterminatorName = "GD_Group";
+            p.DeterminatorParams = new long[0];
+            p.NeedCombatMode = 0;
+            return p;
+        }
+
+        private static void EnsureTodoItemProto(StoredTodo t)
+        {
+            var p = LDB.goals.Select(t.id);
+            if (p == null)
+            {
+                p = new GoalProto
+                {
+                    ID = t.id,
+                    SID = "ICARUSII_TODO_" + t.id.ToString(CultureInfo.InvariantCulture),
+                    Level = EGoalLevel.Off,
+                    ParentId = TodoGroupId,
+                    DeterminatorName = string.Empty,
+                    DeterminatorParams = new long[0],
+                    DisplayParams = new double[0],
+                    Childs = new int[0],
+                };
+                AddProto(p);
+            }
+            p.Name = t.text;
+            p.name = t.text;
+            p.Level = EGoalLevel.Off;
+            p.ParentId = TodoGroupId;
+            p.DeterminatorName = string.Empty;
+            p.DeterminatorParams = new long[0];
+            p.Childs = new int[0];
+        }
+
+        private static string TodoGroupTitle()
+        {
+            try { return Localization.isZHCN ? "AI 待办" : "AI Todo"; }
+            catch { return "AI 待办"; }
+        }
+
+        private static void RemoveGroupFromQueue(int id)
+        {
+            var system = GameMain.data != null ? GameMain.data.goalSystem : null;
+            if (system == null || system.goalQueue == null) return;
+            for (int i = 0; i < system.queueCursor; i++)
+            {
+                if (system.goalQueue[i] != id) continue;
+                for (int j = i; j + 1 < system.queueCursor; j++)
+                    system.goalQueue[j] = system.goalQueue[j + 1];
+                system.goalQueue[system.queueCursor - 1] = 0;
+                system.queueCursor--;
+                return;
+            }
+        }
+
+        private static JsonValue TodoResult()
+        {
+            var arr = JsonValue.NewArray();
+            int pending = 0;
+            int inProgress = 0;
+            int completed = 0;
+            int skipped = 0;
+            var system = GameMain.data != null ? GameMain.data.goalSystem : null;
+            if (_store != null && _store.todos != null)
+            {
+                for (int i = 0; i < _store.todos.Count; i++)
+                {
+                    var t = _store.todos[i];
+                    if (t == null || string.IsNullOrEmpty(t.text)) continue;
+                    var data = system != null ? system.GetGoalDataById(t.id) : null;
+                    bool isSkipped = data != null && data.stage == EGoalStage.Ignored && data.isManualIgnore;
+                    string status = isSkipped ? TodoStatusSkipped : t.status;
+                    if (isSkipped) skipped++;
+                    else if (string.Equals(status, TodoStatusCompleted, StringComparison.Ordinal)) completed++;
+                    else if (string.Equals(status, TodoStatusInProgress, StringComparison.Ordinal)) inProgress++;
+                    else pending++;
+
+                    var row = JsonValue.NewObject();
+                    row.Set("id", t.id);
+                    row.Set("content", t.text);
+                    row.Set("status", status);
+                    arr.Add(row);
+                }
+            }
+
+            var counts = JsonValue.NewObject();
+            counts.Set("pending", pending);
+            counts.Set("inProgress", inProgress);
+            counts.Set("completed", completed);
+            counts.Set("skipped", skipped);
+
+            var result = JsonValue.NewObject();
+            result.Set("group", TodoGroupTitle());
+            result.Set("todos", arr);
+            result.Set("count", arr.Count);
+            result.Set("counts", counts);
+            AppendGoalPanelState(result);
+            return result;
+        }
+
         private static void HideGoal(int id)
         {
             if (GameMain.data == null || GameMain.data.goalSystem == null) return;
@@ -669,6 +1008,21 @@ namespace IcarusII.Game.Tools
                     };
                     if (g.goalId > 0 && g.templateId > 0) set.goals.Add(g);
                 }
+
+                var todos = root["todos"];
+                for (int i = 0; i < todos.Count; i++)
+                {
+                    var item = todos[i];
+                    var t = new StoredTodo
+                    {
+                        id = item["id"].AsInt(0),
+                        text = item["text"].AsString(string.Empty),
+                        status = NormalizeTodoStatus(item["status"].AsString(TodoStatusPending)),
+                    };
+                    if (t.id >= TodoItemIdStart && t.id < TodoItemIdStart + TodoItemLimit &&
+                        !string.IsNullOrEmpty(t.text))
+                        set.todos.Add(t);
+                }
                 return set;
             }
             catch { return new StoredSet(); }
@@ -703,6 +1057,23 @@ namespace IcarusII.Game.Tools
                 }
             }
             root.Set("goals", arr);
+
+            var todoArr = JsonValue.NewArray();
+            if (_store != null && _store.todos != null)
+            {
+                for (int i = 0; i < _store.todos.Count; i++)
+                {
+                    var t = _store.todos[i];
+                    if (t == null || string.IsNullOrEmpty(t.text)) continue;
+                    var row = JsonValue.NewObject();
+                    row.Set("id", t.id);
+                    row.Set("text", t.text);
+                    row.Set("status", t.status ?? TodoStatusPending);
+                    todoArr.Add(row);
+                }
+            }
+            root.Set("todos", todoArr);
+
             todo.content = StorePrefix + root.ToJson();
         }
 

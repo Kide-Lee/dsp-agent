@@ -232,6 +232,9 @@ namespace IcarusII.Common.Protocol
         /// <summary>mod 支持原生 GoalProto 目标注入与读取。</summary>
         public const string CapabilityGameTodo = "game.todo.v1";
 
+        /// <summary>mod 支持轮内待办：整表写入原生目标面板的第一组。</summary>
+        public const string CapabilityGameTodoWrite = "game.todo.write.v1";
+
         /// <summary>mod 支持受控写脚本（run_script 脚本级确认 + 租约）。</summary>
         public const string CapabilityScriptWrite = "script.write.v1";
 

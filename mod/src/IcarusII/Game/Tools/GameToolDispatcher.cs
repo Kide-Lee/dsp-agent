@@ -135,6 +135,7 @@ namespace IcarusII.Game.Tools
             Register(new GameTodoListTool());
             Register(new GameTodoAddTool());
             Register(new GameTodoRemoveTool());
+            Register(new TodoWriteTool());
             Register(new TakeOutputTool());
             Register(new UndoLastWriteTool());
             Register(new ModsListTool());

@@ -461,6 +461,7 @@ export const TOOL_FIELD_NOTES: Record<string, Record<string, FieldNote>> = {
     ],
     count: ['integer', '目标数量'],
     goalPanelOff: ['boolean', '目标面板确实没有显示；true 时提醒玩家打开'],
+    todo: ['boolean', '该行是轮内待办（group 固定为第一组）'],
     display: ['string', '一行摘要'],
   },
 
@@ -472,6 +473,18 @@ export const TOOL_FIELD_NOTES: Record<string, Record<string, FieldNote>> = {
 
   game_todo_remove: {
     removed: ['integer', '删除的目标数'],
+    display: ['string', '一行确认摘要'],
+  },
+
+  game_todo_write: {
+    group: ['string', '待办所在的原生目标分组名（固定为第一组）'],
+    todos: [
+      'array',
+      '完整列表：`id` / `content` / `status`（pending / in_progress / completed；玩家跳过的是 skipped）',
+    ],
+    count: ['integer', '条目数'],
+    counts: ['object', '`pending` / `inProgress` / `completed` / `skipped`'],
+    goalPanelOff: ['boolean', '目标面板确实没有显示；true 时提醒玩家打开'],
     display: ['string', '一行确认摘要'],
   },
 };

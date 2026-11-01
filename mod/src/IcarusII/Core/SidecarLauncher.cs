@@ -246,6 +246,7 @@ namespace IcarusII.Core
             IcarusII.Common.Protocol.Protocol.CapabilityGameStorage,
             IcarusII.Common.Protocol.Protocol.CapabilityGameTether,
             IcarusII.Common.Protocol.Protocol.CapabilityGameTodo,
+            IcarusII.Common.Protocol.Protocol.CapabilityGameTodoWrite,
             IcarusII.Common.Protocol.Protocol.CapabilityScriptWrite,
             IcarusII.Common.Protocol.Protocol.CapabilityRichTextV2,
             IcarusII.Common.Protocol.Protocol.CapabilityUiTree,

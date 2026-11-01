@@ -17,6 +17,7 @@ export const CAPABILITY_GAME_BUILD = 'game.build.v1';
 export const CAPABILITY_GAME_STORAGE = 'game.storage.v1';
 export const CAPABILITY_GAME_TETHER = 'game.tether.v1';
 export const CAPABILITY_GAME_TODO = 'game.todo.v1';
+export const CAPABILITY_GAME_TODO_WRITE = 'game.todo.write.v1';
 
 export function isWriteToolName(name: string): boolean {
   return (WRITE_TOOL_NAMES as readonly string[]).includes(name);
@@ -39,6 +40,7 @@ export const WRITE_TOOL_NAMES = [
   'game_tether_clear',
   'game_todo_add',
   'game_todo_remove',
+  'game_todo_write',
   'game_take_output',
   'game_undo_last_write',
   'game_copy_blueprint',
@@ -74,6 +76,7 @@ const WRITE_TOOL_RISK: Record<string, 1 | 2> = {
   game_tether_clear: 1,
   game_todo_add: 2,
   game_todo_remove: 2,
+  game_todo_write: 1,
   game_take_output: 2,
   game_undo_last_write: 1,
   game_copy_blueprint: 1,
@@ -479,6 +482,7 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       promptGuidelines: [
         '玩家明确要求删除目标时使用。',
         '先用 game_todo_list 找到 groupId/goalId；不要删除不是 AI 创建的原生目标。',
+        '轮内待办（列表里 todo=true 的行）不用这个工具删除：改用 game_todo_write 提交去掉它的新列表。',
       ],
       parameters: Type.Object({
         groupId: Type.Optional(Type.Integer({ description: '删除整组目标' })),
@@ -486,6 +490,34 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       }),
       timeoutMs: 8000,
       risk: 2,
+    }),
+    writeTool(host, {
+      name: 'game_todo_write',
+      label: '更新待办',
+      description:
+        '把当前任务清单整份写入游戏左侧目标面板的第一组“AI 待办”。' +
+        '每次调用替换上一次的列表（空数组清空）；状态 pending / in_progress / completed，' +
+        '完成项在面板里打勾并划线，玩家也可以随时跳过某一条。',
+      promptGuidelines: [
+        '开始一项需要多步完成的工作前先写待办；一步就能做完的琐事不要用。',
+        '每次更新都提交完整列表，不要只发变化项；做完一步就把它改成 completed。',
+        '条目是一句可执行的短任务；同一列表里不要重复，最多 20 条。',
+        '待办显示在游戏左侧目标面板，玩家跳过某条后不要反复重加，除非玩家要求。',
+      ],
+      parameters: Type.Object({
+        todos: Type.Array(
+          Type.Object({
+            content: Type.String({ description: '任务描述，一句话' }),
+            status: Type.Union(
+              [Type.Literal('pending'), Type.Literal('in_progress'), Type.Literal('completed')],
+              { description: 'pending（未开始）/ in_progress（进行中）/ completed（完成）' },
+            ),
+          }),
+          { description: '完整任务列表，替换上一次；空数组清空' },
+        ),
+      }),
+      timeoutMs: 5000,
+      risk: 1,
     }),
     writeTool(host, {
       name: 'game_undo_last_write',

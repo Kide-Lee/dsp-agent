@@ -1,8 +1,8 @@
-# 辅助 · 方位指示与游戏目标
+# 辅助 · 方位指示、目标与待办
 
-tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”面板，不是 mod 自己的清单。
+tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”面板，不是 mod 自己的清单；game_todo_write 把轮内待办整表写入原生面板的第一组。
 
-共 7 个工具。提示词如何进入模型上下文见 [prompt-shape.md](prompt-shape.md)。
+共 8 个工具。提示词如何进入模型上下文见 [prompt-shape.md](prompt-shape.md)。
 
 ---
 
@@ -44,13 +44,14 @@ tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”�
 #### 模型可见 · 工具描述（tools 数组）
 
 ```text
-读取 AI 创建的原生游戏目标及当前值/目标值/阶段，以及目标面板当前是否真的没有显示。
+读取 AI 创建的原生游戏目标（含轮内待办）及当前值/目标值/阶段，以及目标面板当前是否真的没有显示。
 ```
 
 #### 模型可见 · 使用规则（system prompt）
 
 - 玩家询问当前目标进度或准备删除目标时使用。
 - 目标在“自由探索”下也会显示（只列 AI 目标）；如果结果里 goalPanelOff=true，说明目标面板确实被关闭了，回答进度时提醒玩家打开目标面板设置改成“关键节点”或“事无巨细”。
+- todo=true 的行是轮内待办，用 game_todo_write 更新；不要用 game_todo_remove 删它们。
 
 #### 参数
 
@@ -63,6 +64,7 @@ tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”�
 | `goals` | `array` | AI 创建的目标：`groupId` / `goalId` / `group` / `title` / `templateId` / `current` / `target` / `stage` |
 | `count` | `integer` | 目标数量 |
 | `goalPanelOff` | `boolean` | 目标面板确实没有显示；true 时提醒玩家打开 |
+| `todo` | `boolean` | 该行是轮内待办（group 固定为第一组） |
 | `display` | `string` | 一行摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
@@ -218,6 +220,7 @@ tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”�
 
 - 玩家明确要求删除目标时使用。
 - 先用 game_todo_list 找到 groupId/goalId；不要删除不是 AI 创建的原生目标。
+- 轮内待办（列表里 todo=true 的行）不用这个工具删除：改用 game_todo_write 提交去掉它的新列表。
 
 #### 参数
 
@@ -231,6 +234,44 @@ tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”�
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `removed` | `integer` | 删除的目标数 |
+| `display` | `string` | 一行确认摘要 |
+
+> 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
+
+---
+
+### `game_todo_write`
+
+**label** 更新待办 · **能力位** `game.todo.write.v1` · **风险** 1（低风险写，可逆） · **超时** 5000 ms
+
+#### 模型可见 · 工具描述（tools 数组）
+
+```text
+把当前任务清单整份写入游戏左侧目标面板的第一组“AI 待办”。每次调用替换上一次的列表（空数组清空）；状态 pending / in_progress / completed，完成项在面板里打勾并划线，玩家也可以随时跳过某一条。
+```
+
+#### 模型可见 · 使用规则（system prompt）
+
+- 开始一项需要多步完成的工作前先写待办；一步就能做完的琐事不要用。
+- 每次更新都提交完整列表，不要只发变化项；做完一步就把它改成 completed。
+- 条目是一句可执行的短任务；同一列表里不要重复，最多 20 条。
+- 待办显示在游戏左侧目标面板，玩家跳过某条后不要反复重加，除非玩家要求。
+
+#### 参数
+
+| 参数 | 类型 | 必填 | 约束 | 说明 |
+| --- | --- | --- | --- | --- |
+| `todos` | `object[]` | 是 | — | 完整任务列表，替换上一次；空数组清空 |
+
+#### 返回
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `group` | `string` | 待办所在的原生目标分组名（固定为第一组） |
+| `todos` | `array` | 完整列表：`id` / `content` / `status`（pending / in_progress / completed；玩家跳过的是 skipped） |
+| `count` | `integer` | 条目数 |
+| `counts` | `object` | `pending` / `inProgress` / `completed` / `skipped` |
+| `goalPanelOff` | `boolean` | 目标面板确实没有显示；true 时提醒玩家打开 |
 | `display` | `string` | 一行确认摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。

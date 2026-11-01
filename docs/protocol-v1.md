@@ -92,6 +92,12 @@
   关闭整个目标系统；只要存在未完成的 AI 目标，mod 会让该门禁返回 false 并补一次
   `GoalLogic.Init`，由 `[Goals] ShowAiGoalsInSandbox`（默认 `true`）控制；关闭时保留原生
   “沙盒无目标”，AI 目标不会显示。此时如果目标设置不是“自由探索”，原生目标也会一起回来。
+- `game.todo.write.v1`：mod 支持轮内待办：`game_todo_write` 把整份列表
+  （`pending` / `in_progress` / `completed`）写进原生目标面板**固定第一组**“AI 待办”：
+  每次调用整表替换，空数组清空该组；条目标题就是待办文字，完成项显示勾选与删除线，
+  玩家可以在面板里跳过单项。它是 risk 1 的写操作，受限档下直接执行、不弹确认；
+  与 `game.todo.v1` 的模板目标共用同一套 GoalProto/GoalData，但不共用分组。
+  该能力也让“自由探索”和沙盒存档的显示接管把待办组当作 AI 目标处理。
 - `mod.bridge.v1`：mod 支持第三方 mod 桥：`hello.extensions` + `mods_list` +
   每个已启用插件一个 `mod_<id>_config`，以及可选的适配器工具。
   **没有任何插件启用时，mod 不声明该能力、不发扩展列表**；启停由玩家在
@@ -1748,6 +1754,7 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | `game_todo_list` | 0 | 无 | 列出 AI 创建的目标、进度与阶段；目标面板确实关闭时带 `goalPanelOff` |
 | `game_todo_add` | 2 | `group?`, `goals[]`（`templateId`, `title?`, `params?`, `itemId?`, `count?`） | 注入原生目标；确认后执行；补跑 GoalDeterminator；目标面板确实关闭时带 `goalPanelOff` |
 | `game_todo_remove` | 2 | `groupId?`, `goalId?` | 隐藏/删除 AI 创建的目标；确认后执行 |
+| `game_todo_write` | 1 | `todos[]`（`content`, `status`） | 整表替换原生面板第一组“AI 待办”；空数组清空；受限档直接执行 |
 | `game_take_output` | 2 | `buildingId` | 取生产建筑成品；保留配方；背包满返回剩余；不进入撤销栈 |
 | `game_undo_last_write` | 1 | 无 | 撤销最近一次可撤销写操作；最近一次不可撤销时返回错误 |
 | `ui_click` | 2 | `path` | 点击 uGUI 控件；确认后执行；不可撤销（见 B.1.8） |
