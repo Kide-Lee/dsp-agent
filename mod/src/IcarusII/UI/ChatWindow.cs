@@ -256,6 +256,8 @@ namespace IcarusII.UI
             public bool Expanded;
             public int Visible;
             public readonly List<GameObject> Rows = new List<GameObject>();
+            /// <summary>与 Rows 一一对应的记录；顺序是从新到旧。</summary>
+            public readonly List<ConversationRecordInfo> RowRecords = new List<ConversationRecordInfo>();
         }
 
         private readonly List<Line> _lines = new List<Line>();
@@ -5262,6 +5264,7 @@ namespace IcarusII.UI
                 UnityEngine.Object.Destroy(child.gameObject);
             }
             view.Rows.Clear();
+            view.RowRecords.Clear();
             view.ExpandMore = null;
             view.ExpandMoreText = null;
 
@@ -5270,9 +5273,10 @@ namespace IcarusII.UI
             if (count < 5) visible = count;
             view.Visible = visible;
 
+            // 记录在 Info.Records 里按时间正序；列表展示倒序，最新的提问排第一。
             for (int i = 0; i < visible; i++)
             {
-                var record = view.Info.Records[i];
+                var record = view.Info.Records[count - 1 - i];
                 var row = UnityEngine.Object.Instantiate(_recordTemplate.gameObject, view.Records, false);
                 row.name = "record-" + (i + 1);
                 row.SetActive(true);
@@ -5294,6 +5298,7 @@ namespace IcarusII.UI
                 var captured = record;
                 hover.Clicked += () => OnConversationRecordClicked(view.Id, captured);
                 view.Rows.Add(row);
+                view.RowRecords.Add(record);
             }
 
             if (visible < count)
@@ -5467,8 +5472,8 @@ namespace IcarusII.UI
                 for (int i = 0; i < view.Rows.Count; i++)
                 {
                     if (used[i]) continue;
-                    if (i >= view.Info.Records.Count) break;
-                    var record = view.Info.Records[i];
+                    if (i >= view.RowRecords.Count) break;
+                    var record = view.RowRecords[i];
                     if (record == null || record.Text != entry.Text) continue;
                     if (entry.Timestamp > 0 && record.Timestamp > 0 && entry.Timestamp != record.Timestamp)
                         continue;
