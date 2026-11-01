@@ -6090,23 +6090,29 @@ namespace IcarusII.UI
                 FromPrefab = fromPrefab,
                 Reply = reply,
             };
-            if (kind == LineKind.User && fromPrefab) BindUserFooter(item, go);
+            if (kind == LineKind.User && fromPrefab) item = BindUserFooter(item, go);
             _items.Add(item);
             return _items.Count - 1;
         }
 
         /// <summary>绑定用户气泡下的 footer：只有时间 + 复制按钮。</summary>
-        private void BindUserFooter(Item item, GameObject go)
+        /// <remarks>
+        /// Item 是 struct，按值传进来再改字段只会改到副本，调用方拿到的 Footer 还是 null，
+        /// 于是 footer 一直停在下面的 SetActive(false) 上（用户气泡看不到时间/复制）。
+        /// 所以这里必须把 Item 返回给调用方。
+        /// </remarks>
+        private Item BindUserFooter(Item item, GameObject go)
         {
-            if (go == null) return;
+            if (go == null) return item;
             var footer = go.transform.Find("footer");
-            if (footer == null) return;
+            if (footer == null) return item;
 
             item.Footer = footer.gameObject;
             item.FooterTime = FindChildText(footer, "time");
             var copyTr = footer.Find("copy");
             item.FooterCopy = copyTr != null ? copyTr.GetComponent<Button>() : null;
             footer.gameObject.SetActive(false);   // 等正文落地再显示
+            return item;
         }
 
         /// <summary>填用户消息的 footer：时间 + 复制当前气泡文本。</summary>
