@@ -52,8 +52,8 @@ export function busPortPlan(itemId) {
       outputSlot: output.slot,
       inCell,
       outCell,
-      halfX: collider.ext[0],
-      halfZ: collider.ext[2],
+      halfX: collider.ext[0] + Math.abs(collider.pos[0]),
+      halfZ: collider.ext[2] + Math.abs(collider.pos[2]),
     };
   }
   return null;
@@ -71,7 +71,7 @@ export function busStageMode(itemId) {
   if (!collider) return null;
   const topCenter = slots?.some((slot) => Math.abs(slot.x) <= 0.3 && slot.z >= 0.9 && slot.z <= 1.2);
   if (topCenter && collider.ext[0] <= 2.5 && collider.ext[2] <= 2.5) {
-    return { mode: 'top', yOffset: 2, yaw: 0, halfX: collider.ext[0], halfZ: collider.ext[2] };
+    return { mode: 'top', yOffset: 2, yaw: 0, halfX: collider.ext[0] + Math.abs(collider.pos[0]), halfZ: collider.ext[2] + Math.abs(collider.pos[2]) };
   }
   const port = busPortPlan(itemId);
   if (port) return { mode: 'port', ...port };
@@ -431,10 +431,28 @@ export function layoutBus(spec) {
   let width = Math.ceil(Math.sqrt(totalCells * 7));
   width = Math.max(40, Math.min(240, width));
   let rows = Math.max(1, Math.ceil(totalCells / (width - 2)));
+  const maxHeight = spec.maxHeight ?? 50;
+  const maxRows = Math.max(1, Math.floor((maxHeight - 8) / rowGap) + 1);
   const requestedRows = Number.isFinite(spec.rows) ? Math.floor(spec.rows) : 0;
   if (requestedRows >= 1) {
-    rows = Math.min(64, requestedRows);
-    width = Math.max(40, Math.min(240, Math.ceil(totalCells / rows) + 2));
+    // rows 只是偏好：按它算出来的宽度放不进 240 格就回到自动分页，避免挤成一行放不下。
+    const wantRows = Math.max(1, Math.min(64, Math.min(requestedRows, maxRows)));
+    const wantWidth = Math.ceil(totalCells / wantRows) + 2;
+    if (wantWidth <= 240) {
+      rows = wantRows;
+      width = Math.max(40, wantWidth);
+    }
+  }
+  // 行距变大时（精炼厂等）同样行数会把高度顶出上限，先加宽再降行数。
+  while (rows > maxRows && width < 240) {
+    width = Math.min(240, width + 10);
+    rows = Math.max(1, Math.ceil(totalCells / (width - 2)));
+  }
+  if (rows > maxRows) {
+    const error = new Error(`总线布局在高度 ${maxHeight} 内排不下（需要 ${rows} 行）`);
+    error.code = 'bus-capacity';
+    error.tiles = 2;
+    throw error;
   }
   const height = 4 + rowGap * (rows - 1) + 4;
 
@@ -479,7 +497,7 @@ export function layoutBus(spec) {
   let cursor = headerEnd;
   let machines = 0;
   let lastPlacement = null;
-  const halfOf = (id) => COLLIDERS.get(id)?.ext[0] ?? 1;
+  const halfOf = (id) => (COLLIDERS.get(id) ? COLLIDERS.get(id).ext[0] + Math.abs(COLLIDERS.get(id).pos[0]) : 1);
   for (const stage of stages) {
     const half = halfOf(stage.buildingId);
     for (let m = 0; m < stage.count; m += 1) {

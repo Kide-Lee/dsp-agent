@@ -279,6 +279,7 @@ function hintedTiles(err: unknown): number | null {
 }
 
 function isBusCapacityError(err: unknown): boolean {
+  if ((err as { code?: unknown } | null)?.code === 'bus-capacity') return true;
   const message = err instanceof Error ? err.message : String(err);
   return message.includes('传送带最大容量') || (message.includes('分配') && message.includes('超过传送带'));
 }

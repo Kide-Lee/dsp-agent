@@ -37,10 +37,8 @@ function shapesOf(building) {
   }
   const collider = COLLIDERS.get(building.itemId);
   const area = AREA.get(building.itemId) ?? [1, 1];
-  const n = Math.max(1, Math.ceil(area[0]));
-  const m = Math.max(1, Math.ceil(area[1]));
   const shapes = [
-    { kind: 'cell', x: p.x + (n - 1) / 2, y: p.y + (m - 1) / 2, hw: n / 2, hh: m / 2, station: !!collider?.station },
+    { kind: 'cell', x: p.x, y: p.y, hw: Math.max(0.5, area[0] / 2), hh: Math.max(0.5, area[1] / 2), station: !!collider?.station },
   ];
   if (collider) {
     const yaw = ((Math.round(building.yaw?.[0] ?? 0) % 360) + 360) % 360;
