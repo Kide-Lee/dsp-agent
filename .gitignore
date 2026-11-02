@@ -36,7 +36,10 @@ __pycache__/
 # 系统
 .DS_Store
 Thumbs.db
+
+# 外部参考源码（只读参考，不入库）
 dsp-game/
+dsp-handcraft/
 
 # test temp dirs (must stay inside repo)
 sidecar/.test-tmp/

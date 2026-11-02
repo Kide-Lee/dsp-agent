@@ -27,6 +27,11 @@ mod 只负责打开蓝图浏览器/粘贴，**不再生成蓝图**。
 | `sidecar/vendor/dsp-calc/data/Buildings.mjs` | 建筑槽位/尺寸模板 |
 | `sidecar/vendor/dsp-calc/data/Vanilla.mjs` | 物品/配方基础数据（版本可能与游戏有偏差，机器数不以此为准） |
 
+另一个独立的蓝图生成器 [dsp-handcraft](https://github.com/zoujack018/dsp-handcraft)（GPL-3.0）
+作为**只读参考**克隆在 `dsp-handcraft/`（不入库）：排线、分馏阵列、自动集装机等做法可以对照，
+但**代码不能复制进本仓库**——本项目是 MIT，引入 GPL-3.0 代码会带来传染性许可。
+位置、版本与更新方式见 [development.md](development.md#参考源码)。
+
 ## 2. 正确性口径
 
 - **机器数只信 `kb_plan`**：`recipes[].buildingCount` 已按

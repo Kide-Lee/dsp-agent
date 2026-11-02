@@ -39,6 +39,9 @@ node scripts/check-deps.mjs --update --major   # 连大版本一起升（人工�
   阻塞打包（会刷 `targets a wrong version of BepInEx` 警告），社区发新版则只提示、是否跟进由人
   决定。改它要同步 `THIRD-PARTY.md`、`packaging/thunderstore/manifest.json` 与 README。
 - `--skip-dep-check` 只用于断网排障，不允许出现在正常发布流程里。
+- `dsp-handcraft`（蓝图生成器的参考源码，GPL-3.0）只比对本地 `dsp-handcraft/` 与上游 `master`：
+  没部署时提示克隆命令，上游有新提交时提示 `git -C dsp-handcraft pull --ff-only`。
+  它不参与构建、不进发布产物，**不阻塞打包**，脚本也不自动拉取；更新后不要复制其代码。
 
 ## `package.sh` 做了什么
 

@@ -11,6 +11,7 @@
 //   - sidecar/package.json 的 dependencies / devDependencies
 //   - scripts/build-sidecar.sh 里固定的 NODE_VERSION / ESBUILD_VERSION / POSTJECT_VERSION
 //   - scripts/fetch-deps.sh 里固定的 BEPINEX_VERSION（**刻意锁定**，只报告不更新）
+//   - dsp-handcraft/ 的参考源码（**只读参考**，只比对上游 master，不阻塞、不自动拉取）
 // 未纳入：UnityPy（tools/build-kb.py 的开发期工具，未锁定版本）、dsp-game/Packages（跟随游戏的 Unity 版本）。
 
 import { execFileSync } from 'node:child_process';
@@ -23,6 +24,13 @@ const SIDECAR_DIR = resolve(ROOT, 'sidecar');
 const BUILD_SIDECAR = resolve(ROOT, 'scripts/build-sidecar.sh');
 const FETCH_DEPS = resolve(ROOT, 'scripts/fetch-deps.sh');
 const FETCH_TIMEOUT_MS = 20_000;
+
+// 蓝图生成器的参考源码：只读参考，不构建、不打包，代码也不能复制进本仓库（上游 GPL-3.0）。
+// 只提示上游有新提交，不阻塞打包。
+const REFERENCE_DIR = resolve(ROOT, 'dsp-handcraft');
+const REFERENCE_REPO = 'zoujack018/dsp-handcraft';
+const REFERENCE_BRANCH = 'master';
+const REFERENCE_CLONE = `git clone https://github.com/${REFERENCE_REPO}.git dsp-handcraft`;
 
 const args = process.argv.slice(2);
 const doUpdate = args.includes('--update');
@@ -113,6 +121,40 @@ function readPackageJson() {
   return JSON.parse(readFileSync(resolve(SIDECAR_DIR, 'package.json'), 'utf8'));
 }
 
+// 本地参考源码的版本号与提交；目录不存在时返回 null（允许没部署参考源码）。
+function readReferenceCheckout() {
+  const pkgPath = resolve(REFERENCE_DIR, 'package.json');
+  if (!existsSync(pkgPath)) return null;
+  let version = null;
+  try {
+    version = JSON.parse(readFileSync(pkgPath, 'utf8')).version ?? null;
+  } catch {
+    version = null;
+  }
+  let commit = null;
+  try {
+    commit = execFileSync('git', ['-C', REFERENCE_DIR, 'rev-parse', '--short=7', 'HEAD'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    commit = null;
+  }
+  return { version, commit };
+}
+
+// 上游 master 的提交与 package.json 版本；提示信息里用「版本 @ 短提交」标识同一份源码。
+async function referenceUpstream() {
+  const commit = await fetchJson(`https://api.github.com/repos/${REFERENCE_REPO}/commits/${REFERENCE_BRANCH}`);
+  const sha = String(commit.sha ?? '');
+  if (!sha) throw new Error('上游没有返回 commit');
+  const contents = await fetchJson(
+    `https://api.github.com/repos/${REFERENCE_REPO}/contents/package.json?ref=${sha}`,
+  );
+  const version = JSON.parse(Buffer.from(String(contents.content ?? ''), 'base64').toString('utf8')).version;
+  return { sha, version: version ?? null };
+}
+
 function installedVersion(pkg) {
   const pkgJson = resolve(SIDECAR_DIR, 'node_modules', pkg, 'package.json');
   if (!existsSync(pkgJson)) return null;
@@ -159,6 +201,20 @@ function rangePrefix(declared) {
   return '';
 }
 
+// 参考源码三种结果：没部署 / 与上游一致 / 上游有新提交（都不阻塞打包）。
+function classifyReference(entry, upstream) {
+  if (!entry.local) {
+    return { ...entry, state: 'reference-missing', detail: `先执行：${REFERENCE_CLONE}` };
+  }
+  const local = `${entry.local.version ?? '未知版本'} @ ${entry.local.commit ?? '未知提交'}`;
+  if (upstream.error) return { ...entry, state: 'unknown', detail: `${local}；${upstream.error}` };
+  if (entry.local.commit && upstream.sha.startsWith(entry.local.commit)) {
+    return { ...entry, state: 'up-to-date', detail: local };
+  }
+  const remote = `${upstream.version ?? '未知版本'} @ ${upstream.sha.slice(0, 7)}`;
+  return { ...entry, state: 'reference-outdated', target: remote, detail: local };
+}
+
 async function collectEntries() {
   const pkg = readPackageJson();
   const entries = [];
@@ -194,15 +250,28 @@ async function collectEntries() {
   const bepinex = readPin(FETCH_DEPS, 'BEPINEX_VERSION');
   if (bepinex) entries.push({ kind: 'bepinex', label: 'BepInEx（编译期参考）', pin: 'BEPINEX_VERSION', file: FETCH_DEPS, current: bepinex, locked: true });
 
+  const reference = readReferenceCheckout();
+  entries.push({
+    kind: 'reference',
+    label: 'dsp-handcraft（蓝图参考源码）',
+    current: reference?.version ?? '—',
+    local: reference,
+  });
+
   return entries;
 }
 
 async function resolveVersions(entries, nodeInfo) {
   const bepinexInfo = entries.some((e) => e.kind === 'bepinex') ? await bepinExVersions() : null;
+  const referenceInfo = entries.some((e) => e.kind === 'reference')
+    ? await referenceUpstream().catch((error) => ({ error: error.message }))
+    : null;
   const results = [];
   for (const entry of entries) {
     try {
-      if (entry.kind === 'node') {
+      if (entry.kind === 'reference') {
+        results.push(classifyReference(entry, referenceInfo));
+      } else if (entry.kind === 'node') {
         const current = parse(entry.current);
         results.push(
           classify(entry, {
@@ -241,11 +310,13 @@ function printResults(results, nodeInfo) {
     update: '可更新',
     major: '仅大版本可用',
     'minor-notice': '社区更新',
+    'reference-outdated': '上游更新',
+    'reference-missing': '未部署',
     unknown: '未知',
   };
   const width = Math.max(...results.map((r) => r.label.length), 6);
   for (const r of results) {
-    const target = ['update', 'major', 'minor-notice'].includes(r.state) ? `→ ${r.target}` : '';
+    const target = ['update', 'major', 'minor-notice', 'reference-outdated'].includes(r.state) ? `→ ${r.target}` : '';
     const detail = r.detail ? `（${r.detail}）` : '';
     console.log(`  ${r.label.padEnd(width)}  ${r.current.padEnd(12)} ${statusText[r.state].padEnd(6)} ${target}${detail}`);
   }
@@ -257,9 +328,15 @@ function printResults(results, nodeInfo) {
 async function applyUpdates(results) {
   const applied = [];
   const skipped = [];
+  const manual = [];
   for (const r of results) {
     const isMajor = r.state === 'major';
     if (r.state === 'locked' || r.state === 'up-to-date' || r.state === 'unknown') continue;
+    if (r.kind === 'reference') {
+      // 参考源码是独立 git 仓库，更新由人执行 `git pull`，脚本不代劳。
+      if (r.state === 'reference-outdated') manual.push(r);
+      continue;
+    }
     if (isMajor && !allowMajor) {
       skipped.push(r);
       continue;
@@ -276,7 +353,7 @@ async function applyUpdates(results) {
     }
     applied.push({ ...r, applied: r.target.replace(/^v/, '') });
   }
-  return { applied, skipped };
+  return { applied, skipped, manual };
 }
 
 const entries = await collectEntries();
@@ -290,7 +367,7 @@ const pending = results.filter((r) => r.state === 'update');
 const majorOnly = results.filter((r) => r.state === 'major');
 
 if (doUpdate) {
-  const { applied, skipped } = await applyUpdates(results);
+  const { applied, skipped, manual } = await applyUpdates(results);
   if (applied.length > 0) {
     console.log('\n已更新：');
     for (const r of applied) console.log(`  ${r.label} ${r.current} → ${r.applied}`);
@@ -301,6 +378,10 @@ if (doUpdate) {
   if (skipped.length > 0) {
     console.log('\n跨大版本、需要人工决定：');
     for (const r of skipped) console.log(`  ${r.label} ${r.current} → ${r.target}（确认后用 --major 更新）`);
+  }
+  if (manual.length > 0) {
+    console.log('\n参考源码需要手动更新（独立仓库，不随打包变化）：');
+    for (const r of manual) console.log(`  git -C dsp-handcraft pull --ff-only   # ${r.label} ${r.current} → ${r.target}`);
   }
   process.exit(0);
 }
@@ -320,6 +401,16 @@ const notices = results.filter((r) => r.state === 'minor-notice');
 if (notices.length > 0) {
   console.log('\n社区已发新版本、可选跟进（不阻塞打包，跟了要实机验证）：');
   for (const r of notices) console.log(`  ${r.label} ${r.current} → ${r.target}`);
+}
+
+const referenceNotices = results.filter((r) => r.state === 'reference-outdated' || r.state === 'reference-missing');
+if (referenceNotices.length > 0) {
+  console.log('\n参考源码（只读参考，不阻塞打包）：');
+  for (const r of referenceNotices) {
+    const target = r.state === 'reference-outdated' ? ` → ${r.target}` : '';
+    console.log(`  ${r.label} ${r.current}${target}`);
+    if (r.state === 'reference-outdated') console.log('  更新：git -C dsp-handcraft pull --ff-only');
+  }
 }
 
 if (pending.length > 0) {

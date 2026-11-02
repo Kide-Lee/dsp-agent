@@ -50,6 +50,19 @@ node sidecar/dist/index.js serve --port 8799 --token testtoken --agent echo &
 dotnet run --project tests/ProtocolTests -- e2e ws://127.0.0.1:8799 testtoken
 ```
 
+### 参考源码
+
+这两个目录只作参考，不入库（见 `.gitignore`），也不参与构建与发布：
+
+| 目录 | 用途 | 获取方式 |
+| --- | --- | --- |
+| `dsp-game/` | 游戏工程：UI 场景、资源、程序集，供 MetaDump 与原生 UI 查证 | 自行拷贝游戏目录 |
+| `dsp-handcraft/` | 蓝图生成器参考实现（GPL-3.0）：排线、分馏阵列、集装机等做法可对照，**代码不能复制进本仓库** | `git clone https://github.com/zoujack018/dsp-handcraft.git dsp-handcraft` |
+
+`node scripts/check-deps.mjs` 会把本地 `dsp-handcraft/` 与上游 `master` 比对，只提示有新提交，
+不阻塞打包、不自动拉取；手动更新用 `git -C dsp-handcraft pull --ff-only`。
+当前参考版本以 `dsp-handcraft/package.json` 为准。
+
 ---
 
 ## 仓库结构
