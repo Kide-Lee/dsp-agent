@@ -4,6 +4,7 @@ import buildingData from '../../vendor/dsp-calc/data/Buildings.mjs';
 import vanilla from '../../vendor/dsp-calc/data/Vanilla.mjs';
 import { COLLIDERS } from './colliders.mjs';
 import { SLOTS } from './slots.mjs';
+import { PORT_OFFSETS } from './ports.mjs';
 import { BlueprintBuilder } from './emit.mjs';
 
 const BUILDINGS = buildingData.buildings;
@@ -22,15 +23,29 @@ export function machineSpacing(itemId) {
 }
 
 /**
- * 总线布局要求机器朝上的那面有“中间槽位”（本地 z≈1、横向偏移 0），
- * 这样带子在上方、分拣器长度 1 就能接到机器。精炼厂/化工厂这类大机器槽位在侧面或更远，先回退旧布局。
+ * 总线布局怎么摆这台机器：
+ *   top    —— 正上方有中间槽位（制造台/熔炉），机器在带子下方、朝向 0，分拣器长度 1。
+ *   bottom —— 只有下方中间槽位（精炼厂），转 180° 让端口朝上，用小数端口分拣器。
+ * 两种都放不了就返回 null，由调用方回退旧布局。
  */
-export function busCompatible(itemId) {
+export function busStageMode(itemId) {
   const collider = COLLIDERS.get(itemId);
   const slots = SLOTS.get(itemId);
-  if (!collider || !slots) return false;
-  if (collider.ext[0] > 2.5 || collider.ext[2] > 2.5) return false;
-  return slots.some((slot) => Math.abs(slot.x) <= 0.3 && slot.z >= 0.9 && slot.z <= 1.2);
+  if (!collider || !slots) return null;
+  if (collider.ext[0] > 2.5 || collider.ext[2] > 2.5) {
+    const offsets = PORT_OFFSETS.get(itemId);
+    const center = offsets?.get(7);
+    if (!center || Math.abs(center.dx) > 0.3 || center.dy >= -0.5) return null;
+    if (collider.ext[0] > 2.2) return null;
+    return { mode: 'bottom', yOffset: Math.ceil(1 - center.dy), yaw: 180, halfX: collider.ext[0], halfZ: collider.ext[2] };
+  }
+  const topCenter = slots.some((slot) => Math.abs(slot.x) <= 0.3 && slot.z >= 0.9 && slot.z <= 1.2);
+  if (!topCenter) return null;
+  return { mode: 'top', yOffset: 2, yaw: 0, halfX: collider.ext[0], halfZ: collider.ext[2] };
+}
+
+export function busCompatible(itemId) {
+  return busStageMode(itemId) !== null;
 }
 
 /**
@@ -360,15 +375,18 @@ const BELT_CAPACITY_PER_MIN = { 2001: 360, 2002: 720, 2003: 1800 };
 export function layoutBus(spec) {
   const { stages, target } = spec;
   if (!Array.isArray(stages) || stages.length === 0) throw new Error('总线布局至少需要一段');
+  const beltId = spec.beltId ?? 2003;
+  const sorterId = spec.sorterId ?? 2013;
   for (const stage of stages) {
-    if (!busCompatible(stage.buildingId)) {
+    const mode = busStageMode(stage.buildingId);
+    if (!mode) {
       const error = new Error(`建筑 ${stage.buildingId} 的槽位不在正上方，总线布局放不了`);
       error.code = 'bus-unsupported';
       throw error;
     }
+    stage.mode = mode;
   }
-  const beltId = spec.beltId ?? 2003;
-  const sorterId = spec.sorterId ?? 2013;
+  const rowGap = Math.max(8, Math.ceil(Math.max(...stages.map((stage) => stage.mode.yOffset + stage.mode.halfZ + 0.5))));
   const spacingOf = (stage) => machineSpacing(stage.buildingId);
 
   let totalCells = 0;
@@ -384,17 +402,17 @@ export function layoutBus(spec) {
     rows = Math.min(64, requestedRows);
     width = Math.max(40, Math.min(240, Math.ceil(totalCells / rows) + 2));
   }
-  const height = 4 + 8 * (rows - 1) + 4;
+  const height = 4 + rowGap * (rows - 1) + 4;
 
   const path = [];
   for (let r = 0; r < rows; r += 1) {
-    const y = 4 + 8 * r;
+    const y = 4 + rowGap * r;
     if (r % 2 === 0) {
       for (let x = 1; x <= width - 1; x += 1) path.push({ x, y, dir: 'E' });
-      if (r + 1 < rows) for (let yy = y + 1; yy <= y + 7; yy += 1) path.push({ x: width - 1, y: yy, dir: 'N' });
+      if (r + 1 < rows) for (let yy = y + 1; yy < y + rowGap; yy += 1) path.push({ x: width - 1, y: yy, dir: 'N' });
     } else {
       for (let x = width - 1; x >= 1; x -= 1) path.push({ x, y, dir: 'W' });
-      if (r + 1 < rows) for (let yy = y + 1; yy <= y + 7; yy += 1) path.push({ x: 1, y: yy, dir: 'N' });
+      if (r + 1 < rows) for (let yy = y + 1; yy < y + rowGap; yy += 1) path.push({ x: 1, y: yy, dir: 'N' });
     }
   }
   const indexOf = new Map(path.map((cell, index) => [`${cell.x},${cell.y}`, index]));
@@ -427,7 +445,7 @@ export function layoutBus(spec) {
   let cursor = headerEnd;
   let machines = 0;
   let lastPlacement = null;
-  const halfOf = (id) => Math.max(COLLIDERS.get(id)?.ext[0] ?? 1, COLLIDERS.get(id)?.ext[2] ?? 1);
+  const halfOf = (id) => COLLIDERS.get(id)?.ext[0] ?? 1;
   for (const stage of stages) {
     const half = halfOf(stage.buildingId);
     for (let m = 0; m < stage.count; m += 1) {
@@ -442,24 +460,35 @@ export function layoutBus(spec) {
           if (cell.dir !== 'N' && next.dir !== 'N' && next.y === cell.y && Math.abs(next.x - cell.x) === 1) break;
           cursor += 1;
         }
-        if (cursor + 1 >= path.length) throw new Error('总线长度不够放完所有机器');
+        if (cursor + 1 >= path.length) throw new Error(`总线长度不够放完所有机器（已放 ${machines}/${stages.reduce((sum, stage) => sum + stage.count, 0)}，宽度 ${width}，行数 ${rows}）`);
         const cell = path[cursor];
-        if (cell.x >= 3 && cell.x <= width - 3) break;
+        const margin = Math.ceil(half + 0.6);
+        if (cell.x >= 1 + margin && cell.x <= width - 1 - margin) break;
         cursor += 1;
       }
       const cell = path[cursor];
       const dx = cell.dir === 'E' ? 1 : -1;
       const outCell = path[cursor + 1];
-      const machine = builder.add(stage.buildingId, cell.x, cell.y - 2, 0, { recipeId: stage.recipeId });
+      const mode = stage.mode;
+      const machine = builder.add(stage.buildingId, cell.x, cell.y - mode.yOffset, 0, { recipeId: stage.recipeId, yaw: mode.yaw });
       // 混带：一个输入分拣器就够，机器只吃自己配方认的物品。
       const inBus = belts[indexOf.get(`${cell.x},${cell.y}`)];
       if (!inBus) throw new Error('总线缺少输入格');
-      builder.addSorter(sorterId, { belt: inBus, factory: machine, side: 'top', offset: 0, io: 'in' });
+      if (mode.mode === 'bottom') {
+        builder.addPortSorter(sorterId, { belt: inBus, factory: machine, slot: 7, io: 'in' });
+      } else {
+        builder.addSorter(sorterId, { belt: inBus, factory: machine, side: 'top', offset: 0, io: 'in' });
+      }
       for (const itemId of stage.inputs) {
         addEvent(itemId, cursor, -(stage.inputRates.get(itemId) ?? 0) / stage.count);
       }
       const outBus = belts[indexOf.get(`${outCell.x},${outCell.y}`)];
-      builder.addSorter(sorterId, { belt: outBus, factory: machine, side: 'top', offset: dx, io: 'out', itemIdFilter: stage.output });
+      if (mode.mode === 'bottom') {
+        // 转 180° 后，6/8 号侧端口分别落在 +0.782 / -0.782，选与流向同侧的那个当输出。
+        builder.addPortSorter(sorterId, { belt: outBus, factory: machine, slot: dx > 0 ? 6 : 8, io: 'out', itemIdFilter: stage.output });
+      } else {
+        builder.addSorter(sorterId, { belt: outBus, factory: machine, side: 'top', offset: dx, io: 'out', itemIdFilter: stage.output });
+      }
       for (const output of stage.outputs ?? [{ itemId: stage.output, rate: stage.outputRate ?? 0 }]) {
         addEvent(output.itemId, cursor + 1, output.rate / stage.count);
       }

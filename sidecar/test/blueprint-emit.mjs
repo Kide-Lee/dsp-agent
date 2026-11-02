@@ -78,24 +78,36 @@ const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
   check('总线容量超限抛错', threw);
 }
 
-// 7. 总线只收“正上方有中间槽位”的机器。
+// 7. 总线支持的机器：正上方有中间槽位的，和下端口可以通过转 180° 朝上的。
 {
   check('2303 适合总线', busCompatible(2303));
   check('2302 适合总线', busCompatible(2302));
-  check('2308 精炼厂不适合总线', !busCompatible(2308));
+  check('2308 精炼厂适合总线', busCompatible(2308));
+  const refinery = layoutBus({
+    stages: [{ buildingId: 2308, count: 2, recipeId: 16, output: 1120, outputs: [{ itemId: 1120, rate: 60 }, { itemId: 1114, rate: 120 }], inputs: [1007], inputRates: new Map([[1007, 180]]), outputRate: 60 }],
+    target: 1120,
+    rawRates: new Map([[1007, 180]]),
+  });
+  const result = validateBlueprint(refinery.text);
+  check('精炼厂总线通过硬校验', result.ok, result.errors.slice(0, 3).join('；'));
+}
+
+// 8. 化工厂这类槽位在侧面远端、又没有端口偏移数据的，仍拒绝。
+{
+  check('2310 化工厂不适合总线', !busCompatible(2310));
   let threw = false;
   try {
     layoutBus({
-      stages: [{ buildingId: 2308, count: 1, recipeId: 16, output: 1120, inputs: [1007], inputRates: new Map([[1007, 60]]), outputRate: 60 }],
+      stages: [{ buildingId: 2310, count: 1, recipeId: 16, output: 1120, inputs: [1007], inputRates: new Map([[1007, 60]]), outputRate: 60 }],
       target: 1120,
     });
   } catch (error) {
     threw = error.code === 'bus-unsupported';
   }
-  check('总线拒绝精炼厂', threw);
+  check('总线拒绝化工厂', threw);
 }
 
-// 8. 未知建筑。
+// 9. 未知建筑。
 {
   const b = new BlueprintBuilder({ width: 10, height: 10 });
   let threw = false;

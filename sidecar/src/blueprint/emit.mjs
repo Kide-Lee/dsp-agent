@@ -3,6 +3,7 @@
 // 编码走同一份 vendored parser（蓝图格式本身）。
 import buildingData from '../../vendor/dsp-calc/data/Buildings.mjs';
 import { toStr } from '../../vendor/dsp-calc/src/blueprint/parser.js';
+import { PORT_OFFSETS, rotateOffset } from './ports.mjs';
 
 const TEMPLATES = new Map(Object.values(buildingData.buildings).map((b) => [b.itemId, b]));
 const HEADING = { E: 90, W: 270, N: 0, S: 180 };
@@ -100,6 +101,50 @@ export class BlueprintBuilder {
       sorter.filterId = itemIdFilter;
     }
     // 朝向按两端高低定：终点在上 → 0，否则 180。
+    const up = sorter.localOffset[1].y > sorter.localOffset[0].y;
+    sorter.yaw = up ? [0, 0] : [180, 180];
+    return sorter;
+  }
+
+  /**
+   * 带小数端口的建筑分拣器（精炼厂这类槽位不在整数格上的机器）。
+   * 机器一侧的端点是端口真实位置，带子一侧的端点沿用端口的横向坐标、取带子所在的行。
+   */
+  addPortSorter(itemId, { belt, factory, slot, io, itemIdFilter = 0, sorterId }) {
+    const offsets = PORT_OFFSETS.get(factory.itemId);
+    const local = offsets?.get(slot);
+    if (!local) throw new Error(`建筑 ${factory.itemId} 没有 ${slot} 号端口的偏移数据`);
+    const yaw = factory.yaw?.[0] ?? 0;
+    const { dx, dy } = rotateOffset(local.dx, local.dy, yaw);
+    const portX = factory.localOffset[0].x + dx;
+    const portY = factory.localOffset[0].y + dy;
+    const beltX = belt.localOffset[0].x;
+    const beltY = belt.localOffset[0].y;
+    if (Math.abs(beltX - portX) > 0.5) throw new Error(`端口与带子错开 ${Math.abs(beltX - portX).toFixed(2)} 格`);
+    const length = Math.floor(Math.abs(beltY - portY) + Math.abs(beltX - portX) + 1e-6);
+    if (length < 1 || length > 3) throw new Error(`端口分拣器长度 ${length} 超出 1..3`);
+    const sorter = this.add(sorterId ?? itemId, portX, Math.min(portY, beltY), 0, {
+      parameters: { length },
+      outputObjIdx: -1,
+      inputObjIdx: -1,
+    });
+    const portPoint = { x: portX, y: portY, z: 0 };
+    const beltPoint = { x: portX, y: beltY, z: belt.localOffset[0].z };
+    if (io === 'in') {
+      sorter.localOffset = [beltPoint, portPoint];
+      sorter.inputObjIdx = belt.index;
+      sorter.inputFromSlot = -1;
+      sorter.outputObjIdx = factory.index;
+      sorter.outputToSlot = slot;
+      sorter.filterId = 0;
+    } else {
+      sorter.localOffset = [portPoint, beltPoint];
+      sorter.inputObjIdx = factory.index;
+      sorter.inputFromSlot = slot;
+      sorter.outputObjIdx = belt.index;
+      sorter.outputToSlot = -1;
+      sorter.filterId = itemIdFilter;
+    }
     const up = sorter.localOffset[1].y > sorter.localOffset[0].y;
     sorter.yaw = up ? [0, 0] : [180, 180];
     return sorter;
