@@ -58,8 +58,8 @@
     "test:interrupt": "node test/interrupt.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-ai": "^1.5.0",
+    "@earendil-works/pi-coding-agent": "^1.5.0",
     "@jitl/quickjs-singlefile-cjs-release-sync": "0.32.0",
     "quickjs-emscripten-core": "0.32.0",
     "typebox": "1.4.3",
