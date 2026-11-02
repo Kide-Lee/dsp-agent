@@ -400,13 +400,14 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
       name: 'game_tether_add',
       label: '方位指示',
       description:
-        '建立机甲到行星/建筑/矿脉的方位指示，可同时建立多个（最多 20 个）。本星球的每个建筑/矿脉各画一条 LineGizmo；' +
-        '跨行星时用原生 navigation.indicatorAstroId 指向其中一个目标行星（游戏一次只支持一个导航朝向），' +
-        '落到该行星后，该行星上的所有建筑/矿脉都切换为自绘线。写操作，风险 1：执行前玩家必须确认。',
+        '建立机甲到行星/建筑/矿脉的方位指示，可同时建立多个（最多 20 个）。本星球的建筑/矿脉各放一个原生定位标记（与行星视图右键相同的光柱），' +
+        '抵达附近后标记由游戏清除；跨行星时先用原生 navigation.indicatorAstroId 指向其中一个目标行星（游戏一次只支持一个导航朝向），' +
+        '落到该行星后自动改用定位标记。写操作，风险 1：执行前玩家必须确认。',
       promptGuidelines: [
         '玩家说“给这些建筑/星球/矿脉都做个方位指示”时使用；先用 game_get_entities/game_get_planet 确认目标。',
         'kind=planet 时用 planetId（缺省当前星球）；kind=building 时用 buildingId，可选 planetId；kind=vein 时用 veinId，可选 planetId。',
-        '本星球建筑/矿脉会同时显示多条线；跨行星原生导航一次只指一个目标行星，不要声称所有跨行星线都同时可见。',
+        '本星球建筑/矿脉可同时显示多个定位标记；跨行星原生导航一次只指一个目标行星，不要声称所有跨行星目标都同时可见。',
+        '标记在抵达附近后消失、卡片按钮恢复为未定位，这是正常行为。',
       ],
       parameters: Type.Object({
         kind: Type.String({ enum: ['planet', 'building', 'vein'], description: 'planet / building / vein' }),
@@ -420,8 +421,8 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
     writeTool(host, {
       name: 'game_tether_clear',
       label: '清除方位',
-      description: '清除本 mod 建立的所有方位指示（导航朝向和建筑追踪线）。写操作，风险 1：执行前玩家必须确认。',
-      promptGuidelines: ['玩家说“取消方位/清除连线”时使用；只清本 mod 建立的目标。'],
+      description: '清除本 mod 建立的所有方位指示（导航朝向和定位标记）。写操作，风险 1：执行前玩家必须确认。',
+      promptGuidelines: ['玩家说“取消方位/清除标记”时使用；只清本 mod 建立的目标。'],
       parameters: Type.Object({}),
       timeoutMs: 8000,
       risk: 1,

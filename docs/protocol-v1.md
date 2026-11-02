@@ -1742,7 +1742,7 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | `game_storage_deposit` | 2 | `buildingId`, `itemId`, `count` | 背包→存储；满时退剩余；可撤销 |
 | `game_storage_withdraw` | 2 | `buildingId`, `itemId`, `count` | 存储→背包；背包满时留剩余；可撤销 |
 | `game_feed_input` | 2 | `buildingId`, `itemId`, `count`（≤500） | 背包原料直接进生产建筑输入缓冲；不经过分拣器/传送带；可撤销 |
-| `game_tether_add` | 1 | `kind`（planet/building/vein）, `planetId?`, `buildingId?`, `veinId?` | 建立机甲到行星/建筑/矿脉的方位指示；使用游戏原生动线 |
+| `game_tether_add` | 1 | `kind`（planet/building/vein）, `planetId?`, `buildingId?`, `veinId?` | 建立机甲到行星/建筑/矿脉的方位指示；本星球用原生定位标记，跨行星先用导航线 |
 | `game_tether_clear` | 1 | 无 | 清除本 mod 建立的所有方位指示 |
 | `game_tether_list` | 0 | 无 | 列出当前方位指示 |
 | `game_todo_templates` | 0 | 无 | 列出原生 GoalProto 模板与判断器 |
@@ -1757,6 +1757,8 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 - `game_place_marker` / `game_open_panel` / `game_set_research` / `game_undo_last_write` 需要 `game.write.v1`；`game_drop_item` 需要 `game.drop.v1`；`game_set_recipe` / `game_set_assembler_batch` / `game_take_output` / `game_feed_input` 需要 `game.build.v1`；存储五件套需要 `game.storage.v1`；方位三件套需要 `game.tether.v1`；目标四件套需要 `game.todo.v1`。
 - `game_place_marker` 只能标记玩家当前所在的行星：它写入游戏原生的定位警告（`LOCATION_TRACKING`），
   与行星视图右键放置的是同一种标记，离开行星或抵达附近后游戏会自动清除。
+- 本星球的建筑/矿脉方位指示复用同一种原生定位标记；跨行星目标仍先用导航朝向，落到目标行星后切换为定位标记。
+  定位标记抵达附近后由游戏清除，对应的卡片按钮会恢复为未定位。
 - risk 1/2 的工具都会先走 A.12；拒绝确认时 mod 不执行、无任何副作用。
 - 视角聚焦不再作为 AI 工具提供：建筑/星球/矿脉卡片由玩家点击聚焦（`GameLinkFocus`），AI 不替玩家移动镜头。
 - 写操作只保留一层撤销；`game_set_assembler_batch` 整批算一层。换档/断线清空撤销栈。

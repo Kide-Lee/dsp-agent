@@ -48,7 +48,7 @@
 | [`game_storage_withdraw`](game-write-build.md#game_storage_withdraw) | 从存储取出 | `game.storage.v1` | risk 2 | 8000ms | 把一台存储建筑里的物品取到背包。 |
 | [`game_take_output`](game-write-build.md#game_take_output) | 取成品 | `game.build.v1` | risk 2 | 8000ms | 把一台生产建筑当前已产出的成品取到背包，保留配方。 |
 | [`game_tether_add`](game-assist.md#game_tether_add) | 方位指示 | `game.tether.v1` | risk 1 | 8000ms | 建立机甲到行星/建筑/矿脉的方位指示，可同时建立多个（最多 20 个）。 |
-| [`game_tether_clear`](game-assist.md#game_tether_clear) | 清除方位 | `game.tether.v1` | risk 1 | 8000ms | 清除本 mod 建立的所有方位指示（导航朝向和建筑追踪线）。 |
+| [`game_tether_clear`](game-assist.md#game_tether_clear) | 清除方位 | `game.tether.v1` | risk 1 | 8000ms | 清除本 mod 建立的所有方位指示（导航朝向和定位标记）。 |
 | [`game_tether_list`](game-assist.md#game_tether_list) | 方位列表 | `game.tether.v1` | 只读 | 5000ms | 列出当前方位指示（行星/建筑/矿脉及名称）。 |
 | [`game_todo_add`](game-assist.md#game_todo_add) | 新增游戏目标 | `game.todo.v1` | risk 2 | 8000ms | 在原生左侧“游戏目标”面板新增目标。 |
 | [`game_todo_list`](game-assist.md#game_todo_list) | 当前游戏目标 | `game.todo.v1` | 只读 | 5000ms | 读取 AI 创建的原生游戏目标（含轮内待办）及当前值/目标值/阶段，以及目标面板当前是否真的没有显示。 |

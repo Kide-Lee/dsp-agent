@@ -9,12 +9,16 @@ namespace IcarusII.Game.Tools
     /// <summary>
     /// “机甲 ↔ 目标”的方位指示：
     ///  - 行星/恒星：Player.navigation.indicatorAstroId（星图“方位指示”同源）；
-    ///  - 建筑：跨行星时用原生导航线指向目标行星；落到该行星后切换为自绘 LineGizmo，
-    ///    从机甲连到建筑。全部是瞬态数据，换档/断线/插件卸载时移除。
+    ///  - 建筑/矿脉：跨行星时用原生导航线指向目标行星；落到该行星后改用原生定位标记（光柱）指向实体，
+    ///    与行星视图右键放置的标记同源，抵达附近后由游戏清除。
+    /// 全部是瞬态数据，换档/断线/插件卸载时移除。
     /// </summary>
     internal static class GameTether
     {
         private const int MaxTargets = 20;
+
+        /// <summary>定位警告的 objectId 标记；读档/换档时据此清理上次残留的方位标记。</summary>
+        private const int TetherWarningObjectId = -51901;
 
         /// <summary>一张方位指示卡需要的最小数据；名字一律来自游戏，不做显示层改写。</summary>
         public sealed class Target
@@ -35,7 +39,7 @@ namespace IcarusII.Game.Tools
         private sealed class Entry
         {
             public Target Info;
-            public LineGizmo Line;
+            public int WarningId;
         }
 
         private static readonly List<Entry> Entries = new List<Entry>();
@@ -65,11 +69,14 @@ namespace IcarusII.Game.Tools
 
         public static void Clear()
         {
-            foreach (var entry in Entries)
-            {
-                try { entry.Line?.Close(); } catch { /* 换档/退出时可能已销毁 */ }
-            }
+            foreach (var entry in Entries) RemoveWarning(entry);
             Entries.Clear();
+            ClearNavigationIfOwned();
+            try { Changed?.Invoke(); } catch { /* UI 可能已销毁 */ }
+        }
+
+        private static void ClearNavigationIfOwned()
+        {
             try
             {
                 var nav = GameMain.mainPlayer != null ? GameMain.mainPlayer.navigation : null;
@@ -79,10 +86,9 @@ namespace IcarusII.Game.Tools
             catch { /* ignore */ }
             _navAstroId = 0;
             _navOwned = false;
-            try { Changed?.Invoke(); } catch { /* UI 可能已销毁 */ }
         }
 
-        /// <summary>矿脉卡片与建筑共用 tether：本星球画线，跨行星走原生导航。</summary>
+        /// <summary>矿脉卡片与建筑共用 tether：本星球放定位标记，跨行星走原生导航。</summary>
         public static bool AddVein(PlanetData planet, int veinId, out string error)
         {
             error = null;
@@ -256,17 +262,13 @@ namespace IcarusII.Game.Tools
             for (int i = 0; i < Entries.Count; i++)
             {
                 if (Entries[i].Info.Key != target.Key) continue;
-                try { Entries[i].Line?.Close(); } catch { }
+                RemoveWarning(Entries[i]);
                 Entries.RemoveAt(i);
                 try
                 {
                     var nav = GameMain.mainPlayer != null ? GameMain.mainPlayer.navigation : null;
                     if (nav != null && _navOwned && nav.indicatorAstroId == targetPlanetAstro(target))
-                    {
-                        nav.indicatorAstroId = 0;
-                        _navAstroId = 0;
-                        _navOwned = false;
-                    }
+                        ClearNavigationIfOwned();
                 }
                 catch { }
                 // 删的不是当前导航目标时不要丢弃所有权；Update 会按剩余目标重算。
@@ -390,24 +392,120 @@ namespace IcarusII.Game.Tools
             catch { return 0; }
         }
 
-        private static LineGizmo CreateLine(Vector3 start, Vector3 end)
+        private static void UpdateNavigation(Player player)
         {
-            var line = LineGizmo.Create(1, start, end);
-            line.autoRefresh = true;
-            line.multiplier = 1.5f;
-            line.alphaMultiplier = 0.3f;
-            line.width = 0.6f;
-            line.color = Configs.builtin.gizmoColors != null && Configs.builtin.gizmoColors.Length > 4
-                ? Configs.builtin.gizmoColors[4] : Color.cyan;
-            line.spherical = false;
-            line.Open();
-            return line;
+            var nav = player != null ? player.navigation : null;
+            if (nav == null) return;
+            var localAstroId = player.planetData != null ? player.planetData.astroId : 0;
+            var desiredAstro = 0;
+            for (int i = Entries.Count - 1; i >= 0; i--)
+            {
+                var astro = targetPlanetAstro(Entries[i].Info);
+                if (astro <= 0 || astro == localAstroId) continue;
+                desiredAstro = astro;
+                break;
+            }
+            if (desiredAstro > 0)
+            {
+                if (nav.indicatorAstroId != desiredAstro)
+                {
+                    nav.indicatorAstroId = desiredAstro;
+                    _navAstroId = desiredAstro;
+                    _navOwned = true;
+                }
+            }
+            else
+            {
+                ClearNavigationIfOwned();
+            }
+        }
+
+        private static bool TryGetTargetPos(PlanetData planet, Target info, out Vector3 pos, out int detailId)
+        {
+            pos = Vector3.zero;
+            detailId = 0;
+            var factory = planet != null ? planet.factory : null;
+            if (factory == null) return false;
+            if (info.Kind == "building")
+            {
+                if (!EntityToolUtil.HasEntity(factory, info.TargetId)) return false;
+                var entity = factory.entityPool[info.TargetId];
+                pos = entity.pos;
+                detailId = entity.protoId;
+                return true;
+            }
+            if (factory.veinPool == null || info.TargetId <= 0 || info.TargetId >= factory.veinPool.Length) return false;
+            var vein = factory.veinPool[info.TargetId];
+            if (vein.id != info.TargetId) return false;
+            pos = vein.pos;
+            var proto = LDB.veins != null ? LDB.veins.Select((int)vein.type) : null;
+            detailId = proto != null ? SignalProtoSet.SignalId(ESignalType.Vein, proto.ID) : 0;
+            return true;
+        }
+
+        private static bool IsReached(Player player, PlanetData planet, Vector3 pos)
+        {
+            if (player == null || planet == null) return false;
+            var radius = planet.realRadius;
+            var playerSurface = player.position.normalized * radius;
+            var targetSurface = pos.normalized * radius;
+            var movementAllowance = player.speed * 0.1f;
+            if (player.movementState >= EMovementState.Fly) movementAllowance *= 1.5f;
+            var arriveDistance = Mathf.Max(5f, movementAllowance);
+            return (playerSurface - targetSurface).sqrMagnitude < arriveDistance * arriveDistance;
+        }
+
+        private static void EnsureWarning(Entry entry, PlanetData planet, Vector3 pos, int detailId)
+        {
+            var warningSystem = GameMain.data != null ? GameMain.data.warningSystem : null;
+            if (warningSystem == null)
+            {
+                entry.WarningId = 0;
+                return;
+            }
+            if (IsOwnedWarningAlive(warningSystem, entry.WarningId))
+            {
+                ref var live = ref warningSystem.warningPool[entry.WarningId];
+                live.astroId = planet.id;
+                live.localPos = pos;
+                live.detailId1 = detailId;
+                return;
+            }
+            ref var warning = ref warningSystem.NewWarningData(
+                WarningData.LOCATION_TRACKING, TetherWarningObjectId, WarningData.LOCATION_SIGNALID);
+            warning.state = 1;
+            warning.astroId = planet.id;
+            warning.localPos = pos;
+            warning.detailId1 = detailId;
+            entry.WarningId = warning.id;
+        }
+
+        private static bool IsOwnedWarningAlive(WarningSystem warningSystem, int id)
+        {
+            if (warningSystem == null || id <= 0 || id >= warningSystem.warningCursor) return false;
+            var warning = warningSystem.warningPool[id];
+            return warning.id == id && warning.state > 0 &&
+                warning.factoryId == WarningData.LOCATION_TRACKING &&
+                warning.signalId == WarningData.LOCATION_SIGNALID &&
+                warning.objectId == TetherWarningObjectId;
+        }
+
+        private static void RemoveWarning(Entry entry)
+        {
+            if (entry == null || entry.WarningId <= 0) return;
+            try
+            {
+                var warningSystem = GameMain.data != null ? GameMain.data.warningSystem : null;
+                if (IsOwnedWarningAlive(warningSystem, entry.WarningId))
+                    warningSystem.RemoveWarningData(entry.WarningId);
+            }
+            catch { /* 换档/退出时系统可能已销毁 */ }
+            entry.WarningId = 0;
         }
 
         /// <summary>
-        /// 多目标：本星球的建筑各画一条线；跨行星目标由原生 navigation 指向其中一个
-        /// 目标行星（游戏本身一次只支持一个导航朝向）。落到某颗目标行星后，该行星上的
-        /// 所有建筑都切换为自绘线。
+        /// 本星球目标各放一个原生定位标记；跨行星目标由原生 navigation 指向其中一个目标行星
+        /// （游戏本身一次只支持一个导航朝向）。落到某颗目标行星后，该行星上的目标改用定位标记。
         /// </summary>
         public static void Update()
         {
@@ -415,79 +513,36 @@ namespace IcarusII.Game.Tools
             {
                 var player = GameMain.mainPlayer;
                 if (player == null) return;
-                var localPlanet = GameMain.localPlanet;
-                int localAstroId = localPlanet != null ? localPlanet.astroId : 0;
-                bool removed = false;
+                var planet = player.planetData;
+                var removed = false;
 
                 for (int i = Entries.Count - 1; i >= 0; i--)
                 {
                     var entry = Entries[i];
                     if (entry.Info.Kind != "building" && entry.Info.Kind != "vein") continue;
-                    if (entry.Info.PlanetId != player.planetId || localPlanet == null || localPlanet.factory == null)
+                    if (planet == null || planet.id != entry.Info.PlanetId || planet.factory == null)
                     {
-                        if (entry.Line != null) { entry.Line.Close(); entry.Line = null; }
+                        RemoveWarning(entry);
                         continue;
                     }
-                    Vector3 end;
-                    if (entry.Info.Kind == "building")
+                    if (!TryGetTargetPos(planet, entry.Info, out var pos, out var detailId))
                     {
-                        if (!EntityToolUtil.HasEntity(localPlanet.factory, entry.Info.TargetId))
-                        {
-                            if (entry.Line != null) entry.Line.Close();
-                            Entries.RemoveAt(i);
-                            removed = true;
-                            continue;
-                        }
-                        end = localPlanet.factory.entityPool[entry.Info.TargetId].pos;
+                        RemoveWarning(entry);
+                        Entries.RemoveAt(i);
+                        removed = true;
+                        continue;
                     }
-                    else
+                    if (IsReached(player, planet, pos))
                     {
-                        if (localPlanet.factory.veinPool == null ||
-                            entry.Info.TargetId >= localPlanet.factory.veinPool.Length ||
-                            localPlanet.factory.veinPool[entry.Info.TargetId].id != entry.Info.TargetId)
-                        {
-                            if (entry.Line != null) entry.Line.Close();
-                            Entries.RemoveAt(i);
-                            removed = true;
-                            continue;
-                        }
-                        end = localPlanet.factory.veinPool[entry.Info.TargetId].pos;
+                        RemoveWarning(entry);
+                        Entries.RemoveAt(i);
+                        removed = true;
+                        continue;
                     }
-                    if (entry.Line == null) entry.Line = CreateLine(player.position, end);
-                    if (!entry.Line.gameObject.activeSelf) entry.Line.Open();
-                    entry.Line.startPoint = player.position;
-                    entry.Line.endPoint = end;
+                    EnsureWarning(entry, planet, pos, detailId);
                 }
                 if (removed) { try { Changed?.Invoke(); } catch { } }
-
-                // 原生导航一次只能指向一个星球：优先最新添加的、不在当前星球的星球/建筑目标。
-                int desiredAstro = 0;
-                for (int i = Entries.Count - 1; i >= 0; i--)
-                {
-                    var entry = Entries[i];
-                    var astro = targetPlanetAstro(entry.Info);
-                    if (astro <= 0 || astro == localAstroId) continue;
-                    desiredAstro = astro;
-                    break;
-                }
-
-                var nav = player.navigation;
-                if (nav == null) return;
-                if (desiredAstro > 0)
-                {
-                    if (nav.indicatorAstroId != desiredAstro)
-                    {
-                        nav.indicatorAstroId = desiredAstro;
-                        _navAstroId = desiredAstro;
-                        _navOwned = true;
-                    }
-                }
-                else if (_navOwned && nav.indicatorAstroId == _navAstroId)
-                {
-                    nav.indicatorAstroId = 0;
-                    _navAstroId = 0;
-                    _navOwned = false;
-                }
+                UpdateNavigation(player);
             }
             catch { /* 切换场景瞬间忽略 */ }
         }
@@ -513,8 +568,8 @@ namespace IcarusII.Game.Tools
         }
 
         /// <summary>
-        /// 清理旧版本/异常数据：DASHBOARD_TRACKING 的 objectId 必须是有效 statPlan，
-        /// 否则 UIWarningWindow.OnLateUpdate 会 NRE。换档进入时调用一次。
+        /// 清理异常数据：上次退出残留的方位定位警告，以及 objectId 失效的
+        /// DASHBOARD_TRACKING（否则 UIWarningWindow.OnLateUpdate 会 NRE）。换档进入时调用一次。
         /// </summary>
         public static void SanitizeInvalidWarnings()
         {
@@ -529,6 +584,12 @@ namespace IcarusII.Game.Tools
                 {
                     var warning = warningSystem.warningPool[id];
                     if (warning.id != id) continue;
+                    if (warning.factoryId == WarningData.LOCATION_TRACKING &&
+                        warning.objectId == TetherWarningObjectId)
+                    {
+                        warningSystem.RemoveWarningData(id);
+                        continue;
+                    }
                     if (warning.factoryId != WarningData.DASHBOARD_TRACKING ||
                         warning.signalId != WarningData.DASHBOARD_SIGNALID) continue;
                     if (plans == null || plans.buffer == null || warning.objectId <= 0 ||
