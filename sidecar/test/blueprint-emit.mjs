@@ -5,7 +5,7 @@
  * 覆盖：单段机器行的蓝图能过硬校验；带子首尾相连；分拣器超长/未知建筑会抛错。
  */
 import { BlueprintBuilder } from '../src/blueprint/emit.mjs';
-import { layoutBus, layoutSingleStage } from '../src/blueprint/layout.mjs';
+import { busCompatible, layoutBus, layoutSingleStage } from '../src/blueprint/layout.mjs';
 import { validateBlueprint } from '../src/blueprint/validate.mjs';
 
 let passed = 0;
@@ -78,7 +78,24 @@ const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
   check('总线容量超限抛错', threw);
 }
 
-// 7. 未知建筑。
+// 7. 总线只收“正上方有中间槽位”的机器。
+{
+  check('2303 适合总线', busCompatible(2303));
+  check('2302 适合总线', busCompatible(2302));
+  check('2308 精炼厂不适合总线', !busCompatible(2308));
+  let threw = false;
+  try {
+    layoutBus({
+      stages: [{ buildingId: 2308, count: 1, recipeId: 16, output: 1120, inputs: [1007], inputRates: new Map([[1007, 60]]), outputRate: 60 }],
+      target: 1120,
+    });
+  } catch (error) {
+    threw = error.code === 'bus-unsupported';
+  }
+  check('总线拒绝精炼厂', threw);
+}
+
+// 8. 未知建筑。
 {
   const b = new BlueprintBuilder({ width: 10, height: 10 });
   let threw = false;

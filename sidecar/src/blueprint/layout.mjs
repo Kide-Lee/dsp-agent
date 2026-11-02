@@ -3,6 +3,7 @@
 import buildingData from '../../vendor/dsp-calc/data/Buildings.mjs';
 import vanilla from '../../vendor/dsp-calc/data/Vanilla.mjs';
 import { COLLIDERS } from './colliders.mjs';
+import { SLOTS } from './slots.mjs';
 import { BlueprintBuilder } from './emit.mjs';
 
 const BUILDINGS = buildingData.buildings;
@@ -18,6 +19,18 @@ function buildingOf(itemId) {
 export function machineSpacing(itemId) {
   const collider = COLLIDERS.get(itemId);
   return Math.max(2, Math.ceil((collider?.ext[0] ?? 1) * 2));
+}
+
+/**
+ * 总线布局要求机器朝上的那面有“中间槽位”（本地 z≈1、横向偏移 0），
+ * 这样带子在上方、分拣器长度 1 就能接到机器。精炼厂/化工厂这类大机器槽位在侧面或更远，先回退旧布局。
+ */
+export function busCompatible(itemId) {
+  const collider = COLLIDERS.get(itemId);
+  const slots = SLOTS.get(itemId);
+  if (!collider || !slots) return false;
+  if (collider.ext[0] > 2.5 || collider.ext[2] > 2.5) return false;
+  return slots.some((slot) => Math.abs(slot.x) <= 0.3 && slot.z >= 0.9 && slot.z <= 1.2);
 }
 
 /**
@@ -347,6 +360,13 @@ const BELT_CAPACITY_PER_MIN = { 2001: 360, 2002: 720, 2003: 1800 };
 export function layoutBus(spec) {
   const { stages, target } = spec;
   if (!Array.isArray(stages) || stages.length === 0) throw new Error('总线布局至少需要一段');
+  for (const stage of stages) {
+    if (!busCompatible(stage.buildingId)) {
+      const error = new Error(`建筑 ${stage.buildingId} 的槽位不在正上方，总线布局放不了`);
+      error.code = 'bus-unsupported';
+      throw error;
+    }
+  }
   const beltId = spec.beltId ?? 2003;
   const sorterId = spec.sorterId ?? 2013;
   const spacingOf = (stage) => machineSpacing(stage.buildingId);
