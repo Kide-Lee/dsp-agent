@@ -251,13 +251,14 @@ interface BuildTilesOptions {
   rows: number;
   stackSize: number;
   supply?: 'belt' | 'station';
+  layout?: 'bus' | 'factory';
   from?: 'ore' | 'smelted' | number;
   description?: (index: number, count: number, tileRate: number, totalRate: number) => string;
 }
 
 interface BuiltTile {
   text: string;
-  meta: PlanBlueprintMeta;
+  meta: PlanBlueprintMeta & { report?: unknown };
   plan: PlanResult;
   rate: number;
   name: string;
@@ -306,6 +307,7 @@ function buildBlueprintTiles(
       rows: options.rows,
       stackSize: options.stackSize,
       ...(options.supply ? { supply: options.supply } : {}),
+      ...(options.layout ? { layout: options.layout } : {}),
       name,
       author: options.author,
       version: options.version,
@@ -920,6 +922,7 @@ export function createBlueprintTools(
         insertType: Type.Optional(Type.Integer({ minimum: 0, maximum: 3, description: '默认 2（极速）' })),
         rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 8, description: '产线行数，默认 1；超宽时会自动加行' })),
         supply: Type.Optional(Type.Union([Type.Literal('belt'), Type.Literal('station')], { description: '原料供给方式：belt 走物品标签（默认），station 在行首放物流站并接出料带（最多 3 种原料）' })),
+        layout: Type.Optional(Type.Union([Type.Literal('bus'), Type.Literal('factory')], { description: '布局方式：bus 单条混带（默认，放不下会拆张）；factory 每个阶段一个模块、模块间用物流站供货，整条产线出一张图（适合复杂产品）' })),
         stackSize: Type.Optional(Type.Integer({ minimum: 1, maximum: 4, description: '集装堆叠，默认 1' })),
         depth: Type.Optional(Type.Integer({ minimum: 1, maximum: 16, description: '配方展开深度，默认 8' })),
         from: Type.Optional(
@@ -1059,6 +1062,7 @@ export function createBlueprintTools(
         const attributes = typeof args['attributes'] === 'string' ? args['attributes'] : '';
         const rows = typeof args['rows'] === 'number' ? args['rows'] : 1;
         const supply = args['supply'] === 'station' ? 'station' : 'belt';
+        const layout = args['layout'] === 'factory' ? 'factory' : 'bus';
 
         let tileSet;
         try {
@@ -1074,6 +1078,7 @@ export function createBlueprintTools(
             rows,
             stackSize,
             supply,
+            layout,
             ...(from !== undefined ? { from } : {}),
             ...(typeof args['description'] === 'string' && args['description']
               ? { description: () => String(args['description']) }
@@ -1131,6 +1136,7 @@ export function createBlueprintTools(
             machines: tile.meta.machines,
             stages: tile.meta.stages,
             warnings: tile.meta.warnings,
+            report: tile.meta.report,
           });
         }
 
@@ -1191,6 +1197,7 @@ export function createBlueprintTools(
             ratePerTile: tileSet.ratePerTile,
             tiles,
             stages: firstTile.stages,
+            report: firstTile.report,
             raw,
             byproducts,
             warnings,

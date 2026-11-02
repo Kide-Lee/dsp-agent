@@ -100,6 +100,11 @@ try {
     check('每个文件都落盘', three.tiles.every((tile) => existsSync(tile.path)), JSON.stringify(three.tiles.map((tile) => tile.path)));
     check('机器数为两张之和', three.tiles.reduce((sum, tile) => sum + tile.machines, 0) === three.machines);
 
+
+    const factory = await run({ item: '电磁涡轮', rate: 60, layout: 'factory' });
+    check('factory 布局一张出图', factory.tileCount === 1 && factory.width > 0, JSON.stringify(factory?.error ?? factory?.tileCount));
+    check('返回蓝图统计', Array.isArray(factory.report?.buildings) && factory.report.stations.length > 0);
+
     const six = await run({ item: '电磁涡轮', rate: 600 });
     check('600/min 拆 5 张', six.tileCount === 5, String(six.tileCount));
     const huge = await run({ item: '电磁涡轮', rate: 1200 });

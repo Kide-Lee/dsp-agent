@@ -37,8 +37,12 @@ function shapesOf(building) {
   }
   const collider = COLLIDERS.get(building.itemId);
   const area = AREA.get(building.itemId) ?? [1, 1];
+  if (collider?.station) {
+    // 站的 buildCollider 是工作范围（10x25），不是占地；按 5x5 占地算，端口格单独豁免。
+    return [{ kind: 'cell', x: p.x, y: p.y, hw: 2.5, hh: 2.5, station: true }];
+  }
   const shapes = [
-    { kind: 'cell', x: p.x, y: p.y, hw: Math.max(0.5, area[0] / 2), hh: Math.max(0.5, area[1] / 2), station: !!collider?.station },
+    { kind: 'cell', x: p.x, y: p.y, hw: Math.max(0.5, area[0] / 2), hh: Math.max(0.5, area[1] / 2), station: false },
   ];
   if (collider) {
     const yaw = ((Math.round(building.yaw?.[0] ?? 0) % 360) + 360) % 360;

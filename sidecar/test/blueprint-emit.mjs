@@ -6,6 +6,7 @@
  */
 import { BlueprintBuilder } from '../src/blueprint/emit.mjs';
 import { busCompatible, layoutBus } from '../src/blueprint/layout.mjs';
+import { layoutFactory } from '../src/blueprint/factory.mjs';
 import { STATION_PORT_CELLS, stationPortCell } from '../src/blueprint/ports.mjs';
 import { validateBlueprint } from '../src/blueprint/validate.mjs';
 import { fromStr } from '../vendor/dsp-calc/src/blueprint/parser.js';
@@ -169,6 +170,22 @@ const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
   check('两个下侧口配置为输出', stations[0].parameters.slots[6].dir === 1 && stations[0].parameters.slots[7].dir === 1);
   check('站内配置两种原料', stations[0].parameters.storage[0].itemId === 1001 && stations[0].parameters.storage[1].itemId === 1004);
   check('站供料蓝图过硬校验', validateBlueprint(built.text).ok);
+}
+
+// 13. 工厂布局：每个阶段一个模块、模块间靠物流站，整条产线一张图。
+{
+  const built = layoutFactory({
+    stages: [
+      { buildingId: 2302, count: 2, recipeId: 1, output: 1101, inputs: [1001], inputRates: new Map([[1001, 60]]), outputRate: 60 },
+      { buildingId: 2303, count: 1, recipeId: 1, output: 1204, inputs: [1101, 1202], inputRates: new Map([[1101, 30], [1202, 30]]), outputRate: 30 },
+    ],
+    title: 'factory-two',
+  });
+  const result = validateBlueprint(built.text);
+  check('工厂布局过硬校验', result.ok, result.errors.slice(0, 3).join('；'));
+  const bp = fromStr(built.text);
+  check('两个阶段各两个站', bp.buildings.filter((b) => b.itemId === 2103).length === 4);
+  check('模块数', built.meta.modules === 2, JSON.stringify(built.meta));
 }
 
 console.log(`\n${failed === 0 ? '全部通过' : `${failed} 项失败`}（${passed} 通过 / ${failed} 失败）`);
