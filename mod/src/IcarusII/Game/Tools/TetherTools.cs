@@ -45,6 +45,7 @@ namespace IcarusII.Game.Tools
         private static readonly List<Entry> Entries = new List<Entry>();
         private static int _navAstroId;
         private static bool _navOwned;
+        private static bool _locationIconHovered;
         private static Target _lastAdded;
 
         public static Target LastAdded => _lastAdded;
@@ -71,6 +72,7 @@ namespace IcarusII.Game.Tools
         {
             foreach (var entry in Entries) RemoveWarning(entry);
             Entries.Clear();
+            _locationIconHovered = false;
             ClearNavigationIfOwned();
             try { Changed?.Invoke(); } catch { /* UI 可能已销毁 */ }
         }
@@ -503,6 +505,33 @@ namespace IcarusII.Game.Tools
             entry.WarningId = 0;
         }
 
+        /// <summary>顶部“目的地指引”图标右键：每次移除最近添加的一个本星球目标。</summary>
+        private static bool IsWarningLocationHovered()
+        {
+            try
+            {
+                var uiGame = UIRoot.instance != null ? UIRoot.instance.uiGame : null;
+                var warningWindow = uiGame != null ? uiGame.warningWindow : null;
+                return warningWindow != null && warningWindow.hoverSignalId == WarningData.LOCATION_SIGNALID;
+            }
+            catch { return false; }
+        }
+
+        private static bool RemoveNewestLocalTarget(PlanetData planet)
+        {
+            if (planet == null) return false;
+            for (int i = Entries.Count - 1; i >= 0; i--)
+            {
+                var entry = Entries[i];
+                if (entry.Info.Kind != "building" && entry.Info.Kind != "vein") continue;
+                if (entry.Info.PlanetId != planet.id) continue;
+                RemoveWarning(entry);
+                Entries.RemoveAt(i);
+                return true;
+            }
+            return false;
+        }
+
         /// <summary>
         /// 本星球目标各放一个原生定位标记；跨行星目标由原生 navigation 指向其中一个目标行星
         /// （游戏本身一次只支持一个导航朝向）。落到某颗目标行星后，该行星上的目标改用定位标记。
@@ -515,6 +544,11 @@ namespace IcarusII.Game.Tools
                 if (player == null) return;
                 var planet = player.planetData;
                 var removed = false;
+
+                var hovered = IsWarningLocationHovered();
+                if (planet != null && UnityEngine.Input.GetMouseButtonDown(1) && (hovered || _locationIconHovered))
+                    removed = RemoveNewestLocalTarget(planet);
+                _locationIconHovered = hovered;
 
                 for (int i = Entries.Count - 1; i >= 0; i--)
                 {
