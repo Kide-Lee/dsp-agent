@@ -53,19 +53,10 @@ namespace IcarusII.Game.Tools
         public static event Action<Target> Added;
         public static event Action Changed;
 
-        public static bool HasAny => Entries.Count > 0;
-
         public static bool Contains(Target target)
         {
             if (target == null) return false;
             return Entries.Exists(e => e.Info.Key == target.Key);
-        }
-
-        public static List<Target> Snapshot()
-        {
-            var result = new List<Target>(Entries.Count);
-            foreach (var entry in Entries) result.Add(entry.Info);
-            return result;
         }
 
         public static void Clear()
@@ -517,17 +508,26 @@ namespace IcarusII.Game.Tools
             catch { return false; }
         }
 
-        private static bool RemoveNewestLocalTarget(PlanetData planet)
+        private static bool HasLocalEntries()
         {
+            var planet = GameMain.mainPlayer != null ? GameMain.mainPlayer.planetData : null;
             if (planet == null) return false;
-            for (int i = Entries.Count - 1; i >= 0; i--)
+            for (int i = 0; i < Entries.Count; i++)
             {
-                var entry = Entries[i];
-                if (entry.Info.Kind != "building" && entry.Info.Kind != "vein") continue;
-                if (entry.Info.PlanetId != planet.id) continue;
-                RemoveWarning(entry);
-                Entries.RemoveAt(i);
-                return true;
+                var info = Entries[i].Info;
+                if (info.Kind != "building" && info.Kind != "vein") continue;
+                if (info.PlanetId == planet.id) return true;
+            }
+            return false;
+        }
+
+        private static bool HasAnyOwnedWarningAlive()
+        {
+            var warningSystem = GameMain.data != null ? GameMain.data.warningSystem : null;
+            if (warningSystem == null) return false;
+            for (int i = 0; i < Entries.Count; i++)
+            {
+                if (IsOwnedWarningAlive(warningSystem, Entries[i].WarningId)) return true;
             }
             return false;
         }
@@ -546,8 +546,20 @@ namespace IcarusII.Game.Tools
                 var removed = false;
 
                 var hovered = IsWarningLocationHovered();
-                if (planet != null && UnityEngine.Input.GetMouseButtonDown(1) && (hovered || _locationIconHovered))
-                    removed = RemoveNewestLocalTarget(planet);
+                var rightClick = UnityEngine.Input.GetMouseButtonDown(1);
+                if (planet != null && rightClick && hovered)
+                {
+                    _locationIconHovered = hovered;
+                    Clear();
+                    return;
+                }
+                if (planet != null && rightClick && _locationIconHovered &&
+                    HasLocalEntries() && !HasAnyOwnedWarningAlive())
+                {
+                    _locationIconHovered = hovered;
+                    Clear();
+                    return;
+                }
                 _locationIconHovered = hovered;
 
                 for (int i = Entries.Count - 1; i >= 0; i--)
