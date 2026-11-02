@@ -5,8 +5,10 @@
  * 覆盖：合法蓝图通过；分拣器超长、建筑碰撞、带子跳格、区域超高、未知物品被拦住。
  * 校验器只解码蓝图本身，不依赖生成器。
  */
+import { readFileSync } from 'node:fs';
 import { toStr } from '../vendor/dsp-calc/src/blueprint/parser.js';
 import { validateBlueprint } from '../src/blueprint/validate.mjs';
+import { fromStr } from '../vendor/dsp-calc/src/blueprint/parser.js';
 
 let passed = 0;
 let failed = 0;
@@ -95,10 +97,10 @@ const errorsOf = (result) => result.errors.join(' | ');
   check('带子跳格被拦住', !result.ok && result.errors.some((e) => e.includes('不相邻')), errorsOf(result));
 }
 
-// 5. 区域高于 50 格（离赤道会跨回归线）。
+// 5. 区域高于 50 格：只是规划上限，按警告提示（游戏在赤道附近仍可贴）。
 {
   const result = validateBlueprint(makeText([base(0, 2303, 5, 5)], { x: 30, y: 60 }));
-  check('区域超高被拦住', !result.ok && result.errors.some((e) => e.includes('高度 60')), errorsOf(result));
+  check('区域超高给出警告', result.ok && result.warnings.some((e) => e.includes('高度 60')), errorsOf(result));
 }
 
 // 6. 未知物品。
@@ -111,6 +113,17 @@ const errorsOf = (result) => result.errors.join(' | ');
 {
   const result = validateBlueprint('not a blueprint');
   check('解析失败返回错误', !result.ok && result.errors[0].includes('解析失败'), errorsOf(result));
+}
+
+// 8. 游戏 0.10.35 保存的站蓝图（每条记录末尾带 content 字符串）。
+{
+  const text = readFileSync(new URL('./fixtures/blueprint-station-0.10.35.txt', import.meta.url), 'utf8').trim();
+  const bp = fromStr(text);
+  const stations = bp.buildings.filter((b) => b.itemId === 2103 || b.itemId === 2104).length;
+  check('站蓝图解析出 95 个建筑', bp.buildings.length === 95, String(bp.buildings.length));
+  check('站蓝图含两个物流站', stations === 2, String(stations));
+  const result = validateBlueprint(text);
+  check('站蓝图校验通过（尺寸只算提示）', result.ok && result.errors.length === 0, errorsOf(result));
 }
 
 console.log(`\n${failed === 0 ? '全部通过' : `${failed} 项失败`}（${passed} 通过 / ${failed} 失败）`);

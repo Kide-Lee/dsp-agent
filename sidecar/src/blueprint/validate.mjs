@@ -73,8 +73,9 @@ function beltsAdjacent(from, to) {
   const dy = snap(b.y - a.y);
   const dz = snap(b.z - a.z);
   const flat = Math.abs(dx) + Math.abs(dy);
-  if (flat === 1) return true; // 平一格：同层或坡道，坡度单独由游戏判定
-  if (flat !== 0) return false;
+  // 带子的 blueprint 坐标带模型偏移：接物流站/端口的带子之间实测 0.85~1.0，判 0.7~1.3 都算相邻。
+  if (Math.abs(flat - 1) <= 0.3) return true;
+  if (flat > 0.3) return false;
   return Math.abs(dz) * LEVEL_M <= BELT_LINK_M + EPS;
 }
 
@@ -96,8 +97,11 @@ export function validateParsed(bp, options = {}) {
 
   if (!area) errors.push('蓝图没有区域');
   if (width <= 0 || height <= 0) errors.push(`蓝图区域尺寸无效：${width}x${height}`);
-  if (width > maxWidth) errors.push(`蓝图宽度 ${width} 超过上限 ${maxWidth}`);
-  if (height > maxHeight) errors.push(`蓝图高度 ${height} 超过上限 ${maxHeight}（离赤道会跨回归线，贴不上）`);
+  // 尺寸超限只是规划上限：游戏自己的区域检查按纬度算，赤道附近 55 格高也能贴（用真实站蓝图验证过）。
+  const sizeProblems = [];
+  if (width > maxWidth) sizeProblems.push(`蓝图宽度 ${width} 超过规划上限 ${maxWidth}`);
+  if (height > maxHeight) sizeProblems.push(`蓝图高度 ${height} 超过规划上限 ${maxHeight}（建议在赤道附近贴）`);
+  (options.limitsAreErrors ? errors : warnings).push(...sizeProblems);
 
   const byItem = new Map();
   for (const building of buildings) {

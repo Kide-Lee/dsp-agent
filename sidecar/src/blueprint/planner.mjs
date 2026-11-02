@@ -126,7 +126,7 @@ export function planBlueprint(plan, options = {}) {
         rows: options.rows,
       });
       const parsed = fromStr(built.text);
-      const hard = validateParsed(parsed, { maxWidth: MAX_WIDTH, maxHeight: MAX_HEIGHT });
+      const hard = validateParsed(parsed, { maxWidth: MAX_WIDTH, maxHeight: MAX_HEIGHT, limitsAreErrors: true });
       if (hard.ok) {
         const machines = plan.recipes.reduce((sum, row) => sum + (row.buildingCount || 0), 0);
         return {
@@ -176,7 +176,7 @@ export function planBlueprint(plan, options = {}) {
         gameVersion: options.gameVersion || options.version,
       });
       const chained = fromStr(built.text);
-      const hard = validateParsed(chained, { maxWidth: MAX_WIDTH, maxHeight: MAX_HEIGHT });
+      const hard = validateParsed(chained, { maxWidth: MAX_WIDTH, maxHeight: MAX_HEIGHT, limitsAreErrors: true });
       if (hard.ok) {
         const machines = plan.recipes.reduce((sum, row) => sum + (row.buildingCount || 0), 0);
         return {
@@ -284,7 +284,7 @@ export function planBlueprint(plan, options = {}) {
     parsed.header.desc = options.description ?? '';
     breakBeltCycles(parsed);
     // 硬校验：碰撞、分拣器够不着、断带、越界，任何一条都说明贴进游戏会报红。
-    const hard = validateParsed(parsed, { maxWidth: MAX_WIDTH, maxHeight: MAX_HEIGHT });
+    const hard = validateParsed(parsed, { maxWidth: MAX_WIDTH, maxHeight: MAX_HEIGHT, limitsAreErrors: true });
     if (!hard.ok) {
       lastError = new Error(`蓝图未通过硬校验：${hard.errors.slice(0, 3).join('；')}`);
       continue;

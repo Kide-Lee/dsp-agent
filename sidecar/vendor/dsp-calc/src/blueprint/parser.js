@@ -183,6 +183,11 @@ function importBuilding(r) {
         const v = r.getView(length * Int32Array.BYTES_PER_ELEMENT);
         b.parameters = getParamParser(b.itemId).decode(v);
     }
+    if (num <= -102) {
+        // 0.10.35 起每条记录末尾多一个 content 字符串（int32 长度 + UTF-8 字节）。
+        const contentLength = r.getInt32();
+        if (contentLength > 0) b.content = new TextDecoder().decode(r.getView(contentLength));
+    }
     return b;
 }
 function exportBuilding(w, b) {
