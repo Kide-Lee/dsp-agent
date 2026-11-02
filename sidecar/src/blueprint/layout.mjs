@@ -281,28 +281,31 @@ export function chainSpecFromPlan(plan) {
 /** 把 KB 规划整理成“任意 DAG”的段列表（拓扑排序）。认不出返回 null。 */
 export function busSpecFromPlan(plan) {
   if (!plan?.item || !Array.isArray(plan.recipes) || plan.recipes.length === 0) return null;
-  if (Array.isArray(plan.byproducts) && plan.byproducts.length > 0) return null;
   const nodes = [];
-  const producerOf = new Map();
+  const producersOf = new Map();
   for (const [index, row] of plan.recipes.entries()) {
     const recipe = RECIPES.get(row.recipeId);
     if (!recipe) return null;
     const primary = row.primaryItemId ?? plan.item.id;
-    const outputs = (row.outputsPerMin ?? []).map((output) => output.itemId);
-    const results = recipe.Results ?? [];
-    if (results.length !== 1 || results[0] !== primary) return null;
-    if (producerOf.has(primary)) return null;
-    producerOf.set(primary, index);
-    nodes.push({ index, row, recipe, primary });
+    const outputs = (row.outputsPerMin ?? []).map((output) => ({ itemId: output.itemId, rate: output.amount }));
+    if (outputs.length === 0 || !outputs.some((output) => output.itemId === primary)) return null;
+    for (const output of outputs) {
+      if (!producersOf.has(output.itemId)) producersOf.set(output.itemId, []);
+      producersOf.get(output.itemId).push(index);
+    }
+    nodes.push({ index, row, recipe, primary, outputs });
   }
   const indegree = new Map(nodes.map((node) => [node.index, 0]));
   const consumers = new Map(nodes.map((node) => [node.index, []]));
   for (const node of nodes) {
+    const linked = new Set();
     for (const input of node.recipe.Items ?? []) {
-      const producer = producerOf.get(input);
-      if (producer === undefined) continue;
-      consumers.get(producer).push(node.index);
-      indegree.set(node.index, indegree.get(node.index) + 1);
+      for (const producer of producersOf.get(input) ?? []) {
+        if (producer === node.index || linked.has(producer)) continue;
+        linked.add(producer);
+        consumers.get(producer).push(node.index);
+        indegree.set(node.index, indegree.get(node.index) + 1);
+      }
     }
   }
   const queue = nodes.filter((node) => indegree.get(node.index) === 0).map((node) => node.index);
@@ -319,18 +322,19 @@ export function busSpecFromPlan(plan) {
   const byIndex = new Map(nodes.map((node) => [node.index, node]));
   return {
     stages: order.map((index) => {
-      const { row, recipe, primary } = byIndex.get(index);
+      const { row, recipe, primary, outputs } = byIndex.get(index);
       return {
         buildingId: row.buildingId,
         count: row.buildingCount,
         recipeId: row.recipeId,
         output: primary,
+        outputs,
         inputs: recipe.Items ?? [],
-        outputRate: (row.outputsPerMin?.[0]?.amount ?? 0),
         inputRates: new Map((row.inputsPerMin ?? []).map((input) => [input.itemId, input.amount])),
       };
     }),
     target: plan.item.id,
+    rawRates: new Map((plan.raw ?? []).map((row) => [row.itemId, row.amount])),
   };
 }
 
@@ -381,7 +385,11 @@ export function layoutBus(spec) {
   builder.label(belts.at(-1), target);
 
   // 原料：行首上方各拉一条短带，再用带间分拣器放到总线上。
-  const rawIndex = new Map();
+  const events = new Map();
+  const addEvent = (itemId, index, delta) => {
+    if (!events.has(itemId)) events.set(itemId, []);
+    events.get(itemId).push({ index, delta });
+  };
   for (const [i, itemId] of raws.entries()) {
     const x0 = 1 + 5 * i;
     const lane = [builder.addBelt(beltId, x0, 6, 0, 'E'), builder.addBelt(beltId, x0 + 1, 6, 0, 'E'), builder.addBelt(beltId, x0 + 2, 6, 0, 'E')];
@@ -390,24 +398,17 @@ export function layoutBus(spec) {
     builder.label(lane[0], itemId);
     const bus = belts[indexOf.get(`${x0 + 1},4`)];
     builder.addBeltSorter(sorterId, { from: lane[1], to: bus });
-    rawIndex.set(itemId, x0 + 1);
+    const rawRate = spec.rawRates?.get(itemId)
+      ?? stages.reduce((sum, stage) => sum + (stage.inputRates?.get(itemId) ?? 0), 0);
+    addEvent(itemId, indexOf.get(`${x0 + 1},4`), rawRate);
   }
   const headerEnd = 1 + 5 * raws.length;
-
-  const loads = new Float64Array(path.length + 1);
-  const addLoad = (from, to, rate) => {
-    if (to <= from) return;
-    for (let i = from; i < to; i += 1) loads[i] += rate;
-  };
-  const producedAt = new Map();
-  for (const [itemId, _] of rawIndex) producedAt.set(itemId, indexOf.get(`${rawIndex.get(itemId)},4`));
 
   let cursor = headerEnd;
   let machines = 0;
   let lastPlacement = null;
   const halfOf = (id) => Math.max(COLLIDERS.get(id)?.ext[0] ?? 1, COLLIDERS.get(id)?.ext[2] ?? 1);
   for (const stage of stages) {
-    const inputRate = stage.inputRates;
     const half = halfOf(stage.buildingId);
     for (let m = 0; m < stage.count; m += 1) {
       for (;;) {
@@ -435,25 +436,39 @@ export function layoutBus(spec) {
       if (!inBus) throw new Error('总线缺少输入格');
       builder.addSorter(sorterId, { belt: inBus, factory: machine, side: 'top', offset: 0, io: 'in' });
       for (const itemId of stage.inputs) {
-        const start = producedAt.get(itemId);
-        const perMachine = (inputRate.get(itemId) ?? 0) / stage.count;
-        if (start === undefined) throw new Error(`输入 ${itemId} 没有来源`);
-        addLoad(start, cursor, perMachine);
+        addEvent(itemId, cursor, -(stage.inputRates.get(itemId) ?? 0) / stage.count);
       }
       const outBus = belts[indexOf.get(`${outCell.x},${outCell.y}`)];
       builder.addSorter(sorterId, { belt: outBus, factory: machine, side: 'top', offset: dx, io: 'out', itemIdFilter: stage.output });
-      if (!producedAt.has(stage.output)) producedAt.set(stage.output, cursor + 1);
+      for (const output of stage.outputs ?? [{ itemId: stage.output, rate: stage.outputRate ?? 0 }]) {
+        addEvent(output.itemId, cursor + 1, output.rate / stage.count);
+      }
       machines += 1;
       lastPlacement = { index: cursor, half };
       cursor += 1;
     }
   }
 
+  // 每条物品按位置排事件，累计净值就是该段带上在途的数量。
+  const loads = new Float64Array(path.length + 1);
+  for (const itemEvents of events.values()) {
+    itemEvents.sort((a, b) => a.index - b.index);
+    let current = 0;
+    let previous = 0;
+    for (const event of itemEvents) {
+      for (let i = previous; i < event.index; i += 1) loads[i] += current;
+      current += event.delta;
+      previous = event.index;
+    }
+  }
   const capacity = BELT_CAPACITY_PER_MIN[beltId] ?? 1800;
   let worst = 0;
   for (const load of loads) worst = Math.max(worst, load);
   if (worst > capacity + 1e-6) {
-    throw new Error(`分配 ${ITEM_NAMES.get(target) ?? target} 时超过传送带最大容量（需要 ${Math.ceil(worst)}/min，单条 ${capacity}/min）`);
+    const error = new Error(`分配 ${ITEM_NAMES.get(target) ?? target} 时超过传送带最大容量（需要 ${Math.ceil(worst)}/min，单条 ${capacity}/min）`);
+    error.code = 'bus-capacity';
+    error.tiles = Math.ceil(worst / capacity);
+    throw error;
   }
 
   return { text: builder.finish(), meta: { width, height, machines, rows, rawCount: raws.length } };

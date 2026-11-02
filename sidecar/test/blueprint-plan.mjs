@@ -17,6 +17,7 @@ import { KnowledgeStore } from '../dist/kb/store.js';
 import { createBlueprintTools } from '../dist/blueprint/tools.js';
 import { BlueprintWorkspace } from '../dist/blueprint/workspace.js';
 import { fromStr } from '../vendor/dsp-calc/src/blueprint/parser.js';
+import { validateBlueprint } from '../src/blueprint/validate.mjs';
 import { makeTempDir } from './helpers.mjs';
 
 let passed = 0;
@@ -101,6 +102,9 @@ try {
 
     const six = await run({ item: '电磁涡轮', rate: 600 });
     check('600/min 拆 5 张', six.tileCount === 5, String(six.tileCount));
+    const huge = await run({ item: '电磁涡轮', rate: 1200 });
+    check('1200/min 拆 9 张', huge.tileCount === 9, String(huge.tileCount));
+    check('每张都过硬校验', huge.tiles.every((tile) => validateBlueprint(readFileSync(join(blueprintDir, tile.relPath), 'utf8')).ok));
     check('每张约 120/min', Math.abs(six.ratePerTile - 120) < 1e-6, String(six.ratePerTile));
     check('每张尺寸安全', six.tiles.every((tile) => tile.width <= 1000 && tile.height <= 50));
   }

@@ -157,8 +157,10 @@ export function planBlueprint(plan, options = {}) {
           },
         };
       }
-    } catch {
-      // 总线排不下（宽度/高度/容量）就继续走后面的布局。
+    } catch (error) {
+      // 容量不够要交给调用方按张数拆分，不能悄悄回退到旧布局器。
+      if (error?.code === 'bus-capacity') throw error;
+      // 其它原因（宽度/高度/模板缺失）就继续走后面的布局。
     }
   }
 

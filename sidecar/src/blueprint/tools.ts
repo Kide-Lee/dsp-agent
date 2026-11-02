@@ -262,6 +262,22 @@ interface BuiltTile {
   name: string;
 }
 
+const MAX_TILES = 256;
+const GENERATION_BUDGET_MS = 8000;
+
+/** 从容量错误里读出“至少要拆几张”：优先用结构化字段，其次解析消息里的两个数字。 */
+function hintedTiles(err: unknown): number | null {
+  const tiles = (err as { tiles?: unknown } | null)?.tiles;
+  if (Number.isInteger(tiles)) return Math.max(2, Math.min(MAX_TILES, tiles as number));
+  const message = err instanceof Error ? err.message : String(err);
+  const split = /需要\s*([\d.]+)\/min，单条\s*([\d.]+)\/min/.exec(message);
+  if (split) return Math.max(2, Math.ceil(Number(split[1]) / Number(split[2])));
+  const pack = /超过传送带最大容量\s*[\d.]*\s*\*\s*[\d.]+\s*=\s*([\d.]+)/.exec(message);
+  const need = /中间产物\s*([\d.]+)\s*份/.exec(message);
+  if (pack && need) return Math.max(2, Math.ceil(Number(need[1]) / Number(pack[1])));
+  return null;
+}
+
 function isBusCapacityError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return message.includes('传送带最大容量') || (message.includes('分配') && message.includes('超过传送带'));
@@ -302,6 +318,7 @@ function buildBlueprintTiles(
     return { text: built.text, meta: built.meta, plan, rate: tileRate, name };
   };
 
+  const startedAt = performance.now();
   let lastError: unknown = null;
   try {
     return { tiles: [buildOne(rate, options.blueprintName, 1, 1)], ratePerTile: rate };
@@ -310,7 +327,12 @@ function buildBlueprintTiles(
     lastError = err;
   }
 
-  for (let count = 2; count <= 8; count += 1) {
+  // 容量错误里带着“至少要拆几张”，直接从它开始试，别从 2 张一路试上去。
+  const startCount = hintedTiles(lastError) ?? 2;
+  for (let count = startCount; count <= MAX_TILES; count += 1) {
+    if (performance.now() - startedAt > GENERATION_BUDGET_MS) {
+      throw new Error(`蓝图生成超过 ${GENERATION_BUDGET_MS / 1000} 秒预算（已试到 ${count} 张）；请降低产量或改用多张蓝图。`);
+    }
     const tileRate = rate / count;
     if (!(tileRate > 0)) break;
     try {
@@ -322,6 +344,9 @@ function buildBlueprintTiles(
     } catch (err) {
       if (!isBusCapacityError(err)) throw err;
       lastError = err;
+      // 这一张的容量错误可能比之前更严重，直接跳到它要的张数再试。
+      const need = hintedTiles(err);
+      if (need && need - 1 > count) count = need - 1;
     }
   }
   throw lastError instanceof Error ? lastError : new Error('蓝图生成失败');
