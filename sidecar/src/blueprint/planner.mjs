@@ -1,5 +1,6 @@
 import { computeBlueprint, generateBlueprint } from '../../vendor/dsp-calc/src/global_blueprint.js';
 import { fromStr, toStr } from '../../vendor/dsp-calc/src/blueprint/parser.js';
+import { validateParsed } from './validate.mjs';
 import vanilla from '../../vendor/dsp-calc/data/Vanilla.mjs';
 import buildingsData from '../../vendor/dsp-calc/data/Buildings.mjs';
 
@@ -177,6 +178,12 @@ export function planBlueprint(plan, options = {}) {
     parsed.header.externalFields = options.attributes ?? '';
     parsed.header.desc = options.description ?? '';
     breakBeltCycles(parsed);
+    // 硬校验：碰撞、分拣器够不着、断带、越界，任何一条都说明贴进游戏会报红。
+    const hard = validateParsed(parsed, { maxWidth: MAX_WIDTH, maxHeight: MAX_HEIGHT });
+    if (!hard.ok) {
+      lastError = new Error(`蓝图未通过硬校验：${hard.errors.slice(0, 3).join('；')}`);
+      continue;
+    }
     const finalText = toStr(parsed);
     const machines = plan.recipes.reduce((sum, row) => sum + (row.buildingCount || 0), 0);
     return {

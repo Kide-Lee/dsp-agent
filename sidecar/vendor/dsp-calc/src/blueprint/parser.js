@@ -257,7 +257,8 @@ export function fromStr(strData) {
         throw Error('Checksum mismatch');
     const encoded = strData.substring(p1 + 1, p2);
     const decoded = zlib.gunzipSync(btoUint8Array(atob(encoded)));
-    const reader = new BufferReader(new DataView(decoded.buffer));
+    // zlib 返回的 Buffer 可能来自内存池：必须带上 byteOffset/byteLength，否则会从池子的起点读，解出上一张蓝图。
+    const reader = new BufferReader(new DataView(decoded.buffer, decoded.byteOffset, decoded.byteLength));
     const meta = {
         version: reader.getInt32(),
         cursorOffset: {
@@ -325,7 +326,7 @@ export function toStr(bp) {
     result += encodeURIComponent(bp.header.desc);
     result += '"';
     const decoded = new Uint8Array(encodedSize(bp));
-    const writer = new BufferWriter(new DataView(decoded.buffer));
+    const writer = new BufferWriter(new DataView(decoded.buffer, decoded.byteOffset, decoded.byteLength));
     writer.setInt32(bp.version);
     writer.setInt32(bp.cursorOffset.x);
     writer.setInt32(bp.cursorOffset.y);
