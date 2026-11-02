@@ -6,6 +6,7 @@
  */
 import { BlueprintBuilder } from '../src/blueprint/emit.mjs';
 import { busCompatible, layoutBus, layoutSingleStage } from '../src/blueprint/layout.mjs';
+import { STATION_PORT_CELLS, stationPortCell } from '../src/blueprint/ports.mjs';
 import { validateBlueprint } from '../src/blueprint/validate.mjs';
 
 let passed = 0;
@@ -121,7 +122,18 @@ const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
   check('总线拒绝 2312', threw);
 }
 
-// 10. 未知建筑。
+// 10. 物流站：站本身能出图；12 个端口格互不重复。
+{
+  const builder = new BlueprintBuilder({ width: 40, height: 40, title: 'station' });
+  builder.add(2103, 20, 20, 0, { yaw: 0 });
+  const result = validateBlueprint(builder.finish());
+  check('物流站单体能过硬校验', result.ok, result.errors.slice(0, 3).join('；'));
+  const cells = STATION_PORT_CELLS.get(2103).map((cell) => `${cell.x},${cell.y}`);
+  check('12 个端口格互不重复', new Set(cells).size === 12, cells.join(' '));
+  check('0 号端口在 (1,3)', stationPortCell(2103, 0).x === 1 && stationPortCell(2103, 0).y === 3);
+}
+
+// 11. 未知建筑。
 {
   const b = new BlueprintBuilder({ width: 10, height: 10 });
   let threw = false;

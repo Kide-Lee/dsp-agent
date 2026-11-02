@@ -51,3 +51,25 @@ export function rotateOffset(dx, dy, yaw) {
   if (deg === 270) return { dx: -dy, dy: dx };
   return { dx, dy };
 }
+
+// 物流站 12 个进料/出料口：本地端口位置来自游戏 prefabDesc.portPoses，
+// 带子只能落在相邻的整数格（把端口位置四舍五入），朝向是“从带子看向站”的反方向。
+const STATION_POSE = [
+  [1.256, 2.7], [0, 2.7], [-1.256, 2.7],
+  [-2.7, 1.256], [-2.7, 0], [-2.7, -1.256],
+  [-1.256, -2.7], [0, -2.7], [1.256, -2.7],
+  [2.7, -1.256], [2.7, 0], [2.7, 1.256],
+];
+export const STATION_PORT_CELLS = new Map([
+  [2103, STATION_POSE.map(([x, y]) => ({ x: Math.round(x), y: Math.round(y) }))],
+  [2104, STATION_POSE.map(([x, y]) => ({ x: Math.round(x), y: Math.round(y) }))],
+]);
+
+/** 带子接站时应该放的格子（相对站中心，yaw 0）。 */
+export function stationPortCell(itemId, port) {
+  const cells = STATION_PORT_CELLS.get(itemId);
+  if (!cells) return null;
+  const cell = cells[port];
+  if (!cell) return null;
+  return { x: cell.x, y: cell.y };
+}
