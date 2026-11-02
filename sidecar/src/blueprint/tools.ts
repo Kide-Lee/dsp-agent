@@ -262,7 +262,7 @@ interface BuiltTile {
   name: string;
 }
 
-const MAX_TILES = 256;
+const MAX_TILES = 512;
 const GENERATION_BUDGET_MS = 8000;
 
 /** 从容量错误里读出“至少要拆几张”：优先用结构化字段，其次解析消息里的两个数字。 */
@@ -345,12 +345,17 @@ function buildBlueprintTiles(
     } catch (err) {
       if (!isBusCapacityError(err)) throw err;
       lastError = err;
-      // 这一张的容量错误可能比之前更严重，直接跳到它要的张数再试。
+      // 提示是“当前这一张至少还要拆几份”，换算成总张数直接跳过去，别一张一张试。
       const need = hintedTiles(err);
-      if (need && need - 1 > count) count = need - 1;
+      if (need) {
+        const total = Math.min(MAX_TILES, count * need);
+        // 小步就一张一张试（张数最少），跨步很大再直接跳。
+        if (total - count > 4) count = total - 1;
+      }
     }
   }
-  throw lastError instanceof Error ? lastError : new Error('蓝图生成失败');
+  const message = lastError instanceof Error ? lastError.message : '蓝图生成失败';
+  throw new Error(`${message}；已拆到 ${MAX_TILES} 张上限，建议降低产量或分成多条产线`);
 }
 
 

@@ -6,7 +6,7 @@
  *   - 机器数直接来自 kb_plan（60/min 电磁涡轮 = 29 台，7 个阶段）
  *   - 生成物里真的有中间阶段（14 台熔炉 + 15 台制造台），不是只放末段
  *   - rows 能按阶段拆机器：宽度下降、总机器数不变
- *   - 超出单张混带总线容量时自动拆成多张（300/min → 2 张，600/min → 5 张，1200/min → 8 张）
+ *   - 超出单张混带总线容量时自动拆成多张（300/min → 2 张，600/min → 5 张，1200/min → 10 张）
  *   - 知识库缺失 / 物品不存在时返回明确错误
  */
 
@@ -103,7 +103,7 @@ try {
     const six = await run({ item: '电磁涡轮', rate: 600 });
     check('600/min 拆 5 张', six.tileCount === 5, String(six.tileCount));
     const huge = await run({ item: '电磁涡轮', rate: 1200 });
-    check('1200/min 拆 8 张', huge.tileCount === 8, String(huge.tileCount));
+    check('1200/min 拆 10 张', huge.tileCount === 10, String(huge.tileCount));
     check('每张都过硬校验', huge.tiles.every((tile) => validateBlueprint(readFileSync(join(blueprintDir, tile.relPath), 'utf8')).ok));
     check('每张约 120/min', Math.abs(six.ratePerTile - 120) < 1e-6, String(six.ratePerTile));
     check('每张尺寸安全', six.tiles.every((tile) => tile.width <= 1000 && tile.height <= 50));
