@@ -1,9 +1,6 @@
 using System;
-using System.Collections.Generic;
 using System.Globalization;
-using System.Reflection;
 using IcarusII.Common.Json;
-using UnityEngine;
 
 namespace IcarusII.Game.Tools
 {
@@ -116,81 +113,69 @@ namespace IcarusII.Game.Tools
     }
 
     /// <summary>
-    /// 新建标记（M4）。M5 曾删除该工具，导致老 sidecar + 新 mod 出现 tool_not_found；
-    /// 这里恢复实现并保留原有的两字简述限制，保证 game.write.v1 的工具集合不缩水。
+    /// 在玩家当前所在的行星放置定位标记，复用行星视图右键的 SetLocationTracking。
+    /// 定位标记是 WarningSystem 的 LOCATION_TRACKING 数据：抵达附近或离开行星后由游戏自动移除。
     /// </summary>
     internal sealed class PlaceMarkerTool : WriteToolBase
     {
         public override string Name => "game_place_marker";
 
-        private static void SetMarkerVisual(MarkerComponent marker, float height, float radius)
-        {
-            // MarkerComponent.height/radius 只有 getter；用 backing field 设置默认可视高度。
-            var flags = BindingFlags.NonPublic | BindingFlags.Instance;
-            var h = typeof(MarkerComponent).GetField("<height>k__BackingField", flags);
-            var r = typeof(MarkerComponent).GetField("<radius>k__BackingField", flags);
-            h?.SetValue(marker, height);
-            r?.SetValue(marker, radius);
-        }
-
         protected override GameToolJobResult Execute(JsonValue args)
         {
             if (!GameRefs.IsInGame) throw Fail("当前不在游戏内");
-            var data = GameMain.data;
-            if (data == null || data.galacticDigital == null) throw Fail("银河数字系统尚未就绪");
+            var player = GameMain.mainPlayer;
+            var planet = player?.planetData;
+            if (planet == null || !planet.factoryLoaded) throw Fail("请先降落到行星表面");
 
-            int planetId = args["planetId"].AsInt(0);
-            var planet = planetId > 0
-                ? GameMain.galaxy?.PlanetById(planetId)
-                : GameMain.mainPlayer?.planetData;
-            if (planet == null) throw Fail("行星不存在或尚未加载");
+            var requested = args["planetId"];
+            var requestedId = requested != null ? requested.AsInt(0) : 0;
+            if (requestedId > 0 && requestedId != planet.id)
+                throw Fail("定位标记只能放在玩家当前所在的行星");
 
-            var text = args["text"].AsString(null);
-            if (string.IsNullOrWhiteSpace(text)) throw Fail("text 不能为空");
+            var latValue = args["latitude"];
+            var lonValue = args["longitude"];
+            if (latValue == null || lonValue == null || latValue.IsNull || lonValue.IsNull)
+                throw Fail("需要 latitude 与 longitude");
+            var latitude = latValue.AsDouble(double.NaN);
+            var longitude = lonValue.AsDouble(double.NaN);
+            if (double.IsNaN(latitude) || double.IsNaN(longitude)) throw Fail("latitude/longitude 必须是数字");
+            if (latitude < -90.0 || latitude > 90.0) throw Fail("latitude 必须在 -90..90");
+            if (longitude < -180.0 || longitude > 180.0) throw Fail("longitude 必须在 -180..180");
 
-            // MarkerUIRenderer.PopulateMinimal 内部固定只有 2 个 quad 缓冲：
-            // word 超过 2 个字符会直接抛 IndexOutOfRangeException。
-            // 游戏原生标记的“简述”也只有两字，完整内容放 name。
-            var brief = text.Trim();
-            if (brief.Length > 2) brief = brief.Substring(0, 2);
+            var uiGame = UIRoot.instance != null ? UIRoot.instance.uiGame : null;
+            if (uiGame?.globemap == null) throw Fail("行星视图尚未就绪");
 
-            var marker = new MarkerComponent();
-            marker.Reset();
-            marker.astroId = planet.id;
-            var lat = args["latitude"];
-            var lon = args["longitude"];
-            if (lat != null && lon != null && !lat.IsNull && !lon.IsNull)
+            var pos = GameToolFormat.PositionFromLatLon(planet, latitude, longitude, 0.0);
+            if (planet.type != EPlanetType.Gas && planet.data != null)
             {
-                var altitude = args["altitude"] != null ? args["altitude"].AsDouble(0) : 0.0;
-                marker.pos = GameToolFormat.PositionFromLatLon(planet, lat.AsDouble(0), lon.AsDouble(0), altitude);
+                var ground = planet.data.QueryModifiedHeight(pos);
+                pos = pos.normalized * (ground + 0.2f);
             }
-            else
-            {
-                // 兼容旧调用；新工具链应优先用经纬度。
-                var position = args["position"];
-                if (position == null || !position.IsObject) throw Fail("需要 latitude+longitude，或兼容的 position{x,y,z}");
-                marker.pos = new Vector3(
-                    (float)position["x"].AsDouble(0),
-                    (float)position["y"].AsDouble(0),
-                    (float)position["z"].AsDouble(0));
-            }
-            marker.word = brief;
-            marker.name = text;
-            marker.icon = args["icon"].AsInt(0);
-            marker.color = 0;
-            SetMarkerVisual(marker, 12.5f, 1.5f);
-            marker.visibility = EMarkerVisibility.LocalPlanet;
-            marker.detailLevel = EMarkerDetailLevel.BriefInfo;
 
-            var gid = data.galacticDigital.AddMarkerComponent(marker);
-            if (gid <= 0) throw Fail("新增标记失败（可能已达到上限）");
-            WriteActionStack.Push("删除刚新增的标记", () =>
+            uiGame.globemap.SetLocationTracking(planet.id, pos, WarningData.LOCATION_SIGNALID);
+            var warningId = FindLocationWarningId();
+            if (warningId <= 0) throw Fail("放置定位标记失败");
+
+            WriteActionStack.Push("移除刚放置的定位标记", () =>
             {
-                var digital = GameMain.data?.galacticDigital;
-                if (digital != null) digital.RemoveMarkerComponent(gid);
+                var warningSystem = GameMain.data?.warningSystem;
+                if (warningSystem != null) warningSystem.RemoveWarningData(warningId);
             });
-            var note = brief == text.Trim() ? string.Empty : "（地图简述显示前两字，完整名称保存在标记详情）";
-            return Ok($"已在 {planet.displayName} 新建标记「{text}」{note}");
+
+            return Ok($"已在 {planet.displayName} 放置定位标记（抵达附近或离开行星后消失）");
+        }
+
+        private static int FindLocationWarningId()
+        {
+            var warningSystem = GameMain.data?.warningSystem;
+            if (warningSystem == null) return 0;
+            for (int i = 1; i < warningSystem.warningCursor; i++)
+            {
+                var warning = warningSystem.warningPool[i];
+                if (warning.id == i && warning.signalId == WarningData.LOCATION_SIGNALID && warning.state > 0)
+                    return i;
+            }
+            return 0;
         }
     }
 

@@ -81,7 +81,7 @@ DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）�
 
 | 工具 | 说明 |
 | --- | --- |
-| `game_place_marker` | 在行星上新建标记；可撤销 |
+| `game_place_marker` | 在当前行星放置定位标记（同行星视图右键）；可撤销 |
 | `game_open_panel` | 打开背包/科技树/星图/标记/机甲/复制器/统计/蓝图面板 |
 | `game_set_research` | 切换当前研究目标；只允许前置科技已满足的科技 |
 | `game_drop_item` | 把背包物品丢到当前行星地面；需手动拾回，不进入撤销栈 |

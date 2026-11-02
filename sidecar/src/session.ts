@@ -210,10 +210,9 @@ function describeConfirmation(
   switch (name) {
     case 'game_place_marker':
       return {
-        title: '新增标记？',
-        body: `行星：${fmt(args['planetId'] ?? '当前')}\n` +
-          `坐标：${fmt(args['latitude'])} / ${fmt(args['longitude'])}\n` +
-          `文字：${fmt(args['text'])}`,
+        title: '放置定位标记？',
+        body: `当前行星\n坐标：${fmt(args['latitude'])} / ${fmt(args['longitude'])}\n` +
+          '抵达附近或离开行星后标记会自动消失。',
       };
     case 'game_open_panel':
       return { title: '打开游戏面板？', body: `面板：${fmt(args['panel'])}` };

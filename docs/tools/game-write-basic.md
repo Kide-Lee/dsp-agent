@@ -8,30 +8,26 @@
 
 ### `game_place_marker`
 
-**label** 新建标记 · **能力位** `game.write.v1` · **风险** 1（低风险写，可逆） · **超时** 8000 ms
+**label** 放置标记 · **能力位** `game.write.v1` · **风险** 1（低风险写，可逆） · **超时** 8000 ms
 
 #### 模型可见 · 工具描述（tools 数组）
 
 ```text
-在当前行星或指定行星上新建一个地图标记。写操作：执行前玩家必须确认。用 latitude/longitude 指定位置（可从 game_get_entity 的 location 读取），text 是标记文字。
+在玩家当前所在的行星上放置一个定位标记，效果与行星视图右键相同。用 latitude/longitude 指定位置（可从 game_get_entity 的 location 读取）。标记会在地图上显示光柱，抵达附近或离开行星后由游戏自动清除。写操作：执行前玩家必须确认。
 ```
 
 #### 模型可见 · 使用规则（system prompt）
 
 - 玩家明确要求“在这里做个标记/标个点”时使用。
 - 坐标必须来自游戏数据或玩家给出；不要凭截图猜坐标。优先使用 game_get_entity 返回的 location.latitude/longitude。
+- 只能标记玩家当前所在的行星；玩家要求标记其他行星时先说明限制。
 
 #### 参数
 
 | 参数 | 类型 | 必填 | 约束 | 说明 |
 | --- | --- | --- | --- | --- |
-| `planetId` | `integer` | 否 | — | 行星 id；省略为当前行星 |
-| `latitude` | `number` | 否 | — | 纬度（-90..90） |
-| `longitude` | `number` | 否 | — | 经度（-180..180） |
-| `altitude` | `number` | 否 | — | 海拔（米），默认 0 |
-| `position` | `object` | 否 | — | 旧版行星局部坐标，仅兼容用 |
-| `text` | `string` | 是 | — | 标记完整文字；地图简述只显示前 2 个字，详情保存完整名称 |
-| `icon` | `integer` | 否 | — | 标记图标 id，可选 |
+| `latitude` | `number` | 是 | — | 纬度（-90..90） |
+| `longitude` | `number` | 是 | — | 经度（-180..180） |
 
 #### 返回
 

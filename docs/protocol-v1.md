@@ -1730,7 +1730,7 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 
 | 工具 | risk | 参数 | 说明 |
 | --- | --- | --- | --- |
-| `game_place_marker` | 1 | `planetId?`, `latitude`, `longitude`, `altitude?`, `text`, `icon?` | 新建标记；确认后执行；可撤销 |
+| `game_place_marker` | 1 | `latitude`, `longitude` | 在当前所在行星放置定位标记（与行星视图右键相同）；抵达附近或离开行星后由游戏移除；确认后执行；可撤销 |
 | `game_open_panel` | 1 | `panel`（inventory/tech/starmap/marker/mecha/replicator/statistics/blueprint） | 打开面板；确认后执行 |
 | `game_set_research` | 2 | `techId`（id 或名称） | 切换研究目标；确认后执行 |
 | `game_drop_item` | 2 | `itemId`（id 或名称）, `count?` | 丢弃背包物品到地面；确认后执行；需手动拾回，不进入撤销栈 |
@@ -1755,6 +1755,8 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | `ui_click` | 2 | `path` | 点击 uGUI 控件；确认后执行；不可撤销（见 B.1.8） |
 
 - `game_place_marker` / `game_open_panel` / `game_set_research` / `game_undo_last_write` 需要 `game.write.v1`；`game_drop_item` 需要 `game.drop.v1`；`game_set_recipe` / `game_set_assembler_batch` / `game_take_output` / `game_feed_input` 需要 `game.build.v1`；存储五件套需要 `game.storage.v1`；方位三件套需要 `game.tether.v1`；目标四件套需要 `game.todo.v1`。
+- `game_place_marker` 只能标记玩家当前所在的行星：它写入游戏原生的定位警告（`LOCATION_TRACKING`），
+  与行星视图右键放置的是同一种标记，离开行星或抵达附近后游戏会自动清除。
 - risk 1/2 的工具都会先走 A.12；拒绝确认时 mod 不执行、无任何副作用。
 - 视角聚焦不再作为 AI 工具提供：建筑/星球/矿脉卡片由玩家点击聚焦（`GameLinkFocus`），AI 不替玩家移动镜头。
 - 写操作只保留一层撤销；`game_set_assembler_batch` 整批算一层。换档/断线清空撤销栈。

@@ -722,7 +722,7 @@ async function run() {
     const { socket, session, state } = makeSession({
       callOptions: {
         name: 'game_place_marker',
-        args: { latitude: 1.5, longitude: 2.5, text: '矿点' },
+        args: { latitude: 1.5, longitude: 2.5 },
         risk: 1,
         timeoutMs: 800,
       },
@@ -735,8 +735,11 @@ async function run() {
     const confirm = await waitFor(() => socket.frames.some((f) => f.type === 'confirm_request')) &&
       socket.frames.find((f) => f.type === 'confirm_request');
     check('标记先发 confirm_request', !!confirm);
-    check('标记确认 title', confirm?.payload?.title === '新增标记？');
-    check('标记确认 body 含文字', String(confirm?.payload?.body ?? '').includes('矿点'));
+    check('标记确认 title', confirm?.payload?.title === '放置定位标记？');
+    check(
+      '标记确认 body 含坐标',
+      String(confirm?.payload?.body ?? '').includes('1.5') && String(confirm?.payload?.body ?? '').includes('2.5'),
+    );
     check('标记确认 risk=1', confirm?.payload?.risk === 1);
     session.handleFrame(
       Buffer.from(

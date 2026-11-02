@@ -146,28 +146,21 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
   return [
     writeTool(host, {
       name: 'game_place_marker',
-      label: '新建标记',
+      label: '放置标记',
       description:
-        '在当前行星或指定行星上新建一个地图标记。写操作：执行前玩家必须确认。' +
-        '用 latitude/longitude 指定位置（可从 game_get_entity 的 location 读取），text 是标记文字。',
+        '在玩家当前所在的行星上放置一个定位标记，效果与行星视图右键相同。' +
+        '用 latitude/longitude 指定位置（可从 game_get_entity 的 location 读取）。' +
+        '标记会在地图上显示光柱，抵达附近或离开行星后由游戏自动清除。写操作：执行前玩家必须确认。',
       promptGuidelines: [
         '玩家明确要求“在这里做个标记/标个点”时使用。',
         '坐标必须来自游戏数据或玩家给出；不要凭截图猜坐标。优先使用 game_get_entity 返回的 location.latitude/longitude。',
+        '只能标记玩家当前所在的行星；玩家要求标记其他行星时先说明限制。',
       ],
       parameters: Type.Object({
-        planetId: Type.Optional(Type.Integer({ description: '行星 id；省略为当前行星' })),
-        latitude: Type.Optional(Type.Number({ description: '纬度（-90..90）' })),
-        longitude: Type.Optional(Type.Number({ description: '经度（-180..180）' })),
-        altitude: Type.Optional(Type.Number({ description: '海拔（米），默认 0' })),
-        position: Type.Optional(Type.Object({
-          x: Type.Number(),
-          y: Type.Number(),
-          z: Type.Number(),
-        }, { description: '旧版行星局部坐标，仅兼容用' })),
-        text: Type.String({ description: '标记完整文字；地图简述只显示前 2 个字，详情保存完整名称' }),
-        icon: Type.Optional(Type.Integer({ description: '标记图标 id，可选' })),
+        latitude: Type.Number({ description: '纬度（-90..90）' }),
+        longitude: Type.Number({ description: '经度（-180..180）' }),
       }),
-      timeoutMs: 10000,
+      timeoutMs: 8000,
       risk: 1,
     }),
     writeTool(host, {

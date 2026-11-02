@@ -35,7 +35,7 @@
 | [`game_get_progress`](game-progress.md#game_get_progress) | 进度阶段 | `game.progress.v1` | 只读 | 6000ms | 读取玩家进度：派生阶段（电磁/炼油/钛/星际物流/翘曲/戴森球…）及判定依据、已解锁科技数、里程碑、教程、当前研究与队列。 |
 | [`game_drop_item`](game-write-basic.md#game_drop_item) | 丢弃物品 | `game.drop.v1` | risk 2 | 8000ms | 把背包里的物品丢到当前行星地面。 |
 | [`game_open_panel`](game-write-basic.md#game_open_panel) | 打开面板 | `game.write.v1` | risk 1 | 8000ms | 打开游戏内面板：inventory（背包）、tech（科技树）、starmap（星图）、marker（标记）、mecha（机甲）、replicator（复制器）、statist… |
-| [`game_place_marker`](game-write-basic.md#game_place_marker) | 新建标记 | `game.write.v1` | risk 1 | 8000ms | 在当前行星或指定行星上新建一个地图标记。 |
+| [`game_place_marker`](game-write-basic.md#game_place_marker) | 放置标记 | `game.write.v1` | risk 1 | 8000ms | 在玩家当前所在的行星上放置一个定位标记，效果与行星视图右键相同。 |
 | [`game_set_research`](game-write-basic.md#game_set_research) | 切换研究 | `game.write.v1` | risk 2 | 8000ms | 把当前研究目标切换为指定科技。 |
 | [`game_undo_last_write`](game-write-basic.md#game_undo_last_write) | 撤销上一步 | `game.write.v1` | risk 1 | 8000ms | 撤销最近一次由本 mod 执行的写操作（视角、标记、面板、研究、配方、存储、投料等）。 |
 | [`game_feed_input`](game-write-build.md#game_feed_input) | 投料 | `game.build.v1` | risk 2 | 8000ms | 从背包把配方原料直接放进一台生产建筑的输入缓冲。 |
