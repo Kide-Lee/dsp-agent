@@ -273,9 +273,6 @@ function hintedTiles(err: unknown): number | null {
   const message = err instanceof Error ? err.message : String(err);
   const split = /需要\s*([\d.]+)\/min，单条\s*([\d.]+)\/min/.exec(message);
   if (split) return Math.max(2, Math.ceil(Number(split[1]) / Number(split[2])));
-  const pack = /超过传送带最大容量\s*[\d.]*\s*\*\s*[\d.]+\s*=\s*([\d.]+)/.exec(message);
-  const need = /中间产物\s*([\d.]+)\s*份/.exec(message);
-  if (pack && need) return Math.max(2, Math.ceil(Number(need[1]) / Number(pack[1])));
   return null;
 }
 

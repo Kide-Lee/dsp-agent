@@ -161,9 +161,9 @@ try {
 
     const single = await run({ item: '铁块', rate: 60 });
     check(
-      '单阶段配方返回明确错误',
-      typeof single?.error === 'string' && single.error.includes('至少需要两个生产阶段'),
-      JSON.stringify(single),
+      '单阶段配方也能出图',
+      single?.tileCount === 1 && single.stages?.length === 1 && single.buildings > 0,
+      JSON.stringify(single?.error ?? { buildings: single?.buildings, stages: single?.stages?.length }),
     );
   }
 } finally {

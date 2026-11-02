@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * 出图器 + 单段布局测试（离线）。
+ * 出图器 + 总线布局测试（离线）。
  *
- * 覆盖：单段机器行的蓝图能过硬校验；带子首尾相连；分拣器超长/未知建筑会抛错。
+ * 覆盖：总线蓝图能过硬校验；带子首尾相连；分拣器超长/未知建筑会抛错。
  */
 import { BlueprintBuilder } from '../src/blueprint/emit.mjs';
-import { busCompatible, layoutBus, layoutSingleStage } from '../src/blueprint/layout.mjs';
+import { busCompatible, layoutBus } from '../src/blueprint/layout.mjs';
 import { STATION_PORT_CELLS, stationPortCell } from '../src/blueprint/ports.mjs';
 import { validateBlueprint } from '../src/blueprint/validate.mjs';
 import { fromStr } from '../vendor/dsp-calc/src/blueprint/parser.js';
@@ -18,17 +18,25 @@ const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
 
 // 1. 两输入、两台机器：过硬校验。
 {
-  const { text, meta } = layoutSingleStage({ buildingId: 2303, count: 2, inputs: [1101, 1202], output: 1204, title: 'two' });
+  const { text, meta } = layoutBus({
+    stages: [{ buildingId: 2303, count: 2, recipeId: 1, output: 1204, inputs: [1101, 1202], inputRates: new Map([[1101, 60], [1202, 60]]), outputRate: 30 }],
+    target: 1204,
+    title: 'two',
+  });
   const result = validateBlueprint(text);
   check('两输入单段通过硬校验', result.ok, result.errors.slice(0, 3).join('；'));
-  check('宽度/台数', meta.machines === 2 && meta.width === 9, JSON.stringify(meta));
+  check('台数', meta.machines === 2, JSON.stringify(meta));
 }
 
-// 2. 三条输入带：分拣器长度分别 1/2/3。
+// 2. 三条输入带：三条原料带都接进总线。
 {
-  const { text } = layoutSingleStage({ buildingId: 2303, count: 1, inputs: [1101, 1104, 1202], output: 1301 });
+  const { text, meta } = layoutBus({
+    stages: [{ buildingId: 2303, count: 1, recipeId: 1, output: 1301, inputs: [1101, 1104, 1202], inputRates: new Map([[1101, 30], [1104, 30], [1202, 30]]), outputRate: 30 }],
+    target: 1301,
+  });
   const result = validateBlueprint(text);
   check('三输入单段通过硬校验', result.ok, result.errors.slice(0, 3).join('；'));
+  check('三输入原料数', meta.rawCount === 3, JSON.stringify(meta));
 }
 
 // 3. 带子链：除最后一节外每一节都指向下一节。
