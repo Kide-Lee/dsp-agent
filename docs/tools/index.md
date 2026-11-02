@@ -169,7 +169,7 @@ code 取自 `mod/src/Shared/Protocol/Protocol.cs` 的 `Code*` 常量：
 | `confirmation_denied` | mod | 玩家在确认页拒绝 |
 | `confirmation_expired` | mod | 确认超时（一次性令牌失效） |
 | `confirmation_invalid` | mod | 令牌/参数指纹不匹配 |
-| `debug_disabled` / `debug_not_allowed` | sidecar | 调试直调未开启 / 工具不在只读白名单 |
+| `debug_disabled` | sidecar | 调试直调未开启（sidecar 未带 `--debug-tools`） |
 | `tool_required` | sidecar | 强制工具回合没有调用指定工具 |
 
 注意：`stale=true`、`reason="not_found"` 是**返回字段**（`ok` 仍为 true），不是错误码。工具自身的业务失败也可能把 `internal` 作为 code 透出，以 `error.message` 为准。

@@ -555,10 +555,10 @@ AgentRoot (RectTransform, 默认 inactive)
   图标选择器和文字颜色选择器也复用 `tool-menu` 的左下角锚点（输入框上沿、左对齐），
   不再按工具条按钮的位置向左/向上摆放。
 - **调试直调**（M4m）：输入框 `!tools` / `!tool <工具名> <JSON>`；mod 发 `tool_debug`，
-  sidecar 不建 pi 会话、不调 LLM，直接执行只读白名单工具并回 `tool_debug_result`。
+  sidecar 不建 pi 会话、不调 LLM，直接执行任意已注册工具并回 `tool_debug_result`。
   游戏工具内部仍走 `tool_call`，但标 `internal=true`，mod 不画普通工具卡；结果由
   `tool_debug_result` 作为系统调试块显示，不写对话历史。开关为 `DebugToolConsole=true`
-  + sidecar `--debug-tools`，写文件/脚本类工具不在白名单。
+  + sidecar `--debug-tools`；不设工具白名单，写工具照常走确认页与一次性令牌。
 - **每条消息都有脚注**：助手脚注是「时间 + 复制 + 刷新」；用户气泡下面是「时间 + 复制」
   （右对齐、只有这两项）。复制按钮拷的都是该条消息的原文。
   刷新只出现在**最后一轮**回答上（会话是线性的，重开中间一轮会改变上下文顺序）：

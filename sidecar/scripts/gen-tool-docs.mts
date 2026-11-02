@@ -683,7 +683,7 @@ function renderIndex(tools: DocTool[]): string {
   lines.push('| `confirmation_denied` | mod | 玩家在确认页拒绝 |');
   lines.push('| `confirmation_expired` | mod | 确认超时（一次性令牌失效） |');
   lines.push('| `confirmation_invalid` | mod | 令牌/参数指纹不匹配 |');
-  lines.push('| `debug_disabled` / `debug_not_allowed` | sidecar | 调试直调未开启 / 工具不在只读白名单 |');
+  lines.push('| `debug_disabled` | sidecar | 调试直调未开启（sidecar 未带 `--debug-tools`） |');
   lines.push('| `tool_required` | sidecar | 强制工具回合没有调用指定工具 |');
   lines.push('');
   lines.push(

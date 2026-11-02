@@ -106,7 +106,6 @@ import {
 import { createScriptTool } from './tools/script.js';
 import { CAPABILITY_UI_ASK, createAskTool } from './tools/ask.js';
 import { CAPABILITY_GAME_SANDBOX } from './tools/sandbox.js';
-import { isDebugToolAllowed } from './tools/debug.js';
 import { createWikiTools } from './wiki/tools.js';
 import { WikiClient } from './wiki/client.js';
 import { AliasResolver } from './wiki/aliases.js';
@@ -240,7 +239,7 @@ export interface AgentRunner {
   /** A.14.6：记录存档显示名，供会话索引分组使用。 */
   noteSaveBinding?(saveKey: string | null, saveName: string | null): void;
   /**
-   * M4m：调试直调。不创建/使用 pi 会话，不调用 LLM；只执行一个只读工具。
+   * M4m：调试直调。不创建/使用 pi 会话，不调用 LLM；只执行一个已注册工具。
    * 老实现可以不提供。
    */
   debugTool?(name: string, args: JsonObject, emit: AgentEmitter): Promise<ToolDebugResultPayload>;
@@ -1279,7 +1278,8 @@ async function fetchEndpointModels(
  */
 // ---------------------------------------------------------------- 调试直调
 
-const DEBUG_TIMEOUT_MS = 30_000;
+// 覆盖 run_script 的运行时间上限（最大 120 秒），否则脚本类工具无法用满自己的预算。
+const DEBUG_TIMEOUT_MS = 130_000;
 const DEBUG_CONTENT_MAX = 64 * 1024;
 const DEBUG_DETAILS_MAX = 256 * 1024;
 
@@ -3547,7 +3547,6 @@ export class PiAgent implements AgentRunner {
         name: tool.name,
         label: tool.label || tool.name,
         description: clipText(tool.description ?? '', 160),
-        debuggable: isDebugToolAllowed(tool.name),
         group: toolGroupOf(tool.name),
         risk: toolRiskOf(tool.name),
         source: source.source,
@@ -3614,16 +3613,6 @@ export class PiAgent implements AgentRunner {
     const source: 'game' | 'local' | 'unknown' = this.host.tools().some((tool) => tool.name === name)
       ? 'game'
       : 'local';
-
-    if (!isDebugToolAllowed(name)) {
-      return this.debugFailure(
-        name,
-        source,
-        startedAt,
-        'debug_not_allowed',
-        `工具 ${name} 不在调试只读白名单里；写文件/改游戏状态的工具只能走正常 AI 路径`,
-      );
-    }
 
     const definition = this.buildToolDefinitions().find((tool) => tool.name === name);
     if (!definition) {

@@ -39,7 +39,7 @@ export const MessageType = {
   Ping: 'ping',
   ConfigSet: 'config.set',
   SaveBind: 'save.bind',
-  // M4m：调试直调（不经过 AI；只读工具白名单）
+  // M4m：调试直调（不经过 AI）
   ToolDebug: 'tool_debug',
   // sidecar → mod
   Ready: 'ready',
@@ -138,7 +138,6 @@ export type ErrorCode =
   | 'tool_required'
   // M4m：调试直调
   | 'debug_disabled'
-  | 'debug_not_allowed'
   | 'confirmation_required'
   | 'confirmation_invalid'
   | 'confirmation_expired'
@@ -1026,7 +1025,6 @@ export function buildToolsStatePayload(args: {
       name: entry.name,
       label: entry.label,
       description: entry.description,
-      ...(entry.debuggable === undefined ? {} : { debuggable: entry.debuggable }),
       ...(entry.group === undefined ? {} : { group: entry.group }),
       ...(entry.risk === undefined ? {} : { risk: entry.risk }),
       ...(entry.source === undefined ? {} : { source: entry.source }),
@@ -1752,8 +1750,6 @@ export interface ToolCatalogEntry {
   name: string;
   label: string;
   description: string;
-  /** M4m：是否允许在 `!tool` 调试直调中执行（只读白名单）。 */
-  debuggable?: boolean;
   /** A.14.1：分组；老服务端不返回时 mod 按名字推断。 */
   group?: ToolGroup;
   /** A.14.1：0 = 只读，1 = 可逆写，2 = 改变存档。 */
@@ -1794,7 +1790,6 @@ export function buildReadyPayload(args: {
       name: entry.name,
       label: entry.label,
       description: entry.description,
-      ...(entry.debuggable === undefined ? {} : { debuggable: entry.debuggable }),
       ...(entry.group === undefined ? {} : { group: entry.group }),
       ...(entry.risk === undefined ? {} : { risk: entry.risk }),
       ...(entry.source === undefined ? {} : { source: entry.source }),

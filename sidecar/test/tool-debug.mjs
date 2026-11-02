@@ -5,7 +5,7 @@
  *   node test/tool-debug.mjs
  *
  * 覆盖：tool_debug 解析、Session 直调、不进入 prompt、开关关闭、
- * 只读白名单、debuggable 目录字段。
+ * 任意工具（含写工具与 run_script）都可直调、目录不带 debuggable 字段。
  */
 
 import { Session } from '../dist/session.js';
@@ -13,7 +13,6 @@ import {
   buildReadyPayload,
   parseToolDebugPayload,
 } from '../dist/protocol.js';
-import { DEBUG_TOOL_NAMES, isDebugToolAllowed } from '../dist/tools/debug.js';
 import { GameToolHost } from '../dist/tools/host.js';
 import { PiAgent } from '../dist/agent.js';
 import '../dist/tools/registry.js';
@@ -183,30 +182,21 @@ console.log('\n── 3. 开关与 agent 缺失 ──');
   session.dispose('test done');
 }
 
-// ---------------------------------------------------------------- 4. 白名单/目录
+// ---------------------------------------------------------------- 4. 目录
 
-console.log('\n── 4. 只读白名单与 toolCatalog ──');
+console.log('\n── 4. toolCatalog 不带 debuggable ──');
 {
-  check('game_get_power 允许', isDebugToolAllowed('game_get_power'));
-  check('kb_search 允许', isDebugToolAllowed('kb_search'));
-  check('blueprint_search 允许', isDebugToolAllowed('blueprint_search'));
-  check('game_copy_blueprint 拒绝', !isDebugToolAllowed('game_copy_blueprint'));
-  check('run_script 拒绝', !isDebugToolAllowed('run_script'));
-  check('blueprint_fs 拒绝', !isDebugToolAllowed('blueprint_fs'));
-  check('白名单无重复', new Set(DEBUG_TOOL_NAMES).size === DEBUG_TOOL_NAMES.length);
-
   const payload = buildReadyPayload({
     serverVersion: 'test',
     sessionId: 's1',
     agent: { provider: 'test', model: 'test', available: true },
     tools: ['game_get_power'],
     toolCatalog: [
-      { name: 'game_get_power', label: '电力状态', description: '读取电网', debuggable: true },
-      { name: 'game_copy_blueprint', label: '存为蓝图', description: '写文件', debuggable: false },
+      { name: 'game_get_power', label: '电力状态', description: '读取电网' },
+      { name: 'game_copy_blueprint', label: '存为蓝图', description: '写文件' },
     ],
   });
-  check('toolCatalog debuggable 写入', payload.toolCatalog?.[0]?.debuggable === true);
-  check('toolCatalog 不可调试标记', payload.toolCatalog?.[1]?.debuggable === false);
+  check('toolCatalog 不写 debuggable', payload.toolCatalog?.every((entry) => !('debuggable' in entry)) === true);
 
   // 调试直调期间 host 调用必须标记 internal，mod 才不会画普通工具卡。
   const host = new GameToolHost();
@@ -260,8 +250,16 @@ console.log('\n── 5. PiAgent.debugTool 实际执行 ──');
   check('PiAgent 结果 details 原样', result.details?.data?.demandKw === 1);
   check('PiAgent 直调没有 content 截断', result.truncated === false);
 
-  const blocked = await agent.debugTool('run_script', { code: 'return 1' }, emit);
-  check('PiAgent 拒绝写工具', blocked.ok === false && blocked.error?.code === 'debug_not_allowed');
+  const script = await agent.debugTool('run_script', { code: 'return 1' }, emit);
+  check('PiAgent 允许 run_script', script.ok === true, script.error?.code);
+
+  // 写工具不再被调试直调拒绝；确认与令牌仍由 host/transport 负责。
+  const writeTool = await agent.debugTool(
+    'game_copy_blueprint',
+    { planetId: 1, entityIds: [1] },
+    emit,
+  );
+  check('PiAgent 允许写工具 game_copy_blueprint', writeTool.ok === true, writeTool.error?.code);
 
   // entityId 现在可为空（批量走 entityIds），用错误的字段类型验证 schema 仍会拦截。
   const invalid = await agent.debugTool('game_get_entity', { entityId: 'bad' }, emit);
@@ -280,9 +278,9 @@ console.log('\n── 5. PiAgent.debugTool 实际执行 ──');
   check('截图 details 不携带 base64', shot.details?.image?.data === undefined);
 
   const catalog = agent.toolCatalog(['game.read.v1', 'game.entity.v1', 'game.view.v1']);
-  check('目录标记 game_get_power 可调试', catalog.find((t) => t.name === 'game_get_power')?.debuggable === true);
-  check('目录标记 run_script 不可调试', catalog.find((t) => t.name === 'run_script')?.debuggable === false);
-  check('目录标记 game_copy_blueprint 不可调试', catalog.find((t) => t.name === 'game_copy_blueprint')?.debuggable === false);
+  check('目录包含 run_script', Boolean(catalog.find((t) => t.name === 'run_script')));
+  check('目录包含 game_copy_blueprint', Boolean(catalog.find((t) => t.name === 'game_copy_blueprint')));
+  check('目录不带 debuggable 字段', catalog.every((t) => !('debuggable' in t)));
   agent.dispose();
 }
 

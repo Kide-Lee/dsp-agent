@@ -172,8 +172,8 @@ namespace IcarusII.Config
                 "是否逐字显示流式回复。").Value;
 
             DebugToolConsole = cfg.Bind("General", "DebugToolConsole", false,
-                "输入框调试直调：!tools 列工具，!tool <工具名> <JSON> 直接执行只读工具。\n" +
-                "不经过 AI、不消耗 token；需要 sidecar 以 --debug-tools 启动。\n" +
+                "输入框调试直调：!tools 列工具，!tool <工具名> <JSON> 直接执行任意已注册工具。\n" +
+                "不经过 AI、不消耗 token；写工具照常弹确认。需要 sidecar 以 --debug-tools 启动。\n" +
                 "默认关闭，调试完建议关掉。").Value;
 
             LaunchMode = cfg.Bind("Sidecar", "LaunchMode", "spawnExe",

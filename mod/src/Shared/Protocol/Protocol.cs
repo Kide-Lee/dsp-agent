@@ -443,7 +443,6 @@ namespace IcarusII.Common.Protocol
         public const string CodeBusy = "busy";
         public const string CodeCancelled = "cancelled";
         public const string CodeDebugDisabled = "debug_disabled";
-        public const string CodeDebugNotAllowed = "debug_not_allowed";
 
         /// <summary>M4l：prompt.requiredTool 指定的工具本轮没有被调用。</summary>
         public const string CodeToolRequired = "tool_required";
@@ -1883,8 +1882,6 @@ namespace IcarusII.Common.Protocol
         public string Name;
         public string Label;
         public string Description;
-        /// <summary>M4m：`!tool` 调试直调是否允许。</summary>
-        public bool Debuggable = true;
         /// <summary>A.14.1：game.read | game.write | kb | blueprint | script | ask | thirdparty | other。</summary>
         public string Group;
         /// <summary>A.14.1：0 = 只读，1 = 可逆写，2 = 改变存档。</summary>
@@ -1906,7 +1903,6 @@ namespace IcarusII.Common.Protocol
                 Name = name,
                 Label = value["label"].AsString(name),
                 Description = value["description"].AsString(string.Empty),
-                Debuggable = value["debuggable"].AsBool(true),
                 Group = value["group"].AsString(null),
                 Risk = value["risk"].AsInt(0),
                 Source = value["source"].AsString(null),

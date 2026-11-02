@@ -384,7 +384,6 @@ namespace IcarusII.I18n
             ["plugin.debug.catalog"] = "[调试] 工具目录（{0}）",
             ["plugin.debug.catalog_pending"] =
                 "（尚未收到 ready.payload.toolCatalog；连接成功后会自动刷新）",
-            ["plugin.debug.not_debuggable"] = "（不可调试）",
             ["plugin.debug.bad_result"] = "[调试] 收到无法解析的 tool_debug_result。",
             ["plugin.debug.call_failed"] = "[调试] {0}\n错误：[{1}] {2}",
             ["plugin.debug.head"] = "[调试] {0} · {1}ms · {2}",

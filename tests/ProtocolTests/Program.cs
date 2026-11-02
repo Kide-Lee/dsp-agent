@@ -277,10 +277,10 @@ namespace IcarusII.Tests
                 @"{
                     ""ok"": false,
                     ""tool"": ""run_script"",
-                    ""error"": { ""code"": ""debug_not_allowed"", ""message"": ""not allowed"" }
+                    ""error"": { ""code"": ""tool_failed"", ""message"": ""not allowed"" }
                 }"));
             Check("tool_debug_result 失败", !debugFail.Ok);
-            Eq("tool_debug_result 错误码", "debug_not_allowed", debugFail.ErrorCode);
+            Eq("tool_debug_result 错误码", "tool_failed", debugFail.ErrorCode);
             Eq("tool_debug_result 缺字段安全默认", "null", ToolDebugResultInfo.Parse(null).DetailsText());
 
             var withReply = Protocol.Envelope(Protocol.Pong, Protocol.BuildPing(123), "s-1", "m-9");

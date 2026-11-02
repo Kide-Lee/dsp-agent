@@ -76,7 +76,7 @@ function usage(): string {
     '  --token <token>   握手 token（默认随机 32 字节 hex）',
     '  --system-prompt-file <path>',
     '                    用文件整份替换内置人格（仅调试/评测；启动时读一次，文件缺失直接报错）',
-    '  --debug-tools     开启 !tool 调试直调（只读白名单；默认关闭）',
+    '  --debug-tools     开启 !tool 调试直调（不设工具白名单；默认关闭）',
     '  --log-level <l>   debug | info | warn | error（默认 info）',
     '  -h, --help        显示本帮助',
     '  -v, --version     显示版本号',

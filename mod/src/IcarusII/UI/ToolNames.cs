@@ -12,8 +12,6 @@ namespace IcarusII.UI
         public string Name;
         public string Label;
         public string Description;
-        /// <summary>M4m：sidecar 的调试只读白名单标记；老目录缺省为 true。</summary>
-        public bool Debuggable = true;
 
         public bool Matches(string query)
         {

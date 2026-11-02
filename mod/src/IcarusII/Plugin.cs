@@ -2140,7 +2140,6 @@ namespace IcarusII
                         Name = name,
                         Label = entry["label"].AsString(ToolNames.Label(name)),
                         Description = entry["description"].AsString(""),
-                        Debuggable = entry["debuggable"].AsBool(false),
                     });
                 }
             }
@@ -2159,7 +2158,6 @@ namespace IcarusII
                             Name = name,
                             Label = ToolNames.Label(name),
                             Description = "",
-                            Debuggable = false,
                         });
                     }
                 }
@@ -2180,7 +2178,7 @@ namespace IcarusII
         /// <summary>
         /// 输入框调试命令：
         ///   !tools                 列出工具目录
-        ///   !tool &lt;name&gt; &lt;json&gt;   直接执行一个只读工具
+        ///   !tool &lt;name&gt; &lt;json&gt;   直接执行一个工具（含写工具）
         ///
         /// 命中后完全不经过 prompt/AI，结果只作为系统调试块显示，不写会话历史。
         /// </summary>
@@ -2276,7 +2274,6 @@ namespace IcarusII
                 foreach (var item in items)
                 {
                     sb.Append(item.Name).Append(" — ").Append(item.Label);
-                    if (!item.Debuggable) sb.Append(Strings.Get("plugin.debug.not_debuggable"));
                     sb.AppendLine();
                 }
             }

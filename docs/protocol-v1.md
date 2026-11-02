@@ -122,8 +122,7 @@
       {
         "name": "game_get_overview",        // 模型可见名（也是 / 命令名）
         "label": "存档概览",                 // 显示名
-        "description": "读取当前存档、星球、时间与玩家位置的概览",
-        "debuggable": true                  // 可选（M4m）：!tool 调试直调是否允许
+        "description": "读取当前存档、星球、时间与玩家位置的概览"
       }
     ]
   }
@@ -203,12 +202,9 @@
   `truncated=true`。
 - 开关双重门禁：mod 配置 `General/DebugToolConsole=true`，sidecar 以 `--debug-tools` 启动；
   未开启时 sidecar 返回 `error{code:"debug_disabled"}`。
-- **只读白名单**：`game_get_*` / `game_analyze_area` / `game_capture_view` /
-  `game_render_layout` / `game_trace_line` / `game_get_planets` / `game_get_logistics`、
-  `kb_*`、`wiki_*`、`blueprint_search`、`blueprint_info`。
-  不包含 `game_copy_blueprint`、`blueprint_save`、`blueprint_generate`、`blueprint_fs`、
-  `run_script`（写文件/可间接写文件）；调用它们时 `tool_debug_result.ok=false`，
-  `error.code="debug_not_allowed"`。
+- **不设工具白名单**：当前能力下注册的工具都能直调，写工具与 `run_script` 也在内。
+  写工具照常走 `confirm_request` → 玩家确认 → 一次性令牌，`run_script` 照常走脚本级确认；
+  调试直调不绕过任何确认与凭证校验。
 - mod 侧命令：`!tools` 列出工具目录；`!tool <name> <json>` 发起调试直调。
   命令在 `AppendUser` 之前拦截，不进入普通对话气泡或历史。
 
@@ -268,7 +264,6 @@
 | `tool_failed` | 工具执行失败（M1+） |
 | `tool_required` | `prompt.requiredTool` 指定的工具在本轮没有被调用（M4l） |
 | `debug_disabled` | `tool_debug` 未开启（sidecar 未带 `--debug-tools`，M4m） |
-| `debug_not_allowed` | 工具不在调试只读白名单（M4m） |
 | `config_required` | 尚未配置可用的 API Key，prompt 被拒绝（M1+） |
 | `confirmation_required` | 写工具缺少一次性确认令牌（M4） |
 | `confirmation_invalid` | 令牌无效/已使用/参数不匹配（M4） |
@@ -1322,7 +1317,6 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
   "name": "game_get_overview",
   "label": "存档概览",
   "description": "读取当前存档、星球、时间与玩家位置的概览",
-  "debuggable": true,
   "group": "game.read",      // game.read | game.write | kb | blueprint | script | ask | thirdparty | other
   "risk": 0,                 // 0 = 只读；1 = 可逆写；2 = 改变存档
   "source": "builtin",       // builtin = 内置；否则为第三方插件的 id

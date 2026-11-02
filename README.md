@@ -327,26 +327,27 @@ MaxTranscriptLines = 500
 | `LaunchMode=connectOnly` | 插件只连接；你自己先启动 sidecar（便于调试 / 多存档共用） |
 | `Hotkey` | 任意 Unity `KeyCode` 名；可带 `Ctrl+` / `Alt+` / `Shift+` |
 | `[Keys] Send` / `Newline` | 发送与换行；与 `Hotkey` 三项不能重复。游戏内「设置 → Icarus II → 快捷键」可改键 |
-| `DebugToolConsole=true` | 开启输入框 `!tools` / `!tool` 调试直调；只读白名单，不经过 AI。`spawnExe` 会自动给 sidecar 加 `--debug-tools`，`connectOnly` 需手动加 |
+| `DebugToolConsole=true` | 开启输入框 `!tools` / `!tool` 调试直调；可执行任意已注册工具，不经过 AI。`spawnExe` 会自动给 sidecar 加 `--debug-tools`，`connectOnly` 需手动加 |
 
 sidecar 自己的运行期配置（供应商、模型、蓝图目录、Wiki 端点）在 `config.json`，
 字段见 [docs/config.md](docs/config.md)。
 
 ### 调试直调 `!tool`
 
-开发/排障用：不调用 AI，直接执行一个只读工具并显示原始返回值。
+开发/排障用：不调用 AI，直接执行一个工具并显示原始返回值。
 
 ```text
 !tools
 !tool game_get_power {}
 !tool game_get_entities {"limit": 5}
 !tool kb_search {"query": "量子芯片"}
+!tool run_script {"code": "return dsp.call(\"game_get_power\", {})"}
 ```
 
 - 需要 `DebugToolConsole=true`，且 sidecar 以 `--debug-tools` 启动。
 - 结果作为系统调试块显示，不写入对话历史、不消耗 token。
-- 只允许只读工具；`game_copy_blueprint`、`blueprint_save`、`blueprint_generate`、
-  `blueprint_fs`、`run_script` 不在白名单内。
+- 不设工具白名单：写工具（`game_copy_blueprint`、`blueprint_save`、
+  `blueprint_generate`、`blueprint_fs`）与 `run_script` 也能直调；写操作照常走确认页与一次性令牌。
 
 原生 Linux 跑 `connectOnly` 时，sidecar 与游戏不在同一 Wine 环境，需在 sidecar 的
 `config.json` 里把 `blueprintDir` 指向 Proton prefix 里的 `Documents/Dyson Sphere Program/Blueprint`
