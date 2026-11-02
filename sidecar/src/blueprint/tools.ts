@@ -250,6 +250,7 @@ interface BuildTilesOptions {
   insertType: number;
   rows: number;
   stackSize: number;
+  supply?: 'belt' | 'station';
   from?: 'ore' | 'smelted' | number;
   description?: (index: number, count: number, tileRate: number, totalRate: number) => string;
 }
@@ -307,6 +308,7 @@ function buildBlueprintTiles(
       insertType: options.insertType,
       rows: options.rows,
       stackSize: options.stackSize,
+      ...(options.supply ? { supply: options.supply } : {}),
       name,
       author: options.author,
       version: options.version,
@@ -920,6 +922,7 @@ export function createBlueprintTools(
         beltType: Type.Optional(Type.Integer({ minimum: 0, maximum: 2, description: '默认 2（蓝带）' })),
         insertType: Type.Optional(Type.Integer({ minimum: 0, maximum: 3, description: '默认 2（极速）' })),
         rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 8, description: '产线行数，默认 1；超宽时会自动加行' })),
+        supply: Type.Optional(Type.Union([Type.Literal('belt'), Type.Literal('station')], { description: '原料供给方式：belt 走物品标签（默认），station 在行首放物流站并接出料带（最多 3 种原料）' })),
         stackSize: Type.Optional(Type.Integer({ minimum: 1, maximum: 4, description: '集装堆叠，默认 1' })),
         depth: Type.Optional(Type.Integer({ minimum: 1, maximum: 16, description: '配方展开深度，默认 8' })),
         from: Type.Optional(
@@ -1058,6 +1061,7 @@ export function createBlueprintTools(
           typeof args['version'] === 'string' && args['version'] ? args['version'] : kb.gameVersion;
         const attributes = typeof args['attributes'] === 'string' ? args['attributes'] : '';
         const rows = typeof args['rows'] === 'number' ? args['rows'] : 1;
+        const supply = args['supply'] === 'station' ? 'station' : 'belt';
 
         let tileSet;
         try {
@@ -1072,6 +1076,7 @@ export function createBlueprintTools(
             insertType,
             rows,
             stackSize,
+            supply,
             ...(from !== undefined ? { from } : {}),
             ...(typeof args['description'] === 'string' && args['description']
               ? { description: () => String(args['description']) }

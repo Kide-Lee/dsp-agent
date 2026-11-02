@@ -124,6 +124,7 @@ export function planBlueprint(plan, options = {}) {
         title: options.name,
         gameVersion: options.gameVersion || options.version,
         rows: options.rows,
+        ...(options.supply ? { supply: options.supply } : {}),
       });
       const parsed = fromStr(built.text);
       const hard = validateParsed(parsed, { maxWidth: MAX_WIDTH, maxHeight: MAX_HEIGHT, limitsAreErrors: true });

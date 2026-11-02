@@ -401,6 +401,27 @@ export function busSpecFromPlan(plan) {
 }
 
 const BELT_CAPACITY_PER_MIN = { 2001: 360, 2002: 720, 2003: 1800 };
+// 物流站 12 个端口在半径 2 的环上（来自游戏保存的真实站蓝图，见 docs/plans）。
+const STATION_PORT_RING = [
+  [1, 2], [0, 2], [-1, 2],
+  [-2, 1], [-2, 0], [-2, -1],
+  [-1, -2], [0, -2], [1, -2],
+  [2, -1], [2, 0], [2, 1],
+];
+const STATION_PARAM_DEFAULTS = {
+  workEnergyPerTick: 12,
+  tripRangeOfDrones: 180,
+  tripRangeOfShips: 10000,
+  includeOrbitCollector: true,
+  warpEnableDistance: 12,
+  warperNecessary: true,
+  deliveryAmountOfDrones: 10,
+  deliveryAmountOfShips: 100,
+  pilerCount: 0,
+  miningSpeed: 0,
+  droneAutoReplenish: false,
+  shipAutoReplenish: false,
+};
 
 /**
  * 总线布局：一条蛇形传送带穿过所有机器，机器在带子下方，
@@ -420,7 +441,9 @@ export function layoutBus(spec) {
     }
     stage.mode = mode;
   }
-  const rowGap = Math.max(8, Math.ceil(Math.max(...stages.map((stage) => stage.mode.yOffset + stage.mode.halfZ + 0.5))));
+  const stationSupply = spec.supply === 'station';
+  let rowGap = Math.max(8, Math.ceil(Math.max(...stages.map((stage) => stage.mode.yOffset + stage.mode.halfZ + 0.5))));
+  if (stationSupply) rowGap = Math.max(rowGap, 10);
   const spacingOf = (stage) => machineSpacing(stage.buildingId);
 
   let totalCells = 0;
@@ -454,7 +477,8 @@ export function layoutBus(spec) {
     error.tiles = 2;
     throw error;
   }
-  const height = 4 + rowGap * (rows - 1) + 4;
+  let height = 4 + rowGap * (rows - 1) + 4;
+  if (stationSupply) height = Math.max(height, 15); // 行首物流站顶到 y≈12.8，区域要盖住它。
 
   const path = [];
   for (let r = 0; r < rows; r += 1) {
@@ -474,25 +498,64 @@ export function layoutBus(spec) {
   for (let i = 0; i + 1 < belts.length; i += 1) builder.link(belts[i], belts[i + 1]);
   builder.label(belts.at(-1), target);
 
-  // 原料：行首上方各拉一条短带，再用带间分拣器放到总线上。
   const events = new Map();
   const addEvent = (itemId, index, delta) => {
     if (!events.has(itemId)) events.set(itemId, []);
     events.get(itemId).push({ index, delta });
   };
-  for (const [i, itemId] of raws.entries()) {
-    const x0 = 1 + 5 * i;
-    const lane = [builder.addBelt(beltId, x0, 6, 0, 'E'), builder.addBelt(beltId, x0 + 1, 6, 0, 'E'), builder.addBelt(beltId, x0 + 2, 6, 0, 'E')];
-    builder.link(lane[0], lane[1]);
-    builder.link(lane[1], lane[2]);
-    builder.label(lane[0], itemId);
-    const bus = belts[indexOf.get(`${x0 + 1},4`)];
-    builder.addBeltSorter(sorterId, { from: lane[1], to: bus });
-    const rawRate = spec.rawRates?.get(itemId)
-      ?? stages.reduce((sum, stage) => sum + (stage.inputRates?.get(itemId) ?? 0), 0);
-    addEvent(itemId, indexOf.get(`${x0 + 1},4`), rawRate);
+  const rawRateOf = (itemId) => spec.rawRates?.get(itemId)
+    ?? stages.reduce((sum, stage) => sum + (stage.inputRates?.get(itemId) ?? 0), 0);
+  let headerEnd;
+  if (stationSupply) {
+    // 物流站供料：站放在行首上方，下侧三个口的带子各拉一条竖带，再用带间分拣器插进总线。
+    if (raws.length > 3) {
+      const error = new Error('物流站供料最多支持 3 种原料');
+      error.code = 'bus-unsupported';
+      throw error;
+    }
+    const busY = 4;
+    const sx = 6;
+    const sy = 10;
+    const storage = Array.from({ length: 4 }, (_, i) => ({
+      itemId: raws[i] ?? 0,
+      localRole: raws[i] ? 1 : 0,
+      remoteRole: raws[i] ? 2 : 0,
+      max: raws[i] ? 1000 : 0,
+      lockAmount: 0,
+    }));
+    const slots = STATION_PORT_RING.map((_, i) => {
+      const index = i - 6;
+      return index >= 0 && index < raws.length ? { dir: 1, storageIdx: index + 1 } : { dir: 0, storageIdx: 0 };
+    });
+    const station = builder.add(2103, sx, sy, 0, { yaw: 0, parameters: { storage, slots, ...STATION_PARAM_DEFAULTS } });
+    for (const [i, itemId] of raws.entries()) {
+      const port = 6 + i;
+      const px = sx + STATION_PORT_RING[port][0];
+      const py = sy + STATION_PORT_RING[port][1];
+      const lane = [builder.addBelt(beltId, px, py, 0, 'S')];
+      for (let y = py - 1; y >= busY + 1; y -= 1) lane.push(builder.addBelt(beltId, px, y, 0, 'S'));
+      lane[0].inputObjIdx = station.index;
+      lane[0].inputFromSlot = port;
+      for (let k = 0; k + 1 < lane.length; k += 1) builder.link(lane[k], lane[k + 1]);
+      const bus = belts[indexOf.get(`${px},${busY}`)];
+      builder.addBeltSorter(sorterId, { from: lane.at(-1), to: bus });
+      addEvent(itemId, indexOf.get(`${px},${busY}`), rawRateOf(itemId));
+    }
+    headerEnd = sx + 6;
+  } else {
+    // 原料：行首上方各拉一条短带，再用带间分拣器放到总线上。
+    for (const [i, itemId] of raws.entries()) {
+      const x0 = 1 + 5 * i;
+      const lane = [builder.addBelt(beltId, x0, 6, 0, 'E'), builder.addBelt(beltId, x0 + 1, 6, 0, 'E'), builder.addBelt(beltId, x0 + 2, 6, 0, 'E')];
+      builder.link(lane[0], lane[1]);
+      builder.link(lane[1], lane[2]);
+      builder.label(lane[0], itemId);
+      const bus = belts[indexOf.get(`${x0 + 1},4`)];
+      builder.addBeltSorter(sorterId, { from: lane[1], to: bus });
+      addEvent(itemId, indexOf.get(`${x0 + 1},4`), rawRateOf(itemId));
+    }
+    headerEnd = 1 + 5 * raws.length;
   }
-  const headerEnd = 1 + 5 * raws.length;
 
   let cursor = headerEnd;
   let machines = 0;
@@ -515,7 +578,7 @@ export function layoutBus(spec) {
         if (cursor + 1 >= path.length) throw new Error(`总线长度不够放完所有机器（已放 ${machines}/${stages.reduce((sum, stage) => sum + stage.count, 0)}，宽度 ${width}，行数 ${rows}）`);
         const cell = path[cursor];
         const margin = Math.ceil(half + 0.6);
-        if (cell.x < 1 + margin || cell.x > width - 1 - margin) {
+        if (cell.x < Math.max(1 + margin, headerEnd - 1) || cell.x > width - 1 - margin) {
           cursor += 1;
           continue;
         }

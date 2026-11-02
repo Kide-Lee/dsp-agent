@@ -8,6 +8,7 @@ import { BlueprintBuilder } from '../src/blueprint/emit.mjs';
 import { busCompatible, layoutBus, layoutSingleStage } from '../src/blueprint/layout.mjs';
 import { STATION_PORT_CELLS, stationPortCell } from '../src/blueprint/ports.mjs';
 import { validateBlueprint } from '../src/blueprint/validate.mjs';
+import { fromStr } from '../vendor/dsp-calc/src/blueprint/parser.js';
 
 let passed = 0;
 let failed = 0;
@@ -143,6 +144,23 @@ const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
     threw = true;
   }
   check('未知建筑抛错', threw);
+}
+
+// 12. 物流站供料：行首放一个站，下侧两口出料接总线。
+{
+  const built = layoutBus({
+    stages: [{ buildingId: 2303, count: 2, recipeId: 1, output: 1204, inputs: [1001, 1004], inputRates: new Map([[1001, 60], [1004, 60]]), outputRate: 30 }],
+    target: 1204,
+    rawRates: new Map([[1001, 60], [1004, 60]]),
+    supply: 'station',
+    title: 'station-supply',
+  });
+  const bp = fromStr(built.text);
+  const stations = bp.buildings.filter((b) => b.itemId === 2103);
+  check('物流站供料放一个站', stations.length === 1, String(stations.length));
+  check('两个下侧口配置为输出', stations[0].parameters.slots[6].dir === 1 && stations[0].parameters.slots[7].dir === 1);
+  check('站内配置两种原料', stations[0].parameters.storage[0].itemId === 1001 && stations[0].parameters.storage[1].itemId === 1004);
+  check('站供料蓝图过硬校验', validateBlueprint(built.text).ok);
 }
 
 console.log(`\n${failed === 0 ? '全部通过' : `${failed} 项失败`}（${passed} 通过 / ${failed} 失败）`);
