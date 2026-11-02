@@ -5,7 +5,7 @@
  * 覆盖：单段机器行的蓝图能过硬校验；带子首尾相连；分拣器超长/未知建筑会抛错。
  */
 import { BlueprintBuilder } from '../src/blueprint/emit.mjs';
-import { layoutSingleStage } from '../src/blueprint/layout.mjs';
+import { layoutBus, layoutSingleStage } from '../src/blueprint/layout.mjs';
 import { validateBlueprint } from '../src/blueprint/validate.mjs';
 
 let passed = 0;
@@ -52,7 +52,33 @@ const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
   check('分拣器超长抛错', threw);
 }
 
-// 5. 未知建筑。
+// 5. 总线布局：两段（熔炉→制造台），能过硬校验。
+{
+  const stages = [
+    { buildingId: 2302, count: 2, recipeId: 1, output: 1101, inputs: [1001], outputRate: 120, inputRates: new Map([[1001, 120]]) },
+    { buildingId: 2303, count: 2, recipeId: 5, output: 1201, inputs: [1101], outputRate: 60, inputRates: new Map([[1101, 60]]) },
+  ];
+  const { text, meta } = layoutBus({ stages, target: 1201, title: 'bus' });
+  const result = validateBlueprint(text);
+  check('总线布局通过硬校验', result.ok, result.errors.slice(0, 3).join('；'));
+  check('总线机器数', meta.machines === 4, JSON.stringify(meta));
+}
+
+// 6. 总线容量：单条黄带放不下就抛错。
+{
+  const stages = [
+    { buildingId: 2302, count: 2, recipeId: 1, output: 1101, inputs: [1001], outputRate: 120, inputRates: new Map([[1001, 9000]]) },
+  ];
+  let threw = false;
+  try {
+    layoutBus({ stages, target: 1101, beltId: 2001 });
+  } catch (error) {
+    threw = String(error.message).includes('传送带最大容量');
+  }
+  check('总线容量超限抛错', threw);
+}
+
+// 7. 未知建筑。
 {
   const b = new BlueprintBuilder({ width: 10, height: 10 });
   let threw = false;

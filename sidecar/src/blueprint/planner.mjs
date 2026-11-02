@@ -1,6 +1,7 @@
 import { computeBlueprint, generateBlueprint } from '../../vendor/dsp-calc/src/global_blueprint.js';
 import { fromStr, toStr } from '../../vendor/dsp-calc/src/blueprint/parser.js';
 import { validateParsed } from './validate.mjs';
+import { busSpecFromPlan, chainSpecFromPlan, layoutBus, layoutChain } from './layout.mjs';
 import vanilla from '../../vendor/dsp-calc/data/Vanilla.mjs';
 import buildingsData from '../../vendor/dsp-calc/data/Buildings.mjs';
 
@@ -80,6 +81,11 @@ function silently(fn) {
   }
 }
 
+function clampTier(value, fallback, max) {
+  const tier = Number.isFinite(value) ? Math.floor(value) : fallback;
+  return Math.max(0, Math.min(max, tier));
+}
+
 function clampRows(value) {
   const rows = Number.isFinite(value) ? Math.floor(value) : 1;
   return Math.max(1, Math.min(MAX_ROWS, rows));
@@ -105,6 +111,103 @@ export function planBlueprint(plan, options = {}) {
 
   if (plan.recipes.length < 2) {
     throw new Error('当前混带布局器至少需要两个生产阶段；单阶段配方（例如只造铁块）暂不支持。');
+  }
+
+  // 新总线布局：一条蛇形混带穿过所有机器；放不下就依次回退到线性链、旧布局器。
+  const busSpec = busSpecFromPlan(plan);
+  if (busSpec) {
+    try {
+      const built = layoutBus({
+        ...busSpec,
+        beltId: 2001 + clampTier(options.beltType, 2, 2),
+        sorterId: 2011 + clampTier(options.insertType, 2, 3),
+        title: options.name,
+        gameVersion: options.gameVersion || options.version,
+        rows: options.rows,
+      });
+      const parsed = fromStr(built.text);
+      const hard = validateParsed(parsed, { maxWidth: MAX_WIDTH, maxHeight: MAX_HEIGHT });
+      if (hard.ok) {
+        const machines = plan.recipes.reduce((sum, row) => sum + (row.buildingCount || 0), 0);
+        return {
+          text: built.text,
+          meta: {
+            rows: built.meta.rows,
+            requestedRows: clampRows(options.rows ?? built.meta.rows),
+            width: built.meta.width,
+            height: built.meta.height,
+            buildings: parsed.buildings.length,
+            machines,
+            stages: plan.recipes.map((row) => ({
+              recipeId: row.recipeId,
+              recipeName: row.recipeName ?? '',
+              primaryItemId: row.primaryItemId ?? plan.item.id,
+              primaryItem: itemName(row.primaryItemId ?? plan.item.id),
+              buildingId: row.buildingId,
+              buildingName: row.buildingName ?? '',
+              buildingCount: row.buildingCount,
+              craftsPerMin: row.craftsPerMin,
+              outputsPerMin: row.outputsPerMin,
+            })),
+            raw: plan.raw,
+            byproducts: plan.byproducts ?? [],
+            warnings: [...(plan.warnings ?? [])],
+            expectedByBuilding: {},
+            layout: 'bus',
+          },
+        };
+      }
+    } catch {
+      // 总线排不下（宽度/高度/容量）就继续走后面的布局。
+    }
+  }
+
+  // 线性链（每段只吃上一段的产物）走新布局；其余仍用 dsp-calc，直到 M3 补上分支。
+  const chain = chainSpecFromPlan(plan);
+  if (chain) {
+    try {
+      const built = layoutChain({
+        stages: chain.stages,
+        beltId: 2001 + clampTier(options.beltType, 2, 2),
+        sorterId: 2011 + clampTier(options.insertType, 2, 3),
+        title: options.name,
+        gameVersion: options.gameVersion || options.version,
+      });
+      const chained = fromStr(built.text);
+      const hard = validateParsed(chained, { maxWidth: MAX_WIDTH, maxHeight: MAX_HEIGHT });
+      if (hard.ok) {
+        const machines = plan.recipes.reduce((sum, row) => sum + (row.buildingCount || 0), 0);
+        return {
+          text: built.text,
+          meta: {
+            rows: 1,
+            requestedRows: clampRows(options.rows ?? 1),
+            width: built.meta.width,
+            height: built.meta.height,
+            buildings: chained.buildings.length,
+            machines,
+            stages: plan.recipes.map((row) => ({
+              recipeId: row.recipeId,
+              recipeName: row.recipeName ?? '',
+              primaryItemId: row.primaryItemId ?? plan.item.id,
+              primaryItem: itemName(row.primaryItemId ?? plan.item.id),
+              buildingId: row.buildingId,
+              buildingName: row.buildingName ?? '',
+              buildingCount: row.buildingCount,
+              craftsPerMin: row.craftsPerMin,
+              outputsPerMin: row.outputsPerMin,
+            })),
+            raw: plan.raw,
+            byproducts: plan.byproducts ?? [],
+            warnings: [...(plan.warnings ?? [])],
+            expectedByBuilding: {},
+            layout: 'chain',
+          },
+        };
+      }
+    } catch {
+      // 新布局排不下就回退旧布局器，不让功能比现在更差。
+    }
   }
 
   const byproducts = Array.isArray(plan.byproducts) ? plan.byproducts : [];

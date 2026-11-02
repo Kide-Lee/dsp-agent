@@ -105,6 +105,34 @@ export class BlueprintBuilder {
     return sorter;
   }
 
+  /** 带子 → 带子的分拣器（原料带把物品放到总线上）。 */
+  addBeltSorter(itemId, { from, to, sorterId }) {
+    const a = from.localOffset[0];
+    const b = to.localOffset[0];
+    if (a.x !== b.x) throw new Error('带子之间的分拣器两端不在同一列');
+    const length = Math.abs(b.y - a.y);
+    if (length < 1 || length > 3) throw new Error(`带间分拣器长度 ${length} 超出 1..3`);
+    const sorter = this.add(sorterId ?? itemId, a.x, Math.min(a.y, b.y), 0, {
+      parameters: { length },
+      outputObjIdx: -1,
+      inputObjIdx: -1,
+    });
+    sorter.localOffset = [
+      { x: a.x, y: a.y, z: a.z },
+      { x: b.x, y: b.y, z: b.z },
+    ];
+    sorter.inputObjIdx = from.index;
+    sorter.inputFromSlot = -1;
+    sorter.outputObjIdx = to.index;
+    sorter.outputToSlot = -1;
+    sorter.outputFromSlot = 0;
+    sorter.inputToSlot = 1;
+    sorter.filterId = 0;
+    const up = sorter.localOffset[1].y > sorter.localOffset[0].y;
+    sorter.yaw = up ? [0, 0] : [180, 180];
+    return sorter;
+  }
+
   /** 给一条带子的头一节贴物品标签（游戏里显示“这是什么”）。 */
   label(belt, itemId, count = 0) {
     belt.parameters = { iconId: itemId, count };

@@ -1,10 +1,13 @@
 // 布局 v1：一期只做“单段机器行”——一排机器 + 最多三条输入带 + 一条输出带。
 // 多段串联、分支和物流站在后续里程碑补，这里先把出图器与几何跑通。
 import buildingData from '../../vendor/dsp-calc/data/Buildings.mjs';
+import vanilla from '../../vendor/dsp-calc/data/Vanilla.mjs';
 import { COLLIDERS } from './colliders.mjs';
 import { BlueprintBuilder } from './emit.mjs';
 
 const BUILDINGS = buildingData.buildings;
+const RECIPES = new Map(vanilla.recipes.map((recipe) => [recipe.ID, recipe]));
+const ITEM_NAMES = new Map(vanilla.items.map((item) => [item.ID, item.Name]));
 
 function buildingOf(itemId) {
   for (const building of Object.values(BUILDINGS)) if (building.itemId === itemId) return building;
@@ -91,4 +94,367 @@ export function layoutSingleStage(spec) {
   }
 
   return { text: builder.finish(), meta: { width, height, machines: machines.length, inputs: inputs.length } };
+}
+
+/**
+ * 线性链：每段一行机器，段与段之间用右侧竖直连接带串起来，原料从左边缘进。
+ * 约束（v1）：每段最多 3 个输入；第 s 段的 primary 必须来自第 s-1 段，其余算原料。
+ *
+ * @param {object} spec
+ * @param {{buildingId:number, count:number, primary?:number, raws:number[], output:number, recipeId?:number}[]} spec.stages
+ */
+export function layoutChain(spec) {
+  const stages = spec.stages;
+  if (!Array.isArray(stages) || stages.length < 2) throw new Error('线性链至少需要两段');
+  const beltId = spec.beltId ?? 2003;
+  const sorterId = spec.sorterId ?? 2013;
+  const rowGap = 9;
+  const x0 = 2;
+
+  const lastXs = stages.map((s) => x0 + (s.count - 1) * machineSpacing(s.buildingId));
+  const laneEnds = lastXs.map((x) => x + 1);
+  const connectors = [];
+  for (let s = 1; s < stages.length; s += 1) connectors.push(Math.max(laneEnds[s - 1], laneEnds[s]) + 2);
+
+  const width = Math.max(...laneEnds, ...connectors) + 2;
+  const height = 8 + rowGap * (stages.length - 1) + 3;
+  const builder = new BlueprintBuilder({
+    width,
+    height,
+    title: spec.title ?? '线性产线',
+    gameVersion: spec.gameVersion,
+    iconId: stages.at(-1).output,
+  });
+
+  const lane = (from, to, y, dir) => {
+    const belts = [];
+    const step = dir === 'E' ? 1 : -1;
+    for (let x = from; step > 0 ? x <= to : x >= to; x += step) belts.push(builder.addBelt(beltId, x, y, 0, dir));
+    for (let i = 0; i + 1 < belts.length; i += 1) builder.link(belts[i], belts[i + 1]);
+    return belts;
+  };
+
+  let pendingConnector = null;
+  for (let s = 0; s < stages.length; s += 1) {
+    const stage = stages[s];
+    const y = 8 + rowGap * s;
+    const laneStart = 1;
+    const laneEnd = laneEnds[s];
+    const inputs = [];
+
+    if (s > 0) {
+      const c = connectors[s - 1];
+      const primary = stage.primary;
+      if (!primary) throw new Error(`第 ${s + 1} 段缺少 primary 输入`);
+      const belts = lane(c, laneStart, y - 2, 'W');
+      if (pendingConnector) builder.link(pendingConnector, belts[0]);
+      pendingConnector = null;
+      inputs.push({ itemId: primary, y: y - 2, offset: -1, belts });
+    }
+
+    for (const [index, itemId] of stage.raws.entries()) {
+      const slot = s > 0 ? index + 1 : index;
+      const beltY = y - 2 - slot;
+      const belts = lane(laneStart, laneEnd, beltY, 'E');
+      builder.label(belts[0], itemId);
+      inputs.push({ itemId, y: beltY, offset: slot - 1, belts });
+    }
+    if (inputs.length > 3) throw new Error(`第 ${s + 1} 段输入超过 3 条`);
+
+    const machines = [];
+    for (let i = 0; i < stage.count; i += 1) {
+      machines.push(builder.add(stage.buildingId, x0 + i * machineSpacing(stage.buildingId), y, 0, { recipeId: stage.recipeId ?? 0 }));
+    }
+
+    const laneByXY = new Map();
+    for (const input of inputs) for (const belt of input.belts) laneByXY.set(`${belt.localOffset[0].x},${belt.localOffset[0].y}`, belt);
+
+    for (const machine of machines) {
+      const mx = machine.localOffset[0].x;
+      for (const input of inputs) {
+        const belt = laneByXY.get(`${mx + input.offset},${input.y}`);
+        if (!belt) throw new Error(`第 ${s + 1} 段输入带缺少格子 (${mx + input.offset},${input.y})`);
+        builder.addSorter(sorterId, { belt, factory: machine, side: 'bottom', offset: input.offset, io: 'in' });
+      }
+    }
+
+    const outputEnd = s + 1 < stages.length ? connectors[s] : laneEnd;
+    const outLane = lane(1, outputEnd, y + 2, 'E');
+    const outByX = new Map(outLane.map((belt) => [belt.localOffset[0].x, belt]));
+    for (const machine of machines) {
+      const belt = outByX.get(machine.localOffset[0].x);
+      if (!belt) throw new Error('输出带缺少对应格子');
+      builder.addSorter(sorterId, { belt, factory: machine, side: 'top', offset: 0, io: 'out', itemIdFilter: stage.output });
+    }
+    if (s + 1 === stages.length) builder.label(outLane.at(-1), stage.output);
+
+    if (s + 1 < stages.length) {
+      const c = connectors[s];
+      let prev = outByX.get(c);
+      if (!prev) throw new Error('输出带没有接到连接带上');
+      for (let cy = y + 3; cy <= y + rowGap - 3; cy += 1) {
+        const belt = builder.addBelt(beltId, c, cy, 0, 'N');
+        builder.link(prev, belt);
+        prev = belt;
+      }
+      pendingConnector = prev;
+    }
+  }
+
+  return { text: builder.finish(), meta: { width, height, stages: stages.length } };
+}
+
+/**
+ * 从 KB 产线规划里认出“线性链”：每段只吃上一段的产物，其余输入都是原料。
+ * KB 的 recipes 是“目标在前、上游在后”，这里先按依赖做拓扑排序；
+ * 认不出就返回 null，由调用方回退到旧布局器。
+ */
+export function chainSpecFromPlan(plan) {
+  if (!plan?.item || !Array.isArray(plan.recipes) || plan.recipes.length < 2) return null;
+  if (Array.isArray(plan.byproducts) && plan.byproducts.length > 0) return null;
+
+  const nodes = [];
+  const producerOf = new Map();
+  for (const [index, row] of plan.recipes.entries()) {
+    const recipe = RECIPES.get(row.recipeId);
+    if (!recipe) return null;
+    const primary = row.primaryItemId ?? plan.item.id;
+    const outputs = Array.isArray(row.outputsPerMin) && row.outputsPerMin.length
+      ? row.outputsPerMin.map((output) => output.itemId)
+      : (recipe.Results ?? []);
+    if (outputs.length !== 1 || outputs[0] !== primary) return null;
+    if (producerOf.has(primary)) return null; // 同一物品两段生产，链不唯一
+    producerOf.set(primary, index);
+    nodes.push({ index, row, recipe, primary });
+  }
+
+  // 生产者 → 消费者的边，按依赖拓扑排序；有环就不是产线。
+  const order = [];
+  const indegree = new Map(nodes.map((node) => [node.index, 0]));
+  const consumers = new Map(nodes.map((node) => [node.index, []]));
+  for (const node of nodes) {
+    for (const input of node.recipe.Items ?? []) {
+      const producer = producerOf.get(input);
+      if (producer === undefined) continue;
+      if (producer === node.index) return null;
+      consumers.get(producer).push(node.index);
+      indegree.set(node.index, indegree.get(node.index) + 1);
+    }
+  }
+  const queue = nodes.filter((node) => indegree.get(node.index) === 0).map((node) => node.index);
+  while (queue.length) {
+    const index = queue.shift();
+    order.push(index);
+    for (const next of consumers.get(index)) {
+      indegree.set(next, indegree.get(next) - 1);
+      if (indegree.get(next) === 0) queue.push(next);
+    }
+  }
+  if (order.length !== nodes.length) return null;
+
+  const byIndex = new Map(nodes.map((node) => [node.index, node]));
+  const specs = [];
+  for (const [position, index] of order.entries()) {
+    const { row, recipe, primary } = byIndex.get(index);
+    const inputs = recipe.Items ?? [];
+    const fromStage = inputs.filter((id) => producerOf.has(id));
+    const raws = inputs.filter((id) => !producerOf.has(id));
+    if (position === 0) {
+      if (fromStage.length !== 0 || raws.length > 3) return null;
+      specs.push({ buildingId: row.buildingId, count: row.buildingCount, raws, output: primary, recipeId: row.recipeId });
+      continue;
+    }
+    if (fromStage.length !== 1 || producerOf.get(fromStage[0]) !== order[position - 1]) return null;
+    if (raws.length > 2) return null;
+    specs.push({
+      buildingId: row.buildingId,
+      count: row.buildingCount,
+      primary: fromStage[0],
+      raws,
+      output: primary,
+      recipeId: row.recipeId,
+    });
+  }
+  return { stages: specs };
+}
+
+/** 把 KB 规划整理成“任意 DAG”的段列表（拓扑排序）。认不出返回 null。 */
+export function busSpecFromPlan(plan) {
+  if (!plan?.item || !Array.isArray(plan.recipes) || plan.recipes.length === 0) return null;
+  if (Array.isArray(plan.byproducts) && plan.byproducts.length > 0) return null;
+  const nodes = [];
+  const producerOf = new Map();
+  for (const [index, row] of plan.recipes.entries()) {
+    const recipe = RECIPES.get(row.recipeId);
+    if (!recipe) return null;
+    const primary = row.primaryItemId ?? plan.item.id;
+    const outputs = (row.outputsPerMin ?? []).map((output) => output.itemId);
+    const results = recipe.Results ?? [];
+    if (results.length !== 1 || results[0] !== primary) return null;
+    if (producerOf.has(primary)) return null;
+    producerOf.set(primary, index);
+    nodes.push({ index, row, recipe, primary });
+  }
+  const indegree = new Map(nodes.map((node) => [node.index, 0]));
+  const consumers = new Map(nodes.map((node) => [node.index, []]));
+  for (const node of nodes) {
+    for (const input of node.recipe.Items ?? []) {
+      const producer = producerOf.get(input);
+      if (producer === undefined) continue;
+      consumers.get(producer).push(node.index);
+      indegree.set(node.index, indegree.get(node.index) + 1);
+    }
+  }
+  const queue = nodes.filter((node) => indegree.get(node.index) === 0).map((node) => node.index);
+  const order = [];
+  while (queue.length) {
+    const index = queue.shift();
+    order.push(index);
+    for (const next of consumers.get(index)) {
+      indegree.set(next, indegree.get(next) - 1);
+      if (indegree.get(next) === 0) queue.push(next);
+    }
+  }
+  if (order.length !== nodes.length) return null;
+  const byIndex = new Map(nodes.map((node) => [node.index, node]));
+  return {
+    stages: order.map((index) => {
+      const { row, recipe, primary } = byIndex.get(index);
+      return {
+        buildingId: row.buildingId,
+        count: row.buildingCount,
+        recipeId: row.recipeId,
+        output: primary,
+        inputs: recipe.Items ?? [],
+        outputRate: (row.outputsPerMin?.[0]?.amount ?? 0),
+        inputRates: new Map((row.inputsPerMin ?? []).map((input) => [input.itemId, input.amount])),
+      };
+    }),
+    target: plan.item.id,
+  };
+}
+
+const BELT_CAPACITY_PER_MIN = { 2001: 360, 2002: 720, 2003: 1800 };
+
+/**
+ * 总线布局：一条蛇形传送带穿过所有机器，机器在带子下方，
+ * 输入分拣器从带子取料、输出分拣器把产物放回带子下游；原料在行首用带间分拣器放上总线。
+ */
+export function layoutBus(spec) {
+  const { stages, target } = spec;
+  if (!Array.isArray(stages) || stages.length === 0) throw new Error('总线布局至少需要一段');
+  const beltId = spec.beltId ?? 2003;
+  const sorterId = spec.sorterId ?? 2013;
+  const spacingOf = (stage) => machineSpacing(stage.buildingId);
+
+  let totalCells = 0;
+  for (const stage of stages) totalCells += stage.count * (spacingOf(stage) + 1);
+  const raws = [...new Set(stages.flatMap((stage) => stage.inputs.filter((id) => !stages.some((s) => s.output === id))))];
+  totalCells += raws.length * 5 + 4;
+
+  let width = Math.ceil(Math.sqrt(totalCells * 7));
+  width = Math.max(40, Math.min(240, width));
+  let rows = Math.max(1, Math.ceil(totalCells / (width - 2)));
+  const requestedRows = Number.isFinite(spec.rows) ? Math.floor(spec.rows) : 0;
+  if (requestedRows >= 1) {
+    rows = Math.min(64, requestedRows);
+    width = Math.max(40, Math.min(240, Math.ceil(totalCells / rows) + 2));
+  }
+  const height = 4 + 8 * (rows - 1) + 4;
+
+  const path = [];
+  for (let r = 0; r < rows; r += 1) {
+    const y = 4 + 8 * r;
+    if (r % 2 === 0) {
+      for (let x = 1; x <= width - 1; x += 1) path.push({ x, y, dir: 'E' });
+      if (r + 1 < rows) for (let yy = y + 1; yy <= y + 7; yy += 1) path.push({ x: width - 1, y: yy, dir: 'N' });
+    } else {
+      for (let x = width - 1; x >= 1; x -= 1) path.push({ x, y, dir: 'W' });
+      if (r + 1 < rows) for (let yy = y + 1; yy <= y + 7; yy += 1) path.push({ x: 1, y: yy, dir: 'N' });
+    }
+  }
+  const indexOf = new Map(path.map((cell, index) => [`${cell.x},${cell.y}`, index]));
+
+  const builder = new BlueprintBuilder({ width, height, title: spec.title ?? '总线产线', gameVersion: spec.gameVersion, iconId: target });
+  const belts = path.map((cell) => builder.addBelt(beltId, cell.x, cell.y, 0, cell.dir));
+  for (let i = 0; i + 1 < belts.length; i += 1) builder.link(belts[i], belts[i + 1]);
+  builder.label(belts.at(-1), target);
+
+  // 原料：行首上方各拉一条短带，再用带间分拣器放到总线上。
+  const rawIndex = new Map();
+  for (const [i, itemId] of raws.entries()) {
+    const x0 = 1 + 5 * i;
+    const lane = [builder.addBelt(beltId, x0, 6, 0, 'E'), builder.addBelt(beltId, x0 + 1, 6, 0, 'E'), builder.addBelt(beltId, x0 + 2, 6, 0, 'E')];
+    builder.link(lane[0], lane[1]);
+    builder.link(lane[1], lane[2]);
+    builder.label(lane[0], itemId);
+    const bus = belts[indexOf.get(`${x0 + 1},4`)];
+    builder.addBeltSorter(sorterId, { from: lane[1], to: bus });
+    rawIndex.set(itemId, x0 + 1);
+  }
+  const headerEnd = 1 + 5 * raws.length;
+
+  const loads = new Float64Array(path.length + 1);
+  const addLoad = (from, to, rate) => {
+    if (to <= from) return;
+    for (let i = from; i < to; i += 1) loads[i] += rate;
+  };
+  const producedAt = new Map();
+  for (const [itemId, _] of rawIndex) producedAt.set(itemId, indexOf.get(`${rawIndex.get(itemId)},4`));
+
+  let cursor = headerEnd;
+  let machines = 0;
+  let lastPlacement = null;
+  const halfOf = (id) => Math.max(COLLIDERS.get(id)?.ext[0] ?? 1, COLLIDERS.get(id)?.ext[2] ?? 1);
+  for (const stage of stages) {
+    const inputRate = stage.inputRates;
+    const half = halfOf(stage.buildingId);
+    for (let m = 0; m < stage.count; m += 1) {
+      for (;;) {
+        if (lastPlacement) {
+          const need = Math.max(3, Math.ceil(lastPlacement.half + half));
+          if (cursor < lastPlacement.index + need) cursor = lastPlacement.index + need;
+        }
+        while (cursor + 1 < path.length) {
+          const cell = path[cursor];
+          const next = path[cursor + 1];
+          if (cell.dir !== 'N' && next.dir !== 'N' && next.y === cell.y && Math.abs(next.x - cell.x) === 1) break;
+          cursor += 1;
+        }
+        if (cursor + 1 >= path.length) throw new Error('总线长度不够放完所有机器');
+        const cell = path[cursor];
+        if (cell.x >= 3 && cell.x <= width - 3) break;
+        cursor += 1;
+      }
+      const cell = path[cursor];
+      const dx = cell.dir === 'E' ? 1 : -1;
+      const outCell = path[cursor + 1];
+      const machine = builder.add(stage.buildingId, cell.x, cell.y - 2, 0, { recipeId: stage.recipeId });
+      // 混带：一个输入分拣器就够，机器只吃自己配方认的物品。
+      const inBus = belts[indexOf.get(`${cell.x},${cell.y}`)];
+      if (!inBus) throw new Error('总线缺少输入格');
+      builder.addSorter(sorterId, { belt: inBus, factory: machine, side: 'top', offset: 0, io: 'in' });
+      for (const itemId of stage.inputs) {
+        const start = producedAt.get(itemId);
+        const perMachine = (inputRate.get(itemId) ?? 0) / stage.count;
+        if (start === undefined) throw new Error(`输入 ${itemId} 没有来源`);
+        addLoad(start, cursor, perMachine);
+      }
+      const outBus = belts[indexOf.get(`${outCell.x},${outCell.y}`)];
+      builder.addSorter(sorterId, { belt: outBus, factory: machine, side: 'top', offset: dx, io: 'out', itemIdFilter: stage.output });
+      if (!producedAt.has(stage.output)) producedAt.set(stage.output, cursor + 1);
+      machines += 1;
+      lastPlacement = { index: cursor, half };
+      cursor += 1;
+    }
+  }
+
+  const capacity = BELT_CAPACITY_PER_MIN[beltId] ?? 1800;
+  let worst = 0;
+  for (const load of loads) worst = Math.max(worst, load);
+  if (worst > capacity + 1e-6) {
+    throw new Error(`分配 ${ITEM_NAMES.get(target) ?? target} 时超过传送带最大容量（需要 ${Math.ceil(worst)}/min，单条 ${capacity}/min）`);
+  }
+
+  return { text: builder.finish(), meta: { width, height, machines, rows, rawCount: raws.length } };
 }
