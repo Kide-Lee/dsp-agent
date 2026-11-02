@@ -95,7 +95,7 @@ const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
 
 // 8. 有端口偏移数据的化工厂/位面熔炉也能上总线。
 {
-  for (const [buildingId, name] of [[2310, '化工厂'], [2309, '位面熔炉']]) {
+  for (const [buildingId, name] of [[2310, '微型粒子对撞机'], [2309, '位面熔炉'], [2317, '量子化工厂'], [2902, '自演化研究站']]) {
     check(`总线支持${name}`, busCompatible(buildingId));
     const built = layoutBus({
       stages: [{ buildingId, count: 2, recipeId: 16, output: 1120, inputs: [1007], inputRates: new Map([[1007, 180]]), outputRate: 60 }],
