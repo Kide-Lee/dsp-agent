@@ -92,22 +92,36 @@ const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
   check('精炼厂总线通过硬校验', result.ok, result.errors.slice(0, 3).join('；'));
 }
 
-// 8. 化工厂这类槽位在侧面远端、又没有端口偏移数据的，仍拒绝。
+// 8. 有端口偏移数据的化工厂/位面熔炉也能上总线。
 {
-  check('2310 化工厂不适合总线', !busCompatible(2310));
+  for (const [buildingId, name] of [[2310, '化工厂'], [2309, '位面熔炉']]) {
+    check(`总线支持${name}`, busCompatible(buildingId));
+    const built = layoutBus({
+      stages: [{ buildingId, count: 2, recipeId: 16, output: 1120, inputs: [1007], inputRates: new Map([[1007, 180]]), outputRate: 60 }],
+      target: 1120,
+      rawRates: new Map([[1007, 180]]),
+    });
+    const result = validateBlueprint(built.text);
+    check(`${name}总线通过硬校验`, result.ok, result.errors.slice(0, 3).join('；'));
+  }
+}
+
+// 9. 没有端口数据、槽位又不在正上方的大建筑仍拒绝。
+{
+  check('2312 不适合总线', !busCompatible(2312));
   let threw = false;
   try {
     layoutBus({
-      stages: [{ buildingId: 2310, count: 1, recipeId: 16, output: 1120, inputs: [1007], inputRates: new Map([[1007, 60]]), outputRate: 60 }],
+      stages: [{ buildingId: 2312, count: 1, recipeId: 16, output: 1120, inputs: [1007], inputRates: new Map([[1007, 60]]), outputRate: 60 }],
       target: 1120,
     });
   } catch (error) {
     threw = error.code === 'bus-unsupported';
   }
-  check('总线拒绝化工厂', threw);
+  check('总线拒绝 2312', threw);
 }
 
-// 9. 未知建筑。
+// 10. 未知建筑。
 {
   const b = new BlueprintBuilder({ width: 10, height: 10 });
   let threw = false;

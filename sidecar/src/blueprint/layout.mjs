@@ -4,7 +4,7 @@ import buildingData from '../../vendor/dsp-calc/data/Buildings.mjs';
 import vanilla from '../../vendor/dsp-calc/data/Vanilla.mjs';
 import { COLLIDERS } from './colliders.mjs';
 import { SLOTS } from './slots.mjs';
-import { PORT_OFFSETS } from './ports.mjs';
+import { PORT_OFFSETS, rotateOffset } from './ports.mjs';
 import { BlueprintBuilder } from './emit.mjs';
 
 const BUILDINGS = buildingData.buildings;
@@ -28,20 +28,54 @@ export function machineSpacing(itemId) {
  *   bottom —— 只有下方中间槽位（精炼厂），转 180° 让端口朝上，用小数端口分拣器。
  * 两种都放不了就返回 null，由调用方回退旧布局。
  */
+export function busPortPlan(itemId) {
+  const offsets = PORT_OFFSETS.get(itemId);
+  const collider = COLLIDERS.get(itemId);
+  if (!offsets || !collider) return null;
+  for (const yaw of [0, 180]) {
+    const ports = [...offsets.entries()]
+      .map(([slot, offset]) => ({ slot, ...rotateOffset(offset.dx, offset.dy, yaw) }))
+      .filter((port) => port.dy > 0.5);
+    if (ports.length < 2) continue;
+    const input = ports.reduce((best, port) => (Math.abs(port.dx) < Math.abs(best.dx) ? port : best));
+    const outputs = ports.filter((port) => port.slot !== input.slot);
+    if (!outputs.length) continue;
+    const output = outputs.reduce((best, port) => (Math.abs(port.dx - 1) < Math.abs(best.dx - 1) ? port : best));
+    const inCell = Math.round(input.dx);
+    const outCell = Math.round(output.dx);
+    if (Math.abs(input.dx - inCell) > 0.6 || Math.abs(output.dx - outCell) > 0.6) continue;
+    if (inCell === outCell) continue;
+    return {
+      yaw,
+      yOffset: Math.ceil(input.dy + 1 - 1e-9),
+      inputSlot: input.slot,
+      outputSlot: output.slot,
+      inCell,
+      outCell,
+      halfX: collider.ext[0],
+      halfZ: collider.ext[2],
+    };
+  }
+  return null;
+}
+
+/**
+ * 总线布局怎么摆这台机器：
+ *   top  —— 正上方有中间槽位（制造台/熔炉），机器朝 0、带子在上、分拣器长度 1。
+ *   port —— 有端口偏移数据（精炼厂/位面熔炉/化工厂…），按数据选一侧端口和朝向。
+ * 两种都放不了就返回 null，由调用方回退旧布局。
+ */
 export function busStageMode(itemId) {
   const collider = COLLIDERS.get(itemId);
   const slots = SLOTS.get(itemId);
-  if (!collider || !slots) return null;
-  if (collider.ext[0] > 2.5 || collider.ext[2] > 2.5) {
-    const offsets = PORT_OFFSETS.get(itemId);
-    const center = offsets?.get(7);
-    if (!center || Math.abs(center.dx) > 0.3 || center.dy >= -0.5) return null;
-    if (collider.ext[0] > 2.2) return null;
-    return { mode: 'bottom', yOffset: Math.ceil(1 - center.dy), yaw: 180, halfX: collider.ext[0], halfZ: collider.ext[2] };
+  if (!collider) return null;
+  const topCenter = slots?.some((slot) => Math.abs(slot.x) <= 0.3 && slot.z >= 0.9 && slot.z <= 1.2);
+  if (topCenter && collider.ext[0] <= 2.5 && collider.ext[2] <= 2.5) {
+    return { mode: 'top', yOffset: 2, yaw: 0, halfX: collider.ext[0], halfZ: collider.ext[2] };
   }
-  const topCenter = slots.some((slot) => Math.abs(slot.x) <= 0.3 && slot.z >= 0.9 && slot.z <= 1.2);
-  if (!topCenter) return null;
-  return { mode: 'top', yOffset: 2, yaw: 0, halfX: collider.ext[0], halfZ: collider.ext[2] };
+  const port = busPortPlan(itemId);
+  if (port) return { mode: 'port', ...port };
+  return null;
 }
 
 export function busCompatible(itemId) {
@@ -463,34 +497,48 @@ export function layoutBus(spec) {
         if (cursor + 1 >= path.length) throw new Error(`总线长度不够放完所有机器（已放 ${machines}/${stages.reduce((sum, stage) => sum + stage.count, 0)}，宽度 ${width}，行数 ${rows}）`);
         const cell = path[cursor];
         const margin = Math.ceil(half + 0.6);
-        if (cell.x >= 1 + margin && cell.x <= width - 1 - margin) break;
-        cursor += 1;
+        if (cell.x < 1 + margin || cell.x > width - 1 - margin) {
+          cursor += 1;
+          continue;
+        }
+        if (stage.mode.mode === 'port') {
+          const inX = cell.x + stage.mode.inCell;
+          const outX = cell.x + stage.mode.outCell;
+          const a = indexOf.get(`${inX},${cell.y}`);
+          const b = indexOf.get(`${outX},${cell.y}`);
+          if (inX < 1 || inX > width - 2 || outX < 1 || outX > width - 2 || a === undefined || b === undefined || path[a].dir === 'N' || path[b].dir === 'N') {
+            cursor += 1;
+            continue;
+          }
+        }
+        break;
       }
       const cell = path[cursor];
-      const dx = cell.dir === 'E' ? 1 : -1;
-      const outCell = path[cursor + 1];
       const mode = stage.mode;
       const machine = builder.add(stage.buildingId, cell.x, cell.y - mode.yOffset, 0, { recipeId: stage.recipeId, yaw: mode.yaw });
+      let inputIndex;
+      let outputIndex;
       // 混带：一个输入分拣器就够，机器只吃自己配方认的物品。
-      const inBus = belts[indexOf.get(`${cell.x},${cell.y}`)];
-      if (!inBus) throw new Error('总线缺少输入格');
-      if (mode.mode === 'bottom') {
-        builder.addPortSorter(sorterId, { belt: inBus, factory: machine, slot: 7, io: 'in' });
+      if (mode.mode === 'port') {
+        inputIndex = indexOf.get(`${cell.x + mode.inCell},${cell.y}`);
+        outputIndex = indexOf.get(`${cell.x + mode.outCell},${cell.y}`);
+        builder.addPortSorter(sorterId, { belt: belts[inputIndex], factory: machine, slot: mode.inputSlot, io: 'in' });
+        builder.addPortSorter(sorterId, { belt: belts[outputIndex], factory: machine, slot: mode.outputSlot, io: 'out', itemIdFilter: stage.output });
       } else {
+        const dx = cell.dir === 'E' ? 1 : -1;
+        inputIndex = cursor;
+        outputIndex = cursor + 1;
+        const inBus = belts[inputIndex];
+        const outBus = belts[outputIndex];
+        if (!inBus || !outBus) throw new Error('总线缺少输入/输出格');
         builder.addSorter(sorterId, { belt: inBus, factory: machine, side: 'top', offset: 0, io: 'in' });
-      }
-      for (const itemId of stage.inputs) {
-        addEvent(itemId, cursor, -(stage.inputRates.get(itemId) ?? 0) / stage.count);
-      }
-      const outBus = belts[indexOf.get(`${outCell.x},${outCell.y}`)];
-      if (mode.mode === 'bottom') {
-        // 转 180° 后，6/8 号侧端口分别落在 +0.782 / -0.782，选与流向同侧的那个当输出。
-        builder.addPortSorter(sorterId, { belt: outBus, factory: machine, slot: dx > 0 ? 6 : 8, io: 'out', itemIdFilter: stage.output });
-      } else {
         builder.addSorter(sorterId, { belt: outBus, factory: machine, side: 'top', offset: dx, io: 'out', itemIdFilter: stage.output });
       }
+      for (const itemId of stage.inputs) {
+        addEvent(itemId, inputIndex, -(stage.inputRates.get(itemId) ?? 0) / stage.count);
+      }
       for (const output of stage.outputs ?? [{ itemId: stage.output, rate: stage.outputRate ?? 0 }]) {
-        addEvent(output.itemId, cursor + 1, output.rate / stage.count);
+        addEvent(output.itemId, outputIndex, output.rate / stage.count);
       }
       machines += 1;
       lastPlacement = { index: cursor, half };
