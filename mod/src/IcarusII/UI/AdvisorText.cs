@@ -37,11 +37,20 @@ namespace IcarusII.UI
             return $"<color=\"{HotkeyColor}\">[{text}]</color>";
         }
 
+        /// <summary>
+        /// 强调段（用户提问、授权内容）。顾问字幕里所有强调都用 #61D8FFc0：
+        /// 既包按键（[自动标记重建]），也包名词短语（电力覆盖范围、导弹防御塔）和引号内的话。
+        /// </summary>
+        private static string Emphasis(string text)
+        {
+            return string.IsNullOrEmpty(text) ? string.Empty : $"<color=\"{HotkeyColor}\">{text}</color>";
+        }
+
         public static string ComposeReply(string template, string question, string body, string hotkeyMarkup)
         {
             return string.Format(
                 template,
-                Quote(question, QuestionMaxChars),
+                Emphasis(Quote(question, QuestionMaxChars)),
                 Flatten(body, BodyMaxChars),
                 hotkeyMarkup);
         }
@@ -50,7 +59,7 @@ namespace IcarusII.UI
         {
             return string.Format(
                 template,
-                TrimTitle(Flatten(title, TitleMaxChars)),
+                Emphasis(TrimTitle(Flatten(title, TitleMaxChars))),
                 Flatten(body, BodyMaxChars),
                 hotkeyMarkup);
         }

@@ -10,10 +10,10 @@ namespace IcarusII.Tests
     /// </summary>
     internal static class AdvisorTextTests
     {
-        // 模板不写死换行：顾问字幕面板居中，短行会被看成首行缩进，交给 Text 自动折行。
-        private const string ReplyTemplate = "我已回复{0}，请过目：{1}请您按{2}键进入工业机甲终端查看完整内容。";
-        private const string ConfirmTemplate = "工程师，我请求{0}：{1}请您按{2}键进入工业机甲终端进行授权。";
-        private const string AskTemplate = "我需要您为如下事项做出抉择：{0}请您按{1}键进入工业机甲终端作出批示。";
+        // 固定三段：首段说明事件，中段放内容，末段给出进入终端的热键。
+        private const string ReplyTemplate = "我已回复{0}，请过目：\n{1}\n请您按{2}键进入工业机甲终端查看完整内容。";
+        private const string ConfirmTemplate = "工程师，我请求{0}：\n{1}\n请您按{2}键进入工业机甲终端进行授权。";
+        private const string AskTemplate = "我需要您为如下事项做出抉择：\n{0}\n请您按{1}键进入工业机甲终端作出批示。";
 
         public static void Run()
         {
@@ -33,16 +33,20 @@ namespace IcarusII.Tests
             var reply = AdvisorText.ComposeReply(ReplyTemplate, "怎么造戴森球", "先铺太阳帆，再搭框架。", AdvisorText.HotkeyMarkup("R"));
             Check("回复：带问题原文", reply.Contains("「怎么造戴森球」"));
             Check("回复：引号只出现一层", !reply.Contains("「「"));
+            Check("回复：提问着色", reply.Contains("<color=\"#61D8FFc0\">「怎么造戴森球」</color>"));
+            Check("回复：固定三段", reply.Split('\n').Length == 3);
             Check("回复：带正文", reply.Contains("先铺太阳帆，再搭框架。"));
             Check("回复：带着色热键", reply.Contains("<color=\"#61D8FFc0\">[R]</color>键进入工业机甲终端查看完整内容。"));
 
             var confirm = AdvisorText.ComposeConfirm(ConfirmTemplate, "新增标记？", "行星：1\n坐标：2 / 3", AdvisorText.HotkeyMarkup("F8"));
-            Check("授权：标题去掉问号", confirm.StartsWith("工程师，我请求新增标记："));
+            Check("授权：标题去掉问号", confirm.StartsWith("工程师，我请求<color=\"#61D8FFc0\">新增标记</color>："));
+            Check("授权：固定三段", confirm.Split('\n').Length == 3);
             Check("授权：细节折成一行", confirm.Contains("行星：1；坐标：2 / 3"));
             Check("授权：带着色热键", confirm.Contains("<color=\"#61D8FFc0\">[F8]</color>键进入工业机甲终端进行授权。"));
 
             var ask = AdvisorText.ComposeAsk(AskTemplate, "要建在哪？；用几条线？", AdvisorText.HotkeyMarkup("R"));
             Check("选择：带问题列表", ask.Contains("要建在哪？；用几条线？"));
+            Check("选择：固定三段", ask.Split('\n').Length == 3);
             Check("选择：带着色热键", ask.Contains("<color=\"#61D8FFc0\">[R]</color>键进入工业机甲终端作出批示。"));
 
             var longBody = new string('长', 500);
