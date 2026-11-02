@@ -24,7 +24,8 @@ const STATION_PARAM_DEFAULTS = {
 
 const reachX = (itemId) => {
   const collider = COLLIDERS.get(itemId);
-  return collider ? collider.ext[0] + Math.abs(collider.pos[0]) : 1;
+  if (!collider) return 1;
+  return collider.ext[0] + Math.abs(collider.pos?.[0] ?? 0);
 };
 
 const storageOf = (items, role) => Array.from({ length: 4 }, (_, i) => ({
@@ -47,6 +48,9 @@ function stationParameters(storageItems, role, portDirs) {
 function placeModule(builder, stage, x0, yTop, ids) {
   const outputs = stage.outputs ?? [{ itemId: stage.output }];
   const inputs = stage.inputs ?? [];
+  if (inputs.length > INPUT_PORTS.length) {
+    throw new Error(`工厂布局暂不支持 ${inputs.length} 种输入的配方（建筑 ${stage.buildingId}）`);
+  }
   const stations = [];
 
   // 机器从左到右排开，间距按碰撞盒算。

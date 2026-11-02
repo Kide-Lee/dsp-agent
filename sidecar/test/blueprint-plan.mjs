@@ -94,24 +94,24 @@ try {
   console.log('\n── 3. 高产量拆多张（总线容量上限）──');
   {
     const three = await run({ item: '电磁涡轮', rate: 300 });
-    check('300/min 拆 2 张', three.tileCount === 2, String(three.tileCount));
-    check('每张约 150/min', Math.abs(three.ratePerTile - 150) < 1e-6, String(three.ratePerTile));
-    check('tiles 数组长度', three.tiles.length === 2);
+    check('300/min 走工厂布局一张', three.tileCount === 1, String(three.tileCount));
+    check('单张就是 300/min', Math.abs(three.ratePerTile - 300) < 1e-6, String(three.ratePerTile));
+    check('tiles 数组长度', three.tiles.length === 1);
     check('每个文件都落盘', three.tiles.every((tile) => existsSync(tile.path)), JSON.stringify(three.tiles.map((tile) => tile.path)));
-    check('机器数为两张之和', three.tiles.reduce((sum, tile) => sum + tile.machines, 0) === three.machines);
+    check('机器数一致', three.tiles.reduce((sum, tile) => sum + tile.machines, 0) === three.machines);
 
 
     const factory = await run({ item: '电磁涡轮', rate: 60, layout: 'factory' });
     check('factory 布局一张出图', factory.tileCount === 1 && factory.width > 0, JSON.stringify(factory?.error ?? factory?.tileCount));
-    check('返回蓝图统计', Array.isArray(factory.report?.buildings) && factory.report.stations.length > 0);
+    check('返回蓝图统计', Array.isArray(factory.report?.buildings) && factory.report.stations.length > 0, JSON.stringify(factory.report).slice(0, 200));
 
     const six = await run({ item: '电磁涡轮', rate: 600 });
-    check('600/min 拆 5 张', six.tileCount === 5, String(six.tileCount));
+    check('600/min 走工厂布局一张', six.tileCount === 1, String(six.tileCount));
     const huge = await run({ item: '电磁涡轮', rate: 1200 });
     check('1200/min 拆 10 张', huge.tileCount === 10, String(huge.tileCount));
     check('每张都过硬校验', huge.tiles.every((tile) => validateBlueprint(readFileSync(join(blueprintDir, tile.relPath), 'utf8')).ok));
-    check('每张约 120/min', Math.abs(six.ratePerTile - 120) < 1e-6, String(six.ratePerTile));
-    check('每张尺寸安全', six.tiles.every((tile) => tile.width <= 1000 && tile.height <= 50));
+    check('单张就是 600/min', Math.abs(six.ratePerTile - 600) < 1e-6, String(six.ratePerTile));
+    check('每张尺寸安全', six.tiles.every((tile) => tile.width <= 1000 && tile.height <= 100));
   }
 
   console.log('\n── 4. 档位 ──');

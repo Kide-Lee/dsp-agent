@@ -52,8 +52,8 @@ export function busPortPlan(itemId) {
       outputSlot: output.slot,
       inCell,
       outCell,
-      halfX: collider.ext[0] + Math.abs(collider.pos[0]),
-      halfZ: collider.ext[2] + Math.abs(collider.pos[2]),
+      halfX: collider.ext[0] + Math.abs(collider.pos?.[0] ?? 0),
+      halfZ: collider.ext[2] + Math.abs(collider.pos?.[2] ?? 0),
     };
   }
   return null;
@@ -71,7 +71,7 @@ export function busStageMode(itemId) {
   if (!collider) return null;
   const topCenter = slots?.some((slot) => Math.abs(slot.x) <= 0.3 && slot.z >= 0.9 && slot.z <= 1.2);
   if (topCenter && collider.ext[0] <= 2.5 && collider.ext[2] <= 2.5) {
-    return { mode: 'top', yOffset: 2, yaw: 0, halfX: collider.ext[0] + Math.abs(collider.pos[0]), halfZ: collider.ext[2] + Math.abs(collider.pos[2]) };
+    return { mode: 'top', yOffset: 2, yaw: 0, halfX: collider.ext[0] + Math.abs(collider.pos?.[0] ?? 0), halfZ: collider.ext[2] + Math.abs(collider.pos?.[2] ?? 0) };
   }
   const port = busPortPlan(itemId);
   if (port) return { mode: 'port', ...port };
@@ -302,7 +302,7 @@ export function layoutBus(spec) {
   let cursor = headerEnd;
   let machines = 0;
   let lastPlacement = null;
-  const halfOf = (id) => (COLLIDERS.get(id) ? COLLIDERS.get(id).ext[0] + Math.abs(COLLIDERS.get(id).pos[0]) : 1);
+  const halfOf = (id) => (COLLIDERS.get(id) ? COLLIDERS.get(id).ext[0] + Math.abs(COLLIDERS.get(id).pos?.[0] ?? 0) : 1);
   for (const stage of stages) {
     const half = halfOf(stage.buildingId);
     for (let m = 0; m < stage.count; m += 1) {
@@ -327,7 +327,8 @@ export function layoutBus(spec) {
         }
         const cell = path[cursor];
         const margin = Math.ceil(half + 0.6);
-        if (cell.x < Math.max(1 + margin, headerEnd - 1) || cell.x > width - 1 - margin) {
+        const minX = stationSupply ? Math.max(1 + margin, headerEnd - 1) : 1 + margin;
+        if (cell.x < minX || cell.x > width - 1 - margin) {
           cursor += 1;
           continue;
         }

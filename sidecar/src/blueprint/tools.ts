@@ -251,7 +251,7 @@ interface BuildTilesOptions {
   rows: number;
   stackSize: number;
   supply?: 'belt' | 'station';
-  layout?: 'bus' | 'factory';
+  layout?: 'auto' | 'bus' | 'factory';
   from?: 'ore' | 'smelted' | number;
   description?: (index: number, count: number, tileRate: number, totalRate: number) => string;
 }
@@ -294,7 +294,7 @@ function buildBlueprintTiles(
   rate: number,
   options: BuildTilesOptions,
 ): { tiles: BuiltTile[]; ratePerTile: number } {
-  const buildOne = (tileRate: number, name: string, index: number, count: number): BuiltTile => {
+  const buildOne = (tileRate: number, name: string, index: number, count: number, layout?: 'bus' | 'factory'): BuiltTile => {
     const plan = kb.plan(itemId, {
       rate: tileRate,
       buildingTier: options.buildingTier,
@@ -307,7 +307,7 @@ function buildBlueprintTiles(
       rows: options.rows,
       stackSize: options.stackSize,
       ...(options.supply ? { supply: options.supply } : {}),
-      ...(options.layout ? { layout: options.layout } : {}),
+      ...(layout ? { layout } : {}),
       name,
       author: options.author,
       version: options.version,
@@ -321,12 +321,22 @@ function buildBlueprintTiles(
   };
 
   const startedAt = performance.now();
+  const requestedLayout = options.layout === 'factory' || options.layout === 'bus' ? options.layout : undefined;
   let lastError: unknown = null;
   try {
-    return { tiles: [buildOne(rate, options.blueprintName, 1, 1)], ratePerTile: rate };
+    return { tiles: [buildOne(rate, options.blueprintName, 1, 1, requestedLayout)], ratePerTile: rate };
   } catch (err) {
     if (!isBusCapacityError(err)) throw err;
     lastError = err;
+  }
+
+  // 默认（auto）：单张总线放不下时先试工厂布局，整条产线往往能一张出图；工厂也放不下才拆张。
+  if (!options.layout || options.layout === 'auto') {
+    try {
+      return { tiles: [buildOne(rate, options.blueprintName, 1, 1, 'factory')], ratePerTile: rate };
+    } catch (factoryError) {
+      if (!isBusCapacityError(factoryError) && !(factoryError instanceof Error)) throw factoryError;
+    }
   }
 
   // 容量错误里带着“至少要拆几张”，直接从它开始试，别从 2 张一路试上去。
@@ -922,7 +932,7 @@ export function createBlueprintTools(
         insertType: Type.Optional(Type.Integer({ minimum: 0, maximum: 3, description: '默认 2（极速）' })),
         rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 8, description: '产线行数，默认 1；超宽时会自动加行' })),
         supply: Type.Optional(Type.Union([Type.Literal('belt'), Type.Literal('station')], { description: '原料供给方式：belt 走物品标签（默认），station 在行首放物流站并接出料带（最多 3 种原料）' })),
-        layout: Type.Optional(Type.Union([Type.Literal('bus'), Type.Literal('factory')], { description: '布局方式：bus 单条混带（默认，放不下会拆张）；factory 每个阶段一个模块、模块间用物流站供货，整条产线出一张图（适合复杂产品）' })),
+        layout: Type.Optional(Type.Union([Type.Literal('auto'), Type.Literal('bus'), Type.Literal('factory')], { description: '布局方式：auto（默认，单张总线放不下时先试工厂布局，仍不行才拆张）；bus 只用单条混带；factory 每个阶段一个模块、模块间用物流站供货，整条产线一张图' })),
         stackSize: Type.Optional(Type.Integer({ minimum: 1, maximum: 4, description: '集装堆叠，默认 1' })),
         depth: Type.Optional(Type.Integer({ minimum: 1, maximum: 16, description: '配方展开深度，默认 8' })),
         from: Type.Optional(
@@ -1062,7 +1072,7 @@ export function createBlueprintTools(
         const attributes = typeof args['attributes'] === 'string' ? args['attributes'] : '';
         const rows = typeof args['rows'] === 'number' ? args['rows'] : 1;
         const supply = args['supply'] === 'station' ? 'station' : 'belt';
-        const layout = args['layout'] === 'factory' ? 'factory' : 'bus';
+        const layout = args['layout'] === 'factory' ? 'factory' : args['layout'] === 'bus' ? 'bus' : 'auto';
 
         let tileSet;
         try {
