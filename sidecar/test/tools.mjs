@@ -107,8 +107,8 @@ function makeAgent(host, callOptions = {}, opts = {}) {
       emit.message(state.result.ok ? 'ok' : `fail:${state.result.error?.code}`, promptId, true);
     },
     onConfigChanged() {},
-    async deleteHistory(saveKey, text, timestamp) {
-      state.deleted = { saveKey, text, timestamp };
+    async deleteHistory(saveKey, text, timestamp, conversationId) {
+      state.deleted = { saveKey, text, timestamp, conversationId };
       return { ok: true, removed: 2 };
     },
     dispose() {},
@@ -372,7 +372,11 @@ async function run() {
           v: 1,
           id: 'm-61',
           type: 'history.delete',
-          payload: { text: '被删的问题', timestamp: 1760000000000 },
+          payload: {
+            conversationId: 'conv-a',
+            text: '被删的问题',
+            timestamp: 1760000000000,
+          },
         }),
       ),
       false,
@@ -386,7 +390,9 @@ async function run() {
     check('saveKey 回落到当前绑定', deleted?.payload?.saveKey === 'save-a');
     check(
       'agent 收到文本与时间戳',
-      state.deleted?.text === '被删的问题' && state.deleted?.timestamp === 1760000000000,
+      state.deleted?.text === '被删的问题' &&
+        state.deleted?.timestamp === 1760000000000 &&
+        state.deleted?.conversationId === 'conv-a',
     );
 
     const bad = makeSession();

@@ -138,10 +138,13 @@
 
 ```jsonc
 { "v":1, "id":"s-2", "type":"status",
-  "payload": { "state": "idle", "detail": "…" } }
+  "payload": { "state": "idle", "detail": "…", "conversationId": "conv_7c1e…" } }
 ```
 
 `state` 取值：`"idle"` | `"thinking"` | `"tools"` | `"retrying"` | `"compacting"` | `"aborting"`
+
+`conversationId`（可选）：该状态属于哪个会话。并行会话时只发送**当前焦点会话**的状态；
+老 mod 忽略该字段，仍按单一全局状态处理。
 
 ### 4.4 `prompt` — mod → sidecar
 
@@ -155,7 +158,9 @@
   } }
 ```
 
-`conversationId` 可选；缺省表示使用连接当前会话。
+`conversationId` 可选；缺省表示使用连接当前焦点会话。显式指定时，sidecar 按该会话路由本轮；
+如果该会话不存在返回 `conversation_not_found`。其他会话正在回答时，本会话仍可开始自己的回合；
+同一会话的连续提问按该会话的队列串行。
 
 `mode` 可选（附录 A.15）：缺省/`"queue"` = 普通提问；`"steer"` = 插话到当前回合。
 
@@ -214,10 +219,13 @@
 
 ```jsonc
 { "v":1, "id":"s-3", "type":"stream", "replyTo":"m-2",
-  "payload": { "channel": "text", "delta": "可以" } }
+  "payload": { "channel": "text", "delta": "可以", "conversationId": "conv_7c1e…" } }
 ```
 
 `channel`：`"text"` | `"reasoning"`
+
+`conversationId`（可选）：增量属于哪个会话。sidecar 只向当前焦点会话发送增量；
+切走时旧增量丢弃，切回后由 `conversation.switched` 的进度快照补上已经生成的部分。
 
 ### 4.6 `message` — sidecar → mod
 
@@ -228,9 +236,12 @@
   "payload": {
     "role": "assistant",
     "final": true,
+    "conversationId": "conv_7c1e…",
     "content": [ { "type": "text", "text": "…" } ]
   } }
 ```
+
+`conversationId`（可选）：终稿属于哪个会话；老 mod 忽略。
 
 `content` 元素类型：M0 仅 `{"type":"text","text":…}`；M1+ 增加
 `{"type":"tool","callId":…,"name":…,"state":"running|ok|error","summary":…}`。
@@ -729,6 +740,7 @@ mod                                   sidecar
   "v": 1, "id": "m-51", "type": "history.delete",
   "payload": {
     "saveKey": "3f2a91c4d8e05b17",
+    "conversationId": "conv_7c1e…",
     "text": "上次的问题",
     "timestamp": 1760000000000
   }
@@ -738,6 +750,10 @@ mod                                   sidecar
 - `text`：该回合的**用户消息原文**（必填，用于定位）。
 - `timestamp`：可选。历史回放里带回来的毫秒时间戳；有它时优先按时间戳匹配，
   没有时才退化为「最后一条同文本的用户消息」。
+- `conversationId`：可选。指定要改写的会话；缺省时使用当前活动会话。
+  老 mod 不传该字段时由 sidecar 用当前活动会话兜底，行为与它只显示活动会话一致。
+  老 sidecar 会忽略该字段，仍按最新 session 文件定位；升级 sidecar 后才按会话改写。
+  指定了 `conversationId` 但找不到对应 session 文件时返回 `conversation_not_found`。
 
 #### `history.deleted`（sidecar → mod）
 
@@ -757,9 +773,11 @@ mod                                   sidecar
 
 - 成功时 `removed` 是删掉的会话条目数（通常 user + assistant，可能含工具消息）。
 - 失败时 `ok=false`，`error` 为 `busy`（正在回答）、`no_save`、`turn_not_found`、
-  `unsupported_session`（会话含压缩/分支/上下文中编辑，拒绝改写）、`io_error` 之一。
-- 成功后 sidecar 会**丢弃当前内存会话**，下一次 `prompt` 从改写后的文件重建上下文，
-  因此被删回合不会继续进入模型上下文。
+  `conversation_not_found`、`unsupported_session`（会话含压缩/分支/上下文中编辑，拒绝改写）、
+  `io_error` 之一。
+- 如果改写的是当前活动会话，成功后 sidecar 会**丢弃当前内存会话**，下一次 `prompt`
+  从改写后的文件重建上下文，因此被删回合不会继续进入模型上下文；改写其他会话不会打断
+  当前内存上下文。
 - 实现是线性会话重写：保留条目按原顺序重新串成 `parentId` 链；
   含 `compaction` / `branch_summary` / `context_edit` 的会话拒绝删除（避免破坏上下文树）。
   已压缩的回合要撤销请走附录 A.11 的 `history.undo_compaction`，不要用 `history.delete`。
@@ -770,11 +788,15 @@ mod                                   sidecar
 **看不到任何卡片**——玩家会误以为模型没有用计算器。这条消息只用于 UI 展示，
 不参与工具执行，也不改变模型上下文。
 
+`conversationId`（可选）标明属于哪个会话；并行会话下 sidecar 只发送焦点会话的
+`tool_activity`，后台本地工具仍然执行但不在聊天窗显示。
+
 ```jsonc
 {
   "v": 1, "id": "s-70", "type": "tool_activity",
   "payload": {
     "callId": "kb_plan-3f9a",
+    "conversationId": "conv_7c1e…",
     "phase": "start",           // start | end
     "name": "kb_plan",
     "args": "{\"item\":\"宇宙矩阵\",\"rate\":20}",
@@ -834,6 +856,7 @@ mod                                   sidecar
 | `source` | 否 | `"generated"` \| `"downloaded"` \| `"copied"` \| `"written"`，用于卡片角标 |
 | `license` / `repository` | 否 | 下载来源的许可与仓库，卡片可据此署名 |
 
+- `conversationId`（可选）：卡片所属会话。并行会话下只向焦点会话发卡片；后台卡片仍写历史。
 - 一次工具调用成功 → 一张卡片；一轮里调用多次就发多条，顺序与工具完成顺序一致。
 - 工具失败不发卡片。
 - 同一轮里如果 `blueprint_fs rm/rmdir` 删掉了已经生成的蓝图，sidecar 会撤回待发卡片，
@@ -875,6 +898,7 @@ mod                                   sidecar
 | `description` | 否 | 建筑统计或星球备忘录快照 |
 | `iconLabel` | 否 | 缩略图占位文字 |
 
+- `conversationId`（可选）：卡片所属会话；并行会话下只向焦点会话发送。
 - sidecar 按「用户提问原文 + 回答原文」把卡片持久化到存档会话的 `link-cards.jsonl`；
   `save.bound.history` 的 assistant 消息用可选 `linkCards` 字段带回，mod 回放时重建。
   只按提问匹配会在重复提问（「现在什么情况」）时错配，因此回答原文也参与消歧。
@@ -902,6 +926,7 @@ mod 收到 `message{final}` 并完成渲染后发送。sidecar 不回复；它�
 {
   "v": 1, "id": "m-61", "type": "reply.time",
   "payload": {
+    "conversationId": "conv_7c1e…",
     "prompt": "帮我看看这条日志里的过滤规则是什么？",
     "reply": "日志里是 Filter: legacy……",
     "gameTime": "08:42:00"
@@ -910,6 +935,8 @@ mod 收到 `message{final}` 并完成渲染后发送。sidecar 不回复；它�
 ```
 
 - `prompt`：本轮用户提问原文，用于没有 `reply` 时回退匹配；过长时按 sidecar 存储上限截断。
+- `conversationId`：可选。把这条时间记录归属到指定会话；缺省时使用当前活动会话。
+  老 mod 不传该字段，旧记录没有会话归属，仍按提问/回答原文匹配。
 - `reply`（可选）：本轮 assistant 终稿原文。sidecar 优先按回答原文匹配，能区分
   “继续”这类重复提问；过长时截断。
 - `gameTime`：`HH:mm:ss`；没有游戏数据时 mod 可跳过不发。
@@ -929,6 +956,7 @@ pi 的自动压缩完成后，sidecar 把摘要作为一条**只给 UI** 的记�
   "v": 1, "id": "s-71", "type": "context.compacted",
   "payload": {
     "summary": "## Goal\n…",
+    "conversationId": "conv_7c1e…",
     "compactionId": "a1b2c3d4",
     "timestamp": 1760000000000,
     "tokensBefore": 96000,
@@ -939,6 +967,7 @@ pi 的自动压缩完成后，sidecar 把摘要作为一条**只给 UI** 的记�
 ```
 
 - `summary`：pi 生成的压缩摘要；mod 作为一条 assistant 记录渲染。
+- `conversationId`（可选）：压缩所属会话；后台会话的压缩不实时显示，切回后从历史回放。
 - `compactionId`：pi compaction entry id；事件刚发生时可能缺省，撤销时可省略。
 - `timestamp`：压缩完成时间（毫秒）；mod 用本地时间生成 `[HH:mm:ss]`。
 - `tokensBefore` / `estimatedTokensAfter`：可选，只用于展示。
@@ -953,13 +982,21 @@ pi 的自动压缩完成后，sidecar 把摘要作为一条**只给 UI** 的记�
 ```jsonc
 {
   "v": 1, "id": "m-72", "type": "history.undo_compaction",
-  "payload": { "saveKey": "3f2a91c4d8e05b17", "compactionId": "a1b2c3d4" }
+  "payload": {
+    "saveKey": "3f2a91c4d8e05b17",
+    "conversationId": "conv_7c1e…",
+    "compactionId": "a1b2c3d4"
+  }
 }
 ```
 
 - `compactionId` 可省略：省略表示撤销最近一次压缩。
+- `conversationId` 可选：指定要改写的会话；缺省时使用当前活动会话。
+  老 mod 不传该字段时由 sidecar 用当前活动会话兜底；老 sidecar 会忽略该字段。
+  指定了 `conversationId` 但找不到对应 session 文件时返回 `conversation_not_found`。
 - 只允许撤销**最近一次**压缩（LIFO）；指定更早的压缩返回 `not_latest`。
-- 目标不存在返回 `not_found`；正在回答返回 `busy`；会话无法安全改写返回
+- 目标不存在返回 `not_found`；指定了 `conversationId` 但找不到对应会话返回
+  `conversation_not_found`；正在回答返回 `busy`；会话无法安全改写返回
   `unsupported_session`；写盘失败返回 `io_error`。
 
 #### `history.compaction_undone`（sidecar → mod）
@@ -997,6 +1034,9 @@ sidecar 生成 32 字节随机 token（16 进制），把
 **同意** 后 mod 原样回传 token，sidecar 才把 token 放进 `tool_call.confirmToken`
 发给 mod 执行。普通 token 60 秒有效、单次使用，并绑定 `callId + tool + argsHash`。
 需要自动放行的档位也走同一条消息，只是 mod 不弹页、直接回传 `allow`。
+
+`conversationId`（可选）：确认请求所属会话。后台会话在需要玩家点确认时会等切到前台；
+`limited` 的 risk 1 / `takeover` 的自动放行仍可在后台完成。mod 只允许焦点会话弹确认页。
 
 > **v1 边界**：mod 不持有原始 args，无法重算 `argsHash`；该字段只能发现 sidecar
 > 两条消息自相矛盾，不能阻止被替换的 sidecar 在玩家确认后替换参数。真正的安全边界是
@@ -1040,6 +1080,7 @@ SHA-256，并可带 `maxWrites`（1–10000）与 `writeNames`（脚本里出现
   "payload": {
     "requestId": "confirm_1",
     "callId": "call_7",
+    "conversationId": "conv_7c1e…",
     "tool": "game_set_research",
     "argsHash": "sha256…",
     "token": "64-hex…",
@@ -1164,12 +1205,15 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
     "conversation": { "id": "conv_9a…", "title": "新会话",
                       "createdAt": 1760000200000, "updatedAt": 1760000200000,
                       "recordCount": 0, "records": [] },
+    "running": false,
+    "state": "idle",
     "history": []
   }
 }
 ```
 
-- 如果当前正在回答，返回 `error{code:"busy"}`，不改变活动会话。
+- 新建会话不会打断其他正在回答的会话；返回的 `conversation.created` 带上 `running:false`、`state:"idle"`，
+  mod 据此把发送/中断按钮重置为发送。
 - 如果当前活动会话本来就是空的（没有记录），sidecar 可以复用它的 id，
   避免不断产生新的空会话；UI 仍会收到一个 `conversation.created`。
 
@@ -1191,12 +1235,21 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
     "conversation": { /* 同 conversation.create.conversation */ },
     "existed": true,
     "messageCount": 2,
+    "running": true,
+    "state": "thinking",
     "discardedConversationId": "conv_9a…",
     "history": [ /* 该会话历史，字段同 A.6 */ ]
   }
 }
 ```
 
+- `running` / `state`（均可选）：目标会话当前是否在跑、跑到哪个状态；mod 用它们决定
+  发送/中断按钮，不需要依赖全局 `status`。
+- 切换会话**不会中断**目标会话或其他会话；只改变“焦点会话”。后台会话继续运行，
+  但其 `stream` / `message` / 工具卡不发送给 mod，直到再次切回。
+- 如果目标会话正在运行且已经生成了一部分正文，sidecar 在 `conversation.switched`
+  之后补发一条 `stream{conversationId, channel:"text", delta:<已生成正文>}`，让切回后的
+  聊天窗能接上；之后的新增量继续按正常流式发送。
 - 会话不存在时返回 `error{code:"conversation_not_found"}`；此时活动会话不变。
 - `conversation.title` 优先取该会话的 `session_info.name`（玩家改名或模型总结），
   没有时才退回第一条用户消息；切走再切回不会丢掉玩家改过的标题。
@@ -1282,7 +1335,8 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 
 - 删除是永久的：sidecar 删除该会话的 session 文件，以及与该会话关联的
   卡片/游戏时间记录；失败时 `ok=false`，`error` 为
-  `busy` / `no_save` / `conversation_not_found` / `io_error` 之一。
+  `conversation_busy`（该会话正在回答）/ `no_save` / `conversation_not_found` / `io_error` 之一。
+- 删除其他**正在回答**的会话返回 `conversation_busy`，不会自动中断它；其他空闲会话可以删除。
 - 如果删除的是活动会话，sidecar 选择 `updatedAt` 最新的剩余会话；
   没有剩余会话时新建一个空会话。返回的 `history` 是新的活动会话历史。
 - 如果删除的是非活动会话，活动会话与 `history` 保持不变。
@@ -1290,8 +1344,8 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 #### `prompt.conversationId`
 
 - `prompt` 的 `conversationId` 是可选字段（§4.4）；新 mod 会始终带上当前活动会话 id。
-- 如果带上的 id 与 sidecar 当前活动会话不一致，sidecar 返回
-  `error{code:"conversation_mismatch"}`，不执行本轮提问；mod 应先 `conversation.switch`。
+- 显式指定 `conversationId` 时，sidecar 会把本轮路由到该会话，不再要求它等于当前焦点；
+  会话不存在返回 `conversation_not_found`。
 - 老 mod 不带该字段时继续使用当前活动会话，行为与 v1 旧版一致。
 
 #### 兼容性
@@ -1435,7 +1489,7 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 ```
 
 - 非当前存档时允许重命名/删除，但**不切换**活动会话、不修改当前存档的
-  `active.json`；删除前同样拒绝 `busy`。
+  `active.json`；删除正在回答的会话返回 `conversation_busy`。
 - `conversation.renamed` / `conversation.deleted` 的 `payload.saveKey` 回传实际
   操作的存档（缺省时即当前存档），便于 UI 把结果写回正确的分组。
 - 老 mod 不带 `saveKey`，行为与 A.13 完全一致。
@@ -1487,8 +1541,11 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 #### `abort`（mod → sidecar）
 
 ```jsonc
-{ "v": 1, "id": "m-90", "type": "abort", "payload": {} }
+{ "v": 1, "id": "m-90", "type": "abort",
+  "payload": { "conversationId": "conv_7c1e…" } }
 ```
+
+`conversationId` 可选：要中断的会话；缺省为当前焦点会话。中断一个会话不影响其他会话。
 
 - 中断当前正在生成的回合；没有回合在跑时忽略（不报错、不改变任何状态，也不回帧）。
 - 确实有回合在跑时，sidecar 先回 `status{state:"aborting"}`，再用一条
@@ -1950,6 +2007,7 @@ manifest 格式：
     "risk": 0,
     "timeoutMs": 8000,
     "internal": false,
+    "conversationId": "conv_7c1e…",
     // 写操作（risk>0）才出现：
     "confirmToken": "64-hex…",
     "confirmArgsHash": "sha256…"
@@ -1963,7 +2021,9 @@ manifest 格式：
 - `timeoutMs` 由 sidecar 钳制在 500–30000ms；`ask_user` 例外，上限 600000ms。超时后 sidecar 不再接受该 `callId` 的结果。
 - M2 的 `risk` 恒为 0；写工具（M4）才使用 1/2。
 - `confirmToken` / `confirmArgsHash` 只有写操作才出现；mod 必须校验 token 未过期、未使用，且 callId/tool/argsHash 与确认时一致。
-- 同一连接同一时刻最多一个 `game.*` 调用（sidecar 串行化）。
+- `conversationId` 可选：发起调用的会话。并行会话下 mod 仍须执行后台会话的 `tool_call`
+  并回 `tool_result`，但不要给它画工具卡或改焦点会话的状态；老 mod 忽略该字段。
+- 不同会话的 `game.*` 调用可以同时存在；sidecar 用建筑/工厂/星球层级的资源锁避免同一目标并发写。
 
 ### B.3 `tool_result`（mod → sidecar）
 
@@ -1994,7 +2054,7 @@ manifest 格式：
 - `meta` 必带 `gameTick`、`saveKey`、`tickAtStart`、`tickAtEnd`；列表截断时带
   `truncated:true` 与 `nextOffset`。
 - 错误码：`tool_not_found`、`tool_unavailable`、`not_in_game`、`invalid_args`、
-  `timeout`、`busy`、`internal`、`cancelled`、`sandbox_required`。
+  `timeout`、`busy`、`internal`、`cancelled`、`sandbox_required`、`resource_locked`、`not_focused`。
 - 断线、换档、退游戏时 sidecar 立即以 `tool_unavailable` / `not_in_game` 结束 pending 调用，
   不等待 mod 回复。
 

@@ -10,6 +10,8 @@ import type { HistoryMessage, LinkCardPayload } from '../protocol.js';
 import { promptMatchesHistory } from '../blueprint/card.js';
 
 export interface LinkCardRecord {
+  /** 卡片所属会话；老记录没有该字段，回放时退回按提问/回答原文匹配。 */
+  conversationId?: string;
   prompt: string;
   /** 本轮最终回答原文；用于区分重复提问（「现在什么情况」）。 */
   reply?: string;
@@ -112,10 +114,16 @@ function replyMatchesHistory(historyText: string, reply: string): boolean {
 export function attachLinkCards(
   messages: HistoryMessage[],
   records: readonly LinkCardRecord[],
+  conversationId?: string | null,
 ): HistoryMessage[] {
   if (messages.length === 0 || records.length === 0) return messages;
 
-  const pending = records.filter(
+  const scoped = conversationId
+    ? records.filter((record) => !record.conversationId || record.conversationId === conversationId)
+    : records;
+  if (scoped.length === 0) return messages;
+
+  const pending = scoped.filter(
     (record) => record.prompt.trim().length > 0 && record.card !== null,
   );
   if (pending.length === 0) return messages;

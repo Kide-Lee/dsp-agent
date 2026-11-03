@@ -210,6 +210,30 @@ console.log('\n── 8. 删除蓝图后撤回待发卡片 ──');
   check('按绝对 path 也能撤回', noRel.length === 1 && noRel[0]?.fileName === 'b.txt');
 }
 
+console.log('\n── 8.5 卡片按会话归属 ──');
+{
+  const makeMessages = () => [
+    { role: 'user', text: '同一句提问' },
+    { role: 'assistant', text: '回答' },
+  ];
+  const records = [
+    { conversationId: 'conv-a', prompt: '同一句提问', card: { fileName: 'a.txt' } },
+    { conversationId: 'conv-b', prompt: '同一句提问', card: { fileName: 'b.txt' } },
+  ];
+  const a = attachBlueprintCards(makeMessages(), records, 'conv-a');
+  check('只挂目标会话的卡片', a[1].cards?.length === 1 && a[1].cards[0].fileName === 'a.txt',
+    JSON.stringify(a[1]));
+  const b = attachBlueprintCards(makeMessages(), records, 'conv-b');
+  check('另一个会话各有自己的卡片', b[1].cards?.length === 1 && b[1].cards[0].fileName === 'b.txt',
+    JSON.stringify(b[1]));
+
+  const legacy = attachBlueprintCards(makeMessages(), [
+    { prompt: '同一句提问', card: { fileName: 'legacy.txt' } },
+  ], 'conv-a');
+  check('老记录无会话归属时仍可回放', legacy[1].cards?.[0]?.fileName === 'legacy.txt',
+    JSON.stringify(legacy[1]));
+}
+
 console.log('\n── 9. 构建产物存在 ──');
 check('dist/blueprint/card.js 已构建', existsSync(new URL('../dist/blueprint/card.js', import.meta.url)));
 

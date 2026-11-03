@@ -86,8 +86,10 @@ import {
   type ConfirmRequestPayload,
   type ConfirmResultPayload,
   type ConversationInfo,
+  type PermissionLevel,
 } from './protocol.js';
 import { UI_ASK_TOOL_NAME, UI_ASK_TOOL_NAME_ALIASES, UI_ASK_TIMEOUT_MS } from './tools/ask.js';
+import { GameLockManager, lockKeysForTool } from './tools/locks.js';
 import type { AgentEmitter, AgentRunner } from './agent.js';
 import type {
   LocalWriteConfirmRequest,
@@ -132,6 +134,8 @@ export interface SessionOptions {
   logger?: Logger;
   /** 便于测试注入。 */
   createSessionId?: () => string;
+  /** 并行会话共享的游戏资源锁；缺省时每个 Session 自己一份。 */
+  locks?: GameLockManager;
 }
 
 /** token 比较使用定时安全比较，避免长度/前缀时间侧信道（design.md §9.1）。 */
@@ -359,6 +363,22 @@ function fingerprint(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 12);
 }
 
+/** 与 mod 的权限档位保持一致：sidecar 用它判断后台写操作是否还需要等人点确认。 */
+function autoApprovesWrite(permission: PermissionLevel, risk: number): boolean {
+  if (risk <= 0) return true;
+  if (permission === 'takeover') return true;
+  if (permission === 'limited') return risk <= 1;
+  return false;
+}
+
+/** 这些工具会直接改变玩家眼前的界面，后台会话调用时必须等切到该会话。 */
+const FOREGROUND_ONLY_TOOLS = new Set([
+  UI_ASK_TOOL_NAME,
+  ...UI_ASK_TOOL_NAME_ALIASES,
+  'game_open_panel',
+  'ui_click',
+]);
+
 export class Session {
   readonly sessionId: string;
   private readonly socket: SocketLike;
@@ -373,8 +393,12 @@ export class Session {
   private helloRejected = false;
   private helloTimer: NodeJS.Timeout | null = null;
 
-  /** prompt 串行队列：保证同一连接上不会出现交错的流式输出。 */
+  /** 调试直调的串行队列；正常 prompt 由 agent 按会话排队。 */
   private promptChain: Promise<void> = Promise.resolve();
+  /** 当前焦点会话；只影响 UI 帧、确认/提问和按钮，不影响后台运行。 */
+  private focusedConversationId: string | null = null;
+  /** 跨会话共享的写锁。 */
+  private readonly locks: GameLockManager;
 
   /**
    * 存档切换/历史删除的串行队列。
@@ -400,6 +424,7 @@ export class Session {
     this.socket = socket;
     this.options = options;
     this.onClosed = onClosed;
+    this.locks = options.locks ?? new GameLockManager();
     this.sessionId = (options.createSessionId ?? defaultSessionId)();
     this.logger = (options.logger ?? rootLog).child({
       sessionId: this.sessionId,
@@ -416,6 +441,35 @@ export class Session {
     this.helloTimer.unref?.();
 
     this.logger.debug('会话已建立');
+  }
+
+  /** 设置焦点会话；切到后台会话时只影响显示，不打断它。 */
+  setFocusedConversation(conversationId: string | null): void {
+    this.focusedConversationId = conversationId;
+  }
+
+  get focusedConversation(): string | null {
+    return this.focusedConversationId;
+  }
+
+  private isFocused(conversationId?: string | null): boolean {
+    return !conversationId || this.focusedConversationId === conversationId;
+  }
+
+  private async waitForFocus(
+    conversationId: string,
+    signal?: AbortSignal,
+    timeoutMs = 10 * 60 * 1000,
+  ): Promise<boolean> {
+    if (this.isFocused(conversationId)) return true;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (this._state !== 'ready') return false;
+      if (signal?.aborted) return false;
+      if (this.focusedConversationId === conversationId) return true;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return false;
   }
 
   get state(): SessionState {
@@ -1167,6 +1221,7 @@ export class Session {
       this.options.agent.getActiveConversationId?.() ??
       conversations[0]?.id ??
       null;
+    this.setFocusedConversation(activeConversationId);
 
     let history: Awaited<ReturnType<NonNullable<AgentRunner['getHistory']>>> = [];
     if (bind.saveKey && this.options.agent.getHistory) {
@@ -1225,6 +1280,7 @@ export class Session {
       );
       return;
     }
+    this.setFocusedConversation(result.conversation.id);
     this.sendEnvelope(
       buildEnvelope({
         type: MessageType.ConversationCreated,
@@ -1233,6 +1289,8 @@ export class Session {
           saveKey: this.boundSaveKey,
           conversation: result.conversation,
           history: result.history ?? [],
+          running: false,
+          state: 'idle',
         }),
       }),
     );
@@ -1266,6 +1324,10 @@ export class Session {
       return;
     }
     const history = result.history ?? [];
+    const running = this.options.agent.isRunning?.(target.conversationId) === true;
+    // 先读进度再切焦点：切焦点后新增量会立刻开始发送，若快照晚读会重复一段正文。
+    const progress = this.options.agent.getProgress?.(target.conversationId);
+    this.setFocusedConversation(target.conversationId);
     this.sendEnvelope(
       buildEnvelope({
         type: MessageType.ConversationSwitched,
@@ -1275,6 +1337,8 @@ export class Session {
           conversation: result.conversation,
           existed: history.length > 0,
           messageCount: history.length,
+          running,
+          state: running ? 'thinking' : 'idle',
           history,
           ...(result.discardedConversationId
             ? { discardedConversationId: result.discardedConversationId }
@@ -1282,6 +1346,21 @@ export class Session {
         }),
       }),
     );
+
+    // 切回一个仍在回答的会话：把切走期间已经生成的正文补成一条 stream，
+    // 之后的新增量继续按正常流式发送。工具/思考块不重放，最终正文以 message 为准。
+    if (progress?.running && progress.text.length > 0) {
+      this.sendEnvelope(
+        buildEnvelope({
+          type: MessageType.Stream,
+          replyTo: env.id ?? null,
+          payload: {
+            ...buildStreamPayload('text', progress.text),
+            conversationId: target.conversationId,
+          },
+        }),
+      );
+    }
   }
 
   private async handleConversationRename(env: import('./protocol.js').ParsedEnvelope): Promise<void> {
@@ -1370,6 +1449,7 @@ export class Session {
     const activeConversationId = isCurrentSave
       ? this.options.agent.getActiveConversationId?.() ?? result.activeConversationId ?? null
       : result.activeConversationId ?? null;
+    if (isCurrentSave && activeConversationId) this.setFocusedConversation(activeConversationId);
     const conversation = conversations.find((item) => item.id === activeConversationId) ?? null;
     const history = isCurrentSave && this.options.agent.getHistory
       ? await this.options.agent.getHistory(saveKey)
@@ -1390,6 +1470,23 @@ export class Session {
         }),
       }),
     );
+
+    // 删掉焦点会话后，新焦点可能是一个仍在后台回答的会话；补一条状态把按钮置回中断。
+    if (
+      isCurrentSave &&
+      activeConversationId &&
+      this.options.agent.isRunning?.(activeConversationId)
+    ) {
+      this.sendEnvelope(
+        buildEnvelope({
+          type: MessageType.Status,
+          payload: {
+            ...buildStatusPayload('thinking'),
+            conversationId: activeConversationId,
+          },
+        }),
+      );
+    }
   }
 
   /**
@@ -1426,7 +1523,17 @@ export class Session {
 
     if (this.options.agent.deleteHistory) {
       try {
-        result = await this.options.agent.deleteHistory(saveKey, payload.text, payload.timestamp);
+        const conversationId =
+          payload.conversationId ??
+          this.focusedConversationId ??
+          this.options.agent.getActiveConversationId?.() ??
+          null;
+        result = await this.options.agent.deleteHistory(
+          saveKey,
+          payload.text,
+          payload.timestamp,
+          conversationId,
+        );
       } catch (err) {
         this.logger.warn('删除对话回合失败', errorFields(err));
         result = { ok: false, removed: 0, error: 'io_error' };
@@ -1491,7 +1598,16 @@ export class Session {
 
     if (this.options.agent.undoCompaction) {
       try {
-        result = await this.options.agent.undoCompaction(saveKey, payload.compactionId);
+        const conversationId =
+          payload.conversationId ??
+          this.focusedConversationId ??
+          this.options.agent.getActiveConversationId?.() ??
+          null;
+        result = await this.options.agent.undoCompaction(
+          saveKey,
+          payload.compactionId,
+          conversationId,
+        );
       } catch (err) {
         this.logger.warn('撤销上下文压缩失败', errorFields(err));
         result = { ok: false, removed: 0, error: 'io_error' };
@@ -1536,46 +1652,42 @@ export class Session {
       return;
     }
 
-    // A.13：prompt 带的会话必须就是当前活动会话，避免把消息写进别的会话。
-    const activeConversationId = this.options.agent.getActiveConversationId?.();
-    if (
-      prompt.conversationId &&
-      activeConversationId &&
-      prompt.conversationId !== activeConversationId
-    ) {
-      this.sendError(
-        'conversation_mismatch',
-        'conversation.switch is required before prompting another conversation',
-        env.id || null,
-      );
-      return;
-    }
+    // A.13：显式 conversationId 决定本轮路由；缺省用焦点会话，再缺省用 agent 的活动会话。
+    const conversationId =
+      prompt.conversationId ??
+      this.focusedConversationId ??
+      this.options.agent.getActiveConversationId?.() ??
+      null;
+    // 不因为收到 prompt 就抢焦点：焦点由 conversation.switch / create 决定。
+    // 只有连接还没有焦点（老 mod）时才用本轮会话兜底。
+    if (conversationId && !this.focusedConversationId) this.setFocusedConversation(conversationId);
 
     const promptId = env.id || null;
     this.promptCount += 1;
     this.logger.info('收到 prompt', {
       promptId,
       chars: prompt.text.length,
-      conversationId: prompt.conversationId,
+      conversationId,
       requiredTool: prompt.requiredTool,
       mode: prompt.mode,
     });
 
     // A.15：插话必须立刻投递到运行中的回合，不能进串行链（那会等当前回合结束）。
     if (prompt.mode === 'steer' && this.options.agent.steer) {
-      void this.steerOrPrompt(prompt, promptId);
+      void this.steerOrPrompt(prompt, promptId, conversationId);
       return;
     }
-    this.startPromptRun(prompt, promptId);
+    this.startPromptRun(prompt, promptId, conversationId);
   }
 
   /** A.15：先尝试插话；没有运行中的回合就退回普通提问，不能把玩家的话丢掉。 */
   private async steerOrPrompt(
     prompt: import('./protocol.js').PromptPayload,
     promptId: string | null,
+    conversationId: string | null,
   ): Promise<void> {
     try {
-      const steered = await this.options.agent.steer!(prompt.text);
+      const steered = await this.options.agent.steer!(prompt.text, conversationId);
       if (steered) {
         this.logger.info('插话已投递给运行中的回合', { promptId, chars: prompt.text.length });
         return;
@@ -1584,29 +1696,36 @@ export class Session {
       this.logger.warn('插话失败，按普通提问处理', { promptId, ...errorFields(err) });
     }
     this.logger.info('插话时没有运行中的回合，按普通提问处理', { promptId });
-    this.startPromptRun(prompt, promptId);
+    this.startPromptRun(prompt, promptId, conversationId);
   }
 
-  /** 串联一轮 prompt：知识库就绪 → agent.run。 */
+  /** 启动一轮 prompt：知识库就绪 → agent.run；不同会话由 agent 并行调度。 */
   private startPromptRun(
     prompt: import('./protocol.js').PromptPayload,
     promptId: string | null,
+    conversationId: string | null,
   ): void {
-    // 串行化：保证同一 prompt 的 status/stream/message 不被交错的下一轮切开。
-    const emit = this.createEmitter();
-    const run = this.promptChain.then(async () => {
-      const knowledge = this.options.knowledge;
-      if (knowledge) {
-        // 知识库导出通常 <1s；首问等一小会儿，避免模型在旧版本/ kb_unavailable 下回答。
-        // 无导出在途时立即返回，不额外发 status 帧（echo/无知识库路径的帧序必须保持 M0 契约）。
-        await knowledge.whenReady(2500);
+    const emit = this.createEmitter(conversationId);
+    void (async () => {
+      try {
+        const knowledge = this.options.knowledge;
+        if (knowledge) {
+          // 知识库导出通常 <1s；首问等一小会儿，避免模型在旧版本/ kb_unavailable 下回答。
+          // 无导出在途时立即返回，不额外发 status 帧（echo/无知识库路径的帧序必须保持 M0 契约）。
+          await knowledge.whenReady(2500);
+        }
+        await this.options.agent.run(
+          prompt.text,
+          promptId,
+          emit,
+          prompt.requiredTool,
+          conversationId,
+        );
+      } catch (err) {
+        this.logger.error('agent 执行失败', errorFields(err));
+        emit.error('internal', 'agent failed', promptId);
       }
-      await this.options.agent.run(prompt.text, promptId, emit, prompt.requiredTool);
-    });
-    this.promptChain = run.catch((err: unknown) => {
-      this.logger.error('agent 执行失败', errorFields(err));
-      this.sendError('internal', 'agent failed', promptId);
-    });
+    })();
   }
 
   /** A.15：玩家中断当前回合。没有回合在跑时静默忽略。 */
@@ -1621,21 +1740,31 @@ export class Session {
       this.sendError('internal', '当前 agent 不支持中断', env.id || null);
       return;
     }
-    if (agent.isRunning && !agent.isRunning()) {
-      this.logger.info('收到 abort，但没有运行中的回合，忽略');
+    const rawTarget = env.payload?.['conversationId'];
+    const conversationId =
+      typeof rawTarget === 'string' && rawTarget.trim()
+        ? rawTarget.trim()
+        : this.focusedConversationId ??
+          this.options.agent.getActiveConversationId?.() ??
+          null;
+    if (agent.isRunning && !agent.isRunning(conversationId)) {
+      this.logger.info('收到 abort，但目标会话没有运行中的回合，忽略', { conversationId });
       return;
     }
-    this.logger.info('收到 abort');
+    this.logger.info('收到 abort', { conversationId });
     // abort() 要等 agent 空闲才返回，那时 interrupted 终稿和 idle 已经发出去了；
     // aborting 必须在中断动作之前发，否则会排在 idle 后面，把界面重新置成「回答中」。
     this.sendEnvelope(
       buildEnvelope({
         type: MessageType.Status,
-        payload: buildStatusPayload('aborting'),
+        payload: {
+          ...buildStatusPayload('aborting'),
+          ...(conversationId ? { conversationId } : {}),
+        },
       }),
     );
     // 不排队：中断必须立刻作用在当前回合上（排队会等回合结束，等于没断）。
-    void abort.call(agent).catch((err: unknown) => {
+    void abort.call(agent, conversationId).catch((err: unknown) => {
       this.logger.warn('中断失败', errorFields(err));
     });
   }
@@ -1712,6 +1841,10 @@ export class Session {
       parsed.prompt,
       parsed.reply ?? '',
       parsed.gameTime,
+      parsed.conversationId ??
+        this.focusedConversationId ??
+        this.options.agent.getActiveConversationId?.() ??
+        null,
     );
   }
 
@@ -1731,6 +1864,7 @@ export class Session {
       risk?: number;
       confirmToken?: string;
       confirmArgsHash?: string;
+      conversationId?: string;
     },
   ): Promise<ToolResultPayload> {
     if (this._state !== 'ready' || !this.socket.isOpen) {
@@ -1742,16 +1876,66 @@ export class Session {
     const timeoutMs = Math.min(maxTimeoutMs, Math.max(500, options.timeoutMs || 8000));
     const callId = `call_${(this.toolSeq += 1)}`;
     const risk = options.risk ?? 0;
+    const conversationId = options.conversationId ?? this.focusedConversationId ?? null;
+    const permission = this.options.config.view().permissionLevel;
+
+    // 后台会话不抢玩家的确认页/提问面板/界面；等玩家切到该会话再发。
+    // limited 下 risk 1 会被 mod 自动放行，不需要 focus；risk 2 仍要等。
+    const needsFocus =
+      isAsk ||
+      FOREGROUND_ONLY_TOOLS.has(name) ||
+      (risk > 0 && !autoApprovesWrite(permission, risk));
+    if (conversationId && needsFocus && !this.isFocused(conversationId)) {
+      const focused = await this.waitForFocus(conversationId, options.signal);
+      if (!focused) {
+        return toolFailure(
+          options.signal?.aborted ? 'cancelled' : 'not_focused',
+          options.signal?.aborted
+            ? `工具 ${name} 已取消`
+            : `会话 ${conversationId} 不在前台，玩家切换后再重试`,
+        );
+      }
+    }
 
     let token: string | undefined = options.confirmToken;
     let argsHash: string | undefined = options.confirmArgsHash;
     if (!token && risk > 0) {
-      const approved = await this.requestConfirmation(callId, name, args, risk, options.signal);
+      const approved = await this.requestConfirmation(
+        callId,
+        name,
+        args,
+        risk,
+        options.signal,
+        undefined,
+        conversationId,
+      );
       if (!approved) {
         return toolFailure('confirmation_denied', '玩家拒绝了这次写操作，未执行');
       }
       token = approved.token;
       argsHash = approved.argsHash;
+    }
+
+    const lockKeys = lockKeysForTool(name, args, risk);
+    if (lockKeys.length > 0) {
+      const locked = await this.locks.acquire(
+        conversationId ?? 'legacy',
+        callId,
+        lockKeys,
+        { signal: options.signal, waitMs: 3000 },
+      );
+      if (!locked.ok) {
+        const owner = locked.conflicts?.[0]?.conversationId ?? '另一个会话';
+        const path = locked.conflicts?.[0]?.heldPath ?? '资源';
+        return toolFailure(
+          'resource_locked',
+          `${path} 正被 ${owner} 使用；等它释放或换一个建筑/工厂再试`,
+        );
+      }
+      if (options.signal?.aborted) {
+        this.locks.release(callId);
+        return toolFailure('cancelled', `工具 ${name} 已取消`);
+      }
     }
 
     return new Promise<ToolResultPayload>((resolve) => {
@@ -1769,6 +1953,7 @@ export class Session {
         };
         if (signal.aborted) {
           clearTimeout(timer);
+          this.locks.release(callId);
           resolve(toolFailure('cancelled', `工具 ${name} 已被取消`));
           return;
         }
@@ -1791,6 +1976,7 @@ export class Session {
             internal: options.internal === true,
             confirmToken: token,
             confirmArgsHash: argsHash,
+            ...(conversationId ? { conversationId } : {}),
           }),
         }),
         (err) => {
@@ -1807,6 +1993,11 @@ export class Session {
    * token 绑定脚本哈希；mod 只接受该 token + 同一哈希的写 tool_call。
    */
   private async confirmScript(request: ScriptConfirmRequest): Promise<ScriptConfirmResult | null> {
+    const conversationId = request.conversationId ?? null;
+    if (conversationId && !this.isFocused(conversationId)) {
+      const focused = await this.waitForFocus(conversationId);
+      if (!focused) return null;
+    }
     const writeNames = request.writeNames.slice(0, 12);
     const more = request.writeNames.length > writeNames.length ? '…' : '';
     const approved = await this.requestConfirmation(
@@ -1824,6 +2015,7 @@ export class Session {
         maxWrites: request.maxWrites,
         writeNames: request.writeNames,
       },
+      conversationId,
     );
     if (!approved) return null;
     return { token: approved.token, scriptHash: request.scriptHash };
@@ -1834,6 +2026,11 @@ export class Session {
    * 60 秒后自动过期；这里只关心玩家是否同意。
    */
   private async confirmLocalWrite(request: LocalWriteConfirmRequest): Promise<boolean> {
+    const conversationId = request.conversationId ?? null;
+    if (conversationId && !this.isFocused(conversationId)) {
+      const focused = await this.waitForFocus(conversationId);
+      if (!focused) return false;
+    }
     const approved = await this.requestConfirmation(
       `local_${request.tool}`,
       request.tool,
@@ -1841,6 +2038,7 @@ export class Session {
       request.risk,
       undefined,
       { title: request.title, body: request.body },
+      conversationId,
     );
     return approved != null;
   }
@@ -1869,6 +2067,7 @@ export class Session {
       maxWrites?: number;
       writeNames?: string[];
     },
+    conversationId?: string | null,
   ): Promise<{ token: string; argsHash: string } | null> {
     const requestId = `confirm_${(this.confirmSeq += 1)}`;
     const token = randomBytes(32).toString('hex');
@@ -1933,6 +2132,7 @@ export class Session {
               : {}),
             ...(override?.maxWrites ? { maxWrites: override.maxWrites } : {}),
             ...(override?.writeNames ? { writeNames: override.writeNames } : {}),
+            ...(conversationId ? { conversationId } : {}),
           } satisfies ConfirmRequestPayload),
         }),
         (err) => {
@@ -2020,6 +2220,7 @@ export class Session {
   }
 
   private settleTool(callId: string, result: ToolResultPayload): void {
+    this.locks.release(callId);
     const pending = this.pendingTools.get(callId);
     if (!pending) return;
     this.pendingTools.delete(callId);
@@ -2033,6 +2234,7 @@ export class Session {
   }
 
   private failAllTools(reason: string): void {
+    this.locks.releaseAll();
     for (const callId of [...this.pendingTools.keys()]) {
       this.settleTool(callId, toolFailure('tool_unavailable', reason));
     }
@@ -2045,46 +2247,54 @@ export class Session {
   // ---------------------------------------------------------------- agent 写帧出口
 
   /** agent 唯一的写帧出口；所有 replyTo 由 agent 给出。 */
-  private createEmitter(): AgentEmitter {
+  private createEmitter(conversationId: string | null = null): AgentEmitter {
     const session = this;
+    const focused = (): boolean => session.isFocused(conversationId);
+    const withId = (payload: JsonObject): JsonObject =>
+      conversationId ? { ...payload, conversationId } : payload;
     return {
       isActive: () => session._state === 'ready' && session.socket.isOpen,
 
       status(state, detail) {
+        if (!focused()) return;
         session.sendEnvelope(
           buildEnvelope({
             type: MessageType.Status,
-            payload: buildStatusPayload(state, detail),
+            payload: withId(buildStatusPayload(state, detail)),
           }),
         );
       },
 
       stream(channel, delta, replyTo) {
-        if (delta.length === 0) return;
+        if (!focused() || delta.length === 0) return;
         session.sendEnvelope(
           buildEnvelope({
             type: MessageType.Stream,
             replyTo,
-            payload: buildStreamPayload(channel, delta),
+            payload: withId(buildStreamPayload(channel, delta)),
           }),
         );
       },
 
       message(text, replyTo, final = true, options = {}) {
+        if (!focused()) return;
         session.sendEnvelope(
           buildEnvelope({
             type: MessageType.Message,
             replyTo,
-            payload: buildMessagePayload([{ type: 'text', text }], {
-              role: 'assistant',
-              final,
-              ...(options.interrupted ? { interrupted: true } : {}),
-            }),
+            payload: withId(
+              buildMessagePayload([{ type: 'text', text }], {
+                role: 'assistant',
+                final,
+                ...(options.interrupted ? { interrupted: true } : {}),
+              }),
+            ),
           }),
         );
       },
 
       error(code, message, replyTo) {
+        if (!focused()) return;
         session.sendError(code, message, replyTo);
       },
 
@@ -2098,15 +2308,24 @@ export class Session {
       },
 
       callTool(name, args, options) {
-        return session.callTool(name, args, options);
+        return session.callTool(name, args, {
+          ...options,
+          ...(conversationId ? { conversationId } : {}),
+        });
       },
 
       confirmScript(request) {
-        return session.confirmScript(request);
+        return session.confirmScript({
+          ...request,
+          ...(conversationId ? { conversationId } : {}),
+        });
       },
 
       confirmLocalWrite(request) {
-        return session.confirmLocalWrite(request);
+        return session.confirmLocalWrite({
+          ...request,
+          ...(conversationId ? { conversationId } : {}),
+        });
       },
 
       releaseScript(token) {
@@ -2114,37 +2333,41 @@ export class Session {
       },
 
       toolActivity(payload) {
+        if (!focused()) return;
         session.sendEnvelope(
           buildEnvelope({
             type: MessageType.ToolActivity,
-            payload: buildToolActivityPayload(payload),
+            payload: withId(buildToolActivityPayload(payload)),
           }),
         );
       },
 
       blueprintCard(payload: BlueprintCardPayload) {
+        if (!focused()) return;
         session.sendEnvelope(
           buildEnvelope({
             type: MessageType.BlueprintCard,
-            payload: buildBlueprintCardPayload(payload),
+            payload: withId(buildBlueprintCardPayload(payload)),
           }),
         );
       },
 
       linkCard(payload: LinkCardPayload) {
+        if (!focused()) return;
         session.sendEnvelope(
           buildEnvelope({
             type: MessageType.LinkCard,
-            payload: buildLinkCardPayload(payload),
+            payload: withId(buildLinkCardPayload(payload)),
           }),
         );
       },
 
       compacted(payload: ContextCompactedPayload) {
+        if (!focused()) return;
         session.sendEnvelope(
           buildEnvelope({
             type: MessageType.ContextCompacted,
-            payload: buildContextCompactedPayload(payload),
+            payload: withId(buildContextCompactedPayload(payload)),
           }),
         );
       },
@@ -2229,6 +2452,7 @@ export class Session {
     if (this._state === 'closed') return;
     this._state = 'closed';
     this.clearHelloTimer();
+    this.options.agent.abortAll?.();
     this.failAllTools(`连接关闭：${reason}`);
     try {
       this.socket.close(code, reason);
@@ -2244,6 +2468,7 @@ export class Session {
     if (this._state === 'closed') return;
     this._state = 'closed';
     this.clearHelloTimer();
+    this.options.agent.abortAll?.();
     this.failAllTools(`连接断开：${reason}`);
     this.logger.info('会话已断开', { reason, ...this.stats });
     this.onClosed();

@@ -95,5 +95,21 @@ const dupAttached = attachLinkCards(dupMessages, [
 check('重复提问按回答消歧 A', dupAttached[1].linkCards?.[0]?.kind === 'planet');
 check('重复提问按回答消歧 B', dupAttached[3].linkCards?.[0]?.kind === 'building');
 
+{
+  const makeScopedMessages = () => [
+    { role: 'user', text: '同一句提问' },
+    { role: 'assistant', text: '回答' },
+  ];
+  const scoped = attachLinkCards(makeScopedMessages(), [
+    { conversationId: 'conv-a', prompt: '同一句提问', card: p },
+    { conversationId: 'conv-b', prompt: '同一句提问', card: b },
+  ], 'conv-a');
+  check('链接卡按会话只挂 A', scoped[1].linkCards?.length === 1 && scoped[1].linkCards[0].kind === 'planet');
+  const legacyScoped = attachLinkCards(makeScopedMessages(), [
+    { prompt: '同一句提问', card: b },
+  ], 'conv-a');
+  check('老链接卡无会话归属时仍可回放', legacyScoped[1].linkCards?.[0]?.kind === 'building');
+}
+
 console.log(failed === 0 ? `\n✅ link-card 测试全部通过（${passed} 项）` : `\n❌ ${failed}/${passed + failed} 项失败`);
 process.exit(failed === 0 ? 0 : 1);

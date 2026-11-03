@@ -182,6 +182,8 @@ export function blueprintCardFileExists(card: BlueprintCardPayload): boolean {
 
 /** 侧车持久化的一条卡片记录：用它把卡片重新挂回对应回合。 */
 export interface BlueprintCardRecord {
+  /** 卡片所属会话；老记录没有该字段，回放时退回按提问原文匹配。 */
+  conversationId?: string;
   /** 本轮用户提问原文（与 session 历史里的 user 消息对应）。 */
   prompt: string;
   /** 发出卡片的时间（毫秒），仅用于排障。 */
@@ -197,12 +199,19 @@ export interface BlueprintCardRecord {
 export function attachBlueprintCards(
   messages: HistoryMessage[],
   records: readonly BlueprintCardRecord[],
+  conversationId?: string | null,
 ): HistoryMessage[] {
   if (messages.length === 0 || records.length === 0) return messages;
 
+  // 新记录按会话归属过滤；老记录没有 conversationId，仍退回原文匹配。
+  const scoped = conversationId
+    ? records.filter((record) => !record.conversationId || record.conversationId === conversationId)
+    : records;
+  if (scoped.length === 0) return messages;
+
   // 按 prompt 分组：同一轮可能生成多张蓝图。
   const groups = new Map<string, BlueprintCardPayload[]>();
-  for (const record of records) {
+  for (const record of scoped) {
     const prompt = record.prompt.trim();
     if (!prompt || !record.card || typeof record.card.fileName !== 'string') continue;
     const list = groups.get(prompt) ?? [];

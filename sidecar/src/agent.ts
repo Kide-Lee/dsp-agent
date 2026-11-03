@@ -200,20 +200,27 @@ export interface AgentRunner {
     promptId: string | null,
     emit: AgentEmitter,
     requiredTool?: string | null,
+    conversationId?: string | null,
   ): Promise<void>;
-  /** A.15：中断当前正在生成的回合；返回是否真的中断了一个回合。 */
-  abort?(): Promise<boolean>;
+  /** A.15：中断指定会话（缺省为焦点会话）；返回是否真的中断了一个回合。 */
+  abort?(conversationId?: string | null): Promise<boolean>;
+  /** 连接关闭/换档：中断所有会话的当前回合。 */
+  abortAll?(): void;
   /**
    * A.15：是否有回合正在跑。
    * `abort()` 要等 agent 空闲才返回，那时收尾帧已经发出去了，
    * 所以 `status{aborting}` 必须靠这个同步判断先发，不能等 abort 的返回值。
    */
-  isRunning?(): boolean;
+  isRunning?(conversationId?: string | null): boolean;
   /**
    * A.15：插话。当前回合在跑时把这句话投递进该回合并返回 true；
    * 没有回合在跑（或实现不支持）时返回 false，由调用方退回普通提问。
    */
-  steer?(text: string): Promise<boolean>;
+  steer?(text: string, conversationId?: string | null): Promise<boolean>;
+  /**
+   * 并行会话：切回一个正在跑的会话时，取已生成的正文，补上切走期间丢失的显示。
+   */
+  getProgress?(conversationId: string): { text: string; thinking: string; running: boolean };
   /**
    * 本次连接实际可用的工具目录（M4l，供 ready.payload.toolCatalog / 聊天窗工具列表）。
    * 老实现可以不提供。
@@ -296,19 +303,26 @@ export interface AgentRunner {
   /**
    * 删除某个存档里的一个问答回合（M4e）。成功表示会话文件已被改写、
    * 内存会话已丢弃；失败用 `error` 说明原因（busy / turn_not_found / ...）。
+   *
+   * `conversationId` 可选：指定要改写的会话；缺省时按旧版“最新 session 文件”定位，
+   * 保证老 mod 不传该字段时行为不变。
    */
   deleteHistory?(
     saveKey: string | null,
     text: string,
     timestamp?: number,
+    conversationId?: string | null,
   ): Promise<{ ok: boolean; removed: number; error?: string }>;
   /**
    * 撤销最近一次上下文压缩（附录 A.11）：删掉 compaction entry，旧消息重新进入
    * 模型上下文；下一次提问如果仍超预算，可能立刻再次压缩。
+   *
+   * `conversationId` 可选，语义同 `deleteHistory`。
    */
   undoCompaction?(
     saveKey: string | null,
     compactionId?: string,
+    conversationId?: string | null,
   ): Promise<{
     ok: boolean;
     removed: number;
@@ -317,7 +331,13 @@ export interface AgentRunner {
     mayRecompact?: boolean;
   }>;
   /** 回存一轮回答完成时的游戏时间（附录 A.10）；写盘失败不影响回答。 */
-  recordReplyTime?(saveKey: string | null, prompt: string, reply: string, gameTime: string): void;
+  recordReplyTime?(
+    saveKey: string | null,
+    prompt: string,
+    reply: string,
+    gameTime: string,
+    conversationId?: string | null,
+  ): void;
   /**
    * 拉取某个供应商的可用模型列表（M3）。
    * 已知供应商走 pi 目录；显式给了 baseUrl 的走 OpenAI 兼容 `/models`。
@@ -826,6 +846,17 @@ export class EchoAgent implements AgentRunner {
 
 // ---------------------------------------------------------------- pi
 
+interface ConversationSlot {
+  conversationId: string;
+  session: AgentSession;
+  runtime: ModelRuntime;
+  unsubscribe: () => void;
+  run: RunState | null;
+  abortRequested: boolean;
+  draft: boolean;
+  configKey: string;
+}
+
 export interface PiAgentOptions {
   dataDir: string;
   store: ConfigStore;
@@ -843,6 +874,14 @@ export interface PiAgentOptions {
   systemPromptFile?: string;
 }
 
+/** 记录没有会话归属（老数据）或归属相同，才允许被这次会话级删除命中。 */
+function recordTargetsConversation(
+  record: { conversationId?: string },
+  conversationId?: string | null,
+): boolean {
+  return !conversationId || !record.conversationId || record.conversationId === conversationId;
+}
+
 /** 一次 prompt 的运行状态；事件回调按此聚合。 */
 interface RunState {
   emit: AgentEmitter;
@@ -851,6 +890,8 @@ interface RunState {
   saveKey: string | null;
   /** 本轮用户提问原文；用于把卡片记录挂回历史回合。 */
   userText: string;
+  /** 本轮所属会话；用于把卡片/时间记录按会话归属，避免同文提问串会话。 */
+  conversationId: string | null;
   text: string;
   thinking: string;
   error: string | null;
@@ -1321,13 +1362,18 @@ export class PiAgent implements AgentRunner {
   /** 本次会话实际使用的人格文本（覆盖优先，否则内置常量）。 */
   private readonly systemPromptText: string;
 
-  private session: AgentSession | null = null;
-  private runtime: ModelRuntime | null = null;
-  private unsubscribe: (() => void) | null = null;
-  private active: RunState | null = null;
-  /** A.15：本轮被玩家中断过；收尾时据此发 interrupted 终稿而不是 error。 */
-  private abortRequested = false;
-  /** 回合运行中收到 config.set 时，延后到回合结束再重建会话。 */
+  /** 每个会话一个独立 pi session；同一进程内可并行跑多个。 */
+  private readonly slots = new Map<string, ConversationSlot>();
+  /** 每会话一条 prompt 队列：同一会话串行，不同会话并行。 */
+  private readonly runQueues = new Map<string, Promise<void>>();
+  /** 进程级并行上限，避免一次创建过多模型请求/工具调用。 */
+  private readonly maxParallelRuns = 3;
+  private activeRuns = 0;
+  private readonly runWaiters: Array<() => void> = [];
+  /** 正在建立 pi session、还没挂上 slot.run 的回合；用于让 abort 不落空。 */
+  private readonly startingRuns = new Set<string>();
+  private readonly pendingAborts = new Set<string>();
+  /** 回合运行中收到 config.set 时，延后到所有回合结束再重建会话。 */
   private pendingTeardown = false;
   /** 当前绑定的存档；每个存档使用独立的 session 目录。 */
   private saveKey: string | null = null;
@@ -1361,7 +1407,7 @@ export class PiAgent implements AgentRunner {
     this.host = options.host;
     // 启用/禁用扩展工具后，下一轮重建会话；回合中则延后。
     this.host.onToolsetChanged = () => {
-      if (this.active) {
+      if (this.isRunning()) {
         this.pendingTeardown = true;
         return;
       }
@@ -1411,7 +1457,7 @@ export class PiAgent implements AgentRunner {
 
     // 正在跑回合时不要拆会话：否则流式输出会被拦腰截断。
     // 记下来，等这一轮结束后再重建。
-    if (this.active) {
+    if (this.isRunning()) {
       this.pendingTeardown = true;
       this.logger.info('配置变化：当前回合结束后重建 pi 会话', {
         apiKey: this.store.maskedApiKey,
@@ -1440,7 +1486,7 @@ export class PiAgent implements AgentRunner {
       capabilities: [...capabilities],
       extensions: extensions.map((extension) => extension.id),
     });
-    if (this.active) {
+    if (this.isRunning()) {
       this.pendingTeardown = true;
       return;
     }
@@ -1453,7 +1499,7 @@ export class PiAgent implements AgentRunner {
     if (!changed) return;
 
     this.logger.info('沙盒状态变化，工具集将按新状态重建', { sandbox: enabled });
-    if (this.active) {
+    if (this.isRunning()) {
       this.pendingTeardown = true;
       return;
     }
@@ -1473,11 +1519,28 @@ export class PiAgent implements AgentRunner {
     this.conversationSaveKey = null;
     this.logger.info('存档变化，切换对话会话', { saveKey });
 
-    if (this.active) {
+    if (this.isRunning()) {
       this.pendingTeardown = true;
+      this.abortAll();
       return;
     }
     this.teardown();
+  }
+
+  /** 换档/关闭：所有会话的当前回合都结束；收尾由各自的 runOnce 负责。 */
+  abortAll(): void {
+    for (const conversationId of this.startingRuns) this.pendingAborts.add(conversationId);
+    for (const slot of this.slots.values()) {
+      if (!slot.run || slot.abortRequested) continue;
+      slot.abortRequested = true;
+      slot.run.stopReason = 'aborted';
+      void slot.session.abort().catch((err: unknown) => {
+        this.logger.debug('批量中断会话失败', {
+          conversationId: slot.conversationId,
+          ...errorFields(err),
+        });
+      });
+    }
   }
 
   getActiveConversationId(): string | null {
@@ -1680,7 +1743,7 @@ export class PiAgent implements AgentRunner {
     conversationId: string,
     title: string,
   ): Promise<boolean> {
-    const live = this.session;
+    const live = this.slots.get(conversationId)?.session ?? null;
     if (live && live.sessionId === conversationId) {
       // 生成期间玩家可能刚改过名；已有标题时绝不能用模型结果覆盖。
       if ((live.sessionName ?? '').trim().length > 0) return false;
@@ -1740,11 +1803,11 @@ export class PiAgent implements AgentRunner {
     // 这里只负责 UI 回放。
     const messages = extractHistoryMessages(manager.getBranch());
     const records = this.readBlueprintCards(saveKey);
-    const withCards = attachBlueprintCards(messages, records);
+    const withCards = attachBlueprintCards(messages, records, conversationId);
     const linkRecords = this.readLinkCards(saveKey);
-    const withLinks = attachLinkCards(withCards, linkRecords);
+    const withLinks = attachLinkCards(withCards, linkRecords, conversationId);
     const timeRecords = this.readReplyTimes(saveKey);
-    const withTimes = attachGameTimes(withLinks, timeRecords);
+    const withTimes = attachGameTimes(withLinks, timeRecords, conversationId);
     this.logger.info('读取会话历史', {
       saveKey,
       conversationId,
@@ -2080,7 +2143,6 @@ export class PiAgent implements AgentRunner {
     error?: string;
   }> {
     if (!saveKey) return { ok: false, error: 'no_save' };
-    if (this.active) return { ok: false, error: 'busy' };
     const pi = await this.loadSdk();
     const activeId = await this.ensureActiveConversation(saveKey, pi);
 
@@ -2098,7 +2160,6 @@ export class PiAgent implements AgentRunner {
     this.activeConversationDraft = true;
     this.activeConversationDraftTitle = null;
     this.writeActiveConversationId(saveKey, id);
-    this.teardown();
     return { ok: true, conversation: this.draftConversationInfo(id), history: [] };
   }
 
@@ -2111,7 +2172,6 @@ export class PiAgent implements AgentRunner {
     error?: string;
   }> {
     if (!saveKey) return { ok: false, error: 'no_save' };
-    if (this.active) return { ok: false, error: 'busy' };
     const pi = await this.loadSdk();
     const activeId = await this.ensureActiveConversation(saveKey, pi);
     if (conversationId === activeId) {
@@ -2146,7 +2206,6 @@ export class PiAgent implements AgentRunner {
     this.activeConversationDraft = false;
     this.activeConversationDraftTitle = null;
     this.writeActiveConversationId(saveKey, conversationId);
-    this.teardown();
     const { history, name } = this.readConversation(pi, saveKey, conversationId);
     const conversation = this.conversationInfoFrom(pi, saveKey, {
       id: conversationId,
@@ -2192,7 +2251,7 @@ export class PiAgent implements AgentRunner {
     }
 
     // 活动会话还活着：直接走 session manager，保证 leaf/parent 一致。
-    const live = isCurrent ? this.session : null;
+    const live = isCurrent ? this.slots.get(conversationId)?.session ?? null : null;
     if (live && live.sessionId === conversationId) {
       try {
         live.setSessionName(title);
@@ -2226,7 +2285,9 @@ export class PiAgent implements AgentRunner {
     activeConversationId?: string | null;
   }> {
     if (!saveKey) return { ok: false, error: 'no_save' };
-    if (this.active) return { ok: false, error: 'busy' };
+    if (this.isRunning(conversationId)) {
+      return { ok: false, error: 'conversation_busy' };
+    }
     const pi = await this.loadSdk();
     const isCurrent = saveKey === this.saveKey;
     const activeId = isCurrent
@@ -2237,6 +2298,7 @@ export class PiAgent implements AgentRunner {
     const isActive = conversationId === activeId;
     if (!file && !isActive) return { ok: false, error: 'conversation_not_found' };
 
+    this.disposeSlot(conversationId);
     if (file) {
       try {
         unlinkSync(file);
@@ -2267,7 +2329,6 @@ export class PiAgent implements AgentRunner {
     this.activeConversationId = null;
     this.activeConversationDraft = false;
     this.activeConversationDraftTitle = null;
-    this.teardown();
     let list: Awaited<ReturnType<typeof pi.SessionManager.list>> = [];
     try {
       list = await pi.SessionManager.list(this.dataDir, sessionDir);
@@ -2302,6 +2363,7 @@ export class PiAgent implements AgentRunner {
     saveKey: string | null,
     prompt: string,
     cards: readonly BlueprintCardPayload[],
+    conversationId?: string | null,
   ): void {
     const path = this.blueprintCardLogPath(saveKey);
     if (!path || cards.length === 0) return;
@@ -2314,6 +2376,7 @@ export class PiAgent implements AgentRunner {
       const lines = cards
         .map((card) =>
           JSON.stringify({
+            ...(conversationId ? { conversationId } : {}),
             prompt: text,
             timestamp: now,
             card: compactBlueprintCard(card),
@@ -2347,6 +2410,9 @@ export class PiAgent implements AgentRunner {
           continue;
         }
         records.push({
+          ...(typeof parsed.conversationId === 'string' && parsed.conversationId.trim()
+            ? { conversationId: parsed.conversationId }
+            : {}),
           prompt: parsed.prompt,
           ...(typeof parsed.timestamp === 'number' ? { timestamp: parsed.timestamp } : {}),
           card: parsed.card,
@@ -2370,6 +2436,7 @@ export class PiAgent implements AgentRunner {
     prompt: string,
     reply: string,
     cards: readonly LinkCardPayload[],
+    conversationId?: string | null,
   ): void {
     const path = this.linkCardLogPath(saveKey);
     if (!path || cards.length === 0) return;
@@ -2382,6 +2449,7 @@ export class PiAgent implements AgentRunner {
       const lines = cards
         .map((card) =>
           JSON.stringify({
+            ...(conversationId ? { conversationId } : {}),
             prompt: text,
             ...(answer ? { reply: answer } : {}),
             timestamp: now,
@@ -2413,6 +2481,9 @@ export class PiAgent implements AgentRunner {
         if (typeof parsed.prompt !== 'string' || !isStoredLinkCard(parsed.card)) continue;
         const card = parsed.card;
         records.push({
+          ...(typeof parsed.conversationId === 'string' && parsed.conversationId.trim()
+            ? { conversationId: parsed.conversationId }
+            : {}),
           prompt: parsed.prompt,
           ...(typeof parsed.reply === 'string' && parsed.reply.trim()
             ? { reply: parsed.reply }
@@ -2428,12 +2499,18 @@ export class PiAgent implements AgentRunner {
   }
 
   /** 删除某个提问对应的实体链接卡片记录（回合被删时调用）。 */
-  private removeLinkCardRecords(saveKey: string, prompt: string): void {
+  private removeLinkCardRecords(
+    saveKey: string,
+    prompt: string,
+    conversationId?: string | null,
+  ): void {
     const path = this.linkCardLogPath(saveKey);
     const text = prompt.trim();
     if (!path || !text || !existsSync(path)) return;
     const records = this.readLinkCards(saveKey);
-    const kept = records.filter((record) => record.prompt.trim() !== text);
+    const kept = records.filter(
+      (record) => !(record.prompt.trim() === text && recordTargetsConversation(record, conversationId)),
+    );
     if (kept.length === records.length) return;
     const tmp = `${path}.tmp-${process.pid}`;
     try {
@@ -2454,7 +2531,13 @@ export class PiAgent implements AgentRunner {
   }
 
   /** 按提问原文回存每轮回答完成时的游戏时间，供历史脚注回放。 */
-  recordReplyTime(saveKey: string | null, prompt: string, reply: string, gameTime: string): void {
+  recordReplyTime(
+    saveKey: string | null,
+    prompt: string,
+    reply: string,
+    gameTime: string,
+    conversationId?: string | null,
+  ): void {
     const path = this.replyTimeLogPath(saveKey);
     const text = prompt.trim();
     const answer = (reply ?? '').trim();
@@ -2464,6 +2547,7 @@ export class PiAgent implements AgentRunner {
     try {
       mkdirSync(dirname(path), { recursive: true });
       const record: GameTimeRecord = {
+        ...(conversationId ? { conversationId } : {}),
         prompt: text.slice(0, 4000),
         ...(answer ? { reply: answer.slice(0, 4000) } : {}),
         gameTime: time.slice(0, 16),
@@ -2495,7 +2579,13 @@ export class PiAgent implements AgentRunner {
         if (typeof parsed.prompt !== 'string' || typeof parsed.gameTime !== 'string') continue;
         if (!parsed.prompt.trim() || !parsed.gameTime.trim()) continue;
         records.push({
+          ...(typeof parsed.conversationId === 'string' && parsed.conversationId.trim()
+            ? { conversationId: parsed.conversationId }
+            : {}),
           prompt: parsed.prompt,
+          ...(typeof parsed.reply === 'string' && parsed.reply.trim()
+            ? { reply: parsed.reply }
+            : {}),
           gameTime: parsed.gameTime,
           ...(typeof parsed.timestamp === 'number' ? { timestamp: parsed.timestamp } : {}),
         });
@@ -2506,13 +2596,19 @@ export class PiAgent implements AgentRunner {
     return records;
   }
 
-  private removeReplyTimeRecords(saveKey: string, prompt: string): void {
+  private removeReplyTimeRecords(
+    saveKey: string,
+    prompt: string,
+    conversationId?: string | null,
+  ): void {
     const path = this.replyTimeLogPath(saveKey);
     const text = prompt.trim();
     if (!path || !text || !existsSync(path)) return;
 
     const records = this.readReplyTimes(saveKey);
-    const kept = records.filter((record) => record.prompt.trim() !== text);
+    const kept = records.filter(
+      (record) => !(record.prompt.trim() === text && recordTargetsConversation(record, conversationId)),
+    );
     if (kept.length === records.length) return;
 
     const tmp = `${path}.tmp-${process.pid}`;
@@ -2531,13 +2627,19 @@ export class PiAgent implements AgentRunner {
   }
 
   /** 删除某个提问对应的卡片记录（回合被删时调用）。 */
-  private removeBlueprintCardRecords(saveKey: string, prompt: string): void {
+  private removeBlueprintCardRecords(
+    saveKey: string,
+    prompt: string,
+    conversationId?: string | null,
+  ): void {
     const path = this.blueprintCardLogPath(saveKey);
     const text = prompt.trim();
     if (!path || !text || !existsSync(path)) return;
 
     const records = this.readBlueprintCards(saveKey);
-    const kept = records.filter((record) => record.prompt.trim() !== text);
+    const kept = records.filter(
+      (record) => !(record.prompt.trim() === text && recordTargetsConversation(record, conversationId)),
+    );
     if (kept.length === records.length) return;
 
     const tmp = `${path}.tmp-${process.pid}`;
@@ -2565,32 +2667,22 @@ export class PiAgent implements AgentRunner {
     saveKey: string | null,
     text: string,
     timestamp?: number,
+    conversationId?: string | null,
   ): Promise<{ ok: boolean; removed: number; error?: string }> {
     if (!saveKey) return { ok: false, removed: 0, error: 'no_save' };
-    if (this.active) return { ok: false, removed: 0, error: 'busy' };
-
-    const dir = join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey));
-    if (!existsSync(dir)) return { ok: false, removed: 0, error: 'turn_not_found' };
-
-    const files = readdirSync(dir).filter((name) => isSessionFile(name));
-    if (files.length === 0) return { ok: false, removed: 0, error: 'turn_not_found' };
-
-    // 取最近写入的会话文件（与 continueRecent 的选择一致）。
-    let newest = files[0] as string;
-    let newestMs = -1;
-    for (const name of files) {
-      try {
-        const ms = statSync(join(dir, name)).mtimeMs;
-        if (ms > newestMs) {
-          newestMs = ms;
-          newest = name;
-        }
-      } catch {
-        // 单个文件读不到就跳过。
-      }
+    if (conversationId ? this.isRunning(conversationId) : this.isRunning()) {
+      return { ok: false, removed: 0, error: 'busy' };
     }
 
-    const file = join(dir, newest);
+    const file = await this.resolveSessionFileForWrite(saveKey, conversationId);
+    if (!file) {
+      return {
+        ok: false,
+        removed: 0,
+        error: conversationId ? 'conversation_not_found' : 'turn_not_found',
+      };
+    }
+
     let raw: string;
     try {
       raw = readFileSync(file, 'utf8');
@@ -2619,13 +2711,19 @@ export class PiAgent implements AgentRunner {
     }
 
     // 卡片/时间记录跟着回合一起删；否则重进存档时旧记录可能挂到同一句提问的新回答上。
-    this.removeBlueprintCardRecords(saveKey, text);
-    this.removeLinkCardRecords(saveKey, text);
-    this.removeReplyTimeRecords(saveKey, text);
+    this.removeBlueprintCardRecords(saveKey, text, conversationId);
+    this.removeLinkCardRecords(saveKey, text, conversationId);
+    this.removeReplyTimeRecords(saveKey, text, conversationId);
 
-    // 上下文必须重建，否则被删的回合还在内存会话里继续发给模型。
-    if (this.saveKey === saveKey) this.teardown();
-    this.logger.info('已删除对话回合', { saveKey, removed: outcome.removed, file: newest });
+    // 只丢弃被改写的会话；删别的会话不应影响当前内存上下文。
+    const targetId = conversationId ?? this.activeConversationId;
+    if (this.saveKey === saveKey && targetId) this.disposeSlot(targetId);
+    this.logger.info('已删除对话回合', {
+      saveKey,
+      conversationId: conversationId ?? null,
+      removed: outcome.removed,
+      file,
+    });
     return outcome;
   }
 
@@ -2639,6 +2737,7 @@ export class PiAgent implements AgentRunner {
   async undoCompaction(
     saveKey: string | null,
     compactionId?: string,
+    conversationId?: string | null,
   ): Promise<{
     ok: boolean;
     removed: number;
@@ -2647,29 +2746,19 @@ export class PiAgent implements AgentRunner {
     mayRecompact?: boolean;
   }> {
     if (!saveKey) return { ok: false, removed: 0, error: 'no_save' };
-    if (this.active) return { ok: false, removed: 0, error: 'busy' };
-
-    const dir = join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey));
-    if (!existsSync(dir)) return { ok: false, removed: 0, error: 'not_found' };
-
-    const files = readdirSync(dir).filter((name) => isSessionFile(name));
-    if (files.length === 0) return { ok: false, removed: 0, error: 'not_found' };
-
-    let newest = files[0] as string;
-    let newestMs = -1;
-    for (const name of files) {
-      try {
-        const ms = statSync(join(dir, name)).mtimeMs;
-        if (ms > newestMs) {
-          newestMs = ms;
-          newest = name;
-        }
-      } catch {
-        // 单个文件读不到就跳过。
-      }
+    if (conversationId ? this.isRunning(conversationId) : this.isRunning()) {
+      return { ok: false, removed: 0, error: 'busy' };
     }
 
-    const file = join(dir, newest);
+    const file = await this.resolveSessionFileForWrite(saveKey, conversationId);
+    if (!file) {
+      return {
+        ok: false,
+        removed: 0,
+        error: conversationId ? 'conversation_not_found' : 'not_found',
+      };
+    }
+
     let raw: string;
     try {
       raw = readFileSync(file, 'utf8');
@@ -2697,13 +2786,53 @@ export class PiAgent implements AgentRunner {
       return { ok: false, removed: 0, error: 'io_error' };
     }
 
-    if (this.saveKey === saveKey) this.teardown();
+    const targetId = conversationId ?? this.activeConversationId;
+    if (this.saveKey === saveKey && targetId) this.disposeSlot(targetId);
     this.logger.info('已撤销上下文压缩', {
       saveKey,
+      conversationId: conversationId ?? null,
       compactionId: outcome.compactionId ?? null,
-      file: newest,
+      file,
     });
     return { ...outcome, mayRecompact: true };
+  }
+
+  /**
+   * 解析要改写的 session 文件。
+   *
+   * 指定 conversationId 时只认该会话；找不到返回 null，调用方回
+   * `conversation_not_found`。不指定时保持旧行为：取目录里最新修改的 session 文件，
+   * 让没有 conversationId 的老 mod 继续工作。
+   */
+  private async resolveSessionFileForWrite(
+    saveKey: string,
+    conversationId?: string | null,
+  ): Promise<string | null> {
+    const dir = join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey));
+    if (!existsSync(dir)) return null;
+
+    if (conversationId) {
+      const pi = await this.loadSdk();
+      return pi.SessionManager.findById(this.dataDir, conversationId, dir) ?? null;
+    }
+
+    const files = readdirSync(dir).filter((name) => isSessionFile(name));
+    if (files.length === 0) return null;
+
+    let newest = files[0] as string;
+    let newestMs = -1;
+    for (const name of files) {
+      try {
+        const ms = statSync(join(dir, name)).mtimeMs;
+        if (ms > newestMs) {
+          newestMs = ms;
+          newest = name;
+        }
+      } catch {
+        // 单个文件读不到就跳过。
+      }
+    }
+    return join(dir, newest);
   }
 
   dispose(): void {
@@ -2711,26 +2840,51 @@ export class PiAgent implements AgentRunner {
   }
 
   private applyPendingTeardown(): void {
-    if (!this.pendingTeardown) return;
+    if (!this.pendingTeardown || this.isRunning()) return;
     this.pendingTeardown = false;
     this.teardown();
   }
 
-  private teardown(): void {
+  private disposeSlot(conversationId: string): void {
+    const slot = this.slots.get(conversationId);
+    if (!slot) return;
+    this.slots.delete(conversationId);
+    this.runQueues.delete(conversationId);
     try {
-      this.unsubscribe?.();
+      slot.unsubscribe();
     } catch (err) {
       this.logger.debug('取消事件订阅失败', errorFields(err));
     }
-    this.unsubscribe = null;
     try {
-      this.session?.dispose();
+      slot.session.dispose();
     } catch (err) {
       this.logger.debug('释放 pi 会话失败', errorFields(err));
     }
-    this.session = null;
-    this.runtime = null;
-    this.active = null;
+    this.logger.info('已释放会话运行态', { conversationId });
+  }
+
+  private teardown(): void {
+    for (const conversationId of [...this.slots.keys()]) this.disposeSlot(conversationId);
+    this.runQueues.clear();
+    this.startingRuns.clear();
+    this.pendingAborts.clear();
+    this.pendingTeardown = false;
+  }
+
+  /** 进程级并发闸门：最多同时跑 maxParallelRuns 个会话。 */
+  private async acquireRunSlot(): Promise<void> {
+    if (this.activeRuns < this.maxParallelRuns) {
+      this.activeRuns += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => this.runWaiters.push(resolve));
+    this.activeRuns += 1;
+  }
+
+  private releaseRunSlot(): void {
+    this.activeRuns = Math.max(0, this.activeRuns - 1);
+    const next = this.runWaiters.shift();
+    if (next) next();
   }
 
   run(
@@ -2738,59 +2892,95 @@ export class PiAgent implements AgentRunner {
     promptId: string | null,
     emit: AgentEmitter,
     requiredTool: string | null = null,
+    conversationId: string | null = null,
   ): Promise<void> {
+    let target = conversationId ?? this.activeConversationId;
+    if (!target) {
+      // 主菜单/未绑定存档也允许直接聊天：创建一个只存在于本进程/本目录的会话。
+      target = this.newConversationId();
+      this.activeConversationId = target;
+      this.activeConversationDraft = true;
+      this.activeConversationDraftTitle = null;
+    }
+
     const task = async (): Promise<void> => {
-      this.abortRequested = false;
+      this.startingRuns.add(target);
+      await this.acquireRunSlot();
       try {
-        await this.runOnce(text, promptId, emit, requiredTool);
+        await this.runOnce(target, text, promptId, emit, requiredTool);
       } finally {
-        this.active = null;
+        this.startingRuns.delete(target);
+        this.pendingAborts.delete(target);
+        this.releaseRunSlot();
         this.applyPendingTeardown();
       }
     };
-    const previous = this.chain;
+    const previous = this.runQueues.get(target) ?? Promise.resolve();
     const next = previous.then(task, task);
-    this.chain = next.catch(() => undefined);
+    this.runQueues.set(target, next.catch(() => undefined));
     return next;
   }
 
-  /** A.15：是否有回合正在跑。 */
-  isRunning(): boolean {
-    return this.active !== null;
+  /** A.15：指定会话是否有回合正在跑；不传 = 任意会话。 */
+  isRunning(conversationId?: string | null): boolean {
+    if (conversationId) {
+      return this.slots.get(conversationId)?.run != null || this.startingRuns.has(conversationId);
+    }
+    return this.startingRuns.size > 0 || [...this.slots.values()].some((slot) => slot.run);
   }
 
-  /** A.15：中断当前回合。pi 的 abort() 会等到空闲，收尾由 runOnce 负责。 */
-  async abort(): Promise<boolean> {
-    const session = this.session;
-    if (!session || !this.active) return false;
-    this.abortRequested = true;
-    this.active.stopReason = 'aborted';
+  /** 切回一个正在跑的会话时，用已生成的正文补上切走期间丢失的显示。 */
+  getProgress(conversationId: string): { text: string; thinking: string; running: boolean } {
+    const slot = this.slots.get(conversationId);
+    if (!slot?.run) return { text: '', thinking: '', running: false };
+    return {
+      text: slot.run.text,
+      thinking: slot.run.thinking,
+      running: true,
+    };
+  }
+
+  /** A.15：中断指定会话；缺省为当前焦点会话。 */
+  async abort(conversationId?: string | null): Promise<boolean> {
+    const target = conversationId ?? this.activeConversationId;
+    if (!target) return false;
+    if (this.startingRuns.has(target) && !this.slots.get(target)?.run) {
+      this.pendingAborts.add(target);
+      return true;
+    }
+    const slot = this.slots.get(target);
+    if (!slot?.run) return false;
+    slot.abortRequested = true;
+    slot.run.stopReason = 'aborted';
     try {
-      await session.abort();
+      await slot.session.abort();
       return true;
     } catch (err) {
-      this.logger.warn('中断当前回合失败', errorFields(err));
+      this.logger.warn('中断会话失败', { conversationId: target, ...errorFields(err) });
       return false;
     }
   }
 
   /**
-   * A.15：插话到当前回合。没有回合在跑时返回 false，由调用方按普通提问处理。
+   * A.15：插话到指定会话的当前回合。没有回合在跑时返回 false。
    */
-  async steer(text: string): Promise<boolean> {
-    const session = this.session;
-    if (!session || !this.active || this.abortRequested) return false;
+  async steer(text: string, conversationId?: string | null): Promise<boolean> {
+    const target = conversationId ?? this.activeConversationId;
+    if (!target) return false;
+    const slot = this.slots.get(target);
+    if (!slot?.run || slot.abortRequested) return false;
     try {
-      await session.steer(text);
-      this.logger.info('插话已投递', { chars: text.length });
+      await slot.session.steer(text);
+      this.logger.info('插话已投递', { conversationId: target, chars: text.length });
       return true;
     } catch (err) {
-      this.logger.warn('插话失败', errorFields(err));
+      this.logger.warn('插话失败', { conversationId: target, ...errorFields(err) });
       return false;
     }
   }
 
   private async runOnce(
+    conversationId: string,
     text: string,
     promptId: string | null,
     emit: AgentEmitter,
@@ -2811,6 +3001,7 @@ export class PiAgent implements AgentRunner {
       promptId,
       saveKey: this.saveKey,
       userText: text,
+      conversationId,
       text: '',
       thinking: '',
       error: null,
@@ -2823,13 +3014,12 @@ export class PiAgent implements AgentRunner {
       savedTools: null,
       todoWritten: false,
     };
-    this.active = run;
-
     emit.status('thinking', `${data.provider}/${data.model}`);
 
-    let session: AgentSession;
+    let slot: ConversationSlot;
     try {
-      session = await this.ensureSession(
+      slot = await this.ensureSession(
+        conversationId,
         data.provider,
         data.model,
         data.apiKey,
@@ -2838,19 +3028,32 @@ export class PiAgent implements AgentRunner {
         data.providers[data.provider]?.models.find((m) => m.id === data.model)?.name,
       );
     } catch (err) {
-      // 建会话失败 = LLM/模型不可用（协议 §4.8），与上游请求错误区分开。
       const safe = redactSecrets(describeError(err), [data.apiKey]);
       this.logger.error('无法建立 pi 会话', {
         promptId,
+        conversationId,
         message: safe,
         ...safeErrorFields(err, data.apiKey),
         apiKey: this.store.maskedApiKey,
       });
       if (emit.isActive()) {
-        emit.error('agent_unavailable', safe, promptId);
+        const code = safe.includes('会话不存在') ? 'conversation_not_found' : 'agent_unavailable';
+        emit.error(code, safe, promptId);
         emit.status('idle');
       }
       return;
+    }
+
+    const session = slot.session;
+    slot.run = run;
+    slot.abortRequested = false;
+    if (this.activeConversationId === conversationId) this.activeConversationDraft = false;
+    if (this.pendingAborts.delete(conversationId)) {
+      slot.abortRequested = true;
+      run.stopReason = 'aborted';
+      void session.abort().catch((err: unknown) => {
+        this.logger.debug('启动阶段的中断失败', { conversationId, ...errorFields(err) });
+      });
     }
 
     // 强制工具（M4l）：显式 requiredTool 优先；老 mod 只传 /<工具名> 时从原文兜底解析。
@@ -2864,7 +3067,7 @@ export class PiAgent implements AgentRunner {
         emit.error('tool_unavailable', message, promptId);
         emit.status('idle');
       }
-      this.active = null;
+      slot.run = null;
       return;
     }
     if (!forced) forced = extractSlashTool(text, available);
@@ -2887,15 +3090,15 @@ export class PiAgent implements AgentRunner {
       }
     }
 
-    // 工具只发往发起本轮 prompt 的连接；prompt 结束立即解绑。
-    this.host.bind(emit);
     try {
       if (!emit.isActive()) return;
       const start = session.messages.length;
       // 不解析斜杠命令/模板。
-      await session.prompt(text, { expandPromptTemplates: false });
+      await this.host.runWithContext(conversationId, emit, () =>
+        session.prompt(text, { expandPromptTemplates: false }),
+      );
       // 第一条用户消息已经落盘；之后“新会话”应该创建新的 session，而不是复用它。
-      this.activeConversationDraft = false;
+      if (this.activeConversationId === conversationId) this.activeConversationDraft = false;
 
       if (
         run.requiredTool &&
@@ -2926,9 +3129,11 @@ export class PiAgent implements AgentRunner {
         run.stopReason = null;
         emit.status('thinking', `必须调用 ${run.requiredTool}`);
         const retryStart = session.messages.length;
-        await session.prompt(
-          `请现在调用工具 ${run.requiredTool}，然后再回答。`,
-          { expandPromptTemplates: false },
+        await this.host.runWithContext(conversationId, emit, () =>
+          session.prompt(
+            `请现在调用工具 ${run.requiredTool}，然后再回答。`,
+            { expandPromptTemplates: false },
+          ),
         );
         if (
           hasToolCallSince(
@@ -2946,7 +3151,7 @@ export class PiAgent implements AgentRunner {
         run.error = `本轮要求调用工具 ${run.requiredTool}，但模型没有调用。`;
       }
     } catch (err) {
-      if (this.abortRequested) {
+      if (slot.abortRequested) {
         // 中断引起的异常不是失败：收尾走 interrupted 终稿（附录 A.15）。
         run.stopReason = 'aborted';
       } else {
@@ -2970,23 +3175,25 @@ export class PiAgent implements AgentRunner {
       // 一轮结束：本轮写过的待办从游戏目标面板撤掉，不把清单留到下一轮。
       if (run.todoWritten) {
         try {
-          await this.host.call('game_todo_write', { todos: [] }, {
-            timeoutMs: 3000,
-            risk: 0,
-            internal: true,
-          });
+          await this.host.runWithContext(conversationId, emit, () =>
+            this.host.call('game_todo_write', { todos: [] }, {
+              timeoutMs: 3000,
+              risk: 0,
+              internal: true,
+              conversationId,
+            }),
+          );
         } catch (err) {
           this.logger.debug('清空待办失败', errorFields(err));
         }
       }
-      this.host.unbind(emit);
-      this.active = null;
+      slot.run = null;
     }
 
     if (!emit.isActive()) return;
 
     // A.15：玩家中断的回合不是失败——保留已生成文本，按 interrupted 终稿收尾。
-    const interrupted = run.stopReason === 'aborted' || this.abortRequested;
+    const interrupted = run.stopReason === 'aborted' || slot.abortRequested;
     const failed = run.stopReason === 'error';
     // 强制工具没被调用是“本轮要求未被满足”，不是上游故障：不能把配置状态改成 unreachable。
     const requiredMissing =
@@ -3037,7 +3244,7 @@ export class PiAgent implements AgentRunner {
     }
     if (uniqueCards.length > 0) {
       // 先落盘再发帧：即使这一帧没送到，重进存档仍能从历史里回放。
-      this.appendBlueprintCards(run.saveKey, run.userText, uniqueCards);
+      this.appendBlueprintCards(run.saveKey, run.userText, uniqueCards, run.conversationId);
       for (const card of uniqueCards) emit.blueprintCard?.(card);
     }
 
@@ -3050,7 +3257,13 @@ export class PiAgent implements AgentRunner {
       uniqueLinks.push(card);
     }
     if (uniqueLinks.length > 0) {
-      this.appendLinkCards(run.saveKey, run.userText, run.text, uniqueLinks);
+      this.appendLinkCards(
+        run.saveKey,
+        run.userText,
+        run.text,
+        uniqueLinks,
+        run.conversationId,
+      );
       for (const card of uniqueLinks) emit.linkCard?.(card);
     }
 
@@ -3058,7 +3271,7 @@ export class PiAgent implements AgentRunner {
 
     // 标题生成放在 idle 之后异步执行：不阻塞主回答，也不改变模型上下文。
     // 只尝试新会话的前两次成功问答；已有 session_info.name 的会话不再自动覆盖。
-    const titleRuntime = this.runtime;
+    const titleRuntime = slot.runtime;
     const titleModel = session.model;
     const hadTitle = (session.sessionName ?? '').trim().length > 0;
     const userTurns = session.messages.filter((message) => message.role === 'user').length;
@@ -3416,8 +3629,8 @@ export class PiAgent implements AgentRunner {
    * 当前回合的强制工具说明；pi 在每轮 `before_agent_start` 时调用。
    * 工具一旦被调用就清空，避免后续模型轮次继续被要求“必须调用”。
    */
-  private currentForcedToolPrompt(): string | null {
-    const run = this.active;
+  private currentForcedToolPrompt(conversationId?: string | null): string | null {
+    const run = conversationId ? this.slots.get(conversationId)?.run ?? null : null;
     if (!run || !run.requiredTool || run.requiredToolSatisfied) return null;
     return forcedToolInstruction(run.requiredTool);
   }
@@ -3458,7 +3671,7 @@ export class PiAgent implements AgentRunner {
    *   工具能力/规则 → 权限档位 → 沙盒状态 → 强制工具。
    * 沙盒/权限都按当前状态实时读取，不写进人格常量，避免旧 mod 被误导。
    */
-  private currentExtraPrompt(): string | null {
+  private currentExtraPrompt(conversationId?: string | null): string | null {
     const parts: string[] = [];
     const tools = this.toolPromptSection();
     if (tools) parts.push(tools);
@@ -3490,7 +3703,7 @@ export class PiAgent implements AgentRunner {
     }
 
     // 强制工具放最后：它是本轮最强的指令，离用户消息最近效果最稳。
-    const forced = this.currentForcedToolPrompt();
+    const forced = this.currentForcedToolPrompt(conversationId);
     if (forced) parts.push(forced);
 
     return parts.length > 0 ? parts.join('\n\n') : null;
@@ -3747,14 +3960,20 @@ export class PiAgent implements AgentRunner {
   }
 
   private async ensureSession(
+    conversationId: string,
     provider: string,
     modelId: string,
     apiKey: string,
     baseUrl: string | null,
     thinkingLevel: string,
     displayName?: string,
-  ): Promise<AgentSession> {
-    if (this.session) return this.session;
+  ): Promise<ConversationSlot> {
+    const configKey = [provider, modelId, baseUrl ?? '', thinkingLevel].join('\u0000');
+    const existingSlot = this.slots.get(conversationId);
+    if (existingSlot) {
+      if (existingSlot.configKey === configKey) return existingSlot;
+      this.disposeSlot(conversationId);
+    }
 
     const pi = await this.loadSdk();
 
@@ -3778,33 +3997,35 @@ export class PiAgent implements AgentRunner {
         cwd: this.dataDir,
         agentDir: this.agentDir,
       },
-      () => this.currentExtraPrompt(),
+      () => this.currentExtraPrompt(conversationId),
       this.systemPromptText,
     );
     // pi 只有在「自己创建 loader」时才自动 reload；外部传入的 loader 必须我们自己 reload，
     // 否则 getExtensions() 还是空的（内联人格扩展就不会被注册）。
     await resourceLoader.reload();
 
-    // A.13：每个存档一个 session 目录，目录里按 conversationId 存多个 pi session。
-    // 活动会话由 active.json 决定；第一次提问时才落盘。
-    const conversationId =
-      (await this.ensureActiveConversation(this.saveKey, pi)) ?? this.newConversationId();
     const sessionDir = join(this.dataDir, 'sessions', this.sessionDirName());
     const existing = pi.SessionManager.findById(this.dataDir, conversationId, sessionDir);
     let sessionManager;
+    let draft = false;
     if (existing) {
       sessionManager = pi.SessionManager.open(existing, sessionDir, this.dataDir);
-      this.activeConversationDraft = false;
+      if (this.activeConversationId === conversationId) {
+        this.activeConversationDraft = false;
+        this.activeConversationDraftTitle = null;
+      }
     } else {
+      // 只有“当前焦点且尚未落盘的空会话”可以第一次落盘；其他会话找不到就报错。
+      if (this.activeConversationId !== conversationId || !this.activeConversationDraft) {
+        throw new Error(`会话不存在：${conversationId}`);
+      }
       const draftTitle = this.activeConversationDraftTitle;
-      sessionManager = pi.SessionManager.create(this.dataDir, sessionDir, { id: conversationId });
-      // 空 draft 的标题先挂在 active.json；第一次提问建 session 时补一条
-      // session_info。pi 在第一条 user/assistant 消息落盘时会把它一起写出。
+      sessionManager = pi.SessionManager.create(this.dataDir, sessionDir, {
+        id: conversationId,
+      });
       if (draftTitle) sessionManager.appendSessionInfo(draftTitle);
-      this.activeConversationId = conversationId;
-      this.activeConversationDraft = true;
-      this.activeConversationDraftTitle = null;
       this.writeActiveConversationId(this.saveKey, conversationId, draftTitle);
+      draft = true;
     }
 
     const options: CreateAgentSessionOptions = {
@@ -3826,9 +4047,18 @@ export class PiAgent implements AgentRunner {
     };
 
     const created = await pi.createAgentSession(options);
-    this.runtime = runtime;
-    this.session = created.session;
-    this.unsubscribe = created.session.subscribe((event) => this.handleEvent(event));
+    const slot: ConversationSlot = {
+      conversationId,
+      session: created.session,
+      runtime,
+      unsubscribe: () => {},
+      run: null,
+      abortRequested: false,
+      draft,
+      configKey,
+    };
+    slot.unsubscribe = created.session.subscribe((event) => this.handleEvent(event, slot));
+    this.slots.set(conversationId, slot);
 
     // 保险：确认 pi 真的用上了我们的人格（没生效就明确记一条 warn，别静默退化）。
     const effectivePrompt = created.session.systemPrompt ?? '';
@@ -3843,6 +4073,7 @@ export class PiAgent implements AgentRunner {
     }
 
     this.logger.info('pi 会话已建立', {
+      conversationId,
       provider,
       model: model.id,
       cwd: this.dataDir,
@@ -3861,7 +4092,7 @@ export class PiAgent implements AgentRunner {
       this.logger.warn('pi 会话回退到了其它模型', { detail: created.modelFallbackMessage });
     }
 
-    return created.session;
+    return slot;
   }
 
   // ---------------------------------------------------------------- 事件映射
@@ -3871,8 +4102,8 @@ export class PiAgent implements AgentRunner {
     return this.host.tools().some((tool) => tool.name === name);
   }
 
-  private handleEvent(event: AgentSessionEvent): void {
-    const run = this.active;
+  private handleEvent(event: AgentSessionEvent, slot: ConversationSlot): void {
+    const run = slot.run;
     if (!run) return;
 
     switch (event.type) {
@@ -3953,9 +4184,9 @@ export class PiAgent implements AgentRunner {
         // 强制工具已被调用：恢复完整工具集，并允许后续文本正常流式输出。
         if (run.requiredTool && event.toolName === run.requiredTool && !run.requiredToolSatisfied) {
           run.requiredToolSatisfied = true;
-          if (run.savedTools && this.session) {
+          if (run.savedTools) {
             try {
-              this.session.setActiveToolsByName(run.savedTools);
+              slot.session.setActiveToolsByName(run.savedTools);
             } catch (err) {
               this.logger.debug('恢复工具集失败', errorFields(err));
             }
@@ -3998,7 +4229,7 @@ export class PiAgent implements AgentRunner {
           // compaction entry 是刚追加的；取当前 branch 上最后一条，供 UI 撤销。
           let compactionId: string | undefined;
           try {
-            const branch = this.session?.sessionManager.getBranch() ?? [];
+            const branch = slot.session.sessionManager.getBranch();
             for (const entry of branch) {
               const item = entry as { type?: unknown; id?: unknown };
               if (item.type === 'compaction' && typeof item.id === 'string') compactionId = item.id;

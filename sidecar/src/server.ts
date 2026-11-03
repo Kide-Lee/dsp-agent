@@ -16,6 +16,7 @@ import type { ConfigStore } from './config.js';
 import type { KnowledgeManager } from './kb/manager.js';
 import { errorFields, log as rootLog } from './log.js';
 import { Session, type SocketLike } from './session.js';
+import { GameLockManager } from './tools/locks.js';
 
 /**
  * 传输层硬上限：给应用层 8 MiB 判定留出余量。
@@ -118,6 +119,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
 
   const sessions = new Set<Session>();
+  const gameLocks = new GameLockManager();
 
   httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     socket.on('error', (err) => {
@@ -139,6 +141,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       tools,
       debugTools: options.debugTools,
       helloTimeoutMs: options.helloTimeoutMs,
+      locks: gameLocks,
       logger: rootLog,
     }, () => {
       sessions.delete(session);

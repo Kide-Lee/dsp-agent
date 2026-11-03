@@ -345,19 +345,21 @@ console.log('── 5. reply.time ──');
 {
   const calls = [];
   const agent = makeAgent(history);
-  agent.recordReplyTime = (saveKey, prompt, reply, gameTime) => calls.push({ saveKey, prompt, reply, gameTime });
+  agent.recordReplyTime = (saveKey, prompt, reply, gameTime, conversationId) =>
+    calls.push({ saveKey, prompt, reply, gameTime, conversationId });
   const { session } = await bind(agent, 'saveA');
   session.handleFrame(Buffer.from(JSON.stringify({
     v: 1,
     id: 'm-1',
     type: 'reply.time',
-    payload: { prompt: '问题', reply: '回答', gameTime: '08:42' },
+    payload: { conversationId: 'conv-a', prompt: '问题', reply: '回答', gameTime: '08:42' },
   })), false);
   check('reply.time 调用 agent', calls.length === 1, JSON.stringify(calls));
   check('reply.time saveKey', calls[0]?.saveKey === 'saveA');
   check('reply.time prompt', calls[0]?.prompt === '问题');
   check('reply.time reply', calls[0]?.reply === '回答');
   check('reply.time gameTime', calls[0]?.gameTime === '08:42');
+  check('reply.time conversationId', calls[0]?.conversationId === 'conv-a');
 
   session.handleFrame(Buffer.from(JSON.stringify({
     v: 1,
@@ -373,8 +375,8 @@ console.log('── 6. history.undo_compaction ──');
 {
   const calls = [];
   const agent = makeAgent(history);
-  agent.undoCompaction = async (saveKey, compactionId) => {
-    calls.push({ saveKey, compactionId });
+  agent.undoCompaction = async (saveKey, compactionId, conversationId) => {
+    calls.push({ saveKey, compactionId, conversationId });
     return { ok: true, removed: 1, compactionId: compactionId ?? 'c1', mayRecompact: true };
   };
   const { socket, session } = await bind(agent, 'saveA');
@@ -382,7 +384,7 @@ console.log('── 6. history.undo_compaction ──');
     v: 1,
     id: 'm-3',
     type: 'history.undo_compaction',
-    payload: { compactionId: 'c1' },
+    payload: { conversationId: 'conv-a', compactionId: 'c1' },
   })), false);
   for (let i = 0; i < 100 && !socket.frames.some((f) => f.type === 'history.compaction_undone'); i++) {
     await delay(2);
@@ -394,6 +396,7 @@ console.log('── 6. history.undo_compaction ──');
   check('撤销压缩 compactionId', res?.payload?.compactionId === 'c1');
   check('撤销压缩 mayRecompact', res?.payload?.mayRecompact === true);
   check('撤销压缩调用 agent', calls.length === 1 && calls[0]?.saveKey === 'saveA' && calls[0]?.compactionId === 'c1');
+  check('撤销压缩 conversationId', calls[0]?.conversationId === 'conv-a');
 }
 
 console.log(`\n${failed === 0 ? '✅' : '❌'} history 测试${failed === 0 ? '全部通过' : '有失败'}（${passed} 项，失败 ${failed}）`);

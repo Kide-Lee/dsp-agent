@@ -147,7 +147,11 @@ export type ErrorCode =
   // A.13：多会话
   | 'conversation_not_found'
   | 'conversation_mismatch'
-  | 'invalid_title';
+  | 'conversation_busy'
+  | 'invalid_title'
+  // 并行会话：后台会话的资源/交互限制
+  | 'not_focused'
+  | 'resource_locked';
 
 export type StatusState =
   | 'idle'
@@ -797,6 +801,8 @@ export function buildLinkCardPayload(args: LinkCardPayload): JsonObject {
 
 /** `reply.time` 载荷（附录 A.10）：mod 回存回答完成时的游戏时间。 */
 export interface ReplyTimePayload {
+  /** 可选：把时间记录归属到指定会话；缺省时由调用方用当前活动会话兜底。 */
+  conversationId?: string;
   prompt: string;
   reply?: string;
   gameTime: string;
@@ -806,13 +812,24 @@ export function parseReplyTimePayload(payload: JsonObject): ReplyTimePayload | n
   const prompt = payload['prompt'];
   const reply = payload['reply'];
   const gameTime = payload['gameTime'];
+  const conversationId = payload['conversationId'];
   if (typeof prompt !== 'string' || prompt.trim().length === 0) return null;
   if (reply !== undefined && reply !== null && typeof reply !== 'string') return null;
   if (typeof gameTime !== 'string') return null;
+  if (
+    conversationId !== undefined &&
+    conversationId !== null &&
+    typeof conversationId !== 'string'
+  ) {
+    return null;
+  }
   const time = gameTime.trim();
   if (time.length === 0 || time.length > 16) return null;
   const trimmedReply = typeof reply === 'string' ? reply.trim() : '';
   return {
+    ...(typeof conversationId === 'string' && conversationId.trim()
+      ? { conversationId: conversationId.trim() }
+      : {}),
     prompt: prompt.trim(),
     ...(trimmedReply ? { reply: trimmedReply } : {}),
     gameTime: time,
@@ -928,10 +945,14 @@ export function buildConversationCreatedPayload(args: {
   saveKey: string | null;
   conversation: ConversationInfo;
   history?: readonly HistoryMessage[];
+  running?: boolean;
+  state?: StatusState;
 }): JsonObject {
   return {
     saveKey: args.saveKey,
     conversation: args.conversation,
+    running: args.running === true,
+    state: args.state ?? 'idle',
     history: args.history ?? [],
   };
 }
@@ -957,6 +978,8 @@ export function buildConversationSwitchedPayload(args: {
   history?: readonly HistoryMessage[];
   /** A.13：切换前那个没落盘的空会话被丢弃时，回传它，mod 据此删掉列表里的行。 */
   discardedConversationId?: string | null;
+  running?: boolean;
+  state?: StatusState;
 }): JsonObject {
   return {
     saveKey: args.saveKey,
@@ -964,6 +987,8 @@ export function buildConversationSwitchedPayload(args: {
     conversation: args.conversation,
     existed: args.existed,
     messageCount: args.messageCount,
+    running: args.running === true,
+    state: args.state ?? 'idle',
     ...(args.discardedConversationId ? { discardedConversationId: args.discardedConversationId } : {}),
     history: args.history ?? [],
   };
@@ -1131,6 +1156,8 @@ export function buildConversationsExportedPayload(args: {
 
 export interface HistoryDeletePayload {
   saveKey: string | null;
+  /** 可选：要改写的会话；缺省时由调用方用当前活动会话/旧版最新文件兜底。 */
+  conversationId?: string;
   text: string;
   timestamp?: number;
 }
@@ -1143,11 +1170,23 @@ export function parseHistoryDeletePayload(payload: JsonObject): HistoryDeletePay
   const key = payload['saveKey'];
   if (key !== undefined && key !== null && typeof key !== 'string') return null;
 
+  const conversationId = payload['conversationId'];
+  if (
+    conversationId !== undefined &&
+    conversationId !== null &&
+    typeof conversationId !== 'string'
+  ) {
+    return null;
+  }
+
   const rawTs = payload['timestamp'];
   if (rawTs !== undefined && rawTs !== null && typeof rawTs !== 'number') return null;
 
   return {
     saveKey: typeof key === 'string' && key.length > 0 ? key : null,
+    ...(typeof conversationId === 'string' && conversationId.trim()
+      ? { conversationId: conversationId.trim() }
+      : {}),
     text,
     ...(typeof rawTs === 'number' && Number.isFinite(rawTs) ? { timestamp: rawTs } : {}),
   };
@@ -1200,6 +1239,8 @@ export function buildContextCompactedPayload(args: ContextCompactedPayload): Jso
 
 export interface HistoryUndoCompactionPayload {
   saveKey: string | null;
+  /** 可选：要改写的会话；缺省时由调用方用当前活动会话/旧版最新文件兜底。 */
+  conversationId?: string;
   /** 省略 = 撤销最近一次压缩。 */
   compactionId?: string;
 }
@@ -1209,10 +1250,21 @@ export function parseHistoryUndoCompactionPayload(
 ): HistoryUndoCompactionPayload | null {
   const key = payload['saveKey'];
   if (key !== undefined && key !== null && typeof key !== 'string') return null;
+  const conversationId = payload['conversationId'];
+  if (
+    conversationId !== undefined &&
+    conversationId !== null &&
+    typeof conversationId !== 'string'
+  ) {
+    return null;
+  }
   const id = payload['compactionId'];
   if (id !== undefined && id !== null && typeof id !== 'string') return null;
   return {
     saveKey: typeof key === 'string' && key.length > 0 ? key : null,
+    ...(typeof conversationId === 'string' && conversationId.trim()
+      ? { conversationId: conversationId.trim() }
+      : {}),
     ...(typeof id === 'string' && id.length > 0 ? { compactionId: id } : {}),
   };
 }

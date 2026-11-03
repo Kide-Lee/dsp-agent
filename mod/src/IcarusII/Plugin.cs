@@ -59,8 +59,11 @@ namespace IcarusII
         private string _pluginDir;
         private bool _uiInitialized;
         private bool _streaming;
-        /// <summary>A.15：AI 正在回答（从提交到 idle）。输入框为空时按钮显示「中断」。</summary>
+        /// <summary>焦点会话是否正在回答（从提交到 idle）；后台会话的状态不会改它。</summary>
         private bool _agentRunning;
+        /// <summary>callId → 发起工具调用的会话；后台会话只执行、不画卡片。</summary>
+        private readonly Dictionary<string, string> _toolConversations =
+            new Dictionary<string, string>(StringComparer.Ordinal);
         private string _pendingHint;
         private volatile bool _sidecarStartAttempted;
         private bool _uiCreateFailureLogged;
@@ -460,6 +463,15 @@ namespace IcarusII
             Post(() => HandleMessage(type, payload, replyTo));
         }
 
+        /// <summary>并行会话：只处理焦点会话的运行期帧；缺 conversationId 的老 sidecar 视为焦点。</summary>
+        private bool IsFocusedPayload(JsonValue payload)
+        {
+            var id = payload?["conversationId"].AsString(null);
+            return string.IsNullOrEmpty(id) || _chat == null ||
+                   string.IsNullOrEmpty(_chat.ActiveConversationId) ||
+                   id == _chat.ActiveConversationId;
+        }
+
         private void HandleMessage(string type, JsonValue payload, string replyTo)
         {
             switch (type)
@@ -471,12 +483,16 @@ namespace IcarusII
                     ServerVersion = payload["serverVersion"].AsString(null);
                     UI.SettingsPageView.ServerVersion = ServerVersion;
                     ApplyToolCatalog(payload);
+                    _streaming = false;
+                    _agentRunning = false;
+                    _chat.SetBusy(false);
                     _chat.AppendSystem(Strings.Get("plugin.connected", Short(session), model));
                     break;
                 }
 
                 case Protocol.Status:
                 {
+                    if (!IsFocusedPayload(payload)) break;
                     var state = payload["state"].AsString("");
                     // A.15：回答中（含 aborting）显示「中断」，idle 换回「发送」。
                     bool running = state != Protocol.StateIdle;
@@ -546,6 +562,7 @@ namespace IcarusII
 
                 case Protocol.ToolActivity:
                 {
+                    if (!IsFocusedPayload(payload)) break;
                     // 本地工具（kb_* / run_script）原本在聊天窗里完全不可见，
                     // 玩家会误以为模型没用计算器。这里只补 UI 卡片，不参与执行。
                     var act = ToolActivityInfo.Parse(payload);
@@ -562,6 +579,7 @@ namespace IcarusII
 
                 case Protocol.BlueprintCard:
                 {
+                    if (!IsFocusedPayload(payload)) break;
                     // sidecar 在本轮 final message 之后才发，卡片自然排在对话末尾。
                     var card = BlueprintCardInfo.Parse(payload);
                     if (card != null && (!string.IsNullOrEmpty(card.FileName) || !string.IsNullOrEmpty(card.Path)))
@@ -571,6 +589,7 @@ namespace IcarusII
 
                 case Protocol.LinkCard:
                 {
+                    if (!IsFocusedPayload(payload)) break;
                     var card = LinkCardInfo.Parse(payload);
                     if (card != null) _chat.AppendLinkCard(card);
                     break;
@@ -621,6 +640,7 @@ namespace IcarusII
 
                 case Protocol.ContextCompacted:
                 {
+                    if (!IsFocusedPayload(payload)) break;
                     var info = ContextCompactedInfo.Parse(payload);
                     if (info != null)
                     {
@@ -659,6 +679,7 @@ namespace IcarusII
 
                 case Protocol.Stream:
                 {
+                    if (!IsFocusedPayload(payload)) break;
                     var streamChannel = payload["channel"].AsString("text");
 
                     // reasoning：模型的思考增量。进入输出区的可折叠思考块（不进正文）。
@@ -684,6 +705,7 @@ namespace IcarusII
 
                 case Protocol.Message:
                 {
+                    if (!IsFocusedPayload(payload)) break;
                     if (!payload["final"].AsBool()) break;
 
                     // 协议规定一轮 prompt 只有一个 final 终稿。若服务端因缺陷发了
@@ -739,7 +761,11 @@ namespace IcarusII
                     if (!string.IsNullOrEmpty(replyTo)) _promptById.TryGetValue(replyTo, out prompt);
                     if (!string.IsNullOrEmpty(prompt))
                     {
-                        _client?.SendReplyTime(prompt, finalText, ChatWindow.CurrentGameClock());
+                        _client?.SendReplyTime(
+                            prompt,
+                            finalText,
+                            ChatWindow.CurrentGameClock(),
+                            _chat.ActiveConversationId);
                         _promptById.Remove(replyTo);
                     }
 
@@ -766,6 +792,7 @@ namespace IcarusII
 
                 case Protocol.Error:
                 {
+                    if (!IsFocusedPayload(payload)) break;
                     if (!string.IsNullOrEmpty(replyTo)) _promptById.Remove(replyTo);
                     var code = payload["code"].AsString("unknown");
                     var message = payload["message"].AsString("");
@@ -807,9 +834,21 @@ namespace IcarusII
                 return;
             }
 
+            if (!string.IsNullOrEmpty(call.ConversationId))
+                _toolConversations[call.CallId] = call.ConversationId;
+            var focused = string.IsNullOrEmpty(call.ConversationId) || _chat == null ||
+                          string.IsNullOrEmpty(_chat.ActiveConversationId) ||
+                          call.ConversationId == _chat.ActiveConversationId;
+
             // 交互问答不是游戏工具：在进入 GameToolDispatcher 前拦截。
             if (call.Name == Protocol.ToolAskUser || call.Name == Protocol.ToolUiAskUser)
             {
+                if (!focused)
+                {
+                    SendAskError(call.CallId, Protocol.CodeNotFocused,
+                        "该会话不在前台，切换后再提问");
+                    return;
+                }
                 HandleAskCall(call);
                 return;
             }
@@ -840,9 +879,12 @@ namespace IcarusII
             }
             else
             {
-                _chat?.SetStatus(Strings.Get("plugin.status.reading", ToolLabel(call.Name)), AccentColor);
-                if (_chat != null && _chat.Created)
-                    _chat.BeginToolCard(call.CallId, ToolLabel(call.Name), ToolArgsText(call.Args));
+                if (focused)
+                {
+                    _chat?.SetStatus(Strings.Get("plugin.status.reading", ToolLabel(call.Name)), AccentColor);
+                    if (_chat != null && _chat.Created)
+                        _chat.BeginToolCard(call.CallId, ToolLabel(call.Name), ToolArgsText(call.Args));
+                }
             }
 
             if (_tools == null)
@@ -951,6 +993,17 @@ namespace IcarusII
                 }
                 SendConfirmResult(autoResolved, true);
                 Log.LogInfo($"[confirm] 权限 {permission}：自动同意 {request.Tool} risk={request.Risk} callId={request.CallId}");
+                return;
+            }
+
+            // 需要玩家点的确认只允许来自焦点会话；后台会话的 risk 1 已在上面
+            // 按权限自动放行，不会走到这里。sidecar 也会在后台等待焦点，这里是兜底。
+            if (!string.IsNullOrEmpty(request.ConversationId) && _chat != null &&
+                !string.IsNullOrEmpty(_chat.ActiveConversationId) &&
+                request.ConversationId != _chat.ActiveConversationId)
+            {
+                SendConfirmResult(request, false);
+                Log.LogInfo($"[confirm] 非焦点会话请求，已拒绝：{request.Tool} {request.ConversationId}");
                 return;
             }
 
@@ -1147,24 +1200,30 @@ namespace IcarusII
             // 内部调用（知识库导出）只回结果，不碰聊天窗。
             if (_internalCalls.Remove(outcome.CallId)) return;
 
+            _toolConversations.TryGetValue(outcome.CallId, out var conversationId);
+            _toolConversations.Remove(outcome.CallId);
+            var focused = string.IsNullOrEmpty(conversationId) || _chat == null ||
+                          string.IsNullOrEmpty(_chat.ActiveConversationId) ||
+                          conversationId == _chat.ActiveConversationId;
+
             var label = ToolLabel(outcome.Name);
             if (outcome.Ok)
             {
                 var summary = string.IsNullOrEmpty(outcome.Summary) ? Strings.Get("plugin.tool.done") : outcome.Summary;
-                if (_chat != null && _chat.Created)
+                if (focused && _chat != null && _chat.Created)
                 {
                     _chat.FinishToolCard(outcome.CallId, label, true, summary, outcome.Summary);
                     // 截图是本机产生的，不需要绕协议回来：直接把字节贴到工具卡上。
                     AttachToolImage(outcome);
                 }
-                _chat?.SetStatus(Strings.Get("status.ready"), OkColor);
+                if (focused) _chat?.SetStatus(Strings.Get("status.ready"), OkColor);
             }
             else
             {
                 var message = outcome.ErrorMessage ?? outcome.ErrorCode ?? Strings.Get("plugin.error.unknown");
-                if (_chat != null && _chat.Created)
+                if (focused && _chat != null && _chat.Created)
                     _chat.FinishToolCard(outcome.CallId, label, false, message, message);
-                _chat?.SetStatus(Strings.Get("status.ready"), WarnColor);
+                if (focused) _chat?.SetStatus(Strings.Get("status.ready"), WarnColor);
             }
         }
 
@@ -1328,7 +1387,7 @@ namespace IcarusII
         {
             if (string.IsNullOrEmpty(text) || _client == null) return;
             var saveKey = GameRefs.CurrentSaveKey();
-            var id = _client.SendHistoryDelete(saveKey, text, timestampMs);
+            var id = _client.SendHistoryDelete(saveKey, text, timestampMs, _chat.ActiveConversationId);
             if (id == null)
             {
                 _chat.AppendSystem(Strings.Get("plugin.delete.offline"));
@@ -1349,7 +1408,7 @@ namespace IcarusII
                 return;
             }
             var saveKey = GameRefs.CurrentSaveKey();
-            var id = _client.SendHistoryUndoCompaction(saveKey, compactionId);
+            var id = _client.SendHistoryUndoCompaction(saveKey, compactionId, _chat.ActiveConversationId);
             if (id == null)
             {
                 _chat.AppendSystem(Strings.Get("plugin.compaction_undo.changed"));
@@ -1373,7 +1432,7 @@ namespace IcarusII
             }
 
             var saveKey = GameRefs.CurrentSaveKey();
-            var id = _client.SendHistoryDelete(saveKey, text, timestampMs);
+            var id = _client.SendHistoryDelete(saveKey, text, timestampMs, _chat.ActiveConversationId);
             if (id == null)
             {
                 _chat.AppendSystem(Strings.Get("plugin.regenerate.changed"));
@@ -1705,6 +1764,9 @@ namespace IcarusII
                     if (!info.Existed) _chat.AppendSystem(Strings.Get("save.new", name));
                 }
 
+                _streaming = false;
+                _agentRunning = false;
+                _chat.SetBusy(false);
                 _chat.SetStatus(Strings.Get("status.ready"), OkColor);
             });
         }
@@ -1865,6 +1927,9 @@ namespace IcarusII
             {
                 if (_chat == null) return;
                 _chat.ClearTranscript();
+                _streaming = false;
+                _agentRunning = false;
+                _chat.SetBusy(false);
                 _chat.UpsertConversation(info.Conversation, true);
                 _chat.FinishConversationReplay();
                 _historyReplayedFor = ReplayKey(info.SaveKey ?? _saveKey, info.Conversation.Id);
@@ -1890,13 +1955,27 @@ namespace IcarusII
                     return;
                 }
                 _chat.ClearTranscript();
+                _streaming = false;
+                _agentRunning = info.Running;
+                _chat.SetBusy(info.Running);
                 _chat.UpsertConversation(info.Conversation, true);
                 // 切走时 sidecar 丢掉了那个没落盘的空会话：把它的行从左侧删掉，
                 // 否则它会留在列表里，点回去只会得到 conversation_not_found。
                 _chat.RemoveConversation(info.DiscardedConversationId);
                 ReplayHistory(info.History);
                 _historyReplayedFor = ReplayKey(info.SaveKey ?? _saveKey, info.Conversation.Id);
-                _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+                if (info.Running)
+                {
+                    _chat.SetStatus(
+                        info.State == Protocol.StateTools
+                            ? Strings.Get("status.tools")
+                            : Strings.Get("status.thinking"),
+                        AccentColor);
+                }
+                else
+                {
+                    _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+                }
             });
         }
 
@@ -1916,6 +1995,9 @@ namespace IcarusII
                 if (activeChanged)
                 {
                     _chat.ClearTranscript();
+                    _streaming = false;
+                    _agentRunning = false;
+                    _chat.SetBusy(false);
                     _chat.ApplyConversations(info.Conversations, info.ActiveConversationId);
                     ReplayHistory(info.History);
                     _historyReplayedFor = ReplayKey(info.SaveKey ?? _saveKey, info.ActiveConversationId);
@@ -1933,11 +2015,6 @@ namespace IcarusII
         private void OnConversationCreateRequested()
         {
             if (_chat == null || _client == null || _client.State != ConnectionState.Ready) return;
-            if (_streaming)
-            {
-                _chat.AppendSystem(Strings.Get("chat.conversation.busy"));
-                return;
-            }
             if (_client.SendConversationCreate() == null)
                 _chat.AppendSystem(Strings.Get("chat.conversation.failed", "连接未就绪"));
         }
@@ -1946,12 +2023,6 @@ namespace IcarusII
         {
             if (_chat == null || _client == null || _client.State != ConnectionState.Ready) return;
             if (string.IsNullOrEmpty(conversationId)) return;
-            if (_streaming)
-            {
-                _chat.CancelPendingConversationOpen();
-                _chat.AppendSystem(Strings.Get("chat.conversation.busy"));
-                return;
-            }
             if (_client.SendConversationSwitch(conversationId) == null)
             {
                 _chat.CancelPendingConversationOpen();
@@ -1963,11 +2034,6 @@ namespace IcarusII
         {
             if (_chat == null || _client == null || _client.State != ConnectionState.Ready) return;
             if (string.IsNullOrEmpty(conversationId)) return;
-            if (_streaming)
-            {
-                _chat.AppendSystem(Strings.Get("chat.conversation.busy"));
-                return;
-            }
             if (_client.SendConversationDelete(conversationId) == null)
                 _chat.AppendSystem(Strings.Get("chat.conversation.failed", "连接未就绪"));
         }
@@ -2466,7 +2532,7 @@ namespace IcarusII
             if (_chat == null) return;
             if (_client == null || _client.State != ConnectionState.Ready) return;
             if (!_agentRunning) return;
-            if (!_client.SendAbort())
+            if (!_client.SendAbort(_chat.ActiveConversationId))
                 _chat.AppendSystem(Strings.Get("plugin.send.offline"));
         }
 

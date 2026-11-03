@@ -8,6 +8,7 @@
  *  - 能力变化必须让 PiAgent 重建会话，避免模型看到不存在的工具。
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { ExtensionSummary, JsonObject, ToolResultPayload } from '../protocol.js';
 import { isSandboxOnlyTool } from './sandbox.js';
@@ -26,6 +27,8 @@ export interface ToolCallOptions {
   confirmToken?: string;
   /** 脚本写租约绑定的脚本哈希。 */
   confirmArgsHash?: string;
+  /** 发起本次调用的会话；并行会话下用于路由/锁/焦点门控。 */
+  conversationId?: string;
 }
 
 /** run_script 的脚本级确认（一次确认，允许最多 maxWrites 次写调用）。 */
@@ -35,6 +38,8 @@ export interface ScriptConfirmRequest {
   maxWrites: number;
   /** 脚本里写工具的最高 risk（1/2）；mod 据此决定是否按权限档位自动放行。 */
   risk: 1 | 2;
+  /** 脚本所属会话；并行会话下用于焦点门控。 */
+  conversationId?: string;
 }
 
 export interface ScriptConfirmResult {
@@ -52,6 +57,8 @@ export interface LocalWriteConfirmRequest {
   risk: 1 | 2;
   title: string;
   body: string;
+  /** 工具所属会话；并行会话下用于焦点门控。 */
+  conversationId?: string;
 }
 
 /** Session 实现它；工具宿主只依赖这个窄接口。 */
@@ -74,8 +81,15 @@ export function toolError(code: string, message: string): ToolResultPayload {
   };
 }
 
+interface ToolRunContext {
+  conversationId: string;
+  transport: ToolTransport;
+}
+
 export class GameToolHost {
   private transport: ToolTransport | null = null;
+  /** 当前异步执行链所属的会话/连接；工具定义无需自己知道 conversationId。 */
+  private readonly context = new AsyncLocalStorage<ToolRunContext>();
   private capabilities: string[] = [];
   private sandboxEnabled = false;
   private extensions: ExtensionSummary[] = [];
@@ -174,18 +188,33 @@ export class GameToolHost {
   }
 
   async confirmScript(request: ScriptConfirmRequest): Promise<ScriptConfirmResult | null> {
-    if (!this.transport?.confirmScript) return null;
-    return this.transport.confirmScript(request);
+    const ctx = this.context.getStore();
+    const transport = ctx?.transport ?? this.transport;
+    if (!transport?.confirmScript) return null;
+    return transport.confirmScript({
+      ...request,
+      ...(ctx?.conversationId && !request.conversationId
+        ? { conversationId: ctx.conversationId }
+        : {}),
+    });
   }
 
-  /** 本地蓝图写确认；老 transport 没有该能力时放行（保持旧行为）。 */
+  /** 本地蓝图写确认；老 transport 没有该能力时返回 false。 */
   async confirmLocalWrite(request: LocalWriteConfirmRequest): Promise<boolean> {
-    if (!this.transport?.confirmLocalWrite) return false;
-    return this.transport.confirmLocalWrite(request);
+    const ctx = this.context.getStore();
+    const transport = ctx?.transport ?? this.transport;
+    if (!transport?.confirmLocalWrite) return false;
+    return transport.confirmLocalWrite({
+      ...request,
+      ...(ctx?.conversationId && !request.conversationId
+        ? { conversationId: ctx.conversationId }
+        : {}),
+    });
   }
 
   releaseScript(token: string): void {
-    this.transport?.releaseScript?.(token);
+    const ctx = this.context.getStore();
+    (ctx?.transport ?? this.transport)?.releaseScript?.(token);
   }
 
   has(capability: string): boolean {
@@ -194,6 +223,15 @@ export class GameToolHost {
 
   get capabilityList(): readonly string[] {
     return this.capabilities;
+  }
+
+  /** 在一轮的异步上下文里执行；工具调用据此带上会话并选对连接。 */
+  runWithContext<T>(
+    conversationId: string,
+    transport: ToolTransport,
+    fn: () => Promise<T> | T,
+  ): Promise<T> {
+    return this.context.run({ conversationId, transport }, async () => await fn());
   }
 
   bind(transport: ToolTransport): void {
@@ -248,13 +286,17 @@ export class GameToolHost {
       );
     }
 
-    const transport = this.transport;
+    const ctx = this.context.getStore();
+    const transport = ctx?.transport ?? this.transport;
     if (!transport) {
       return toolError('tool_unavailable', '当前没有绑定到游戏连接（可能已断线或尚未进入存档）');
     }
     try {
       return await transport.callTool(name, args, {
         ...options,
+        ...(ctx?.conversationId && !options.conversationId
+          ? { conversationId: ctx.conversationId }
+          : {}),
         internal: options.internal ?? this.debugMode,
       });
     } catch (err) {

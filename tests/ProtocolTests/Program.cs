@@ -839,6 +839,8 @@ namespace IcarusII.Tests
             // ---- 附录 A.15：打断与插话 ----
             Eq("abort 类型名", "abort", Protocol.Abort);
             Eq("abort 空载荷", 0, Protocol.BuildAbort().Count);
+            var abortTarget = Protocol.BuildAbort("conv-a");
+            Eq("abort 目标会话", "conv-a", abortTarget["conversationId"].AsString());
             Eq<string>("prompt.mode 缺省不写", null,
                 Protocol.BuildPrompt("你好", "conv-a")["mode"].AsString());
             Eq("prompt.mode=steer", "steer",
@@ -865,6 +867,12 @@ namespace IcarusII.Tests
                 "\"conversation\":{\"id\":\"conv-a\",\"title\":\"量子芯片\",\"recordCount\":1,\"records\":[{\"text\":\"帮我规划\",\"timestamp\":1}]}," +
                 "\"history\":[{\"role\":\"user\",\"text\":\"帮我规划\",\"timestamp\":1}]}"));
             Eq("conversation.switched id", "conv-a", switched.ConversationId);
+            Eq("conversation.switched running 缺省 false", false, switched.Running);
+            Eq("conversation.switched state 缺省 idle", "idle", switched.State);
+            var switchedRunning = ConversationEventInfo.Parse(JsonValue.Parse(
+                "{\"conversationId\":\"conv-a\",\"running\":true,\"state\":\"tools\"}"));
+            Eq("conversation.switched running", true, switchedRunning.Running);
+            Eq("conversation.switched state", "tools", switchedRunning.State);
             Eq("conversation.switched conversation", "量子芯片", switched.Conversation.Title);
             Eq("conversation.switched history", 1, switched.History.Count);
             Check("conversation.switched 无丢弃字段时为空", string.IsNullOrEmpty(switched.DiscardedConversationId));
@@ -910,17 +918,19 @@ namespace IcarusII.Tests
 
             // ---- 附录 A.10：回存回答游戏时间 ----
             Eq("reply.time 类型名", "reply.time", Protocol.ReplyTime);
-            var replyTime = Protocol.BuildReplyTime("问题", "回答", "08:42");
+            var replyTime = Protocol.BuildReplyTime("问题", "回答", "08:42", "conv-a");
             Eq("reply.time prompt", "问题", replyTime["prompt"].AsString());
             Eq("reply.time reply", "回答", replyTime["reply"].AsString());
             Eq("reply.time gameTime", "08:42", replyTime["gameTime"].AsString());
+            Eq("reply.time conversationId", "conv-a", replyTime["conversationId"].AsString());
 
             // ---- 附录 A.7：删除对话回合 ----
             Eq("history.delete 类型名", "history.delete", Protocol.HistoryDelete);
             Eq("history.deleted 类型名", "history.deleted", Protocol.HistoryDeleted);
 
-            var del = Protocol.BuildHistoryDelete("3f2a", "上次的问题", 1760000000000L);
+            var del = Protocol.BuildHistoryDelete("3f2a", "上次的问题", 1760000000000L, "conv-a");
             Eq("history.delete saveKey", "3f2a", del["saveKey"].AsString());
+            Eq("history.delete conversationId", "conv-a", del["conversationId"].AsString());
             Eq("history.delete text", "上次的问题", del["text"].AsString());
             Eq("history.delete timestamp", 1760000000000L, del["timestamp"].AsLong());
 
@@ -945,8 +955,9 @@ namespace IcarusII.Tests
             Eq("history.undo_compaction 类型名", "history.undo_compaction", Protocol.HistoryUndoCompaction);
             Eq("history.compaction_undone 类型名", "history.compaction_undone", Protocol.HistoryCompactionUndone);
 
-            var undo = Protocol.BuildHistoryUndoCompaction("3f2a", "c1");
+            var undo = Protocol.BuildHistoryUndoCompaction("3f2a", "c1", "conv-a");
             Eq("undo.compaction saveKey", "3f2a", undo["saveKey"].AsString());
+            Eq("undo.compaction conversationId", "conv-a", undo["conversationId"].AsString());
             Eq("undo.compaction id", "c1", undo["compactionId"].AsString());
             var undoLatest = Protocol.BuildHistoryUndoCompaction(null, null);
             Check("撤销最近一次不写 compactionId", !undoLatest.Has("compactionId"));
@@ -994,6 +1005,9 @@ namespace IcarusII.Tests
                 "{\"callId\":\"l1\",\"phase\":\"start\",\"name\":\"kb_search\",\"args\":\"{}\"}"));
             Eq("tool_activity start 无 ok 时为 false", false, actStart.Ok);
             Eq("tool_activity phase 缺省为 end", "end", ToolActivityInfo.Parse(JsonValue.Parse("{}")).Phase);
+            var scopedAct = ToolActivityInfo.Parse(JsonValue.Parse(
+                "{\"callId\":\"c\",\"conversationId\":\"conv-a\",\"phase\":\"start\"}"));
+            Eq("tool_activity conversationId", "conv-a", scopedAct.ConversationId);
 
             // 前向兼容：config.state 未来新增字段不应影响解析
             var futureCfg = ConfigState.Parse(JsonValue.Parse("{\"state\":\"ready\",\"futureField\":42}"));
@@ -1013,6 +1027,9 @@ namespace IcarusII.Tests
             Eq("tool_call name", "game_get_power", call.Name);
             Eq("tool_call args.planetId", 3L, call.Args["planetId"].AsLong());
             Eq("tool_call timeout", 8000, call.TimeoutMs);
+            var scopedCall = ToolCallInfo.Parse(JsonValue.Parse(
+                "{\"callId\":\"c\",\"name\":\"game_get_power\",\"conversationId\":\"conv-a\"}"), null);
+            Eq("tool_call conversationId", "conv-a", scopedCall.ConversationId);
 
             var fallback = ToolCallInfo.Parse(
                 JsonValue.Parse("{\"name\":\"game_get_overview\",\"args\":{}}"), "call_from_replyTo");
@@ -1042,6 +1059,10 @@ namespace IcarusII.Tests
             Eq("confirm callId", "call_1", confirm?.CallId);
             Eq("confirm tool", "game_open_panel", confirm?.Tool);
             Eq("confirm risk", 1, confirm?.Risk);
+            var scopedConfirm = ConfirmRequestInfo.Parse(JsonValue.Parse(
+                "{\"requestId\":\"r\",\"callId\":\"c\",\"tool\":\"game_set_recipe\"," +
+                "\"token\":\"t\",\"conversationId\":\"conv-a\"}"));
+            Eq("confirm conversationId", "conv-a", scopedConfirm.ConversationId);
             var writeCall = ToolCallInfo.Parse(JsonValue.Parse(
                 "{\"callId\":\"call_1\",\"name\":\"game_open_panel\",\"risk\":1," +
                 "\"confirmToken\":\"t\",\"confirmArgsHash\":\"h\"}"), null);

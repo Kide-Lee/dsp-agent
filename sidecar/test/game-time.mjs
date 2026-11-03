@@ -111,5 +111,30 @@ console.log('── 回答游戏时间挂载 ──');
   check('空记录不改消息', attached[1].gameTime === undefined);
 }
 
+{
+  // 同一句提问出现在两个会话：新记录按 conversationId 只挂自己的会话。
+  const makeMessages = () => [
+    { role: 'user', text: '同一句提问' },
+    { role: 'assistant', text: 'A 的回答' },
+    { role: 'user', text: '同一句提问' },
+    { role: 'assistant', text: 'B 的回答' },
+  ];
+  const records = [
+    { conversationId: 'conv-a', prompt: '同一句提问', reply: 'A 的回答', gameTime: '08:00' },
+    { conversationId: 'conv-b', prompt: '同一句提问', reply: 'B 的回答', gameTime: '09:00' },
+  ];
+  const a = attachGameTimes(makeMessages(), records, 'conv-a');
+  check('按会话只挂 A', a[1].gameTime === '08:00' && a[3].gameTime === undefined, JSON.stringify(a));
+  const b = attachGameTimes(makeMessages(), records, 'conv-b');
+  check('按会话只挂 B', b[1].gameTime === undefined && b[3].gameTime === '09:00', JSON.stringify(b));
+
+  const legacy = attachGameTimes(makeMessages(), [
+    { prompt: '同一句提问', reply: 'A 的回答', gameTime: '07:00' },
+    { prompt: '同一句提问', reply: 'B 的回答', gameTime: '07:30' },
+  ], 'conv-a');
+  check('老记录无会话归属时仍可按回答回退匹配', legacy[1].gameTime === '07:00' && legacy[3].gameTime === '07:30',
+    JSON.stringify(legacy));
+}
+
 console.log(`\n${failed === 0 ? '✅ 全部通过' : '❌ 失败'}（${passed} 项断言${failed > 0 ? `，${failed} 失败` : ''}）\n`);
 if (failed > 0) process.exit(1);

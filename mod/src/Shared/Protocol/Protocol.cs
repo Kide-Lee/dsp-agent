@@ -175,6 +175,9 @@ namespace IcarusII.Common.Protocol
         public const string CodeSaveRequired = "save_required";
         public const string CodeConversationNotFound = "conversation_not_found";
         public const string CodeConversationMismatch = "conversation_mismatch";
+        public const string CodeConversationBusy = "conversation_busy";
+        public const string CodeNotFocused = "not_focused";
+        public const string CodeResourceLocked = "resource_locked";
         public const string CodeInvalidTitle = "invalid_title";
 
         // ---- M2 增量：只读工具（协议附录 B）----
@@ -607,10 +610,12 @@ namespace IcarusII.Common.Protocol
             return p;
         }
 
-        /// <summary>A.15：中断当前回合（空负载）。</summary>
-        public static JsonValue BuildAbort()
+        /// <summary>A.15：中断指定回合；conversationId 为空时由 sidecar 用焦点会话兜底。</summary>
+        public static JsonValue BuildAbort(string conversationId = null)
         {
-            return JsonValue.NewObject();
+            var p = JsonValue.NewObject();
+            if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
+            return p;
         }
 
         /// <summary>
@@ -701,10 +706,12 @@ namespace IcarusII.Common.Protocol
         /// 构造 `history.delete` 载荷（附录 A.7）。`timestampMs` 来自历史回放；
         /// 没有时传 0，sidecar 会退化成"最后一条同文本的用户消息"。
         /// </summary>
-        public static JsonValue BuildHistoryDelete(string saveKey, string text, long timestampMs)
+        public static JsonValue BuildHistoryDelete(string saveKey, string text, long timestampMs,
+            string conversationId = null)
         {
             var p = JsonValue.NewObject();
             if (!string.IsNullOrEmpty(saveKey)) p.Set("saveKey", saveKey);
+            if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
             p.Set("text", text ?? string.Empty);
             if (timestampMs > 0) p.Set("timestamp", timestampMs);
             return p;
@@ -714,10 +721,12 @@ namespace IcarusII.Common.Protocol
         /// 构造 `history.undo_compaction` 载荷（附录 A.11）。
         /// `compactionId` 为空表示撤销最近一次压缩。
         /// </summary>
-        public static JsonValue BuildHistoryUndoCompaction(string saveKey, string compactionId)
+        public static JsonValue BuildHistoryUndoCompaction(string saveKey, string compactionId,
+            string conversationId = null)
         {
             var p = JsonValue.NewObject();
             if (!string.IsNullOrEmpty(saveKey)) p.Set("saveKey", saveKey);
+            if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
             if (!string.IsNullOrEmpty(compactionId)) p.Set("compactionId", compactionId);
             return p;
         }
@@ -773,9 +782,11 @@ namespace IcarusII.Common.Protocol
         }
 
         /// <summary>构造 reply.time 载荷（协议附录 A.10）。</summary>
-        public static JsonValue BuildReplyTime(string prompt, string reply, string gameTime)
+        public static JsonValue BuildReplyTime(string prompt, string reply, string gameTime,
+            string conversationId = null)
         {
             var p = JsonValue.NewObject();
+            if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
             p.Set("prompt", prompt ?? string.Empty);
             p.Set("reply", reply ?? string.Empty);
             p.Set("gameTime", gameTime ?? string.Empty);
@@ -831,6 +842,8 @@ namespace IcarusII.Common.Protocol
     public sealed class ToolActivityInfo
     {
         public string CallId { get; private set; }
+        /// <summary>所属会话（并行会话，可选）。</summary>
+        public string ConversationId { get; private set; }
         public string Phase { get; private set; }
         public string Name { get; private set; }
         public string Args { get; private set; }
@@ -843,6 +856,7 @@ namespace IcarusII.Common.Protocol
             var r = new ToolActivityInfo();
             if (payload is null || payload.IsNull) return r;
             r.CallId = payload["callId"].AsString(null);
+            r.ConversationId = payload["conversationId"].AsString(null);
             r.Phase = payload["phase"].AsString("end");
             r.Name = payload["name"].AsString(string.Empty);
             r.Args = payload["args"].AsString(null);
@@ -917,6 +931,8 @@ namespace IcarusII.Common.Protocol
     public sealed class BlueprintCardInfo
     {
         public string Path { get; private set; }
+        /// <summary>所属会话（并行会话，可选）。</summary>
+        public string ConversationId { get; private set; }
         /// <summary>相对蓝图根的 POSIX 路径，例如 IcarusII/a.txt；老卡片为 null。</summary>
         public string RelPath { get; private set; }
         public string FileName { get; private set; }
@@ -957,6 +973,7 @@ namespace IcarusII.Common.Protocol
             var r = new BlueprintCardInfo();
             if (payload is null || payload.IsNull) return r;
             r.Path = payload["path"].AsString(null);
+            r.ConversationId = payload["conversationId"].AsString(null);
             r.RelPath = payload["relPath"].AsString(null);
             r.FileName = payload["fileName"].AsString(null);
             r.Name = payload["name"].AsString(null);
@@ -1112,6 +1129,8 @@ namespace IcarusII.Common.Protocol
     public sealed class LinkCardInfo
     {
         public string Kind { get; private set; }
+        /// <summary>所属会话（并行会话，可选）。</summary>
+        public string ConversationId { get; private set; }
         public int PlanetId { get; private set; }
         public int BuildingId { get; private set; }
         public int VeinId { get; private set; }
@@ -1126,6 +1145,7 @@ namespace IcarusII.Common.Protocol
             var r = new LinkCardInfo
             {
                 Kind = payload["kind"].AsString(null),
+                ConversationId = payload["conversationId"].AsString(null),
                 PlanetId = payload["planetId"].AsInt(0),
                 BuildingId = payload["buildingId"].AsInt(0),
                 VeinId = payload["veinId"].AsInt(0),
@@ -1355,6 +1375,10 @@ namespace IcarusII.Common.Protocol
         public bool Ok { get; private set; }
         public bool Existed { get; private set; }
         public int MessageCount { get; private set; }
+        /// <summary>该会话当前是否在回答（并行会话，可选）。</summary>
+        public bool Running { get; private set; }
+        /// <summary>运行状态（thinking/tools/...）；缺省 idle。</summary>
+        public string State { get; private set; }
         /// <summary>conversation.switched 里被丢弃的空会话 id（附录 A.13，可选）。</summary>
         public string DiscardedConversationId { get; private set; }
         public ConversationInfo Conversation { get; private set; }
@@ -1373,6 +1397,8 @@ namespace IcarusII.Common.Protocol
             r.Ok = payload["ok"].AsBool(true);
             r.Existed = payload["existed"].AsBool(false);
             r.MessageCount = payload["messageCount"].AsInt(0);
+            r.Running = payload["running"].AsBool(false);
+            r.State = payload["state"].AsString("idle");
             r.DiscardedConversationId = payload["discardedConversationId"].AsString(null);
             r.Conversation = ConversationInfo.Parse(payload["conversation"]);
             if (string.IsNullOrEmpty(r.ConversationId) && r.Conversation is not null)
@@ -1768,6 +1794,8 @@ namespace IcarusII.Common.Protocol
     public sealed class ToolCallInfo
     {
         public string CallId { get; private set; }
+        /// <summary>所属会话（并行会话，可选）。</summary>
+        public string ConversationId { get; private set; }
         public string Name { get; private set; }
         public JsonValue Args { get; private set; }
         public int Risk { get; private set; }
@@ -1802,6 +1830,7 @@ namespace IcarusII.Common.Protocol
             return new ToolCallInfo
             {
                 CallId = callId,
+                ConversationId = payload["conversationId"].AsString(null),
                 Name = name,
                 Args = args,
                 Risk = payload["risk"].AsInt(0),
@@ -1819,6 +1848,8 @@ namespace IcarusII.Common.Protocol
     {
         public string RequestId { get; private set; }
         public string CallId { get; private set; }
+        /// <summary>所属会话（并行会话，可选）。</summary>
+        public string ConversationId { get; private set; }
         public string Tool { get; private set; }
         public string ArgsHash { get; private set; }
         public string Token { get; private set; }
@@ -1849,6 +1880,7 @@ namespace IcarusII.Common.Protocol
             {
                 RequestId = requestId,
                 CallId = callId,
+                ConversationId = payload["conversationId"].AsString(null),
                 Tool = tool,
                 ArgsHash = payload["argsHash"].AsString(string.Empty),
                 Token = token,

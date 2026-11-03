@@ -614,6 +614,64 @@ async function main() {
     upstream.mode = 'ok';
   }
 
+  // ------------------------------------------------------------ 6b. 并行会话
+  console.log('── 6b. 并行会话（真 pi + 假上游）──');
+  {
+    upstream.mode = 'slow';
+    client.send({
+      v: 1,
+      id: 'bind-parallel',
+      type: 'save.bind',
+      payload: { saveKey: 'parallel-save', saveName: '并行测试' },
+    });
+    const bound = await client.waitForType('save.bound', WAIT_MS);
+    const aId = bound?.payload?.activeConversationId;
+    check('并行场景拿到活动会话', typeof aId === 'string' && aId.length > 0, String(aId));
+
+    const markA = client.frames.length;
+    client.send({
+      v: 1, id: 'p-parallel-a', type: 'prompt',
+      payload: { text: '甲会话', conversationId: aId },
+    });
+    await client.waitUntil(
+      () => client.frames.slice(markA).some((f) =>
+        f.type === 'status' && f.payload?.conversationId === aId),
+      WAIT_MS,
+      'A 会话开始',
+    );
+
+    client.send({ v: 1, id: 'create-parallel', type: 'conversation.create', payload: {} });
+    const created = await client.waitForType('conversation.created', WAIT_MS);
+    const bId = created?.payload?.conversation?.id;
+    check('A 运行中可以新建会话', created?.payload?.running === false && typeof bId === 'string', JSON.stringify(created?.payload));
+
+    const markB = client.frames.length;
+    client.send({
+      v: 1, id: 'p-parallel-b', type: 'prompt',
+      payload: { text: '乙会话', conversationId: bId },
+    });
+    await client.waitUntil(
+      () => client.frames.slice(markB).some((f) =>
+        f.type === 'message' && f.payload?.conversationId === bId && f.payload?.final === true),
+      WAIT_MS,
+      'B 会话终稿',
+    );
+    const roundB = client.frames.slice(markB);
+    const messageB = roundB.find((f) => f.type === 'message' && f.payload?.conversationId === bId);
+    check('B 会话有流式增量', roundB.some((f) => f.type === 'stream' && f.payload?.conversationId === bId));
+    check('B 会话终稿有正文', (messageB?.payload?.content?.[0]?.text ?? '').length > 0);
+    check('并行期间没有 busy 错误', !roundB.some((f) => f.type === 'error' && f.payload?.code === 'busy'));
+
+    // 切回 A：A 可能已经完成，也可能还在跑；两种都应该正常回执。
+    client.send({
+      v: 1, id: 'switch-parallel-a', type: 'conversation.switch',
+      payload: { conversationId: aId },
+    });
+    const switched = await client.waitForType('conversation.switched', WAIT_MS);
+    check('A 运行中/完成后切回都不 busy', switched?.payload?.ok !== false && switched?.payload?.conversationId === aId, JSON.stringify(switched?.payload));
+    upstream.mode = 'ok';
+  }
+
   // ------------------------------------------------------------ 7. 脱敏总检
   console.log('── 7. 全场景脱敏总检 ──');
   {

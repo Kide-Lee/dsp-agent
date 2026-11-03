@@ -3,6 +3,8 @@ import { promptMatchesHistory } from '../blueprint/card.js';
 
 /** 回答完成时回存的游戏时间；优先按回答原文挂回，回退按提问原文。 */
 export interface GameTimeRecord {
+  /** 记录所属会话；老记录没有该字段，回放时退回按提问/回答原文匹配。 */
+  conversationId?: string;
   prompt: string;
   reply?: string;
   gameTime: string;
@@ -20,13 +22,19 @@ export interface GameTimeRecord {
 export function attachGameTimes(
   messages: HistoryMessage[],
   records: readonly GameTimeRecord[],
+  conversationId?: string | null,
 ): HistoryMessage[] {
   if (messages.length === 0 || records.length === 0) return messages;
+
+  const scoped = conversationId
+    ? records.filter((record) => !record.conversationId || record.conversationId === conversationId)
+    : records;
+  if (scoped.length === 0) return messages;
 
   // 同一提问（或同一提问+回答）的重复记录以最后一条为准。
   const promptOnly = new Map<string, { prompt: string; reply: string; gameTime: string }>();
   const withReply = new Map<string, { prompt: string; reply: string; gameTime: string }>();
-  for (const record of records) {
+  for (const record of scoped) {
     const prompt = record.prompt.trim();
     const reply = record.reply?.trim() ?? '';
     const gameTime = record.gameTime.trim();

@@ -205,7 +205,7 @@ console.log('── 1. Session 消息 ──');
     payload: { text: '你好', conversationId: 'conv-a' },
   })), false);
   const mismatch = await waitFrame(socket, 'error');
-  check('prompt 会话不匹配被拒绝', mismatch?.payload?.code === 'conversation_mismatch');
+  check('prompt 指定会话不再要求先切换', mismatch == null, JSON.stringify(mismatch));
 }
 
 // ---- 2. PiAgent 落盘 ----
@@ -312,6 +312,60 @@ console.log('── 2. PiAgent 会话文件 ──');
     restoredAgent.onSaveChanged('saveA');
     const restoredList = await restoredAgent.getConversations('saveA');
     check('重启后空会话标题保留', restoredList.find((c) => c.id === draftId)?.title === '空会话标题');
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------- 2.5 会话级删除/撤销定位
+console.log('── 2.5 会话级删除/撤销定位 ──');
+{
+  const dataDir = makeTempDir('icarus-conv-target-');
+  const sessionDir = join(dataDir, 'sessions', 'saveA');
+  try {
+    const pi = await import('@earendil-works/pi-coding-agent');
+    const noop = { info() {}, warn() {}, error() {}, debug() {} };
+    const agent = new PiAgent({
+      dataDir,
+      store: { get: () => ({}), hasKey: () => false, blueprintRoot: () => null, wikiEndpoint: () => null },
+      host: {},
+      logger: { child: () => noop },
+      loadSdk: () => import('@earendil-works/pi-coding-agent'),
+    });
+    agent.onSaveChanged('saveA');
+
+    const a = pi.SessionManager.create(dataDir, sessionDir, { id: 'conv-a' });
+    a.appendMessage({ role: 'user', content: '同一句提问', timestamp: 1 });
+    a.appendMessage({ role: 'assistant', content: [{ type: 'text', text: 'A 的回答' }], timestamp: 2 });
+    const b = pi.SessionManager.create(dataDir, sessionDir, { id: 'conv-b' });
+    b.appendMessage({ role: 'user', content: '同一句提问', timestamp: 3 });
+    b.appendMessage({ role: 'assistant', content: [{ type: 'text', text: 'B 的回答' }], timestamp: 4 });
+
+    const aPath = pi.SessionManager.findById(dataDir, 'conv-a', sessionDir);
+    const bPath = pi.SessionManager.findById(dataDir, 'conv-b', sessionDir);
+    const deleted = await agent.deleteHistory('saveA', '同一句提问', undefined, 'conv-a');
+    check('按 conversationId 删除成功', deleted.ok === true, JSON.stringify(deleted));
+    check('只改目标会话 A', Boolean(aPath) && !readFileSync(aPath, 'utf8').includes('A 的回答'));
+    check('不碰同文本会话 B', Boolean(bPath) && readFileSync(bPath, 'utf8').includes('B 的回答'));
+
+    const missing = await agent.deleteHistory('saveA', '同一句提问', undefined, 'conv-missing');
+    check('指定会话不存在时明确失败', missing.ok === false && missing.error === 'conversation_not_found', JSON.stringify(missing));
+
+    const c = pi.SessionManager.create(dataDir, sessionDir, { id: 'conv-c' });
+    c.appendMessage({ role: 'user', content: '压缩前问题', timestamp: 5 });
+    const cCompaction = c.appendCompaction('C 的压缩摘要', null, 1000);
+    const d = pi.SessionManager.create(dataDir, sessionDir, { id: 'conv-d' });
+    d.appendMessage({ role: 'user', content: '压缩前问题', timestamp: 6 });
+    const dCompaction = d.appendCompaction('D 的压缩摘要', null, 1000);
+
+    const cPath = pi.SessionManager.findById(dataDir, 'conv-c', sessionDir);
+    const dPath = pi.SessionManager.findById(dataDir, 'conv-d', sessionDir);
+    const undone = await agent.undoCompaction('saveA', cCompaction, 'conv-c');
+    check('按 conversationId 撤销压缩成功', undone.ok === true, JSON.stringify(undone));
+    check('只撤销目标会话 C', Boolean(cPath) && !readFileSync(cPath, 'utf8').includes('C 的压缩摘要'));
+    check('不碰同文本会话 D', Boolean(dPath) && readFileSync(dPath, 'utf8').includes('D 的压缩摘要'));
+    check('撤销结果带回 compactionId', undone.compactionId === cCompaction, JSON.stringify(undone));
+    check('D 的 compactionId 仍有记录', typeof dCompaction === 'string' && dCompaction.length > 0);
   } finally {
     rmSync(dataDir, { recursive: true, force: true });
   }
