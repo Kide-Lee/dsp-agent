@@ -21,6 +21,7 @@ import type { LocalWriteConfirmRequest } from '../tools/host.js';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { Type } from 'typebox';
+import { createDslTool } from './dsl/tool.js';
 // @ts-ignore vendored JS planner (no types)
 import { planBlueprint } from './planner.mjs';
 
@@ -386,7 +387,11 @@ export function createBlueprintTools(
     if (!confirmWrite) return true;
     return confirmWrite({ tool, args: args as never, risk: 1, title: '写入蓝图文件？', body });
   };
+  const tools: ToolDefinition[] = [];
+  const dslKb = store?.snapshot;
+  if (dslKb) tools.push(createDslTool(dslKb, ws));
   return [
+    ...tools,
     {
       name: 'blueprint_fs',
       label: '蓝图文件',
