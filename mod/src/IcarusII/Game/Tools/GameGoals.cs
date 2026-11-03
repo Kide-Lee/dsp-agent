@@ -3,59 +3,24 @@ using System.Collections.Generic;
 using System.Globalization;
 using IcarusII.Common.Json;
 using UnityEngine;
+using static IcarusII.Game.GoalStore;
 
 namespace IcarusII.Game.Tools
 {
     /// <summary>
     /// 把 AI 生成的目标注入原生 GoalSystem，直接复用左侧 UIGoalPanel。
     ///
-    /// 目标定义存进唯一一个 Global TodoModule 的 content（随存档保存），
-    /// GoalProto 在运行时重新生成；原生 GoalSystem 只保存 GoalData/队列。
+    /// 目标定义和完成/跳过状态都存进唯一一个 Global TodoModule 的 content（随存档保存），
+    /// GoalProto 在运行时重新生成；原生 GoalSystem 的 GoalData 在读档时会丢掉尚未注入 Proto 的条目，
+    /// 所以完成/跳过状态以存档里的 stage/manualIgnore 为准，已收起的目标不再注入。
     /// 触发器完全复用原生 GoalDeterminator，不做第二套 DSL。
     /// </summary>
     internal static class GameGoals
     {
         private const int CustomIdStart = 910000;
-        private const string StorePrefix = "icarus2-goals:";
         private const string StoreTitle = "Icarus II 目标";
 
-        /// <summary>待办固定占用目标 id 900 起的独立段；id 小于原生目标（1000+），面板排序时排在第一。</summary>
-        private const int TodoGroupId = 900;
-        private const int TodoItemIdStart = 901;
-        private const int TodoItemLimit = 20;
-        private const string TodoStatusPending = "pending";
-        private const string TodoStatusInProgress = "in_progress";
-        private const string TodoStatusCompleted = "completed";
-        private const string TodoStatusSkipped = "skipped";
-
-        [Serializable]
-        private sealed class StoredGoal
-        {
-            public int groupId;
-            public int goalId;
-            public string group;
-            public string title;
-            public int templateId;
-            public long[] parameters;
-        }
-
-        /// <summary>轮内待办的一项；id 固定落在 901+，text 是显示文案，status 是三态。</summary>
-        [Serializable]
-        private sealed class StoredTodo
-        {
-            public int id;
-            public string text;
-            public string status;
-        }
-
-        [Serializable]
-        private sealed class StoredSet
-        {
-            public List<StoredGoal> goals = new List<StoredGoal>();
-            public List<StoredTodo> todos = new List<StoredTodo>();
-        }
-
-        private static StoredSet _store;
+        private static GoalStoreState _store;
         private static string _saveKey;
         private static bool _loaded;
         private static bool _needsApply;
@@ -101,6 +66,7 @@ namespace IcarusII.Game.Tools
                 if (_applied)
                 {
                     EnsureGoalLogic();
+                    SyncNativeState();
                     RefreshNotes();
                 }
             }
@@ -113,6 +79,8 @@ namespace IcarusII.Game.Tools
 
         private static bool _applied;
         private static Dictionary<int, string> _notes;
+        /// <summary>同步原生状态时复用，避免每帧分配。</summary>
+        private static readonly HashSet<int> SyncGroups = new HashSet<int>();
         /// <summary>沙盒里补初始化失败过的存档；同一存档不再重试，避免每帧刷日志。</summary>
         private static string _sandboxInitFailedFor;
 
@@ -120,7 +88,7 @@ namespace IcarusII.Game.Tools
         public static bool HasActiveAiGoals()
         {
             if (!_applied || _store == null) return false;
-            if (_store.goals.Count == 0 && (_store.todos == null || _store.todos.Count == 0)) return false;
+            if (!_store.HasActiveGoals && (_store.todos == null || _store.todos.Count == 0)) return false;
 
             var data = GameMain.data;
             var system = data != null ? data.goalSystem : null;
@@ -131,10 +99,37 @@ namespace IcarusII.Game.Tools
             for (int i = 0; i < _store.goals.Count; i++)
             {
                 var goal = _store.goals[i];
-                if (goal == null) continue;
+                if (goal == null || goal.IsDismissed) continue;
                 if (IsGroupActive(system, goal.groupId)) return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// 把原生面板里的完成/跳过写回存档；读档后 ApplyAll 只注入未收起的目标，靠这份状态阻止目标再次出现。
+        /// </summary>
+        private static void SyncNativeState()
+        {
+            if (_store == null || GameMain.data == null || GameMain.data.goalSystem == null) return;
+            var system = GameMain.data.goalSystem;
+            bool changed = false;
+            SyncGroups.Clear();
+            for (int i = 0; i < _store.goals.Count; i++)
+            {
+                var goal = _store.goals[i];
+                if (goal == null || goal.IsDismissed) continue;
+                SyncGroups.Add(goal.groupId);
+                var data = system.GetGoalDataById(goal.goalId);
+                if (data == null) continue;
+                changed |= _store.SyncGoal(goal.goalId, (int)data.stage, data.isManualIgnore);
+            }
+            foreach (int groupId in SyncGroups)
+            {
+                var group = system.GetGoalDataById(groupId);
+                if (group == null) continue;
+                changed |= _store.SyncGroup(groupId, (int)group.stage, group.isManualIgnore) > 0;
+            }
+            if (changed) SaveStore();
         }
 
         private static bool IsGroupActive(GoalSystem system, int groupId)
@@ -208,7 +203,7 @@ namespace IcarusII.Game.Tools
                     row.Set("determinator", p.DeterminatorName);
                     row.Set("level", (int)p.Level);
                     row.Set("parentId", p.ParentId);
-                    row.Set("params", LongArray(p.DeterminatorParams));
+                    row.Set("params", GoalStoreState.LongArray(p.DeterminatorParams));
                     arr.Add(row);
                 }
             }
@@ -236,7 +231,8 @@ namespace IcarusII.Game.Tools
                     row.Set("templateId", g.templateId);
                     row.Set("current", gd != null ? gd.currentValue : 0);
                     row.Set("target", gd != null ? gd.targetValue : 0);
-                    row.Set("stage", gd != null ? (int)gd.stage : 0);
+                    // 重开后已完成/已跳过的目标不再注入，原生 GoalData 不存在，阶段只能从存档读。
+                    row.Set("stage", gd != null ? (int)gd.stage : g.stage);
                     arr.Add(row);
                 }
 
@@ -275,7 +271,7 @@ namespace IcarusII.Game.Tools
             if (goalsArg == null || goalsArg.Count == 0) throw new InvalidOperationException("goals 不能为空");
             var groupTitle = args["group"].AsString("游戏目标") ?? "游戏目标";
             var added = JsonValue.NewArray();
-            if (_store == null) _store = new StoredSet();
+            if (_store == null) _store = new GoalStoreState();
 
             int groupId = 0;
             for (int i = 0; i < _store.goals.Count; i++)
@@ -298,7 +294,7 @@ namespace IcarusII.Game.Tools
                 long[] parameters = CopyParams(template.DeterminatorParams);
                 var paramsArg = item["params"];
                 if (paramsArg != null && paramsArg.Count > 0)
-                    parameters = ParseParams(paramsArg);
+                    parameters = GoalStoreState.ParseParams(paramsArg);
                 int itemId = item["itemId"].AsInt(0);
                 int count = item["count"].AsInt(0);
                 if (itemId > 0 && parameters.Length >= 1) parameters[0] = itemId;
@@ -367,12 +363,15 @@ namespace IcarusII.Game.Tools
             // 整组删除时子目标记录已经清空，但组本身没有 StoredGoal；单独从原生队列/面板隐藏。
             if (goalId <= 0 && groupId > 0) HideGoal(groupId);
             foreach (var id in removedGroups) HideGoal(id);
-            // 删掉某组最后一个子目标时，组也要从原生队列收起。
+            // 删掉某组最后一个子目标时，组也要从原生队列收起；已收起的兄弟目标不会重新注入，不算“还在”。
             if (groupId > 0 && goalId > 0)
             {
                 bool hasLeft = false;
                 for (int i = 0; i < _store.goals.Count; i++)
-                    if (_store.goals[i] != null && _store.goals[i].groupId == groupId) { hasLeft = true; break; }
+                {
+                    var left = _store.goals[i];
+                    if (left != null && !left.IsDismissed && left.groupId == groupId) { hasLeft = true; break; }
+                }
                 if (!hasLeft) HideGoal(groupId);
             }
             SaveStore();
@@ -383,41 +382,44 @@ namespace IcarusII.Game.Tools
 
         private static bool ApplyAll()
         {
-            if (_store == null || (_store.goals.Count == 0 && (_store.todos == null || _store.todos.Count == 0)))
+            if (_store == null) return true;
+            // 已完成/已跳过的目标只保留定义，不再注入原生目标系统，否则重开游戏会再次弹出。
+            var active = _store.ActiveGoals();
+            if (active.Count == 0 && (_store.todos == null || _store.todos.Count == 0))
                 return true;
             var data = GameMain.data;
             var system = data.goalSystem;
             var logic = GameMain.gameScenario != null ? GameMain.gameScenario.goalLogic : null;
             if (system == null || logic == null) return false;
 
-            if (_store.goals.Count > 0)
+            if (active.Count > 0)
             {
                 var groups = new Dictionary<int, string>();
-                for (int i = 0; i < _store.goals.Count; i++)
+                for (int i = 0; i < active.Count; i++)
                 {
-                    var g = _store.goals[i];
+                    var g = active[i];
                     if (g == null) continue;
                     if (!groups.ContainsKey(g.groupId)) groups[g.groupId] = g.group ?? "游戏目标";
                 }
 
                 foreach (var pair in groups)
                     EnsureGroupProto(pair.Key, pair.Value);
-                for (int i = 0; i < _store.goals.Count; i++)
-                    EnsureChildProto(_store.goals[i]);
+                for (int i = 0; i < active.Count; i++)
+                    EnsureChildProto(active[i]);
                 RebuildGoalTable();
 
                 foreach (var pair in groups)
                     EnsureGoalData(pair.Key, true);
-                for (int i = 0; i < _store.goals.Count; i++)
-                    EnsureGoalData(_store.goals[i].goalId, false);
+                for (int i = 0; i < active.Count; i++)
+                    EnsureGoalData(active[i].goalId, false);
 
                 EnsureQueue(groups);
                 if (logic.isInit)
                 {
                     foreach (var pair in groups)
                         EnsureDeterminator(pair.Key);
-                    for (int i = 0; i < _store.goals.Count; i++)
-                        EnsureDeterminator(_store.goals[i].goalId);
+                    for (int i = 0; i < active.Count; i++)
+                        EnsureDeterminator(active[i].goalId);
                     foreach (var pair in groups)
                         EnsureDeterminator(pair.Key);
                 }
@@ -675,7 +677,7 @@ namespace IcarusII.Game.Tools
             if (count > TodoItemLimit)
                 throw new InvalidOperationException($"待办最多 {TodoItemLimit.ToString(CultureInfo.InvariantCulture)} 条");
 
-            if (_store == null) _store = new StoredSet();
+            if (_store == null) _store = new GoalStoreState();
             var old = _store.todos ?? new List<StoredTodo>();
             var byText = new Dictionary<string, StoredTodo>(StringComparer.Ordinal);
             for (int i = 0; i < old.Count; i++)
@@ -719,13 +721,6 @@ namespace IcarusII.Game.Tools
             _needsApply = false;
             _applied = true;
             return TodoResult();
-        }
-
-        private static string NormalizeTodoStatus(string status)
-        {
-            if (string.Equals(status, TodoStatusCompleted, StringComparison.Ordinal)) return TodoStatusCompleted;
-            if (string.Equals(status, TodoStatusInProgress, StringComparison.Ordinal)) return TodoStatusInProgress;
-            return TodoStatusPending;
         }
 
         private static int NextTodoId(HashSet<int> used)
@@ -984,48 +979,10 @@ namespace IcarusII.Game.Tools
             }
         }
 
-        private static StoredSet LoadStore()
+        private static GoalStoreState LoadStore()
         {
             var todo = FindStoreTodo();
-            if (todo == null || string.IsNullOrEmpty(todo.content) || !todo.content.StartsWith(StorePrefix, StringComparison.Ordinal))
-                return new StoredSet();
-            try
-            {
-                var root = JsonValue.Parse(todo.content.Substring(StorePrefix.Length));
-                var set = new StoredSet();
-                var arr = root["goals"];
-                for (int i = 0; i < arr.Count; i++)
-                {
-                    var item = arr[i];
-                    var g = new StoredGoal
-                    {
-                        groupId = item["groupId"].AsInt(0),
-                        goalId = item["goalId"].AsInt(0),
-                        group = item["group"].AsString("游戏目标"),
-                        title = item["title"].AsString("游戏目标"),
-                        templateId = item["templateId"].AsInt(0),
-                        parameters = ParseParams(item["params"]),
-                    };
-                    if (g.goalId > 0 && g.templateId > 0) set.goals.Add(g);
-                }
-
-                var todos = root["todos"];
-                for (int i = 0; i < todos.Count; i++)
-                {
-                    var item = todos[i];
-                    var t = new StoredTodo
-                    {
-                        id = item["id"].AsInt(0),
-                        text = item["text"].AsString(string.Empty),
-                        status = NormalizeTodoStatus(item["status"].AsString(TodoStatusPending)),
-                    };
-                    if (t.id >= TodoItemIdStart && t.id < TodoItemIdStart + TodoItemLimit &&
-                        !string.IsNullOrEmpty(t.text))
-                        set.todos.Add(t);
-                }
-                return set;
-            }
-            catch { return new StoredSet(); }
+            return GoalStoreState.Parse(todo != null ? todo.content : null);
         }
 
         private static void SaveStore()
@@ -1038,43 +995,7 @@ namespace IcarusII.Game.Tools
                 todo = digital.AddTodoModule(ETodoModuleOwnerType.Global, 0);
                 todo.title = StoreTitle;
             }
-            var root = JsonValue.NewObject();
-            var arr = JsonValue.NewArray();
-            if (_store != null)
-            {
-                for (int i = 0; i < _store.goals.Count; i++)
-                {
-                    var g = _store.goals[i];
-                    if (g == null) continue;
-                    var row = JsonValue.NewObject();
-                    row.Set("groupId", g.groupId);
-                    row.Set("goalId", g.goalId);
-                    row.Set("group", g.group ?? string.Empty);
-                    row.Set("title", g.title ?? string.Empty);
-                    row.Set("templateId", g.templateId);
-                    row.Set("params", LongArray(g.parameters));
-                    arr.Add(row);
-                }
-            }
-            root.Set("goals", arr);
-
-            var todoArr = JsonValue.NewArray();
-            if (_store != null && _store.todos != null)
-            {
-                for (int i = 0; i < _store.todos.Count; i++)
-                {
-                    var t = _store.todos[i];
-                    if (t == null || string.IsNullOrEmpty(t.text)) continue;
-                    var row = JsonValue.NewObject();
-                    row.Set("id", t.id);
-                    row.Set("text", t.text);
-                    row.Set("status", t.status ?? TodoStatusPending);
-                    todoArr.Add(row);
-                }
-            }
-            root.Set("todos", todoArr);
-
-            todo.content = StorePrefix + root.ToJson();
+            todo.content = _store != null ? _store.ToContent() : new GoalStoreState().ToContent();
         }
 
         private static TodoModule FindStoreTodo()
@@ -1085,7 +1006,7 @@ namespace IcarusII.Game.Tools
             {
                 var todo = digital.todos.buffer[i];
                 if (todo != null && todo.ownerType == ETodoModuleOwnerType.Global &&
-                    todo.content != null && todo.content.StartsWith(StorePrefix, StringComparison.Ordinal))
+                    todo.content != null && todo.content.StartsWith(GoalStore.Prefix, StringComparison.Ordinal))
                     return todo;
             }
             return null;
@@ -1112,20 +1033,6 @@ namespace IcarusII.Game.Tools
         private static long[] CopyParams(long[] src)
         {
             return src != null ? (long[])src.Clone() : new long[0];
-        }
-
-        private static long[] ParseParams(JsonValue arr)
-        {
-            var list = new long[arr.Count];
-            for (int i = 0; i < arr.Count; i++) list[i] = arr[i].AsLong(0);
-            return list;
-        }
-
-        private static JsonValue LongArray(long[] values)
-        {
-            var arr = JsonValue.NewArray();
-            if (values != null) for (int i = 0; i < values.Length; i++) arr.Add(JsonValue.Of(values[i]));
-            return arr;
         }
     }
 }

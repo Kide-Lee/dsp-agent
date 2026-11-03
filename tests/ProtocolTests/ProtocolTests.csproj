@@ -25,6 +25,8 @@
     <Compile Include="../../mod/src/IcarusII/Input/KeyChord.cs" Link="KeyChord.cs" />
     <!-- 目标面板的等级覆盖状态机不依赖 UnityEngine，恢复错了会改掉玩家的目标设置 -->
     <Compile Include="../../mod/src/IcarusII/Game/GoalLevelSwap.cs" Link="GoalLevelSwap.cs" />
+    <!-- AI 目标的完成/跳过状态只能存在存档 JSON 里，编码或过滤错了重启就会重新弹出 -->
+    <Compile Include="../../mod/src/IcarusII/Game/GoalStore.cs" Link="GoalStore.cs" />
     <!-- 顾问提示的截断/转义/快捷键着色不依赖 UnityEngine，面板宽度全靠这里压字数 -->
     <Compile Include="../../mod/src/IcarusII/UI/AdvisorText.cs" Link="AdvisorText.cs" />
   </ItemGroup>

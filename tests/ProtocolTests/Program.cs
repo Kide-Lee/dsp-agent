@@ -56,6 +56,9 @@ namespace IcarusII.Tests
             Section("目标面板等级覆盖");
             GoalPanelSwapTests.Run();
 
+            Section("AI 目标状态持久化");
+            GoalStoreTests.Run();
+
             Section("顾问提示文案");
             AdvisorTextTests.Run();
 
