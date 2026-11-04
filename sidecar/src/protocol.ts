@@ -59,6 +59,8 @@ export const MessageType = {
   ConversationDeleted: 'conversation.deleted',
   // A.13：标题由模型异步总结后更新（不重建正文）
   ConversationUpdated: 'conversation.updated',
+  // A.13.1：会话状态图标（后台运行/需要授权/已完成）
+  ConversationActivity: 'conversation.activity',
   ConversationRename: 'conversation.rename',
   ConversationRenamed: 'conversation.renamed',
   // M4e：删除一个问答回合（附录 A.7）
@@ -199,6 +201,8 @@ export interface ToolCallPayload {
   confirmToken?: string;
   /** 确认时绑定的参数哈希。 */
   confirmArgsHash?: string;
+  /** 发起本次调用的会话；并行会话下用于 UI 路由。 */
+  conversationId?: string;
 }
 
 /** `confirm_request`（sidecar → mod，M4）。 */
@@ -218,6 +222,8 @@ export interface ConfirmRequestPayload {
   maxWrites?: number;
   /** 脚本确认时列出的写工具名；租约只允许这些工具。 */
   writeNames?: string[];
+  /** 确认请求所属会话；并行会话下用于焦点门控/UI 路由。 */
+  conversationId?: string;
 }
 
 /** `confirm_result`（mod → sidecar）。 */
@@ -958,6 +964,21 @@ export function buildConversationCreatedPayload(args: {
 }
 
 /** A.13：会话标题被模型总结/重命名后推送；mod 只更新左侧标题，不重放历史。 */
+/** 会话状态图标：normal 由前端直接显示 chevron，不通过协议发送。 */
+export type ConversationActivityState = 'running' | 'attention' | 'completed' | 'idle';
+
+export function buildConversationActivityPayload(args: {
+  conversationId: string;
+  state: ConversationActivityState;
+  reason?: string | null;
+}): JsonObject {
+  return {
+    conversationId: args.conversationId,
+    state: args.state,
+    ...(args.reason ? { reason: args.reason } : {}),
+  };
+}
+
 export function buildConversationUpdatedPayload(args: {
   conversationId: string;
   title: string;
@@ -1898,6 +1919,7 @@ export function buildToolCallPayload(args: ToolCallPayload): JsonObject {
   if (args.internal === true) payload['internal'] = true;
   if (args.confirmToken) payload['confirmToken'] = args.confirmToken;
   if (args.confirmArgsHash) payload['confirmArgsHash'] = args.confirmArgsHash;
+  if (args.conversationId) payload['conversationId'] = args.conversationId;
   return payload;
 }
 

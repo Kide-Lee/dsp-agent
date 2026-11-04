@@ -1356,6 +1356,30 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
   只显示一个分组；不会因为连到老 sidecar 而失去索引。
 - 会话文件、卡片记录和 `active.json` 都只落在 sidecar 数据目录内，不写入游戏目录。
 
+### A.13.1 `conversation.activity` — 左侧会话状态图标
+
+sidecar → mod，可选。只用于会话列表的图标，不进入模型上下文。
+
+```jsonc
+{
+  "v": 1, "id": "s-89", "type": "conversation.activity",
+  "payload": {
+    "conversationId": "conv_7c1e…",
+    "state": "running",       // running | attention | completed | idle
+    "reason": "confirm"       // state=attention 时可选：confirm | ask
+  }
+}
+```
+
+- `running`：该会话正在回答；mod 显示旋转的 loading。焦点会话和后台会话都会收到。
+- `attention`：后台会话在等玩家确认或回答；mod 显示 warning。
+  sidecar 只发通知，不会强制切换会话；玩家可以继续看当前会话，切过去后再弹确认/作答。
+- `completed`：后台会话完成了一轮回答；mod 显示 new。切到该会话后清除。
+- `idle`：清除运行/等待/完成状态，恢复普通 chevron。
+- `reason` 目前只用于 `attention`，取值为 `confirm` 或 `ask`；未来可以扩展图标。
+- mod 应容忍未知 `state`（忽略）和未知 `reason`（不改图标）。
+- 点击状态图标只展开/收起该会话的记录列表；要切换会话仍点会话标题。
+
 ### A.14 设定页（M6）
 
 **需求**：游戏的设置窗口里注入一个 `Icarus II` 页签，页内提供「通用 / 快捷键 / 模型 /

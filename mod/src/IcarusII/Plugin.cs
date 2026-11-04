@@ -556,6 +556,10 @@ namespace IcarusII
                     OnConversationUpdated(ConversationEventInfo.Parse(payload));
                     break;
 
+                case Protocol.ConversationActivity:
+                    OnConversationActivity(ConversationActivityInfo.Parse(payload));
+                    break;
+
                 case Protocol.ConversationRenamed:
                     OnConversationRenamed(ConversationEventInfo.Parse(payload));
                     break;
@@ -1872,6 +1876,15 @@ namespace IcarusII
             _chat.FinishConversationReplay();
             Log.LogInfo($"[存档] 回放历史：{replayed} 条，失败 {failed} 条");
             return failed == 0;
+        }
+
+        private void OnConversationActivity(ConversationActivityInfo info)
+        {
+            if (info == null || string.IsNullOrEmpty(info.ConversationId)) return;
+            Post(() =>
+            {
+                _chat?.SetConversationActivity(info.ConversationId, info.State, info.Reason);
+            });
         }
 
         private void OnConversationUpdated(ConversationEventInfo info)

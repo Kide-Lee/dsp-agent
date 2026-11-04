@@ -130,6 +130,9 @@ namespace IcarusII.Common.Protocol
         /// <summary>sidecar → mod：会话标题已由模型总结更新（只更新索引标题）。</summary>
         public const string ConversationUpdated = "conversation.updated";
 
+        /// <summary>sidecar → mod：会话状态图标（运行中 / 需要授权 / 已完成）。</summary>
+        public const string ConversationActivity = "conversation.activity";
+
         /// <summary>mod → sidecar：玩家重命名会话。</summary>
         public const string ConversationRename = "conversation.rename";
 
@@ -1365,6 +1368,30 @@ namespace IcarusII.Common.Protocol
     /// conversation.created / switched / deleted / updated 的解析结果（附录 A.13）。
     /// 各回执共用同一个结构；没有的字段保持默认值。
     /// </summary>
+    /// <summary>A.13.1：左侧会话状态图标。缺省 normal 由 UI 显示展开箭头。</summary>
+    public sealed class ConversationActivityInfo
+    {
+        public string ConversationId { get; private set; }
+        /// <summary>running | attention | completed | idle</summary>
+        public string State { get; private set; }
+        /// <summary>attention 的原因：confirm | ask；现在只用于日志/未来细分。</summary>
+        public string Reason { get; private set; }
+
+        public static ConversationActivityInfo Parse(JsonValue payload)
+        {
+            if (payload is null || payload.IsNull || !payload.IsObject) return null;
+            var conversationId = payload["conversationId"].AsString(null);
+            var state = payload["state"].AsString(null);
+            if (string.IsNullOrEmpty(conversationId) || string.IsNullOrEmpty(state)) return null;
+            return new ConversationActivityInfo
+            {
+                ConversationId = conversationId,
+                State = state,
+                Reason = payload["reason"].AsString(null),
+            };
+        }
+    }
+
     public sealed class ConversationEventInfo
     {
         public string SaveKey { get; private set; }

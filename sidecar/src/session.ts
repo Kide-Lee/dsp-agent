@@ -46,6 +46,7 @@ import {
   buildConversationCreatedPayload,
   buildConversationDeletedPayload,
   buildConversationSwitchedPayload,
+  buildConversationActivityPayload,
   buildConversationUpdatedPayload,
   buildConversationRenamedPayload,
   buildToolsStatePayload,
@@ -86,6 +87,7 @@ import {
   type ConfirmRequestPayload,
   type ConfirmResultPayload,
   type ConversationInfo,
+  type ConversationActivityState,
   type PermissionLevel,
 } from './protocol.js';
 import { UI_ASK_TOOL_NAME, UI_ASK_TOOL_NAME_ALIASES, UI_ASK_TIMEOUT_MS } from './tools/ask.js';
@@ -399,6 +401,8 @@ export class Session {
   private focusedConversationId: string | null = null;
   /** 跨会话共享的写锁。 */
   private readonly locks: GameLockManager;
+  /** 每个会话当前要显示的列表图标；普通状态不存，mod 显示 chevron。 */
+  private readonly conversationActivity = new Map<string, ConversationActivityState>();
 
   /**
    * 存档切换/历史删除的串行队列。
@@ -1203,6 +1207,7 @@ export class Session {
       this.logger.warn('切换存档会话失败', errorFields(err));
     }
     this.boundSaveKey = bind.saveKey;
+    this.conversationActivity.clear();
 
     // A.13：先得到该存档的会话列表（同时会解析 activeConversationId），
     // 再读当前活动会话的历史。读文件是纯本地操作，不建模型会话、不联网。
@@ -1281,6 +1286,7 @@ export class Session {
       return;
     }
     this.setFocusedConversation(result.conversation.id);
+    this.setConversationActivity(result.conversation.id, 'idle');
     this.sendEnvelope(
       buildEnvelope({
         type: MessageType.ConversationCreated,
@@ -1349,6 +1355,15 @@ export class Session {
 
     // 切回一个仍在回答的会话：把切走期间已经生成的正文补成一条 stream，
     // 之后的新增量继续按正常流式发送。工具/思考块不重放，最终正文以 message 为准。
+    const activity = this.conversationActivity.get(target.conversationId);
+    if (activity === 'completed') {
+      this.setConversationActivity(target.conversationId, 'idle');
+    } else if (running && activity !== 'attention') {
+      this.setConversationActivity(target.conversationId, 'running');
+    } else if (!running && activity === 'running') {
+      this.setConversationActivity(target.conversationId, 'idle');
+    }
+
     if (progress?.running && progress.text.length > 0) {
       this.sendEnvelope(
         buildEnvelope({
@@ -1449,6 +1464,7 @@ export class Session {
     const activeConversationId = isCurrentSave
       ? this.options.agent.getActiveConversationId?.() ?? result.activeConversationId ?? null
       : result.activeConversationId ?? null;
+    this.clearConversationActivity(target.conversationId);
     if (isCurrentSave && activeConversationId) this.setFocusedConversation(activeConversationId);
     const conversation = conversations.find((item) => item.id === activeConversationId) ?? null;
     const history = isCurrentSave && this.options.agent.getHistory
@@ -1706,6 +1722,7 @@ export class Session {
     conversationId: string | null,
   ): void {
     const emit = this.createEmitter(conversationId);
+    this.setConversationActivity(conversationId, 'running');
     void (async () => {
       try {
         const knowledge = this.options.knowledge;
@@ -1881,13 +1898,20 @@ export class Session {
 
     // 后台会话不抢玩家的确认页/提问面板/界面；等玩家切到该会话再发。
     // limited 下 risk 1 会被 mod 自动放行，不需要 focus；risk 2 仍要等。
-    const needsFocus =
-      isAsk ||
-      FOREGROUND_ONLY_TOOLS.has(name) ||
-      (risk > 0 && !autoApprovesWrite(permission, risk));
+    const needsAttention =
+      isAsk || (risk > 0 && !autoApprovesWrite(permission, risk));
+    const needsFocus = needsAttention || FOREGROUND_ONLY_TOOLS.has(name);
     if (conversationId && needsFocus && !this.isFocused(conversationId)) {
+      if (needsAttention) {
+        this.setConversationActivity(conversationId, 'attention', isAsk ? 'ask' : 'confirm');
+      }
       const focused = await this.waitForFocus(conversationId, options.signal);
       if (!focused) {
+        // 回合本身可能还在跑（例如玩家一直不切过来），不要把图标误清成 completed。
+        this.setConversationActivity(
+          conversationId,
+          options.signal?.aborted ? 'idle' : 'running',
+        );
         return toolFailure(
           options.signal?.aborted ? 'cancelled' : 'not_focused',
           options.signal?.aborted
@@ -1895,6 +1919,7 @@ export class Session {
             : `会话 ${conversationId} 不在前台，玩家切换后再重试`,
         );
       }
+      this.setConversationActivity(conversationId, 'running');
     }
 
     let token: string | undefined = options.confirmToken;
@@ -1995,8 +2020,13 @@ export class Session {
   private async confirmScript(request: ScriptConfirmRequest): Promise<ScriptConfirmResult | null> {
     const conversationId = request.conversationId ?? null;
     if (conversationId && !this.isFocused(conversationId)) {
+      this.setConversationActivity(conversationId, 'attention', 'confirm');
       const focused = await this.waitForFocus(conversationId);
-      if (!focused) return null;
+      if (!focused) {
+        this.setConversationActivity(conversationId, 'running');
+        return null;
+      }
+      this.setConversationActivity(conversationId, 'running');
     }
     const writeNames = request.writeNames.slice(0, 12);
     const more = request.writeNames.length > writeNames.length ? '…' : '';
@@ -2028,8 +2058,13 @@ export class Session {
   private async confirmLocalWrite(request: LocalWriteConfirmRequest): Promise<boolean> {
     const conversationId = request.conversationId ?? null;
     if (conversationId && !this.isFocused(conversationId)) {
+      this.setConversationActivity(conversationId, 'attention', 'confirm');
       const focused = await this.waitForFocus(conversationId);
-      if (!focused) return false;
+      if (!focused) {
+        this.setConversationActivity(conversationId, 'running');
+        return false;
+      }
+      this.setConversationActivity(conversationId, 'running');
     }
     const approved = await this.requestConfirmation(
       `local_${request.tool}`,
@@ -2257,6 +2292,10 @@ export class Session {
 
       status(state, detail) {
         if (!focused()) return;
+        if (conversationId) {
+          if (state === 'idle') session.setConversationActivity(conversationId, 'idle');
+          else session.setConversationActivity(conversationId, 'running');
+        }
         session.sendEnvelope(
           buildEnvelope({
             type: MessageType.Status,
@@ -2277,6 +2316,11 @@ export class Session {
       },
 
       message(text, replyTo, final = true, options = {}) {
+        if (final && conversationId) {
+          if (options.interrupted) session.setConversationActivity(conversationId, 'idle');
+          else if (focused()) session.setConversationActivity(conversationId, 'idle');
+          else session.setConversationActivity(conversationId, 'completed');
+        }
         if (!focused()) return;
         session.sendEnvelope(
           buildEnvelope({
@@ -2294,6 +2338,7 @@ export class Session {
       },
 
       error(code, message, replyTo) {
+        if (conversationId) session.setConversationActivity(conversationId, 'idle');
         if (!focused()) return;
         session.sendError(code, message, replyTo);
       },
@@ -2381,6 +2426,40 @@ export class Session {
         );
       },
     };
+  }
+
+  /**
+   * 更新并广播会话状态图标。同一状态不重复发；idle 只清已有状态。
+   * 这是 UI 旁路，不受焦点过滤影响。
+   */
+  private setConversationActivity(
+    conversationId: string | null | undefined,
+    state: ConversationActivityState,
+    reason?: 'confirm' | 'ask',
+  ): void {
+    if (!conversationId) return;
+    const previous = this.conversationActivity.get(conversationId);
+    if (state === 'idle') {
+      if (previous === undefined) return;
+      this.conversationActivity.delete(conversationId);
+    } else {
+      if (previous === state) return;
+      this.conversationActivity.set(conversationId, state);
+    }
+    this.sendEnvelope(
+      buildEnvelope({
+        type: MessageType.ConversationActivity,
+        payload: buildConversationActivityPayload({
+          conversationId,
+          state,
+          ...(reason ? { reason } : {}),
+        }),
+      }),
+    );
+  }
+
+  private clearConversationActivity(conversationId: string | null | undefined): void {
+    if (conversationId) this.conversationActivity.delete(conversationId);
   }
 
   // ---------------------------------------------------------------- 出帧

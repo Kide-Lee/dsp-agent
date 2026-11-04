@@ -238,6 +238,15 @@ namespace IcarusII.UI
             public int EstimatedTokensAfter;
         }
 
+        /// <summary>会话列表图标；Normal 显示展开/收起 chevron。</summary>
+        private enum ConversationStatus
+        {
+            Normal,
+            Running,
+            Attention,
+            Completed,
+        }
+
         /// <summary>A.13：左侧索引里的一个会话分组。</summary>
         private sealed class ConversationView
         {
@@ -248,8 +257,12 @@ namespace IcarusII.UI
             public RectTransform Records;
             public Text Title;
             public Color TitleColor;
-            public Image Chevron;
-            public ChevronSpin ChevronSpin;
+            public Image StatusChevron;
+            public Image StatusWarning;
+            public Image StatusLoading;
+            public Image StatusNew;
+            public ChevronSpin StatusChevronSpin;
+            public LoadingSpin StatusLoadingSpin;
             public ConversationDeleteHover DeleteHover;
             public GameObject ExpandMore;
             public Text ExpandMoreText;
@@ -631,7 +644,10 @@ namespace IcarusII.UI
             new Dictionary<string, bool>(StringComparer.Ordinal);
         private readonly Dictionary<string, int> _conversationVisible =
             new Dictionary<string, int>(StringComparer.Ordinal);
+        private readonly Dictionary<string, ConversationStatus> _conversationStatus =
+            new Dictionary<string, ConversationStatus>(StringComparer.Ordinal);
         private string _activeConversationId;
+        private int _suppressHeaderClickFrame = -1;
         private string _pendingFocusConversationId;
         private string _pendingFocusText;
         private long _pendingFocusTimestamp;
@@ -5033,6 +5049,7 @@ namespace IcarusII.UI
             _activeConversationId = activeId;
             if (string.IsNullOrEmpty(_activeConversationId) && _conversations.Count > 0)
                 _activeConversationId = _conversations[0].Id;
+            MarkConversationSeen(_activeConversationId);
             RebuildConversationIndex();
         }
 
@@ -5051,7 +5068,11 @@ namespace IcarusII.UI
             }
             if (index >= 0) _conversations[index] = conversation;
             else _conversations.Insert(0, conversation);
-            if (makeActive) _activeConversationId = conversation.Id;
+            if (makeActive)
+            {
+                _activeConversationId = conversation.Id;
+                MarkConversationSeen(_activeConversationId);
+            }
             RebuildConversationIndex();
         }
 
@@ -5067,6 +5088,7 @@ namespace IcarusII.UI
             if (removed == 0) return;
             _conversationExpanded.Remove(conversationId);
             _conversationVisible.Remove(conversationId);
+            _conversationStatus.Remove(conversationId);
             RebuildConversationIndex();
         }
 
@@ -5095,7 +5117,19 @@ namespace IcarusII.UI
         public void SetActiveConversation(string conversationId)
         {
             _activeConversationId = conversationId;
+            MarkConversationSeen(conversationId);
             RebuildConversationIndex();
+        }
+
+        /// <summary>切到该会话即视为已读：清掉 completed/new，warning 保留到操作解决。</summary>
+        private void MarkConversationSeen(string conversationId)
+        {
+            if (!string.IsNullOrEmpty(conversationId) &&
+                _conversationStatus.TryGetValue(conversationId, out var status) &&
+                status == ConversationStatus.Completed)
+            {
+                _conversationStatus.Remove(conversationId);
+            }
         }
 
         /// <summary>回放结束后把 TurnEntry 和左侧记录行重新挂上，并处理待定位的记录。</summary>
@@ -5137,6 +5171,7 @@ namespace IcarusII.UI
             _activeConversationId = null;
             _pendingScrollBottomConversationId = null;
             _conversationViews.Clear();
+            _conversationStatus.Clear();
             ClearConversationGroups();
             RefreshIndexEmpty();
             RefreshConversationTitle();
@@ -5212,6 +5247,10 @@ namespace IcarusII.UI
                 return;
             }
 
+            // 新 prefab 是 header/status/{chevron,warning,loading,new}；
+            // 旧 prefab 只有 header/chevron/icon，保留兼容到 UI bundle 重打完成。
+            var status = header.Find("status") as RectTransform;
+            if (status == null) status = header.Find("chevron") as RectTransform;
             var view = new ConversationView
             {
                 Id = info.Id,
@@ -5220,9 +5259,13 @@ namespace IcarusII.UI
                 Header = header,
                 Records = records,
                 Title = header.Find("title-mask/title")?.GetComponent<Text>(),
-                Chevron = header.Find("chevron/icon")?.GetComponent<Image>(),
+                StatusChevron = status?.Find("chevron")?.GetComponent<Image>()
+                    ?? status?.Find("icon")?.GetComponent<Image>(),
+                StatusWarning = status?.Find("warning")?.GetComponent<Image>(),
+                StatusLoading = status?.Find("loading")?.GetComponent<Image>(),
+                StatusNew = status?.Find("new")?.GetComponent<Image>(),
             };
-            // 展开状态只由标题左侧的 chevron 改变；首次出现时只有当前会话默认展开，
+            // 展开状态只由标题左侧的状态图标改变；首次出现时只有当前会话默认展开，
             // 并把这次默认写进状态，之后切走再切回不会被重新展开。
             if (!_conversationExpanded.TryGetValue(info.Id, out var expanded))
             {
@@ -5248,11 +5291,31 @@ namespace IcarusII.UI
                 headerButton.onClick.RemoveAllListeners();
                 headerButton.onClick.AddListener(() => OnConversationHeaderClicked(info.Id));
             }
-            var chevronButton = header.Find("chevron")?.GetComponent<Button>();
-            if (chevronButton != null)
+            // 状态图标无论显示 loading/warning/new/chevron，点击都只展开/收起记录；
+            // 切换会话仍然点标题。新 prefab 的 status 自带 Button；旧 prefab 的 chevron 也有。
+            var statusButton = status?.GetComponent<Button>();
+            if (statusButton == null && status != null)
             {
-                chevronButton.onClick.RemoveAllListeners();
-                chevronButton.onClick.AddListener(() => ToggleConversation(info.Id));
+                var hit = status.GetComponent<Image>();
+                if (hit == null)
+                {
+                    hit = status.gameObject.AddComponent<Image>();
+                    hit.color = Color.clear;
+                }
+                hit.raycastTarget = true;
+                statusButton = status.gameObject.AddComponent<Button>();
+                statusButton.transition = Selectable.Transition.None;
+                statusButton.targetGraphic = hit;
+            }
+            if (statusButton != null)
+            {
+                statusButton.onClick.RemoveAllListeners();
+                statusButton.onClick.AddListener(() =>
+                {
+                    // 状态按钮嵌在可切换会话的 header 里；记录本帧，防止事件冒泡把“展开”变成“切换”。
+                    _suppressHeaderClickFrame = Time.frameCount;
+                    ToggleConversation(info.Id);
+                });
             }
 
             var delete = header.Find("delete");
@@ -5286,14 +5349,85 @@ namespace IcarusII.UI
                     string.IsNullOrEmpty(view.Info.Title) ? Strings.Get("chat.conversation.new") : view.Info.Title);
                 view.Title.color = titleColor;
             }
-            if (view.Chevron != null)
-            {
-                view.ChevronSpin ??= view.Chevron.gameObject.AddComponent<ChevronSpin>();
-                view.ChevronSpin.SetAngle(view.Expanded ? -90f : 0f, true);
-                view.Chevron.color = view.Id == _activeConversationId ? _accent : Color.white;
-            }
+            ApplyConversationStatus(view);
             if (view.DeleteHover != null) view.DeleteHover.SetNormal(titleColor);
             if (view.Records != null) view.Records.gameObject.SetActive(view.Expanded);
+        }
+
+        /// <summary>外部状态帧：running=loading，attention=warning，completed=new，idle=chevron。</summary>
+        public void SetConversationActivity(string conversationId, string state, string reason = null)
+        {
+            if (string.IsNullOrEmpty(conversationId) || string.IsNullOrEmpty(state)) return;
+            switch (state)
+            {
+                case "idle":
+                    _conversationStatus.Remove(conversationId);
+                    break;
+                case "running":
+                    _conversationStatus[conversationId] = ConversationStatus.Running;
+                    break;
+                case "attention":
+                    _conversationStatus[conversationId] = ConversationStatus.Attention;
+                    break;
+                case "completed":
+                    // 焦点会话的完成由 sidecar 发 idle；这里再兜一层，避免当前会话被标成“未读”。
+                    if (conversationId == _activeConversationId)
+                        _conversationStatus.Remove(conversationId);
+                    else
+                        _conversationStatus[conversationId] = ConversationStatus.Completed;
+                    break;
+                default:
+                    // 未知状态留空，方便以后增加图标时旧 mod 不误显示。
+                    return;
+            }
+            var view = FindConversationView(conversationId);
+            if (view != null) UpdateConversationHeader(view);
+        }
+
+        private ConversationStatus StatusOf(string conversationId)
+        {
+            if (string.IsNullOrEmpty(conversationId))
+                return ConversationStatus.Normal;
+            if (conversationId == _activeConversationId &&
+                _conversationStatus.TryGetValue(conversationId, out var activeStatus) &&
+                activeStatus == ConversationStatus.Completed)
+            {
+                _conversationStatus.Remove(conversationId);
+                return ConversationStatus.Normal;
+            }
+            return _conversationStatus.TryGetValue(conversationId, out var status)
+                ? status
+                : ConversationStatus.Normal;
+        }
+
+        private void ApplyConversationStatus(ConversationView view)
+        {
+            if (view == null) return;
+            var status = StatusOf(view.Id);
+            SetStatusIconActive(view.StatusChevron, status == ConversationStatus.Normal);
+            SetStatusIconActive(view.StatusWarning, status == ConversationStatus.Attention);
+            SetStatusIconActive(view.StatusLoading, status == ConversationStatus.Running);
+            SetStatusIconActive(view.StatusNew, status == ConversationStatus.Completed);
+
+            if (view.StatusChevron != null) view.StatusChevron.color = status == ConversationStatus.Normal &&
+                view.Id == _activeConversationId ? _accent : Color.white;
+
+            if (status == ConversationStatus.Normal && view.StatusChevron != null)
+            {
+                view.StatusChevronSpin ??= view.StatusChevron.gameObject.AddComponent<ChevronSpin>();
+                view.StatusChevronSpin.SetAngle(view.Expanded ? -90f : 0f, true);
+            }
+            if (view.StatusLoading != null)
+            {
+                view.StatusLoadingSpin ??= view.StatusLoading.gameObject.AddComponent<LoadingSpin>();
+                view.StatusLoadingSpin.SetSpinning(status == ConversationStatus.Running);
+            }
+        }
+
+        private static void SetStatusIconActive(Image icon, bool active)
+        {
+            if (icon != null && icon.gameObject.activeSelf != active)
+                icon.gameObject.SetActive(active);
         }
 
         private void BuildConversationRecords(ConversationView view)
@@ -5365,9 +5499,10 @@ namespace IcarusII.UI
             view.Records.gameObject.SetActive(view.Expanded);
         }
 
-        /// <summary>点会话标题：只切换/滚到该会话，不改变展开状态；展开/收起由标题左侧的 chevron 负责。</summary>
+        /// <summary>点会话标题：只切换/滚到该会话，不改变展开状态；展开/收起由标题左侧的状态图标负责。</summary>
         private void OnConversationHeaderClicked(string conversationId)
         {
+            if (_suppressHeaderClickFrame == Time.frameCount) return;
             var view = FindConversationView(conversationId);
             if (view == null) return;
 
@@ -5388,7 +5523,7 @@ namespace IcarusII.UI
                 return;
             }
 
-            // 已经是当前会话：和 chevron 一样展开/收起。
+            // 已经是当前会话：和左侧状态图标一样展开/收起。
             ToggleConversation(conversationId);
         }
 

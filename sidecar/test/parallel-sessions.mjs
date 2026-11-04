@@ -36,13 +36,15 @@ class FakeSocket {
   close() { this.isOpen = false; }
 }
 
-const config = {
-  view: () => ({
-    state: 'ready', provider: 'test', model: 'test',
-    permissionLevel: 'takeover', message: null,
-  }),
-  update: () => config.view(),
-};
+function makeConfig(permission) {
+  return {
+    view: () => ({
+      state: 'ready', provider: 'test', model: 'test',
+      permissionLevel: permission, message: null,
+    }),
+    update() { return this.view(); },
+  };
+}
 
 function conversation(id) {
   return {
@@ -69,6 +71,13 @@ function makeAgent() {
     pending.set(conversationId, entry);
     emit.status('thinking', 'test');
     emit.stream('text', entry.partial, promptId);
+    if (text.startsWith('tool:')) {
+      entry.toolResult = await emit.callTool(
+        'game_set_research',
+        { techId: 1 },
+        { timeoutMs: 5000, risk: 2 },
+      );
+    }
     await new Promise((resolve) => { entry.resolve = resolve; });
     if (entry.aborted) {
       emit.message('已中断', promptId, true, { interrupted: true });
@@ -144,13 +153,13 @@ function makeAgent() {
   };
 }
 
-async function newSession(agent) {
+async function newSession(agent, permission = 'takeover') {
   const socket = new FakeSocket();
   const session = new Session(socket, {
     token: 'test-token',
     serverVersion: 'test',
     agent,
-    config,
+    config: makeConfig(permission),
     tools: () => [],
     createSessionId: () => 'sess-parallel',
   });
@@ -198,6 +207,12 @@ console.log('── 1. 两个会话同时跑 ──');
     f.type === 'stream' && f.payload?.conversationId === 'conv-a')));
   check('B 的流式帧被焦点过滤', !socket.frames.some((f) =>
     f.type === 'stream' && f.payload?.conversationId === 'conv-b'));
+  check('A 运行中显示 loading', socket.frames.some((f) =>
+    f.type === 'conversation.activity' && f.payload?.conversationId === 'conv-a' &&
+    f.payload?.state === 'running'));
+  check('B 运行中显示 loading', socket.frames.some((f) =>
+    f.type === 'conversation.activity' && f.payload?.conversationId === 'conv-b' &&
+    f.payload?.state === 'running'));
 
   send(session, 'prompt', { text: '丙', conversationId: 'conv-a' }, 'p-a2');
   await delay(30);
@@ -206,6 +221,9 @@ console.log('── 1. 两个会话同时跑 ──');
   agent.resolve('conv-a');
   check('A 完成后焦点收到终稿', await waitFor(() => socket.frames.some((f) =>
     f.type === 'message' && f.payload?.conversationId === 'conv-a' && f.payload?.final === true)));
+  check('焦点 A 完成后恢复 chevron', socket.frames.some((f) =>
+    f.type === 'conversation.activity' && f.payload?.conversationId === 'conv-a' &&
+    f.payload?.state === 'idle'));
   check('B 在 A 完成后仍在跑', agent.isRunning('conv-b'));
 
   send(session, 'conversation.switch', { conversationId: 'conv-b' }, 'sw-b');
@@ -242,6 +260,9 @@ console.log('\n── 2. 后台完成不污染焦点 ──');
   await delay(40);
   check('后台 A 的终稿没有发到焦点 B', !socket.frames.some((f) =>
     f.type === 'message' && f.payload?.conversationId === 'conv-a'));
+  check('后台 A 完成显示 new', socket.frames.some((f) =>
+    f.type === 'conversation.activity' && f.payload?.conversationId === 'conv-a' &&
+    f.payload?.state === 'completed'));
   check('后台 A 的 idle 没有清掉 B 的按钮', !socket.frames.some((f) =>
     f.type === 'status' && f.payload?.conversationId === 'conv-a' && f.payload?.state === 'idle'));
 
@@ -255,6 +276,9 @@ console.log('\n── 2. 后台完成不污染焦点 ──');
     return socket.frames.filter((f) => f.type === 'conversation.switched').at(-1);
   })();
   check('切回已完成的 A 显示 idle', switched?.payload?.running === false && switched?.payload?.state === 'idle');
+  check('切回后清除 new', socket.frames.some((f) =>
+    f.type === 'conversation.activity' && f.payload?.conversationId === 'conv-a' &&
+    f.payload?.state === 'idle'));
 }
 
 console.log('\n── 3. abort 只影响目标会话 ──');
@@ -275,6 +299,59 @@ console.log('\n── 3. abort 只影响目标会话 ──');
     f.type === 'message' && f.payload?.conversationId === 'conv-a')));
   check('B 的中断终稿在切回前被过滤', !socket.frames.some((f) =>
     f.type === 'message' && f.payload?.conversationId === 'conv-b'));
+}
+
+console.log('\n── 4. 后台等待授权显示 warning，不强制切会话 ──');
+{
+  const agent = makeAgent();
+  const { socket, session } = await newSession(agent, 'limited');
+  const switches = [];
+  const originalSend = socket.send.bind(socket);
+  socket.send = (text, cb) => {
+    try {
+      const frame = JSON.parse(text);
+      if (frame.type === 'conversation.switched') switches.push(frame);
+    } catch { /* ignore */ }
+    originalSend(text, cb);
+  };
+
+  // 先切到 B，再让 A 在后台发起一个需要确认的写工具；不能从焦点 A 直接发。
+  send(session, 'conversation.switch', { conversationId: 'conv-b' }, 'sw-b');
+  await waitFor(() => socket.frames.some((f) => f.type === 'conversation.switched'));
+  socket.frames.length = 0;
+  send(session, 'prompt', { text: 'tool:甲', conversationId: 'conv-a' }, 'p-tool');
+  await waitFor(() => socket.frames.some((f) =>
+    f.type === 'conversation.activity' && f.payload?.conversationId === 'conv-a' &&
+    f.payload?.state === 'attention'));
+  check('后台会话等待授权显示 warning', socket.frames.some((f) =>
+    f.type === 'conversation.activity' && f.payload?.conversationId === 'conv-a' &&
+    f.payload?.state === 'attention' && f.payload?.reason === 'confirm'));
+  check('未强制切回会话 A', switches.every((f) => f.payload?.conversationId === 'conv-b'),
+    JSON.stringify(switches.map((f) => f.payload?.conversationId)));
+  check('切到 A 之前不发确认页', !socket.frames.some((f) => f.type === 'confirm_request'));
+
+  send(session, 'conversation.switch', { conversationId: 'conv-a' }, 'sw-a');
+  await waitFor(() => socket.frames.some((f) => f.type === 'confirm_request'));
+  const confirm = socket.frames.find((f) => f.type === 'confirm_request');
+  check('切到 A 后才发确认页', confirm?.payload?.conversationId === 'conv-a');
+
+  send(session, 'confirm_result', {
+    requestId: confirm.payload.requestId,
+    decision: 'allow',
+    token: confirm.payload.token,
+  }, 'cr-1');
+  await waitFor(() => socket.frames.some((f) => f.type === 'tool_call'));
+  const call = socket.frames.find((f) => f.type === 'tool_call');
+  check('确认后执行目标会话工具', call?.payload?.conversationId === 'conv-a', JSON.stringify(call?.payload));
+  send(session, 'tool_result', {
+    callId: call.payload.callId,
+    ok: true,
+    data: {},
+    error: null,
+    meta: { gameTick: 1, saveKey: 'saveA', tickAtStart: 1, tickAtEnd: 1 },
+  }, 'tr-1');
+  check('授权完成后恢复运行态', await waitFor(() =>
+    agent.started.filter((id) => id === 'conv-a').length === 1));
 }
 
 console.log(`\n${failed === 0 ? '✅' : '❌'} parallel-sessions 测试${failed === 0 ? '全部通过' : '失败'}（${passed} 项，失败 ${failed}）`);

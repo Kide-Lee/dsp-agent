@@ -885,6 +885,17 @@ namespace IcarusII.Tests
                 "\"history\":[]}"));
             Eq("conversation.switched discardedConversationId", "conv-9a", switchedWithDrop.DiscardedConversationId);
 
+            Eq("conversation.activity 类型名", "conversation.activity", Protocol.ConversationActivity);
+            var activity = ConversationActivityInfo.Parse(JsonValue.Parse(
+                "{\"conversationId\":\"conv-a\",\"state\":\"attention\",\"reason\":\"confirm\"}"));
+            Eq("conversation.activity id", "conv-a", activity?.ConversationId);
+            Eq("conversation.activity state", "attention", activity?.State);
+            Eq("conversation.activity reason", "confirm", activity?.Reason);
+            Check("conversation.activity 缺 id 拒绝",
+                ConversationActivityInfo.Parse(JsonValue.Parse("{\"state\":\"running\"}")) == null);
+            Check("conversation.activity 缺 state 拒绝",
+                ConversationActivityInfo.Parse(JsonValue.Parse("{\"conversationId\":\"conv-a\"}")) == null);
+
             var updated = ConversationEventInfo.Parse(JsonValue.Parse(
                 "{\"saveKey\":\"3f2a\",\"conversationId\":\"conv-a\",\"title\":\"量子芯片产线规划\"}"));
             Eq("conversation.updated id", "conv-a", updated.ConversationId);
