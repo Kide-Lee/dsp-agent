@@ -1,6 +1,6 @@
 {
   "name": "IcarusII",
-  "version_number": "1.1.295",
+  "version_number": "1.1.298",
   "website_url": "",
   "description": "游戏内 AI 助手：按 R 打开终端，可问机制、产线、存档状态，并在你确认后执行游戏内操作。需自备 DeepSeek 或任意 OpenAI 兼容 API Key。",
   "dependencies": [
