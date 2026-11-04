@@ -709,8 +709,9 @@ namespace IcarusII
 
                 case Protocol.Message:
                 {
-                    if (!IsFocusedPayload(payload)) break;
                     if (!payload["final"].AsBool()) break;
+                    var focused = IsFocusedPayload(payload);
+                    var conversationId = payload["conversationId"].AsString(null);
 
                     // 协议规定一轮 prompt 只有一个 final 终稿。若服务端因缺陷发了
                     // 第二个，这里必须忽略——否则会走下面的"非流式追加"分支，
@@ -734,12 +735,33 @@ namespace IcarusII
                     // 不当错误、不回存游戏时间。
                     if (payload["interrupted"].AsBool(false))
                     {
-                        _chat.EndInterrupted();
-                        _streaming = false;
+                        if (focused)
+                        {
+                            _chat.EndInterrupted();
+                            _streaming = false;
+                            _agentRunning = false;
+                            _chat.SetBusy(false);
+                            _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+                        }
                         if (!string.IsNullOrEmpty(replyTo)) _promptById.Remove(replyTo);
-                        _agentRunning = false;
-                        _chat.SetBusy(false);
-                        _chat.SetStatus(Strings.Get("status.ready"), OkColor);
+                        break;
+                    }
+
+                    // 后台终稿只用于回存游戏时间，不渲染、不改焦点会话的按钮/状态。
+                    if (!focused)
+                    {
+                        string backgroundPrompt = null;
+                        if (!string.IsNullOrEmpty(replyTo))
+                            _promptById.TryGetValue(replyTo, out backgroundPrompt);
+                        if (!string.IsNullOrEmpty(backgroundPrompt))
+                        {
+                            _client?.SendReplyTime(
+                                backgroundPrompt,
+                                finalText,
+                                ChatWindow.CurrentGameClock(),
+                                conversationId ?? _chat.ActiveConversationId);
+                            _promptById.Remove(replyTo);
+                        }
                         break;
                     }
 
@@ -769,7 +791,7 @@ namespace IcarusII
                             prompt,
                             finalText,
                             ChatWindow.CurrentGameClock(),
-                            _chat.ActiveConversationId);
+                            conversationId ?? _chat.ActiveConversationId);
                         _promptById.Remove(replyTo);
                     }
 

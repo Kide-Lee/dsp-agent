@@ -2332,7 +2332,9 @@ export class Session {
           else if (focused()) session.setConversationActivity(conversationId, 'idle');
           else session.setConversationActivity(conversationId, 'completed');
         }
-        if (!focused()) return;
+        // 终稿即使属于后台会话也要送到 mod：mod 不显示它，但要取游戏时间回存
+        // reply.time，否则切回去的历史脚注会缺时间。非终稿仍然只发焦点会话。
+        if (!focused() && !final) return;
         session.sendEnvelope(
           buildEnvelope({
             type: MessageType.Message,

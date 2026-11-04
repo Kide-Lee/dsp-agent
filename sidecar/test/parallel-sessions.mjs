@@ -258,8 +258,8 @@ console.log('\n── 2. 后台完成不污染焦点 ──');
 
   agent.resolve('conv-a');
   await delay(40);
-  check('后台 A 的终稿没有发到焦点 B', !socket.frames.some((f) =>
-    f.type === 'message' && f.payload?.conversationId === 'conv-a'));
+  check('后台 A 的终稿带 conversationId 送达 mod', socket.frames.some((f) =>
+    f.type === 'message' && f.payload?.conversationId === 'conv-a' && f.payload?.final === true));
   check('后台 A 完成显示 new', socket.frames.some((f) =>
     f.type === 'conversation.activity' && f.payload?.conversationId === 'conv-a' &&
     f.payload?.state === 'completed'));
@@ -297,8 +297,9 @@ console.log('\n── 3. abort 只影响目标会话 ──');
   agent.resolve('conv-a');
   check('A 的终稿仍能送到焦点', await waitFor(() => socket.frames.some((f) =>
     f.type === 'message' && f.payload?.conversationId === 'conv-a')));
-  check('B 的中断终稿在切回前被过滤', !socket.frames.some((f) =>
-    f.type === 'message' && f.payload?.conversationId === 'conv-b'));
+  check('B 的中断终稿带 id 送达 mod（由 mod 静默处理）', socket.frames.some((f) =>
+    f.type === 'message' && f.payload?.conversationId === 'conv-b' &&
+    f.payload?.interrupted === true));
 }
 
 console.log('\n── 4. 后台等待授权显示 warning，不强制切会话 ──');
