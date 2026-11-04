@@ -151,8 +151,8 @@ QQ 群 **1091497260**（伊卡洛斯二号研发中心）。
 ## 文件校验（1.1.298）
 
 ```
-icarus-ii-sidecar.exe   SHA256 fa0cde41d43f0bab244aaa68877b4e8e92fa0b7825c80e7143aaad9c10e55670
-IcarusII.dll            SHA256 cd0a0870c04a39262dc57a94b2c8cbd864fcc39a955a8ad28ec901a88e54828f
+icarus-ii-sidecar.exe   SHA256 edafae1935043588b390b2deeb681aa56617e38a601cd6952810d1f5ca4202a5
+IcarusII.dll            SHA256 16b774e178cd60e902230da542331b4124cadfdde1d41a690bcbdfcb1be0e1fd
 ```
 
 ---
