@@ -1901,10 +1901,11 @@ export class Session {
     const needsAttention =
       isAsk || (risk > 0 && !autoApprovesWrite(permission, risk));
     const needsFocus = needsAttention || FOREGROUND_ONLY_TOOLS.has(name);
+    if (conversationId && needsAttention) {
+      // 确认页/提问面板展示期间保持 warning；玩家作答后再回到 loading。
+      this.setConversationActivity(conversationId, 'attention', isAsk ? 'ask' : 'confirm');
+    }
     if (conversationId && needsFocus && !this.isFocused(conversationId)) {
-      if (needsAttention) {
-        this.setConversationActivity(conversationId, 'attention', isAsk ? 'ask' : 'confirm');
-      }
       const focused = await this.waitForFocus(conversationId, options.signal);
       if (!focused) {
         // 回合本身可能还在跑（例如玩家一直不切过来），不要把图标误清成 completed。
@@ -1919,7 +1920,6 @@ export class Session {
             : `会话 ${conversationId} 不在前台，玩家切换后再重试`,
         );
       }
-      this.setConversationActivity(conversationId, 'running');
     }
 
     let token: string | undefined = options.confirmToken;
@@ -1934,6 +1934,9 @@ export class Session {
         undefined,
         conversationId,
       );
+      if (conversationId && needsAttention) {
+        this.setConversationActivity(conversationId, 'running');
+      }
       if (!approved) {
         return toolFailure('confirmation_denied', '玩家拒绝了这次写操作，未执行');
       }
@@ -1963,7 +1966,7 @@ export class Session {
       }
     }
 
-    return new Promise<ToolResultPayload>((resolve) => {
+    const result = await new Promise<ToolResultPayload>((resolve) => {
       let cleanup = (): void => {};
 
       const timer = setTimeout(() => {
@@ -2011,6 +2014,10 @@ export class Session {
         },
       );
     });
+    if (conversationId && needsAttention) {
+      this.setConversationActivity(conversationId, 'running');
+    }
+    return result;
   }
 
   /**
@@ -2019,14 +2026,15 @@ export class Session {
    */
   private async confirmScript(request: ScriptConfirmRequest): Promise<ScriptConfirmResult | null> {
     const conversationId = request.conversationId ?? null;
-    if (conversationId && !this.isFocused(conversationId)) {
+    if (conversationId) {
       this.setConversationActivity(conversationId, 'attention', 'confirm');
-      const focused = await this.waitForFocus(conversationId);
-      if (!focused) {
-        this.setConversationActivity(conversationId, 'running');
-        return null;
+      if (!this.isFocused(conversationId)) {
+        const focused = await this.waitForFocus(conversationId);
+        if (!focused) {
+          this.setConversationActivity(conversationId, 'running');
+          return null;
+        }
       }
-      this.setConversationActivity(conversationId, 'running');
     }
     const writeNames = request.writeNames.slice(0, 12);
     const more = request.writeNames.length > writeNames.length ? '…' : '';
@@ -2047,6 +2055,7 @@ export class Session {
       },
       conversationId,
     );
+    if (conversationId) this.setConversationActivity(conversationId, 'running');
     if (!approved) return null;
     return { token: approved.token, scriptHash: request.scriptHash };
   }
@@ -2057,14 +2066,15 @@ export class Session {
    */
   private async confirmLocalWrite(request: LocalWriteConfirmRequest): Promise<boolean> {
     const conversationId = request.conversationId ?? null;
-    if (conversationId && !this.isFocused(conversationId)) {
+    if (conversationId) {
       this.setConversationActivity(conversationId, 'attention', 'confirm');
-      const focused = await this.waitForFocus(conversationId);
-      if (!focused) {
-        this.setConversationActivity(conversationId, 'running');
-        return false;
+      if (!this.isFocused(conversationId)) {
+        const focused = await this.waitForFocus(conversationId);
+        if (!focused) {
+          this.setConversationActivity(conversationId, 'running');
+          return false;
+        }
       }
-      this.setConversationActivity(conversationId, 'running');
     }
     const approved = await this.requestConfirmation(
       `local_${request.tool}`,
@@ -2075,6 +2085,7 @@ export class Session {
       { title: request.title, body: request.body },
       conversationId,
     );
+    if (conversationId) this.setConversationActivity(conversationId, 'running');
     return approved != null;
   }
 
