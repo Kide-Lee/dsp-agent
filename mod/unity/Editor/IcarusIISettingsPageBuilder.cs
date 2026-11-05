@@ -962,7 +962,6 @@ namespace IcarusII.EditorTools
             le.flexibleWidth = 0f;
 
             AddImage(rt, InputBg);
-            IcarusIIMaskUtil.EnsureStencilMask(rt);
 
             var field = rt.gameObject.AddComponent<InputField>();
             field.lineType = InputField.LineType.SingleLine;
