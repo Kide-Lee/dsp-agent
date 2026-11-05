@@ -226,7 +226,6 @@ namespace IcarusII.EditorTools
             var viewport = Node("viewport", body);
             Stretch(viewport);
             AddImage(viewport, Transparent);
-            IcarusIIMaskUtil.EnsureStencilMask(viewport);
 
             var content = Node("content", viewport);
             content.anchorMin = new Vector2(0f, 1f);
@@ -994,7 +993,6 @@ namespace IcarusII.EditorTools
             var viewport = Node("viewport", list);
             Stretch(viewport);
             AddImage(viewport, Transparent);
-            IcarusIIMaskUtil.EnsureStencilMask(viewport);
 
             var content = Node("content", viewport);
             content.anchorMin = new Vector2(0f, 1f);
