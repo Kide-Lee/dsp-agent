@@ -280,8 +280,33 @@ namespace IcarusII.EditorTools
             var size = new FileInfo(path).Length;
             Debug.Log($"[IcarusII] AssetBundle 已生成：{path}（{size / 1024} KB, StandaloneWindows64）");
             Debug.Log($"[IcarusII] 包内 bundle：{string.Join(", ", manifest.GetAllAssetBundles())}");
+            ValidateMasks();
             SyncPrefabSnapshots();
             return true;
+        }
+
+        /// <summary>
+        /// 遮罩自检：隐藏绘制的遮罩图形如果又被 CanvasRenderer 剔掉，模板就不写，
+        /// 那一整片子节点在游戏里会直接消失（设置页整页空白、会话记录消失都踩过）。
+        /// </summary>
+        private static void ValidateMasks()
+        {
+            var broken = new System.Text.StringBuilder();
+            foreach (var prefab in new[]
+                     {
+                         "Assets/IcarusII/ChatWindow.prefab",
+                         "Assets/IcarusII/SettingsPage.prefab",
+                     })
+            {
+                var go = AssetDatabase.LoadAssetAtPath<GameObject>(prefab);
+                var problems = IcarusIIMaskUtil.FindBrokenMasks(go);
+                if (!string.IsNullOrEmpty(problems)) broken.Append(prefab).Append("：").Append(problems).Append('\n');
+            }
+
+            if (broken.Length > 0)
+                Debug.LogError("[IcarusII] 遮罩自检失败，这些遮罩的子节点会在游戏里消失：\n" + broken);
+            else
+                Debug.Log("[IcarusII] 遮罩自检通过");
         }
 
         /// <summary>

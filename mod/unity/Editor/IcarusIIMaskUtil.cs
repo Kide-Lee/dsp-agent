@@ -100,18 +100,80 @@ namespace IcarusII.EditorTools
             {
                 // 可见底图继续画；透明占位图/临时补的图关掉绘制，否则会盖一层白底。
                 mask.showMaskGraphic = !imageCreated && hadVisibleGraphic;
-                if (!mask.showMaskGraphic)
+            }
+
+            // 不管是这次设的还是之前设的：隐藏绘制的遮罩图形都不能被剔除。
+            // CanvasRenderer.cullTransparentMesh 会把全透明图形整个剔掉，模板不写，
+            // 子节点全部通不过 _Stencil 测试 —— 设置页整页空白、左栏记录消失都是这个。
+            if (!mask.showMaskGraphic)
+            {
+                if (image.color.a < 0.01f)
                 {
-                    // 全透明的遮罩图形会被 CanvasRenderer 剔除（cullTransparentMesh），
-                    // 模板不写，子节点就全部被裁没 —— 设置页整页空白就是这么来的。
-                    if (image.color.a < 0.01f)
-                        image.color = new Color(image.color.r, image.color.g, image.color.b, 1f);
-                    var canvasRenderer = node.GetComponent<CanvasRenderer>();
-                    if (canvasRenderer != null) canvasRenderer.cullTransparentMesh = false;
+                    image.color = new Color(image.color.r, image.color.g, image.color.b, 1f);
+                    changed = true;
+                }
+                var canvasRenderer = node.GetComponent<CanvasRenderer>();
+                if (canvasRenderer != null && canvasRenderer.cullTransparentMesh)
+                {
+                    canvasRenderer.cullTransparentMesh = false;
+                    changed = true;
                 }
             }
 
             return changed;
+        }
+
+        /// <summary>把整份 prefab 里所有现有 Mask 的遮罩图形修一遍（治光秃秃的存量 prefab）。返回改动数量。</summary>
+        public static int RepairAll(string prefabPath)
+        {
+            if (AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath) == null)
+            {
+                Debug.LogWarning("[IcarusII] 找不到 prefab，跳过遮罩修复：" + prefabPath);
+                return 0;
+            }
+
+            var root = PrefabUtility.LoadPrefabContents(prefabPath);
+            if (root == null) return 0;
+
+            try
+            {
+                var fixedCount = 0;
+                foreach (var mask in root.GetComponentsInChildren<Mask>(true))
+                {
+                    if (EnsureStencilMask(mask.transform as RectTransform)) fixedCount++;
+                }
+
+                if (fixedCount == 0)
+                {
+                    Debug.Log("[IcarusII] 遮罩图形都不需要修：" + prefabPath);
+                    return 0;
+                }
+
+                PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+                AssetDatabase.Refresh();
+                Debug.Log($"[IcarusII] 已修 {fixedCount} 个遮罩图形：{prefabPath}");
+                return fixedCount;
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+        }
+
+        /// <summary>列出会被剔除（模板不写）的遮罩，供构建后自检。返回空表示没有问题。</summary>
+        public static string FindBrokenMasks(GameObject root)
+        {
+            if (root == null) return string.Empty;
+            var sb = new System.Text.StringBuilder();
+            foreach (var mask in root.GetComponentsInChildren<Mask>(true))
+            {
+                var image = mask.GetComponent<Image>();
+                var canvasRenderer = mask.GetComponent<CanvasRenderer>();
+                if (image == null) { sb.Append(mask.name + "(无 Image) "); continue; }
+                if (!mask.showMaskGraphic && image.color.a < 0.01f && canvasRenderer != null && canvasRenderer.cullTransparentMesh)
+                    sb.Append(mask.name + "(透明且会被剔除) ");
+            }
+            return sb.ToString();
         }
     }
 }
