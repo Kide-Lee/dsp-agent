@@ -159,6 +159,12 @@ namespace IcarusII.EditorTools
                 return Fail("工具列表构建失败：" + PrefabPath);
             }
 
+            // 作答面板的返回按钮：91f5ea5 重建 prefab 时丢过，缺失时按 skip-button 复制回来。
+            if (!IcarusIIAskButtons.Ensure(PrefabPath))
+            {
+                return Fail("作答面板按钮补齐失败：" + PrefabPath);
+            }
+
             Directory.CreateDirectory(OutputDir);
 
             var build = new AssetBundleBuild
