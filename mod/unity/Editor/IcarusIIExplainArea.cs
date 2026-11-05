@@ -44,6 +44,8 @@ namespace IcarusII.EditorTools
         /// <summary>与 `question/text` 的左边缘对齐（标题左缩进 20）。</summary>
         private const float LeftInset = 20f;
         private const float RightInset = 8f;
+        /// <summary>首行字形会探出 Text 矩形顶边，遮罩贴着它就会切掉上半截；这里把遮罩往上让出余量。</summary>
+        private const float TopSlack = 4f;
         private const int TextFontSize = 14;
         private const string SampleText = "AI 发起的请求详情显示在这里。";
 
@@ -125,15 +127,24 @@ namespace IcarusII.EditorTools
             // 与 input/editor、output 同一套命名：说明区本身只是个容器，
             // 滚动结构放在 scroll-view 里；mod 按 `explain/scroll-view/viewport/content` 取文本。
             var scrollView = Node(ScrollNodeName, explain);
-            Stretch(scrollView);
+            // 遮罩放在 scroll-view 上，并让它比 explain 高一截（往标题方向多出 TopSlack）：
+            // 首行字形会探出 Text 矩形顶边 2px 左右，遮罩顶边和正文顶边齐平就会把字头切掉。
+            Place(scrollView, 0f, -TopSlack, 0f, 0f, new Vector2(0.5f, 0.5f));
 
-            // 不给背景色块：直接透出面板底。但必须保留一个全透明且收射线的 Image，
+            // 不给背景色块：直接透出面板底。但必须保留一个收射线的 Image，
             // ScrollRect 需要一块 Graphic 才能收到滚轮/拖拽事件。
+            // 它同时是 Mask 的模板，两条硬性要求：
+            //   1) **必须给 sprite**——Sliced 类型的 Image 在 sprite 为 null 时不生成网格，
+            //      遮罩写不进模板缓冲，里面的正文会整块消失；
+            //   2) **颜色必须是实心**——全透明的 Graphic 不参与渲染，同样写不进模板。
+            // 视觉上靠 showMaskGraphic=false 隐藏，不要靠把 alpha 调 0。
             var bg = scrollView.gameObject.AddComponent<Image>();
-            bg.sprite = null;
+            bg.sprite = LoadBuiltinMaskSprite();
             bg.type = Image.Type.Sliced;
-            bg.color = new Color(0f, 0f, 0f, 0f);
+            bg.color = Color.white;
             bg.raycastTarget = true;
+            var mask = scrollView.gameObject.AddComponent<Mask>();
+            mask.showMaskGraphic = false;
 
             var scrollRect = scrollView.gameObject.AddComponent<ScrollRect>();
             scrollRect.horizontal = false;
@@ -144,16 +155,12 @@ namespace IcarusII.EditorTools
             scrollRect.elasticity = 0.1f;
             scrollRect.scrollSensitivity = 20f;
 
+            // viewport 从 scroll-view 顶边往回收 TopSlack，正文顶边正好落在 explain 顶边上，
+            // 遮罩比它高 TopSlack，字头就不会被切。
+            // 用 AutoHide（不是 AutoHideAndExpandViewport）：Expand 模式下 ScrollRect.SetLayoutHorizontal
+            // 会强制改写 viewport 的 anchors / sizeDelta / anchoredPosition，这里的留白会被冲掉。
             var viewport = Node(ViewportNodeName, scrollView);
-            // 先定 pivot 再写 offset：pivot 在 offset 之后改会把已经算好的 rect 整体挪走。
-            Place(viewport, LeftInset, 0f, ScrollBarWidth + RightInset, 0f, new Vector2(0f, 1f));
-            var vpImg = viewport.gameObject.AddComponent<Image>();
-            vpImg.sprite = LoadBuiltinMaskSprite();
-            vpImg.type = Image.Type.Sliced;
-            vpImg.color = Color.white;
-            vpImg.raycastTarget = true;
-            var mask = viewport.gameObject.AddComponent<Mask>();
-            mask.showMaskGraphic = false;
+            Place(viewport, LeftInset, TopSlack, ScrollBarWidth + RightInset, 0f, new Vector2(0.5f, 0.5f));
 
             // content 直接就是 Text：说明文字整段换行，高度由 CSF 按文本撑开。
             var content = Node(ContentNodeName, viewport);
@@ -182,7 +189,7 @@ namespace IcarusII.EditorTools
             scrollRect.viewport = viewport;
             scrollRect.content = content;
             scrollRect.verticalScrollbar = BuildScrollbar(scrollView);
-            scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport;
+            scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
             scrollRect.verticalScrollbarSpacing = 0f;
 
             explain.gameObject.SetActive(false);
@@ -259,7 +266,7 @@ namespace IcarusII.EditorTools
             rt.offsetMax = new Vector2(-right, -top);
         }
 
-        /// <summary>UGUI 内置的遮罩图（原生 viewport 用的就是它）。</summary>
+        /// <summary>UGUI 内置的遮罩图：Sliced Image 必须带 sprite 才会生成网格，Mask 才能写模板。</summary>
         private static Sprite LoadBuiltinMaskSprite()
         {
             return AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UIMask.psd");
