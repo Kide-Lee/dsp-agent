@@ -1163,9 +1163,11 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 - 会话置顶状态记录在 `sessions/<saveKey>/conversation-pins.json`：
   `{"pins":{"<conversationId>":1760000000000}}`，值是置顶时间（毫秒）；该文件同样
   不是 pi session，`SessionManager.list` 会忽略它。删除会话时同时删掉它的置顶记录。
-- 会话排序：**置顶会话排在最前**，置顶会话之间按最后回复的游戏时间从新到旧
-  （没有 `lastReplyTick` 的排在有记录之后，再按 `updatedAt` 降序）；其余会话按
-  `updatedAt` 降序（最近活动的在前）。mod 用同一套规则在本地重排，置顶点击后立即生效。
+- 会话排序**只**由两件事决定：是否置顶、最后一条回答的游戏时间。置顶会话排在最前；
+  其后按 `lastReplyTick` 从新到旧，没有 `lastReplyTick` 的排在有记录的之后，
+  它们之间按 `createdAt` 降序。**`updatedAt` 与切换会话都不参与排序**，
+  所以点击某个会话不会让它跳到列表最前面。mod 在本地用同一套规则重排
+  （同分保持原顺序），置顶点击后立即生效。
 
 #### `save.bound` 新增字段（sidecar → mod，均可选）
 
@@ -1388,7 +1390,8 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
   没有存档返回 `ok:false,error:"save_required"`。
 - mod 先本地乐观置顶/取消置顶并重排，收到回执后再对齐 `pinned`；
   请求发不出去（连接未就绪）立即回滚并提示。
-- 排序规则见上文“存储”：置顶会话在最前，置顶之间按最后回复游戏时间从新到旧。
+- 排序规则见上文“存储”：置顶在最前，其后按最后回复游戏时间从新到旧；
+  `updatedAt` 与切换会话不参与排序。
 
 #### `prompt.conversationId`
 

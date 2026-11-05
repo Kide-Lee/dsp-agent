@@ -709,20 +709,19 @@ export function normalizeConversationRename(raw: string): string {
 }
 
 /**
- * A.13 左侧会话排序：置顶在最前；置顶之间按最后回复的游戏时间从新到旧，
- * 没有回复记录的排在有记录之后；其余按 updatedAt 降序，最后用 id 保证稳定。
+ * A.13 左侧会话排序：只由「是否置顶」和「最后一条回答的游戏时间」决定。
+ * 置顶在最前；其后按最后回复从新到旧，没有回复记录的排在有记录之后，
+ * 它们之间按 createdAt 降序（切换会话不改这两个字段，所以点一下不会跳位）。
  */
 export function compareConversations(a: ConversationInfo, b: ConversationInfo): number {
   const pinnedA = a.pinned === true ? 1 : 0;
   const pinnedB = b.pinned === true ? 1 : 0;
   if (pinnedA !== pinnedB) return pinnedB - pinnedA;
-  if (pinnedA === 1) {
-    const tickA = typeof a.lastReplyTick === 'number' ? a.lastReplyTick : -1;
-    const tickB = typeof b.lastReplyTick === 'number' ? b.lastReplyTick : -1;
-    if (tickA !== tickB) return tickB - tickA;
-  }
-  const byUpdated = b.updatedAt - a.updatedAt;
-  if (byUpdated !== 0) return byUpdated;
+  const tickA = typeof a.lastReplyTick === 'number' ? a.lastReplyTick : -1;
+  const tickB = typeof b.lastReplyTick === 'number' ? b.lastReplyTick : -1;
+  if (tickA !== tickB) return tickB - tickA;
+  const byCreated = b.createdAt - a.createdAt;
+  if (byCreated !== 0) return byCreated;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 

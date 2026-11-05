@@ -10,7 +10,12 @@
 import { readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Session } from '../dist/session.js';
-import { PiAgent, normalizeConversationRename, normalizeConversationTitle } from '../dist/agent.js';
+import {
+  PiAgent,
+  compareConversations,
+  normalizeConversationRename,
+  normalizeConversationTitle,
+} from '../dist/agent.js';
 import { MessageType, buildConversationUpdatedPayload } from '../dist/protocol.js';
 import { makeTempDir } from './helpers.mjs';
 
@@ -423,6 +428,13 @@ console.log('── 2.4 置顶与最后回复时刻 ──');
     const unpinned = await restarted.getConversations('saveA');
     check('取消置顶后回到 updatedAt 排序', unpinned[0]?.id === 'conv-a', JSON.stringify(unpinned.map((c) => c.id)));
 
+    // 切换会话不写任何参与排序的字段：点一下不会让会话跳到最前。
+    const beforeSwitch = (await restarted.getConversations('saveA')).map((c) => c.id).join(',');
+    await restarted.switchConversation('saveA', 'conv-b');
+    const afterSwitch = await restarted.getConversations('saveA');
+    check('切换会话不改变列表顺序', afterSwitch.map((c) => c.id).join(',') === beforeSwitch,
+      `${beforeSwitch} → ${afterSwitch.map((c) => c.id).join(',')}`);
+
     // 切换会话的回执也要带 pinned/lastReplyTick：mod 会用它整体覆盖列表项。
     const switchedPinned = await restarted.switchConversation('saveA', 'conv-a');
     check('切换回执带 pinned', switchedPinned.conversation?.pinned === true, JSON.stringify(switchedPinned.conversation));
@@ -490,6 +502,37 @@ console.log('── 2.5 会话级删除/撤销定位 ──');
   } finally {
     rmSync(dataDir, { recursive: true, force: true });
   }
+}
+
+// ---------------------------------------------------------------- 2.6 排序只与置顶/最后回复有关
+console.log('── 2.6 会话排序规则 ──');
+{
+  const conv = (id, extra = {}) => ({
+    id,
+    title: id,
+    createdAt: extra.createdAt ?? 1000,
+    updatedAt: extra.updatedAt ?? 1000,
+    recordCount: 0,
+    records: [],
+    ...(extra.pinned ? { pinned: true } : {}),
+    ...(typeof extra.tick === 'number' ? { lastReplyTick: extra.tick } : {}),
+  });
+
+  const order = (list) => [...list].sort(compareConversations).map((c) => c.id);
+
+  check('置顶排在最前', order([conv('a', { tick: 9000 }), conv('b', { pinned: true, tick: 10 })]).join(',') === 'b,a');
+  check('置顶之间按最后回复从新到旧',
+    order([conv('a', { pinned: true, tick: 500 }), conv('b', { pinned: true, tick: 900 })]).join(',') === 'b,a');
+  check('未置顶也按最后回复从新到旧',
+    order([conv('a', { tick: 100 }), conv('b', { tick: 900 })]).join(',') === 'b,a');
+  check('有回复的排在没有回复的前面',
+    order([conv('a', { createdAt: 5000 }), conv('b', { tick: 100 })]).join(',') === 'b,a');
+  check('都没有回复时按创建时间从新到旧',
+    order([conv('a', { createdAt: 100 }), conv('b', { createdAt: 900 })]).join(',') === 'b,a');
+  check('updatedAt 变了也不影响顺序',
+    order([conv('a', { tick: 100, updatedAt: 99999 }), conv('b', { tick: 900, updatedAt: 1 })]).join(',') === 'b,a');
+  check('同分时按 id 稳定',
+    order([conv('b'), conv('a')]).join(',') === 'a,b');
 }
 
 // ---------------------------------------------------------------- 3. 模型标题

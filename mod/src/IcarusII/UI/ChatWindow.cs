@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using UnityEngine;
@@ -74,6 +75,10 @@ namespace IcarusII.UI
         private const long GameTickPerSecond = 60L;
         /// <summary>删除按钮悬停时的红色（与标题/时间标记的常态色区分开）。</summary>
         private static readonly Color ConversationDeleteHoverColor = new Color(1f, 0.36f, 0.36f, 1f);
+        /// <summary>置顶按钮悬停时的亮青蓝：比标题色和主题蓝都更亮，一眼能看出被点亮。</summary>
+        private static readonly Color ConversationPinHoverColor = new Color(0.45f, 0.87f, 1f, 1f);
+        /// <summary>左栏记录字体跟随右栏滚动位置时的扫描间隔（帧）。</summary>
+        private const int IndexTurnScanIntervalFrames = 5;
         /// <summary>标题还没排版完成时用的兜底宽度；等于 prefab 里 title-mask 的实际宽度。</summary>
         private const float ConversationTitleFallbackWidth = 150f;
 
@@ -673,6 +678,11 @@ namespace IcarusII.UI
         private int _nextTurnId;
         private int _currentTurnId;
         private int _focusedTurnId;
+        /// <summary>上一次扫描时的滚动位置与帧计数：滚动没变就不重复遍历消息。</summary>
+        private float _indexTurnScanScroll = float.NaN;
+        private int _indexTurnScanFrame;
+        /// <summary>「时间标记都没文本」的排查日志只打一次，避免每次开窗都刷屏。</summary>
+        private bool _timeMarkerDiagnosticLogged;
         private bool _awaitingResponse;
         /// <summary>AI 正在回答：为 true 时输入框为空就显示「中断」，有内容则显示「发送」（A.15）。</summary>
         private bool _busy;
@@ -4479,6 +4489,7 @@ namespace IcarusII.UI
             _currentTurnId = 0;
             _nextTurnId = 0;
             _focusedTurnId = 0;
+            _indexTurnScanScroll = float.NaN;
             _awaitingResponse = false;
             ClearConversationGroups();
             RefreshIndexEmpty();
@@ -5078,15 +5089,17 @@ namespace IcarusII.UI
         }
 
         /// <summary>
-        /// 左侧列表顺序：置顶会话固定在所有会话前面。
-        /// 置顶之间按最后回复的游戏时间从新到旧（没有记录的排在有记录之后）；
-        /// 其余按 updatedAt 降序，最后用 id 保证顺序稳定。
+        /// 左侧列表顺序只由两件事决定：是否置顶、最后一条回答的游戏时间。
+        /// 切换会话不写入任何参与排序的字段，所以点一下不会让会话跳到最前面。
+        /// 同分（比如都还没有回答过）保持列表原有顺序——稳定排序，见 OrderConversations。
         /// 返回顺序是否真的变了——变了才值得重建索引。
         /// </summary>
         private bool SortConversations()
         {
             var before = _conversations.ConvertAll(conversation => conversation?.Id);
-            _conversations.Sort(CompareConversations);
+            var ordered = OrderConversations(_conversations);
+            _conversations.Clear();
+            _conversations.AddRange(ordered);
             for (int i = 0; i < _conversations.Count; i++)
             {
                 if (!string.Equals(before[i], _conversations[i]?.Id, StringComparison.Ordinal))
@@ -5095,20 +5108,19 @@ namespace IcarusII.UI
             return false;
         }
 
-        private static int CompareConversations(ConversationInfo a, ConversationInfo b)
+        /// <summary>
+        /// 稳定排序：LINQ 的 OrderBy 对相等的项保留原顺序，List.Sort 不保证。
+        /// 没有「最后回复时间」的会话之间不比较大小，直接沿用 sidecar 给的先后
+        /// （sidecar 那边按 createdAt 排过）。
+        /// </summary>
+        private static List<ConversationInfo> OrderConversations(List<ConversationInfo> source)
         {
-            if (a is null) return 1;
-            if (b is null) return -1;
-            if (a.Pinned != b.Pinned) return a.Pinned ? -1 : 1;
-            if (a.Pinned)
-            {
-                var tickA = a.LastReplyTick > 0 ? a.LastReplyTick : -1L;
-                var tickB = b.LastReplyTick > 0 ? b.LastReplyTick : -1L;
-                if (tickA != tickB) return tickB.CompareTo(tickA);
-            }
-            var byUpdated = b.UpdatedAt.CompareTo(a.UpdatedAt);
-            if (byUpdated != 0) return byUpdated;
-            return string.CompareOrdinal(a.Id, b.Id);
+            return source
+                .OrderBy(conversation => conversation?.Pinned == true ? 0 : 1)
+                .ThenByDescending(conversation => conversation != null && conversation.LastReplyTick > 0
+                    ? conversation.LastReplyTick
+                    : -1L)
+                .ToList();
         }
 
         /// <summary>
@@ -5264,6 +5276,7 @@ namespace IcarusII.UI
             ClearConversationGroups();
             RefreshIndexEmpty();
             RefreshConversationTitle();
+            _timeMarkerDiagnosticLogged = false;
         }
 
         private void RebuildConversationIndex()
@@ -5442,7 +5455,7 @@ namespace IcarusII.UI
                 var pinHover = pin.GetComponent<ConversationIconHover>();
                 if (pinHover == null) pinHover = pin.gameObject.AddComponent<ConversationIconHover>();
                 pinHover.Icon = pin.Find("pin")?.GetComponent<Image>();
-                pinHover.HoverColor = Color.white;
+                pinHover.HoverColor = ConversationPinHoverColor;
                 view.PinHover = pinHover;
             }
 
@@ -5477,7 +5490,7 @@ namespace IcarusII.UI
             }
             ApplyConversationStatus(view);
             if (view.DeleteHover != null) view.DeleteHover.SetNormal(titleColor);
-            // 时间标记和置顶按钮都与标题同色，只有悬停置顶按钮时变成白色。
+            // 时间标记和置顶按钮都与标题同色，只有悬停置顶按钮时变成亮蓝色。
             if (view.TimeText != null) view.TimeText.color = titleColor;
             if (view.PinHover != null) view.PinHover.SetNormal(titleColor);
             RefreshConversationTime(view);
@@ -5504,7 +5517,30 @@ namespace IcarusII.UI
         /// </summary>
         public void RefreshConversationTimes()
         {
-            foreach (var view in _conversationViews) RefreshConversationTime(view);
+            var hasText = false;
+            foreach (var view in _conversationViews)
+            {
+                RefreshConversationTime(view);
+                if (view?.TimeText != null && !string.IsNullOrEmpty(view.TimeText.text)) hasText = true;
+            }
+            if (!hasText) LogMissingConversationTimes();
+        }
+
+        /// <summary>
+        /// 一行时间都没有时打一次排查日志：能区分“没数据”和“节点没找到”，
+        /// 免得下次再靠猜 prefab 到底有没有生效。
+        /// </summary>
+        private void LogMissingConversationTimes()
+        {
+            if (_timeMarkerDiagnosticLogged || _conversationViews.Count == 0) return;
+            _timeMarkerDiagnosticLogged = true;
+            var view = _conversationViews[0];
+            var info = view?.Info;
+            Plugin.Log.LogInfo(
+                $"[索引] 会话时间标记都没有文本：rows={_conversationViews.Count} " +
+                $"records={(info != null ? info.Records.Count : -1)} " +
+                $"lastReplyTick={(info != null ? info.LastReplyTick : -1)} " +
+                $"timeNode={(view != null && view.TimeText != null)}");
         }
 
         /// <summary>
@@ -5669,7 +5705,8 @@ namespace IcarusII.UI
                     float maxWidth = label.rectTransform.rect.width;
                     if (maxWidth <= 20f) maxWidth = 210f;
                     label.text = FitLabel(record.Text, label.fontSize, maxWidth - 4f);
-                    label.color = _accent;
+                    // 常态是白色；右栏正对着的那条由 RefreshIndexSelection 单独染蓝。
+                    label.color = _textMain;
                 }
                 var hover = row.GetComponent<ChatIndexRowHover>();
                 if (hover == null) hover = row.AddComponent<ChatIndexRowHover>();
@@ -6408,9 +6445,48 @@ namespace IcarusII.UI
             foreach (var entry in _turns)
             {
                 if (entry.Link != null)
-                    entry.Link.color = entry.Id == _focusedTurnId ? _textMain : _accent;
+                    entry.Link.color = entry.Id == _focusedTurnId ? _accent : _textMain;
                 entry.Hover?.SetSelected(entry.Id == _focusedTurnId);
             }
+        }
+
+        /// <summary>
+        /// 右栏滚到哪，左栏就染蓝哪一条记录：取视口中线落在的那一行所属的回合。
+        /// 滚动位置没变就跳过，指针/输入都不受影响。
+        /// </summary>
+        private void SyncIndexTurnToScroll()
+        {
+            if (!IsOpen || _scroll == null || _scroll.viewport == null || _lines.Count == 0) return;
+            if (++_indexTurnScanFrame % IndexTurnScanIntervalFrames != 0) return;
+            var position = _scroll.verticalNormalizedPosition;
+            if (!float.IsNaN(_indexTurnScanScroll) && Mathf.Abs(position - _indexTurnScanScroll) < 0.0005f)
+                return;
+            _indexTurnScanScroll = position;
+            var turnId = TurnIdAtViewportCenter();
+            if (turnId <= 0 || turnId == _focusedTurnId) return;
+            _focusedTurnId = turnId;
+            RefreshIndexSelection();
+        }
+
+        /// <summary>视口中线落在哪一行，就返回那一行所属回合；都够不到时退回最近的一条。</summary>
+        private int TurnIdAtViewportCenter()
+        {
+            var viewport = _scroll.viewport;
+            var centerWorldY = viewport.TransformPoint(viewport.rect.center).y;
+            var above = 0;
+            for (int i = 0; i < _lines.Count; i++)
+            {
+                var line = _lines[i];
+                if (line.TurnId <= 0 || line.Go == null) continue;
+                var rect = line.Go.GetComponent<RectTransform>();
+                if (rect == null) continue;
+                var top = rect.TransformPoint(new Vector3(0f, rect.rect.yMax, 0f)).y;
+                var bottom = rect.TransformPoint(new Vector3(0f, rect.rect.yMin, 0f)).y;
+                if (centerWorldY >= top) return above != 0 ? above : line.TurnId;
+                if (centerWorldY >= bottom) return line.TurnId;
+                above = line.TurnId;
+            }
+            return above;
         }
 
         /// <summary>
@@ -7483,6 +7559,9 @@ namespace IcarusII.UI
 
             // 输入区随内容长高：粘贴长文本要撑开，超过上限交给滚动条。
             if (IsOpen) UpdateInputAreaIfNeeded();
+
+            // 左栏“当前看到的那一条”跟着右栏滚动位置走。
+            if (IsOpen) SyncIndexTurnToScroll();
 
             // A.14.7：非回车键的发送/换行绑定在这里轮询；回车仍走 OnInputNewLine。
             if (IsOpen) PollKeyBindings();
