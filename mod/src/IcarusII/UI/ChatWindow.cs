@@ -464,6 +464,12 @@ namespace IcarusII.UI
         private const int ThinkingStreamWindow = 2000;
 
         /// <summary>
+        /// 流式思考块最多占输出区可视高度的比例。超过之后正文不再撑高整个对话，
+        /// 旧内容从裁切框顶部被裁掉，只留最新几行（见 <see cref="ThinkingBodyClip"/>）。
+        /// </summary>
+        private const float ThinkingMaxOutputRatio = 2f / 3f;
+
+        /// <summary>
         /// 输出区里的一个可折叠块（思考 / 工具）。
         ///
         /// 结构（运行期创建，样式与 prefab 里的气泡保持同一套配色）：
@@ -484,11 +490,11 @@ namespace IcarusII.UI
             public LayoutElement TitleLayout;
             public Text Summary;
             public Text Body;
+            /// <summary>思考块正文的裁切框（prefab 里是 body-clip；老 prefab 为 null）。</summary>
+            public ThinkingBodyClip BodyClip;
+            /// <summary>思考块的标题行：算正文可用高度时要扣掉它和块内边距。</summary>
+            public RectTransform Header;
             public bool Expanded;
-            /// <summary>流式思考期间正文已经撑到的高度（0 = 没钉住）；只增不减。</summary>
-            public float BodyHeight;
-            /// <summary>上一次量到正文宽度；用来判断排版是否已经给出真实宽度。</summary>
-            public float BodyWidth;
 
             /// <summary>工具块用：调用参数摘要（展开时显示）。</summary>
             public string Args;
@@ -2938,7 +2944,7 @@ namespace IcarusII.UI
             _thinkingText.Length = 0;
             _thinkingRenderKey = -1;
             _thinkingTruncated = false;
-            UnpinThinkingBodyHeight(block);
+            RestartThinkingBodyClip(block);
             _dirty = true;
         }
 
@@ -3154,7 +3160,7 @@ namespace IcarusII.UI
                 // 超限之后仍然继续收到 delta：只标记一次，内容不再增长。
                 _thinkingTruncated = true;
             }
-            if (!_thinking.Body.gameObject.activeSelf) _thinking.Body.gameObject.SetActive(true);
+            if (!_thinking.Body.gameObject.activeSelf) SetBlockBodyVisible(_thinking, true);
             _dirty = true;
         }
 
@@ -3176,42 +3182,55 @@ namespace IcarusII.UI
                 : full;
             if (_thinkingTruncated) text += Strings.Get("thinking.truncated");
             ApplyRichText(_thinking.Body, text, RichOptions13, RichTextProfile.Body);
-            PinThinkingBodyHeight(_thinking);
+            ApplyThinkingBodyClip(_thinking);
         }
 
         /// <summary>
-        /// 思考块正文只长不回缩：流式期间渲染的只是尾部窗口，窗口每滑动一次换行数就变，
-        /// 块高度会跟着忽高忽低。这里把正文高度钉在已经出现过的最大值上。
+        /// 流式思考块正文可用的最大高度：输出区可视高度的 2/3，再扣掉标题行和块内边距。
+        /// 拿不到输出区高度（刚开窗、布局还没就绪）时返回 0，表示这一帧不限制。
         /// </summary>
-        private void PinThinkingBodyHeight(Block block)
+        private float ThinkingBodyCap(Block block)
         {
-            var body = block != null ? block.Body : null;
-            if (body == null) return;
-            // 关窗时 Canvas 不排版，rect 停在 prefab 的占位尺寸上，按它量出来的高度不可信。
-            if (_root == null || !_root.activeInHierarchy) return;
+            var viewport = _scroll != null ? _scroll.viewport : null;
+            if (viewport == null || block == null || block.Go == null) return 0f;
 
-            // 刚建出来的块要等一帧排版才有真实宽度：宽度没稳定前先只记下来，不钉。
-            var width = body.rectTransform.rect.width;
-            if (width <= 1f || !Mathf.Approximately(block.BodyWidth, width))
-            {
-                block.BodyWidth = width;
-                return;
-            }
+            var output = viewport.rect.height;
+            if (output <= 1f) return 0f;
 
-            var layout = body.GetComponent<LayoutElement>();
-            if (layout == null) layout = body.gameObject.AddComponent<LayoutElement>();
-            block.BodyHeight = Mathf.Max(block.BodyHeight, body.preferredHeight);
-            if (!Mathf.Approximately(layout.preferredHeight, block.BodyHeight))
-                layout.preferredHeight = block.BodyHeight;
+            var chrome = block.Header != null ? block.Header.rect.height : 0f;
+            var layout = block.Go.GetComponent<VerticalLayoutGroup>();
+            if (layout != null) chrome += layout.padding.vertical + layout.spacing;
+            return Mathf.Max(0f, output * ThinkingMaxOutputRatio - chrome);
         }
 
-        /// <summary>解除正文高度钉住，让 Text 按当前全文重新算高（收尾渲染全文、开始下一段时用）。</summary>
-        private void UnpinThinkingBodyHeight(Block block)
+        /// <summary>
+        /// 把思考块的正文裁切框同步到当前状态：流式中按输出区限高、只增不减；
+        /// 收尾后（或历史块）放开限制，展开时按全文重新撑高。
+        /// </summary>
+        private void ApplyThinkingBodyClip(Block block)
+        {
+            var clip = block != null ? block.BodyClip : null;
+            if (clip == null) return;
+            var streaming = ReferenceEquals(block, _thinking);
+            clip.GrowOnly = streaming;
+            clip.MaxHeight = streaming ? ThinkingBodyCap(block) : 0f;
+        }
+
+        /// <summary>开始新一段流式思考：清掉上一段钉住的高度，让裁切框重新按当前文字量高。</summary>
+        private void RestartThinkingBodyClip(Block block)
+        {
+            var clip = block != null ? block.BodyClip : null;
+            if (clip == null) return;
+            clip.Restart();
+            ApplyThinkingBodyClip(block);
+        }
+
+        /// <summary>显隐折叠块正文。正文在裁切框里，两者必须一起开关，否则收起后会留下空白。</summary>
+        private static void SetBlockBodyVisible(Block block, bool visible)
         {
             if (block == null) return;
-            block.BodyHeight = 0f;
-            var layout = block.Body != null ? block.Body.GetComponent<LayoutElement>() : null;
-            if (layout != null) layout.preferredHeight = -1f;
+            if (block.Body != null) block.Body.gameObject.SetActive(visible);
+            if (block.BodyClip != null) block.BodyClip.gameObject.SetActive(visible);
         }
 
         /// <summary>
@@ -3226,8 +3245,6 @@ namespace IcarusII.UI
         {
             var block = _thinking;
             _thinking = null;
-            // 收尾要显示全文：先解除流式期间的高度上限，不能把全文裁在 2000 字窗口的高度里。
-            UnpinThinkingBodyHeight(block);
             if (block == null)
             {
                 if (finalize && _stream.Length == 0) FinalizeIdleReply();
@@ -3534,7 +3551,8 @@ namespace IcarusII.UI
 
             block.RawBody = body ?? string.Empty;
             block.Body.text = FormatRichText(block.RawBody, RichOptions13, RichTextProfile.Plain).Rich;
-            block.Body.gameObject.SetActive(expanded && !string.IsNullOrEmpty(block.RawBody));
+            SetBlockBodyVisible(block, expanded && !string.IsNullOrEmpty(block.RawBody));
+            ApplyThinkingBodyClip(block);
 
             // 截图只在展开时显示：收起态是一行摘要，塞一张 220px 的图会把聊天串撑乱。
             if (block.ImageRt != null)
@@ -6460,6 +6478,7 @@ namespace IcarusII.UI
         {
             var block = new Block { Go = root, Expanded = true };
             var header = root.transform.Find("header");
+            block.Header = header as RectTransform;
             block.Accent = root.transform.Find("accent") != null
                 ? root.transform.Find("accent").GetComponent<Image>()
                 : null;
@@ -6475,9 +6494,26 @@ namespace IcarusII.UI
                 if (native != null) native.onClick += _ => ToggleBlock(block);
                 else if (button != null) button.onClick.AddListener(() => ToggleBlock(block));
             }
-            block.Body = FindChildText(root.transform, "body");
+            block.Body = FindChildText(root.transform, "body-clip/body")
+                ?? FindChildText(root.transform, "body");
+            AttachThinkingBodyClip(block);
             AssignIconMapping(block.Body, TryGetPreferredIconMapping());
             return block;
+        }
+
+        /// <summary>
+        /// 给 prefab 里的思考块挂上正文裁切框。老 prefab 没有 body-clip，这里为 null，
+        /// 运行期就退回“整段展开”的旧行为。
+        /// </summary>
+        private static void AttachThinkingBodyClip(Block block)
+        {
+            if (block == null || block.Go == null || block.Body == null) return;
+            var clipRt = block.Go.transform.Find("body-clip") as RectTransform;
+            if (clipRt == null) return;
+            var clip = clipRt.GetComponent<ThinkingBodyClip>();
+            if (clip == null) clip = clipRt.gameObject.AddComponent<ThinkingBodyClip>();
+            clip.Body = block.Body;
+            block.BodyClip = clip;
         }
 
         private static Text FindChildText(Transform root, string path)
@@ -9248,6 +9284,85 @@ namespace IcarusII.UI
             if (string.IsNullOrEmpty(s)) return string.Empty;
             // 只处理会破坏 <color>/<b> 标签的尖括号；中括号等无需处理。
             return s.IndexOf('<') < 0 ? s : s.Replace("<", "<\u200B");
+        }
+    }
+
+    /// <summary>
+    /// 思考块正文的裁切框（prefab 里的 `thinking-block/body-clip`）。
+    ///
+    /// 正文按底边对齐：内容超过上限时新行从下往上顶，旧内容从框顶被裁掉，
+    /// 视觉上只剩最新几行。不加滚动条，也不能滚。
+    ///
+    /// 只在文字长度、框宽或高度上限变化时重新测量：长文本的 preferredHeight
+    /// 每次都要重排一遍，不能每帧算。
+    /// </summary>
+    internal sealed class ThinkingBodyClip : MonoBehaviour
+    {
+        /// <summary>裁切框里的正文。它在 prefab 里按底边对齐，高度由 ContentSizeFitter 撑开。</summary>
+        public Text Body;
+
+        /// <summary>高度上限；&lt;= 0 表示不限制（收尾后的块、历史块）。</summary>
+        public float MaxHeight;
+
+        /// <summary>
+        /// 流式期间高度只增不减：渲染的只是尾部窗口，窗口每滑动一次换行数就可能变，
+        /// 不钉住时块高会一帧一变地抖。
+        /// </summary>
+        public bool GrowOnly;
+
+        private LayoutElement _layout;
+        private RectTransform _rect;
+        private int _textLength = -1;
+        private float _width = -1f;
+        private float _maxHeight = -1f;
+        private float _height;
+        private bool _wasActive;
+
+        private void Awake()
+        {
+            _layout = GetComponent<LayoutElement>();
+            _rect = transform as RectTransform;
+        }
+
+        /// <summary>开始新一段流式思考：清掉上一段钉住的高度，逼下一帧重新测量。</summary>
+        public void Restart()
+        {
+            _height = 0f;
+            _textLength = -1;
+            _wasActive = false;
+        }
+
+        private void LateUpdate()
+        {
+            if (Body == null || _rect == null || _layout == null) return;
+            if (!isActiveAndEnabled || !Body.gameObject.activeInHierarchy)
+            {
+                _wasActive = false;
+                return;
+            }
+
+            var width = _rect.rect.width;
+            var becameActive = !_wasActive;
+            if (!becameActive
+                && Body.text.Length == _textLength
+                && Mathf.Approximately(width, _width)
+                && Mathf.Approximately(MaxHeight, _maxHeight))
+                return;
+
+            _wasActive = true;
+            // 刚显示的块要等这一帧排版才有真实宽度，宽度没稳定前不量高。
+            if (width <= 1f) return;
+
+            var height = Body.preferredHeight;
+            if (GrowOnly && height < _height) height = _height;
+            if (MaxHeight > 0f && height > MaxHeight) height = MaxHeight;
+
+            _textLength = Body.text.Length;
+            _width = width;
+            _maxHeight = MaxHeight;
+            if (Mathf.Approximately(_height, height)) return;
+            _height = height;
+            _layout.preferredHeight = height;
         }
     }
 

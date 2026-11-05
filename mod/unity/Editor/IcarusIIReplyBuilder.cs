@@ -341,6 +341,8 @@ namespace IcarusII.EditorTools
             var root = BuildBlockRoot(reply, "thinking-block", "思考中…");
             var block = BindBlockParts(root, bold, body, material, title: "思考中…", summary: "正在推理…",
                 bodyText: "示例：先确认玩家问的是哪条产线，再读取电力与产出，最后给出结论。");
+            // 正文收进裁切框：流式思考时按输出区 2/3 限高，旧内容从框顶裁掉。
+            IcarusIIThinkingClipper.Patch(root);
             block.header.gameObject.SetActive(true);
             block.body.gameObject.SetActive(true);
             root.gameObject.SetActive(true);
