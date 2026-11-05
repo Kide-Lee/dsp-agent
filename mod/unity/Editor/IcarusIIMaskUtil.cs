@@ -59,7 +59,7 @@ namespace IcarusII.EditorTools
 
         /// <summary>
         /// 确保节点用 Mask 裁切。返回 true 表示改了东西。
-        /// 已有 Image 的节点沿用那张图（只关掉遮罩图形的绘制），没有就补一张。
+        /// 节点上已有 Image 的，遮罩图形照常绘制（输入框底色不能丢）；没有的补一张无贴图 Image 并隐藏。
         /// </summary>
         public static bool EnsureStencilMask(RectTransform node)
         {
@@ -74,6 +74,7 @@ namespace IcarusII.EditorTools
             }
 
             var image = node.GetComponent<Image>();
+            var imageCreated = false;
             if (image == null)
             {
                 image = node.gameObject.AddComponent<Image>();
@@ -81,17 +82,21 @@ namespace IcarusII.EditorTools
                 image.type = Image.Type.Simple;
                 image.color = Color.white;
                 image.raycastTarget = false;
+                imageCreated = true;
                 changed = true;
             }
 
             var mask = node.GetComponent<Mask>();
-            if (mask == null)
+            var maskCreated = mask == null;
+            if (maskCreated)
             {
                 // Image 必须先存在：Mask.OnEnable 要靠它当遮罩模板。
                 mask = node.gameObject.AddComponent<Mask>();
                 changed = true;
             }
-            mask.showMaskGraphic = false;
+            // 遮罩图形本来就在画面上的（输入框底色这类）必须继续画，藏掉会变成透明框；
+            // 只有为了 Mask 临时补的那张无贴图 Image 才关掉绘制。
+            if (maskCreated || rectMask != null) mask.showMaskGraphic = !imageCreated;
 
             return changed;
         }
