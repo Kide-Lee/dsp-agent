@@ -170,6 +170,8 @@
 | `beltType` | `integer` | 否 | minimum=0，maximum=2 | 默认 2（蓝带） |
 | `insertType` | `integer` | 否 | minimum=0，maximum=3 | 默认 2（极速） |
 | `rows` | `integer` | 否 | minimum=1，maximum=8 | 产线行数，默认 1；超宽时会自动加行 |
+| `supply` | `string \| string` | 否 | — | 原料供给方式：belt 走物品标签（默认），station 在行首放物流站并接出料带（最多 3 种原料） |
+| `layout` | `string \| string \| string` | 否 | — | 布局方式：auto（默认，单张总线放不下时先试工厂布局，仍不行才拆张）；bus 只用单条混带；factory 每个阶段一个模块、模块间用物流站供货，整条产线一张图 |
 | `stackSize` | `integer` | 否 | minimum=1，maximum=4 | 集装堆叠，默认 1 |
 | `depth` | `integer` | 否 | minimum=1，maximum=16 | 配方展开深度，默认 8 |
 | `from` | `string` | 否 | — | 起点：ore（默认，从原矿投入）/ smelted（从冶炼产物，如铁块/钛块开始）/ 物品名或 id（从该中间产物开始） |

@@ -50,6 +50,9 @@ namespace IcarusII.Tests
             Section("富文本输出");
             RichTextTests.Run();
 
+            Section("作答选项文案");
+            AskOptionTextTests.Run();
+
             Section("设定页（A.14）");
             SettingsProtocolTests.Run();
 

@@ -364,7 +364,7 @@ namespace IcarusII.UI
                 row.Go.SetActive(visible);
                 if (!visible) continue;
                 if (row.Number != null) row.Number.text = (i + 1).ToString();
-                if (row.Label != null) row.Label.text = question.Options[i].Label ?? string.Empty;
+                if (row.Label != null) row.Label.text = AskOptionText.Compose(question.Options[i]);
             }
 
             bool showCustom = question.AllowCustom;

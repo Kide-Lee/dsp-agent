@@ -29,6 +29,9 @@
     <Compile Include="../../mod/src/IcarusII/Game/GoalStore.cs" Link="GoalStore.cs" />
     <!-- 顾问提示的截断/转义/快捷键着色不依赖 UnityEngine，面板宽度全靠这里压字数 -->
     <Compile Include="../../mod/src/IcarusII/UI/AdvisorText.cs" Link="AdvisorText.cs" />
+    <!-- 作答选项的显示文案（标题 + 灰色说明）不依赖 UnityEngine，格式漂了游戏里会露出裸标签 -->
+    <Compile Include="../../mod/src/IcarusII/UI/AskModels.cs" Link="AskModels.cs" />
+    <Compile Include="../../mod/src/IcarusII/UI/AskOptionText.cs" Link="AskOptionText.cs" />
   </ItemGroup>
 
 </Project>

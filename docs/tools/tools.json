@@ -8,6 +8,7 @@
       "promptGuidelines": [
         "需要玩家明确选择/偏好/确认，且无法从游戏状态或知识库推断时使用。",
         "不要问能自己查到或验证的事实；能给出 2–4 个具体选项时优先给选项。",
+        "每个选项可以带 description，补一句取舍提示（不超过 12 个全角字）；它会灰色显示在选项标题后面，不是整段解释。",
         "一次可以问多个相关问题，UI 会逐题展示并允许玩家返回上一题；提交按钮在非最后一题显示“下一个”。",
         "玩家可能跳过问题；收到 skipped=true 时不要重复追问同一题。"
       ],
@@ -52,7 +53,7 @@
                       },
                       "description": {
                         "type": "string",
-                        "description": "选项补充说明"
+                        "description": "选项的简短说明（不超过 12 个全角字），显示在选项标题后面、灰色；太长会被行高截断"
                       }
                     }
                   },
@@ -91,7 +92,7 @@
                 },
                 "description": {
                   "type": "string",
-                  "description": "选项补充说明"
+                  "description": "选项的简短说明（不超过 12 个全角字），显示在选项标题后面、灰色；太长会被行高截断"
                 }
               }
             },
@@ -283,6 +284,36 @@
             "minimum": 1,
             "maximum": 8,
             "description": "产线行数，默认 1；超宽时会自动加行"
+          },
+          "supply": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "belt"
+              },
+              {
+                "type": "string",
+                "const": "station"
+              }
+            ],
+            "description": "原料供给方式：belt 走物品标签（默认），station 在行首放物流站并接出料带（最多 3 种原料）"
+          },
+          "layout": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "auto"
+              },
+              {
+                "type": "string",
+                "const": "bus"
+              },
+              {
+                "type": "string",
+                "const": "factory"
+              }
+            ],
+            "description": "布局方式：auto（默认，单张总线放不下时先试工厂布局，仍不行才拆张）；bus 只用单条混带；factory 每个阶段一个模块、模块间用物流站供货，整条产线一张图"
           },
           "stackSize": {
             "type": "integer",

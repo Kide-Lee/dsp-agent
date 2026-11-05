@@ -79,6 +79,7 @@ export function createAskTool(host: GameToolHost): ToolDefinition {
     promptGuidelines: [
       '需要玩家明确选择/偏好/确认，且无法从游戏状态或知识库推断时使用。',
       '不要问能自己查到或验证的事实；能给出 2–4 个具体选项时优先给选项。',
+      '每个选项可以带 description，补一句取舍提示（不超过 12 个全角字）；它会灰色显示在选项标题后面，不是整段解释。',
       '一次可以问多个相关问题，UI 会逐题展示并允许玩家返回上一题；提交按钮在非最后一题显示“下一个”。',
       '玩家可能跳过问题；收到 skipped=true 时不要重复追问同一题。',
     ],
@@ -96,7 +97,12 @@ export function createAskTool(host: GameToolHost): ToolDefinition {
               Type.Array(
                 Type.Object({
                   title: Type.String({ description: '选项文字' }),
-                  description: Type.Optional(Type.String({ description: '选项补充说明' })),
+                  description: Type.Optional(
+                    Type.String({
+                      description:
+                        '选项的简短说明（不超过 12 个全角字），显示在选项标题后面、灰色；太长会被行高截断',
+                    }),
+                  ),
                 }),
                 { description: '0–4 个选项', maxItems: 4 },
               ),
@@ -116,7 +122,12 @@ export function createAskTool(host: GameToolHost): ToolDefinition {
         Type.Array(
           Type.Object({
             title: Type.String({ description: '选项文字' }),
-            description: Type.Optional(Type.String({ description: '选项补充说明' })),
+            description: Type.Optional(
+              Type.String({
+                description:
+                  '选项的简短说明（不超过 12 个全角字），显示在选项标题后面、灰色；太长会被行高截断',
+              }),
+            ),
           }),
           { description: '单题选项，0–4 个', maxItems: 4 },
         ),
