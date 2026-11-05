@@ -10,6 +10,8 @@ namespace IcarusII.EditorTools
     /// 91f5ea5 重建 prefab 时 `btn-grop` 里的 `return-button` 丢了，而面板代码对缺失是静默容忍的
     /// （`_backButton` 为 null 就不显示），所以「返回上一题」消失了一年都没人报错，直到玩家发现。
     /// 这里从同组的 `skip-button` 复制一份：组件、配色、`UIButton` 的 tips 一次带走，然后按固定槽位摆好。
+    /// 槽位从右往左：同意 -20、返回/拒绝 -90、跳过 -160；
+    /// 第一题没有「返回」时运行期把「跳过」挪到 -90（见 AskPanel.PositionSkip），所以这里的 -160 是「跳过」的归位点。
     /// 幂等：已经存在时只校正几何/文案，不重复创建。
     /// </summary>
     public static class IcarusIIAskButtons
@@ -21,8 +23,9 @@ namespace IcarusII.EditorTools
         private const string BackText = "返回";
         private const string BackTipTitle = "返回";
         private const string BackTipText = "返回上一题";
-        /// <summary>按钮等距排在右下角：同意 -20、跳过 -90、返回 -160。</summary>
-        private const float BackOffsetX = -160f;
+        /// <summary>按钮等距排在右下角：同意 -20、返回/拒绝 -90、跳过 -160。</summary>
+        private const float BackOffsetX = -90f;
+        private const float SkipOffsetX = -160f;
 
         [MenuItem("Icarus II/Add Ask Back Button (补回返回按钮)")]
         public static void FixFromMenu()
@@ -69,6 +72,7 @@ namespace IcarusII.EditorTools
 
                 bool changed = created;
                 changed |= Normalize(back);
+                changed |= PositionSkip(template);
                 if (!changed) return true;
 
                 PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
@@ -81,6 +85,16 @@ namespace IcarusII.EditorTools
             {
                 PrefabUtility.UnloadPrefabContents(root);
             }
+        }
+
+        /// <summary>「跳过」的归位点是左侧槽位；第一题的临时位置由 AskPanel 在运行期给。</summary>
+        private static bool PositionSkip(Transform skip)
+        {
+            var rect = (RectTransform)skip;
+            var wanted = new Vector2(SkipOffsetX, rect.anchoredPosition.y);
+            if ((rect.anchoredPosition - wanted).sqrMagnitude <= 0.01f) return false;
+            rect.anchoredPosition = wanted;
+            return true;
         }
 
         private static bool Normalize(Transform back)

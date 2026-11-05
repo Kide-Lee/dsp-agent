@@ -57,6 +57,9 @@ namespace IcarusII.UI
         private Button _backButton;
         private Button _rejectButton;
         private Text _rejectLabel;
+        private RectTransform _skipRect;
+        private RectTransform _backRect;
+        private Vector2 _skipHomePosition;
         private GameObject _explainRoot;
         private Text _explainText;
         private ScrollRect _explainScroll;
@@ -171,6 +174,9 @@ namespace IcarusII.UI
             _rejectButton = FindButton(chooseRoot, "voting-device/btn-grop/reject-button");
             _submitLabel = FindText(chooseRoot, "voting-device/btn-grop/agree-button/text");
             _rejectLabel = FindText(chooseRoot, "voting-device/btn-grop/reject-button/text");
+            _skipRect = _skipButton != null ? _skipButton.transform as RectTransform : null;
+            _backRect = _backButton != null ? _backButton.transform as RectTransform : null;
+            if (_skipRect != null) _skipHomePosition = _skipRect.anchoredPosition;
             _explainRoot = chooseRoot.Find("voting-device/explain") != null
                 ? chooseRoot.Find("voting-device/explain").gameObject
                 : null;
@@ -392,9 +398,18 @@ namespace IcarusII.UI
             }
 
             if (_backButton != null) _backButton.gameObject.SetActive(index > 0);
+            PositionSkip(index == 0);
             LayoutRebuilder.ForceRebuildLayoutImmediate(_optionRoot);
             Canvas.ForceUpdateCanvases();
             if (restoreFocus && _customSelected) FocusCustom();
+        }
+
+        /// <summary>第一题没有「返回」，跳过键挪到它的槽位；后续题回到左侧槽位。</summary>
+        private void PositionSkip(bool middle)
+        {
+            if (_skipRect == null) return;
+            if (middle && _backRect != null) _skipRect.anchoredPosition = _backRect.anchoredPosition;
+            else _skipRect.anchoredPosition = _skipHomePosition;
         }
 
         private void ConfigureMultiSelectVisuals(int optionCount)
