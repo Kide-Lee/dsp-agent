@@ -585,11 +585,23 @@ namespace IcarusII.UI
                 }
                 _customSelected = false;
                 UpdateCustomCheckbox();
+                AdvanceAfterPick();
             }
             else
             {
                 _selectedOptions.Remove(index);
             }
+        }
+
+        /// <summary>
+        /// 单选点一下就等价于点「下一个」：多题后面还有汇总确认页，答错了能按「返回」改。
+        /// </summary>
+        private void AdvanceAfterPick()
+        {
+            bool hasReviewPage = _explainRoot != null && _explainText != null;
+            if (!AskPickRule.AdvancesOnPick(_questions.Count, _multiSelect, hasReviewPage)) return;
+            if (!_showing || _confirmMode || _reviewMode) return;
+            SubmitCurrent();
         }
 
         private void OnCustomChanged(string value)
@@ -681,6 +693,7 @@ namespace IcarusII.UI
                 UpdateCustomCheckbox();
             }
             if (_customInput != null) _customInput.DeactivateInputField();
+            if (!_multiSelect) AdvanceAfterPick();
         }
 
         private void SetCustomText(string value)

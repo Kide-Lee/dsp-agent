@@ -53,6 +53,9 @@ namespace IcarusII.Tests
             Section("作答选项文案");
             AskOptionTextTests.Run();
 
+            Section("作答选项点击即跳规则");
+            AskPickRuleTests.Run();
+
             Section("设定页（A.14）");
             SettingsProtocolTests.Run();
 

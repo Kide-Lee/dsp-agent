@@ -32,6 +32,7 @@
     <!-- 作答选项的显示文案（标题 + 灰色说明）不依赖 UnityEngine，格式漂了游戏里会露出裸标签 -->
     <Compile Include="../../mod/src/IcarusII/UI/AskModels.cs" Link="AskModels.cs" />
     <Compile Include="../../mod/src/IcarusII/UI/AskOptionText.cs" Link="AskOptionText.cs" />
+    <Compile Include="../../mod/src/IcarusII/UI/AskPickRule.cs" Link="AskPickRule.cs" />
   </ItemGroup>
 
 </Project>
