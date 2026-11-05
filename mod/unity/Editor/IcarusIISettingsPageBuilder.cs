@@ -226,6 +226,7 @@ namespace IcarusII.EditorTools
             var viewport = Node("viewport", body);
             Stretch(viewport);
             AddImage(viewport, Transparent);
+            IcarusIIMaskUtil.EnsureStencilMask(viewport);
 
             var content = Node("content", viewport);
             content.anchorMin = new Vector2(0f, 1f);
@@ -962,6 +963,7 @@ namespace IcarusII.EditorTools
             le.flexibleWidth = 0f;
 
             AddImage(rt, InputBg);
+            IcarusIIMaskUtil.EnsureStencilMask(rt);
 
             var field = rt.gameObject.AddComponent<InputField>();
             field.lineType = InputField.LineType.SingleLine;
@@ -992,6 +994,7 @@ namespace IcarusII.EditorTools
             var viewport = Node("viewport", list);
             Stretch(viewport);
             AddImage(viewport, Transparent);
+            IcarusIIMaskUtil.EnsureStencilMask(viewport);
 
             var content = Node("content", viewport);
             content.anchorMin = new Vector2(0f, 1f);

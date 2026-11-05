@@ -85,6 +85,8 @@ namespace IcarusII.EditorTools
                 imageCreated = true;
                 changed = true;
             }
+            // 这张图原本就是画面的一部分吗（输入框底色）？透明占位图不算。
+            var hadVisibleGraphic = image.color.a > 0.01f;
 
             var mask = node.GetComponent<Mask>();
             var maskCreated = mask == null;
@@ -94,9 +96,20 @@ namespace IcarusII.EditorTools
                 mask = node.gameObject.AddComponent<Mask>();
                 changed = true;
             }
-            // 遮罩图形本来就在画面上的（输入框底色这类）必须继续画，藏掉会变成透明框；
-            // 只有为了 Mask 临时补的那张无贴图 Image 才关掉绘制。
-            if (maskCreated || rectMask != null) mask.showMaskGraphic = !imageCreated;
+            if (maskCreated || rectMask != null)
+            {
+                // 可见底图继续画；透明占位图/临时补的图关掉绘制，否则会盖一层白底。
+                mask.showMaskGraphic = !imageCreated && hadVisibleGraphic;
+                if (!mask.showMaskGraphic)
+                {
+                    // 全透明的遮罩图形会被 CanvasRenderer 剔除（cullTransparentMesh），
+                    // 模板不写，子节点就全部被裁没 —— 设置页整页空白就是这么来的。
+                    if (image.color.a < 0.01f)
+                        image.color = new Color(image.color.r, image.color.g, image.color.b, 1f);
+                    var canvasRenderer = node.GetComponent<CanvasRenderer>();
+                    if (canvasRenderer != null) canvasRenderer.cullTransparentMesh = false;
+                }
+            }
 
             return changed;
         }
