@@ -1770,7 +1770,7 @@ UI 由 mod 的 `choose` 面板提供。旧名 `ui_ask_user` 继续接受。
 ```
 
 - `questions` 1–8 个；每题 `options` 0–4 个，选项可以是字符串或 `{title, description?}`（兼容 `label/text/value/name/option` 别名）。
-- `description` 有值时显示在选项标题后面、灰色：mod 把它拼成 `标题\t<color=#555>说明</color>`，所以选项行必须开富文本。选项行只有一行，说明建议不超过 12 个全角字，超出的部分会被行高截断。
+- `description` 有值时显示在选项标题后面、灰色：mod 把它拼成 `标题\t<color=#555>说明</color>`，所以选项行必须开富文本。选项行只有一行，说明写得再长也只显示第一行，超出的部分被行高截断。
 - 也支持单题写法：顶层 `question` + `options` + `allowMultiple` / `allowFreeform`。
 - 每个问题都会在 `choose/question/num` 显示 `当前 / 总数`；`返回` 回到上一题并恢复已填答案。
 - `allowFreeform` 为 true（默认）时，最后固定有一个输入项；为 false 时不显示输入项。

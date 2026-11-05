@@ -7,7 +7,7 @@ namespace IcarusII.UI
 {
     /// <summary>
     /// 一个可选项。Description 有值时显示成选项后面的灰色说明（`标题\t&lt;color=#555&gt;说明&lt;/color&gt;`），
-    /// 选项行只有一行，说明太长会被行高截断，长度由 sidecar 的 schema 提示约束。
+    /// 选项行只有一行，写得再长也只显示第一行，超出的部分由行高截断。
     /// </summary>
     internal sealed class AskOption
     {
