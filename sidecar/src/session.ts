@@ -49,10 +49,12 @@ import {
   buildConversationActivityPayload,
   buildConversationUpdatedPayload,
   buildConversationRenamedPayload,
+  buildConversationPinnedPayload,
   buildToolsStatePayload,
   buildConversationsIndexedPayload,
   buildConversationsExportedPayload,
   parseConversationRenamePayload,
+  parseConversationPinPayload,
   parseToolsSetPayload,
   parseConversationsExportPayload,
   parseConversationTargetPayload,
@@ -607,6 +609,9 @@ export class Session {
         return;
       case MessageType.ConversationDelete:
         this.queueBind(() => this.handleConversationDelete(env));
+        return;
+      case MessageType.ConversationPin:
+        this.queueBind(() => this.handleConversationPin(env));
         return;
       case MessageType.HistoryUndoCompaction:
         this.queueBind(() => this.handleHistoryUndoCompaction(env));
@@ -1506,6 +1511,60 @@ export class Session {
   }
 
   /**
+   * A.13：置顶/取消置顶一个会话（附录 A.13）。
+   *
+   * 置顶只影响左栏排序：不改会话内容、不切换活动会话、不算"已读"。
+   * mod 会先本地乐观置顶，回执只核对结果；失败时 mod 回滚。
+   */
+  private async handleConversationPin(env: import('./protocol.js').ParsedEnvelope): Promise<void> {
+    if (this._state !== 'ready') {
+      this.sendError('unauthorized', 'handshake not completed', env.id || null);
+      return;
+    }
+    const payload = parseConversationPinPayload(env.payload ?? {});
+    if (!payload) {
+      this.sendError('bad_request', 'conversation.pin.payload 非法', env.id || null);
+      return;
+    }
+    // A.14.4：可选 saveKey = 跨存档置顶；缺省仍走当前存档。
+    const saveKey = payload.saveKey ?? this.boundSaveKey;
+    const reply = (ok: boolean, error?: string | null) => {
+      this.sendEnvelope(
+        buildEnvelope({
+          type: MessageType.ConversationPinned,
+          replyTo: env.id || null,
+          payload: buildConversationPinnedPayload({
+            saveKey,
+            conversationId: payload.conversationId,
+            pinned: payload.pinned,
+            ok,
+            error: error ?? null,
+          }),
+        }),
+      );
+    };
+    if (!saveKey) {
+      reply(false, 'save_required');
+      return;
+    }
+    if (!this.options.agent.pinConversation) {
+      reply(false, 'internal');
+      return;
+    }
+    try {
+      const result = await this.options.agent.pinConversation(
+        saveKey,
+        payload.conversationId,
+        payload.pinned,
+      );
+      reply(result.ok, result.error);
+    } catch (err) {
+      this.logger.warn('置顶会话异常', { error: err instanceof Error ? err.message : String(err) });
+      reply(false, 'internal');
+    }
+  }
+
+  /**
    * 删除一个问答回合（附录 A.7）。
    *
    * 删除必须落到会话文件上，否则 `save.bound.history` 会把它又带回聊天窗。
@@ -1862,6 +1921,7 @@ export class Session {
         this.focusedConversationId ??
         this.options.agent.getActiveConversationId?.() ??
         null,
+      parsed.gameTick ?? null,
     );
   }
 

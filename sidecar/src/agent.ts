@@ -337,7 +337,13 @@ export interface AgentRunner {
     reply: string,
     gameTime: string,
     conversationId?: string | null,
+    gameTick?: number | null,
   ): void;
+  /** A.13：置顶/取消置顶一个会话；只影响左栏排序。 */
+  pinConversation?(saveKey: string | null, conversationId: string, pinned: boolean): Promise<{
+    ok: boolean;
+    error?: string;
+  }>;
   /**
    * 拉取某个供应商的可用模型列表（M3）。
    * 已知供应商走 pi 目录；显式给了 baseUrl 的走 OpenAI 兼容 `/models`。
@@ -700,6 +706,39 @@ export function normalizeConversationRename(raw: string): string {
   return chars.length > CONVERSATION_RENAME_MAX_CHARS
     ? chars.slice(0, CONVERSATION_RENAME_MAX_CHARS).join('')
     : text;
+}
+
+/**
+ * A.13 左侧会话排序：置顶在最前；置顶之间按最后回复的游戏时间从新到旧，
+ * 没有回复记录的排在有记录之后；其余按 updatedAt 降序，最后用 id 保证稳定。
+ */
+export function compareConversations(a: ConversationInfo, b: ConversationInfo): number {
+  const pinnedA = a.pinned === true ? 1 : 0;
+  const pinnedB = b.pinned === true ? 1 : 0;
+  if (pinnedA !== pinnedB) return pinnedB - pinnedA;
+  if (pinnedA === 1) {
+    const tickA = typeof a.lastReplyTick === 'number' ? a.lastReplyTick : -1;
+    const tickB = typeof b.lastReplyTick === 'number' ? b.lastReplyTick : -1;
+    if (tickA !== tickB) return tickB - tickA;
+  }
+  const byUpdated = b.updatedAt - a.updatedAt;
+  if (byUpdated !== 0) return byUpdated;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/** 会话最后回复的 gameTick：同一会话取最大值；没有归属或没有 tick 的记录跳过。 */
+function lastReplyTicks(
+  records: readonly GameTimeRecord[],
+): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const record of records) {
+    if (!record.conversationId || typeof record.gameTick !== 'number') continue;
+    const current = out.get(record.conversationId);
+    if (current === undefined || record.gameTick > current) {
+      out.set(record.conversationId, record.gameTick);
+    }
+  }
+  return out;
 }
 
 /** 标题模型只看到这次问答的裁剪版，避免长回答把请求撑大。 */
@@ -1859,8 +1898,14 @@ export class PiAgent implements AgentRunner {
       modified: Date;
       history?: HistoryMessage[];
     },
+    meta?: { pins?: Record<string, number>; replyTicks?: Map<string, number> },
   ): ConversationInfo {
     const records = this.readConversationRecords(pi, saveKey, info.id, info.history);
+    // 缺省就从盘上读一次：切换/新建会话的回执也要带上 pinned/lastReplyTick，
+    // 否则 mod 拿这条回执覆盖列表项时会把置顶和最后回复时刻丢掉。
+    const pins = meta ? meta.pins : this.readConversationPins(saveKey);
+    const replyTicks = meta ? meta.replyTicks : lastReplyTicks(this.readReplyTimes(saveKey));
+    const replyTick = replyTicks?.get(info.id);
     return {
       id: info.id,
       title: this.conversationTitle(info),
@@ -1868,6 +1913,8 @@ export class PiAgent implements AgentRunner {
       updatedAt: info.modified.getTime(),
       recordCount: records.length,
       records,
+      ...(pins?.[info.id] !== undefined ? { pinned: true } : {}),
+      ...(typeof replyTick === 'number' ? { lastReplyTick: replyTick } : {}),
     };
   }
 
@@ -1928,6 +1975,81 @@ export class PiAgent implements AgentRunner {
     } catch (err) {
       this.logger.warn('写入 saves.json 失败', errorFields(err));
     }
+  }
+
+  private conversationPinsPath(saveKey: string | null): string | null {
+    if (!saveKey) return null;
+    return join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey), 'conversation-pins.json');
+  }
+
+  /** 读置顶记录：会话 id → 置顶时间（毫秒）。损坏/缺失都按“没有置顶”处理。 */
+  private readConversationPins(saveKey: string | null): Record<string, number> {
+    const path = this.conversationPinsPath(saveKey);
+    if (!path || !existsSync(path)) return {};
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(path, 'utf8'));
+    } catch {
+      return {};
+    }
+    if (typeof parsed !== 'object' || parsed === null) return {};
+    const pins = (parsed as { pins?: unknown }).pins;
+    if (typeof pins !== 'object' || pins === null || Array.isArray(pins)) return {};
+    const out: Record<string, number> = Object.create(null) as Record<string, number>;
+    for (const [id, value] of Object.entries(pins as Record<string, unknown>)) {
+      if (!id) continue;
+      out[id] = typeof value === 'number' && Number.isFinite(value) ? value : 0;
+    }
+    return out;
+  }
+
+  private writeConversationPins(saveKey: string, pins: Record<string, number>): boolean {
+    const path = this.conversationPinsPath(saveKey);
+    if (!path) return false;
+    const tmp = `${path}.tmp-${process.pid}`;
+    try {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      writeFileSync(tmp, `${JSON.stringify({ pins }, null, 2)}\n`, {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+      renameSync(tmp, path);
+      return true;
+    } catch (err) {
+      try { unlinkSync(tmp); } catch { /* ignore */ }
+      this.logger.warn('写会话置顶记录失败', { saveKey, ...errorFields(err) });
+      return false;
+    }
+  }
+
+  /** 删除会话时顺手清掉置顶记录，避免会话 id 复用时冒出一个置顶的陌生会话。 */
+  private removeConversationPin(saveKey: string, conversationId: string): void {
+    const pins = this.readConversationPins(saveKey);
+    if (pins[conversationId] === undefined) return;
+    delete pins[conversationId];
+    this.writeConversationPins(saveKey, pins);
+  }
+
+  /** A.13：置顶只影响排序；会话不存在时返回 conversation_not_found。 */
+  async pinConversation(
+    saveKey: string | null,
+    conversationId: string,
+    pinned: boolean,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!saveKey) return { ok: false, error: 'no_save' };
+    if (!conversationId) return { ok: false, error: 'conversation_not_found' };
+    const pi = await this.loadSdk();
+    const sessionDir = this.conversationSessionDir(saveKey);
+    // findById 找不到时返回 undefined（不是 null），两者都要按“不存在”处理。
+    const file = pi.SessionManager.findById(this.dataDir, conversationId, sessionDir);
+    const exists = Boolean(file) || this.readActiveConversationId(saveKey) === conversationId;
+    if (!exists) return { ok: false, error: 'conversation_not_found' };
+
+    const pins = this.readConversationPins(saveKey);
+    if (pinned) pins[conversationId] = Date.now();
+    else delete pins[conversationId];
+    if (!this.writeConversationPins(saveKey, pins)) return { ok: false, error: 'io_error' };
+    return { ok: true };
   }
 
   /** 只读 active.json；索引不能用 ensureActiveConversation（它会写盘）。 */
@@ -2000,7 +2122,8 @@ export class PiAgent implements AgentRunner {
       let newest = 0;
       for (const info of list) {
         if (conversations.length >= MAX_CONVERSATIONS) break;
-        const built = this.conversationInfoFrom(pi, dirKey, info);
+        // 索引只用 id/标题/时间/条数，不需要置顶与最后回复时刻，传空 meta 省掉两遍读盘。
+        const built = this.conversationInfoFrom(pi, dirKey, info, {});
         conversations.push({
           id: built.id,
           title: built.title,
@@ -2108,17 +2231,21 @@ export class PiAgent implements AgentRunner {
       this.logger.warn('列出存档会话失败', { saveKey, ...errorFields(err) });
     }
 
+    const meta = {
+      pins: this.readConversationPins(saveKey),
+      replyTicks: lastReplyTicks(this.readReplyTimes(saveKey)),
+    };
     const out: ConversationInfo[] = [];
     const seen = new Set<string>();
     for (const info of list) {
       if (out.length >= MAX_CONVERSATIONS) break;
-      out.push(this.conversationInfoFrom(pi, saveKey, info));
+      out.push(this.conversationInfoFrom(pi, saveKey, info, meta));
       seen.add(info.id);
     }
     if (activeId && !seen.has(activeId)) {
       out.unshift(this.draftConversationInfo(activeId, this.activeConversationDraftTitle));
     }
-    out.sort((a, b) => b.updatedAt - a.updatedAt);
+    out.sort(compareConversations);
     return out;
   }
 
@@ -2307,6 +2434,7 @@ export class PiAgent implements AgentRunner {
         return { ok: false, error: 'io_error' };
       }
     }
+    this.removeConversationPin(saveKey, conversationId);
 
     if (!isActive) {
       return { ok: true, activeConversationId: activeId };
@@ -2537,6 +2665,7 @@ export class PiAgent implements AgentRunner {
     reply: string,
     gameTime: string,
     conversationId?: string | null,
+    gameTick?: number | null,
   ): void {
     const path = this.replyTimeLogPath(saveKey);
     const text = prompt.trim();
@@ -2551,6 +2680,9 @@ export class PiAgent implements AgentRunner {
         prompt: text.slice(0, 4000),
         ...(answer ? { reply: answer.slice(0, 4000) } : {}),
         gameTime: time.slice(0, 16),
+        ...(typeof gameTick === 'number' && Number.isFinite(gameTick) && gameTick >= 0
+          ? { gameTick }
+          : {}),
         timestamp: Date.now(),
       };
       appendFileSync(path, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 });
@@ -2587,6 +2719,9 @@ export class PiAgent implements AgentRunner {
             ? { reply: parsed.reply }
             : {}),
           gameTime: parsed.gameTime,
+          ...(typeof parsed.gameTick === 'number' && Number.isFinite(parsed.gameTick)
+            ? { gameTick: parsed.gameTick }
+            : {}),
           ...(typeof parsed.timestamp === 'number' ? { timestamp: parsed.timestamp } : {}),
         });
       } catch {

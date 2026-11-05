@@ -838,6 +838,8 @@ namespace IcarusII.Tests
             Eq("conversation.updated 类型名", "conversation.updated", Protocol.ConversationUpdated);
             Eq("conversation.rename 类型名", "conversation.rename", Protocol.ConversationRename);
             Eq("conversation.renamed 类型名", "conversation.renamed", Protocol.ConversationRenamed);
+            Eq("conversation.pin 类型名", "conversation.pin", Protocol.ConversationPin);
+            Eq("conversation.pinned 类型名", "conversation.pinned", Protocol.ConversationPinned);
             Eq("conversation.create 空载荷", 0, Protocol.BuildConversationCreate().Count);
             Eq("conversation.switch payload", "conv-a",
                 Protocol.BuildConversationTarget("conv-a")["conversationId"].AsString());
@@ -867,6 +869,20 @@ namespace IcarusII.Tests
             Eq("conversation records 数", 2, multi.Conversations[0].Records.Count);
             Eq("conversation record text", "帮我规划", multi.Conversations[0].Records[0].Text);
             Eq("conversation record gameTime", "08:42", multi.Conversations[0].Records[1].GameTime);
+            Eq("conversation 未置顶缺省 false", false, multi.Conversations[0].Pinned);
+            Eq("conversation 无 lastReplyTick 缺省 0", 0L, multi.Conversations[0].LastReplyTick);
+
+            var pinnedInfo = ConversationInfo.Parse(JsonValue.Parse(
+                "{\"id\":\"conv-a\",\"title\":\"量子芯片\",\"recordCount\":1,\"records\":[]," +
+                "\"pinned\":true,\"lastReplyTick\":42123456}"));
+            Eq("conversation pinned", true, pinnedInfo.Pinned);
+            Eq("conversation lastReplyTick", 42123456L, pinnedInfo.LastReplyTick);
+            pinnedInfo.SetPinned(false);
+            Eq("conversation SetPinned", false, pinnedInfo.Pinned);
+            pinnedInfo.MarkReplied(9000L);
+            Eq("conversation MarkReplied 前进", 42123456L, pinnedInfo.LastReplyTick);
+            pinnedInfo.MarkReplied(99999999L);
+            Eq("conversation MarkReplied 更新", 99999999L, pinnedInfo.LastReplyTick);
 
             var switched = ConversationEventInfo.Parse(JsonValue.Parse(
                 "{\"saveKey\":\"3f2a\",\"conversationId\":\"conv-a\",\"existed\":true,\"messageCount\":2," +
@@ -940,6 +956,21 @@ namespace IcarusII.Tests
             Eq("reply.time reply", "回答", replyTime["reply"].AsString());
             Eq("reply.time gameTime", "08:42", replyTime["gameTime"].AsString());
             Eq("reply.time conversationId", "conv-a", replyTime["conversationId"].AsString());
+            Eq("reply.time 无 gameTick 时不写字段", 0L, replyTime["gameTick"].AsLong(0));
+            var replyTimeTick = Protocol.BuildReplyTime("问题", "回答", "08:42", "conv-a", 42123456L);
+            Eq("reply.time gameTick", 42123456L, replyTimeTick["gameTick"].AsLong(0));
+
+            Eq("conversation.pin builder id", "conv-a",
+                Protocol.BuildConversationPin("conv-a", true)["conversationId"].AsString());
+            Eq("conversation.pin builder pinned", true,
+                Protocol.BuildConversationPin("conv-a", true)["pinned"].AsBool());
+            Eq("conversation.pin builder saveKey", "3f2a",
+                Protocol.BuildConversationPin("conv-a", true, "3f2a")["saveKey"].AsString());
+            var pinnedAck = ConversationEventInfo.Parse(JsonValue.Parse(
+                "{\"saveKey\":\"3f2a\",\"conversationId\":\"conv-a\",\"pinned\":true,\"ok\":true,\"error\":null}"));
+            Eq("conversation.pinned ok", true, pinnedAck.Ok);
+            Eq("conversation.pinned pinned", true, pinnedAck.Pinned);
+            Eq("conversation.pinned id", "conv-a", pinnedAck.ConversationId);
 
             // ---- 附录 A.7：删除对话回合 ----
             Eq("history.delete 类型名", "history.delete", Protocol.HistoryDelete);

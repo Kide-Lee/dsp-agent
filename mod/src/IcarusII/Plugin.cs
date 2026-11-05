@@ -177,6 +177,7 @@ namespace IcarusII
                 _chat.ConversationSwitchRequested += OnConversationSwitchRequested;
                 _chat.ConversationDeleteRequested += OnConversationDeleteRequested;
                 _chat.ConversationRenameRequested += OnConversationRenameRequested;
+                _chat.ConversationPinRequested += OnConversationPinRequested;
                 _chat.BreakRequested += OnBreakRequested;
                 _chat.BlueprintCardActionRequested += OnBlueprintCardAction;
                 _chat.AskCompleted += OnAskCompleted;
@@ -564,6 +565,10 @@ namespace IcarusII
                     OnConversationRenamed(ConversationEventInfo.Parse(payload));
                     break;
 
+                case Protocol.ConversationPinned:
+                    OnConversationPinned(ConversationEventInfo.Parse(payload));
+                    break;
+
                 case Protocol.ToolActivity:
                 {
                     if (!IsFocusedPayload(payload)) break;
@@ -755,10 +760,9 @@ namespace IcarusII
                             _promptById.TryGetValue(replyTo, out backgroundPrompt);
                         if (!string.IsNullOrEmpty(backgroundPrompt))
                         {
-                            _client?.SendReplyTime(
+                            RecordReplyTime(
                                 backgroundPrompt,
                                 finalText,
-                                ChatWindow.CurrentGameClock(),
                                 conversationId ?? _chat.ActiveConversationId);
                             _promptById.Remove(replyTo);
                         }
@@ -787,11 +791,7 @@ namespace IcarusII
                     if (!string.IsNullOrEmpty(replyTo)) _promptById.TryGetValue(replyTo, out prompt);
                     if (!string.IsNullOrEmpty(prompt))
                     {
-                        _client?.SendReplyTime(
-                            prompt,
-                            finalText,
-                            ChatWindow.CurrentGameClock(),
-                            conversationId ?? _chat.ActiveConversationId);
+                        RecordReplyTime(prompt, finalText, conversationId ?? _chat.ActiveConversationId);
                         _promptById.Remove(replyTo);
                     }
 
@@ -1900,6 +1900,22 @@ namespace IcarusII
             return failed == 0;
         }
 
+        /// <summary>
+        /// 回存一轮回答完成时的游戏时间（协议 A.10），并立刻刷新左侧所有会话的时间标记。
+        /// 时间标记按“当前 gameTick − 该会话最后回复的 gameTick”计算，所以两个值来自同一次采样。
+        /// </summary>
+        private void RecordReplyTime(string prompt, string reply, string conversationId)
+        {
+            var gameTick = ChatWindow.CurrentGameTick();
+            _client?.SendReplyTime(
+                prompt,
+                reply,
+                ChatWindow.CurrentGameClock(),
+                conversationId,
+                gameTick);
+            _chat?.MarkConversationReplied(conversationId, gameTick);
+        }
+
         private void OnConversationActivity(ConversationActivityInfo info)
         {
             if (info == null || string.IsNullOrEmpty(info.ConversationId)) return;
@@ -1952,6 +1968,26 @@ namespace IcarusII
                     return;
                 }
                 _chat.UpdateConversationTitle(info.ConversationId, info.Title);
+            });
+        }
+
+        /// <summary>
+        /// 置顶回执：以 sidecar 的结果为准对齐（mod 之前已经乐观置顶）。
+        /// 失败时把状态翻回去，玩家看到列表复原就知道没生效。
+        /// </summary>
+        private void OnConversationPinned(ConversationEventInfo info)
+        {
+            if (info == null || string.IsNullOrEmpty(info.ConversationId)) return;
+            Post(() =>
+            {
+                if (_chat == null) return;
+                if (!info.Ok)
+                {
+                    _chat.SetConversationPinned(info.ConversationId, !info.Pinned);
+                    _chat.AppendSystem(Strings.Get("chat.conversation.failed", info.Error ?? "unknown"));
+                    return;
+                }
+                _chat.SetConversationPinned(info.ConversationId, info.Pinned);
             });
         }
 
@@ -2071,6 +2107,23 @@ namespace IcarusII
             if (string.IsNullOrEmpty(conversationId)) return;
             if (_client.SendConversationDelete(conversationId) == null)
                 _chat.AppendSystem(Strings.Get("chat.conversation.failed", "连接未就绪"));
+        }
+
+        private void OnConversationPinRequested(string conversationId, bool pinned)
+        {
+            if (_chat == null || string.IsNullOrEmpty(conversationId)) return;
+            if (_client == null || _client.State != ConnectionState.Ready)
+            {
+                // 乐观置顶已经生效，发不出去就翻回去，别让列表显示一个存不下来的状态。
+                _chat.SetConversationPinned(conversationId, !pinned);
+                _chat.AppendSystem(Strings.Get("chat.conversation.failed", "连接未就绪"));
+                return;
+            }
+            if (_client.SendConversationPin(conversationId, pinned) == null)
+            {
+                _chat.SetConversationPinned(conversationId, !pinned);
+                _chat.AppendSystem(Strings.Get("chat.conversation.failed", "连接未就绪"));
+            }
         }
 
         /// <summary>

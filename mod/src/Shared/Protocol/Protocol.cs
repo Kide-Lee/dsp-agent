@@ -139,6 +139,12 @@ namespace IcarusII.Common.Protocol
         /// <summary>sidecar → mod：重命名结果。</summary>
         public const string ConversationRenamed = "conversation.renamed";
 
+        /// <summary>mod → sidecar：置顶/取消置顶会话（只影响左侧排序）。</summary>
+        public const string ConversationPin = "conversation.pin";
+
+        /// <summary>sidecar → mod：置顶结果。</summary>
+        public const string ConversationPinned = "conversation.pinned";
+
         // ---- M4e 增量：删除对话回合（协议附录 A.7）----
 
         /// <summary>mod → sidecar：删除一个问答回合。</summary>
@@ -784,15 +790,27 @@ namespace IcarusII.Common.Protocol
             return p;
         }
 
+        /// <summary>构造 conversation.pin 载荷（附录 A.13）：pinned 是点完之后的目标状态。</summary>
+        public static JsonValue BuildConversationPin(string conversationId, bool pinned,
+            string saveKey = null)
+        {
+            var p = JsonValue.NewObject();
+            if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
+            p.Set("pinned", pinned);
+            if (!string.IsNullOrEmpty(saveKey)) p.Set("saveKey", saveKey);
+            return p;
+        }
+
         /// <summary>构造 reply.time 载荷（协议附录 A.10）。</summary>
         public static JsonValue BuildReplyTime(string prompt, string reply, string gameTime,
-            string conversationId = null)
+            string conversationId = null, long gameTick = 0)
         {
             var p = JsonValue.NewObject();
             if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
             p.Set("prompt", prompt ?? string.Empty);
             p.Set("reply", reply ?? string.Empty);
             p.Set("gameTime", gameTime ?? string.Empty);
+            if (gameTick > 0) p.Set("gameTick", gameTick);
             return p;
         }
 
@@ -1290,6 +1308,10 @@ namespace IcarusII.Common.Protocol
         public long UpdatedAt { get; private set; }
         public int RecordCount { get; private set; }
         public List<ConversationRecordInfo> Records { get; private set; } = new List<ConversationRecordInfo>();
+        /// <summary>是否置顶；置顶会话排在左侧列表最前面。</summary>
+        public bool Pinned { get; private set; }
+        /// <summary>该会话最后一条回答完成时的 gameTick；0 = 没有记录。</summary>
+        public long LastReplyTick { get; private set; }
 
         public static ConversationInfo Create(string id, string title)
         {
@@ -1337,6 +1359,17 @@ namespace IcarusII.Common.Protocol
             if (timestamp > 0) UpdatedAt = timestamp;
         }
 
+        public void SetPinned(bool pinned)
+        {
+            Pinned = pinned;
+        }
+
+        /// <summary>回答完成时记下当时的 gameTick，左侧时间标记按它算“过了多久”。</summary>
+        public void MarkReplied(long gameTick)
+        {
+            if (gameTick > LastReplyTick) LastReplyTick = gameTick;
+        }
+
         public static ConversationInfo Parse(JsonValue value)
         {
             if (value is null || value.IsNull) return null;
@@ -1349,6 +1382,8 @@ namespace IcarusII.Common.Protocol
                 CreatedAt = value["createdAt"].AsLong(0),
                 UpdatedAt = value["updatedAt"].AsLong(0),
                 RecordCount = value["recordCount"].AsInt(0),
+                Pinned = value["pinned"].AsBool(false),
+                LastReplyTick = value["lastReplyTick"].AsLong(0),
             };
             var records = value["records"];
             if (records is not null && records.Count > 0)
@@ -1406,6 +1441,8 @@ namespace IcarusII.Common.Protocol
         public bool Running { get; private set; }
         /// <summary>运行状态（thinking/tools/...）；缺省 idle。</summary>
         public string State { get; private set; }
+        /// <summary>conversation.pinned 回执里的目标状态（附录 A.13，可选）。</summary>
+        public bool Pinned { get; private set; }
         /// <summary>conversation.switched 里被丢弃的空会话 id（附录 A.13，可选）。</summary>
         public string DiscardedConversationId { get; private set; }
         public ConversationInfo Conversation { get; private set; }
@@ -1426,6 +1463,7 @@ namespace IcarusII.Common.Protocol
             r.MessageCount = payload["messageCount"].AsInt(0);
             r.Running = payload["running"].AsBool(false);
             r.State = payload["state"].AsString("idle");
+            r.Pinned = payload["pinned"].AsBool(false);
             r.DiscardedConversationId = payload["discardedConversationId"].AsString(null);
             r.Conversation = ConversationInfo.Parse(payload["conversation"]);
             if (string.IsNullOrEmpty(r.ConversationId) && r.Conversation is not null)

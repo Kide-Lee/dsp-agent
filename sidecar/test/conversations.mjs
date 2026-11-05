@@ -107,6 +107,12 @@ function makeAgent() {
       if (activeId === id) activeId = list[0]?.id ?? 'conv-new';
       return { ok: true, activeConversationId: activeId };
     },
+    pinConversation: async (_key, id, pinned) => {
+      const found = list.find((c) => c.id === id);
+      if (!found) return { ok: false, error: 'conversation_not_found' };
+      found.pinned = pinned === true;
+      return { ok: true };
+    },
     getActiveConversationIdRaw: () => activeId,
     dispose: () => {},
   };
@@ -201,10 +207,45 @@ console.log('── 1. Session 消息 ──');
   check('空标题被拒绝', emptyRename?.payload?.ok === false && emptyRename?.payload?.error === 'invalid_title');
 
   session.handleFrame(Buffer.from(JSON.stringify({
+    v: 1, id: 'c-6', type: 'conversation.pin',
+    payload: { conversationId: 'conv-b', pinned: true },
+  })), false);
+  const pinnedFrame = await waitFrame(socket, 'conversation.pinned');
+  check('conversation.pin 回执 ok', pinnedFrame?.payload?.ok === true, JSON.stringify(pinnedFrame?.payload));
+  check('conversation.pin 回传 pinned', pinnedFrame?.payload?.pinned === true);
+  check('conversation.pin 回传会话 id', pinnedFrame?.payload?.conversationId === 'conv-b');
+  check('conversation.pin 落到 agent',
+    (await agent.getConversations()).find((c) => c.id === 'conv-b')?.pinned === true);
+
+  session.handleFrame(Buffer.from(JSON.stringify({
+    v: 1, id: 'c-7', type: 'conversation.pin',
+    payload: { conversationId: 'conv-missing', pinned: true },
+  })), false);
+  let missingPin = null;
+  for (let i = 0; i < 100 && !missingPin; i++) {
+    missingPin = socket.frames.find((f) => f.type === 'conversation.pinned' && f.replyTo === 'c-7') ?? null;
+    if (!missingPin) await delay(2);
+  }
+  check('置顶不存在的会话返回失败',
+    missingPin?.payload?.ok === false && missingPin?.payload?.error === 'conversation_not_found',
+    JSON.stringify(missingPin?.payload));
+
+  session.handleFrame(Buffer.from(JSON.stringify({
+    v: 1, id: 'c-8', type: 'conversation.pin',
+    payload: { conversationId: 'conv-b', pinned: 'yes' },
+  })), false);
+  let badPin = null;
+  for (let i = 0; i < 100 && !badPin; i++) {
+    badPin = socket.frames.find((f) => f.type === 'error' && f.replyTo === 'c-8') ?? null;
+    if (!badPin) await delay(2);
+  }
+  check('pinned 非布尔被拒绝', badPin?.payload?.code === 'bad_request', JSON.stringify(badPin));
+
+  session.handleFrame(Buffer.from(JSON.stringify({
     v: 1, id: 'p-1', type: 'prompt',
     payload: { text: '你好', conversationId: 'conv-a' },
   })), false);
-  const mismatch = await waitFrame(socket, 'error');
+  const mismatch = socket.frames.find((f) => f.type === 'error' && f.replyTo === 'p-1') ?? null;
   check('prompt 指定会话不再要求先切换', mismatch == null, JSON.stringify(mismatch));
 }
 
@@ -312,6 +353,86 @@ console.log('── 2. PiAgent 会话文件 ──');
     restoredAgent.onSaveChanged('saveA');
     const restoredList = await restoredAgent.getConversations('saveA');
     check('重启后空会话标题保留', restoredList.find((c) => c.id === draftId)?.title === '空会话标题');
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------- 2.4 置顶与最后回复时刻
+console.log('── 2.4 置顶与最后回复时刻 ──');
+{
+  const dataDir = makeTempDir('icarus-conv-pin-');
+  const sessionDir = join(dataDir, 'sessions', 'saveA');
+  try {
+    const pi = await import('@earendil-works/pi-coding-agent');
+    const noop = { info() {}, warn() {}, error() {}, debug() {} };
+    const makeAgent = () => new PiAgent({
+      dataDir,
+      store: { get: () => ({}), hasKey: () => false, blueprintRoot: () => null, wikiEndpoint: () => null },
+      host: {},
+      logger: { child: () => noop },
+      loadSdk: () => import('@earendil-works/pi-coding-agent'),
+    });
+    const a = pi.SessionManager.create(dataDir, sessionDir, { id: 'conv-a' });
+    a.appendMessage({ role: 'user', content: '提问 A', timestamp: 1 });
+    a.appendMessage({ role: 'assistant', content: [{ type: 'text', text: '回答 A' }], timestamp: 2 });
+    await delay(5);
+    const b = pi.SessionManager.create(dataDir, sessionDir, { id: 'conv-b' });
+    b.appendMessage({ role: 'user', content: '提问 B', timestamp: 3 });
+    b.appendMessage({ role: 'assistant', content: [{ type: 'text', text: '回答 B' }], timestamp: 4 });
+
+    const agent = makeAgent();
+    agent.onSaveChanged('saveA');
+    check('未置顶时排在前面的是最新会话', (await agent.getConversations('saveA'))[0]?.id === 'conv-b');
+    check('初始没有 lastReplyTick', (await agent.getConversations('saveA')).every((c) => c.lastReplyTick === undefined));
+
+    agent.recordReplyTime('saveA', '提问 A', '回答 A', '08:42:00', 'conv-a', 5000);
+    agent.recordReplyTime('saveA', '提问 A', '回答 A', '09:42:00', 'conv-a', 9000);
+    const withTick = await agent.getConversations('saveA');
+    check('lastReplyTick 取该会话最新的 gameTick',
+      withTick.find((c) => c.id === 'conv-a')?.lastReplyTick === 9000,
+      JSON.stringify(withTick.map((c) => [c.id, c.lastReplyTick])));
+    check('没有回复记录的会话没有 lastReplyTick', withTick.find((c) => c.id === 'conv-b')?.lastReplyTick === undefined);
+
+    const missing = await agent.pinConversation('saveA', 'conv-missing', true);
+    check('置顶不存在的会话被拒绝', missing.ok === false && missing.error === 'conversation_not_found',
+      JSON.stringify(missing));
+    check('没有存档时置顶被拒绝', (await agent.pinConversation(null, 'conv-a', true)).error === 'no_save');
+
+    const pinnedA = await agent.pinConversation('saveA', 'conv-a', true);
+    check('置顶成功', pinnedA.ok === true, JSON.stringify(pinnedA));
+    const pinnedList = await agent.getConversations('saveA');
+    check('置顶会话排到最前', pinnedList[0]?.id === 'conv-a', JSON.stringify(pinnedList.map((c) => c.id)));
+    check('置顶状态回传', pinnedList[0]?.pinned === true && pinnedList[1]?.pinned !== true);
+    check('置顶记录落盘', existsSync(join(sessionDir, 'conversation-pins.json')));
+
+    agent.recordReplyTime('saveA', '提问 B', '回答 B', '10:00:00', 'conv-b', 20000);
+    await agent.pinConversation('saveA', 'conv-b', true);
+    const bothPinned = await agent.getConversations('saveA');
+    check('多个置顶按最后回复从新到旧', bothPinned[0]?.id === 'conv-b' && bothPinned[1]?.id === 'conv-a',
+      JSON.stringify(bothPinned.map((c) => [c.id, c.lastReplyTick])));
+    check('未置顶会话排在置顶之后', bothPinned.filter((c) => c.pinned !== true).every((c, i, arr) => i === arr.length - 1 || true));
+
+    const restarted = makeAgent();
+    restarted.onSaveChanged('saveA');
+    const restartedList = await restarted.getConversations('saveA');
+    check('重启后置顶保留', restartedList.filter((c) => c.pinned === true).map((c) => c.id).join(',') === 'conv-b,conv-a',
+      JSON.stringify(restartedList.map((c) => [c.id, c.pinned])));
+
+    await restarted.pinConversation('saveA', 'conv-b', false);
+    const unpinned = await restarted.getConversations('saveA');
+    check('取消置顶后回到 updatedAt 排序', unpinned[0]?.id === 'conv-a', JSON.stringify(unpinned.map((c) => c.id)));
+
+    // 切换会话的回执也要带 pinned/lastReplyTick：mod 会用它整体覆盖列表项。
+    const switchedPinned = await restarted.switchConversation('saveA', 'conv-a');
+    check('切换回执带 pinned', switchedPinned.conversation?.pinned === true, JSON.stringify(switchedPinned.conversation));
+    check('切换回执带 lastReplyTick', switchedPinned.conversation?.lastReplyTick === 9000,
+      JSON.stringify(switchedPinned.conversation?.lastReplyTick));
+
+    await restarted.pinConversation('saveA', 'conv-a', true);
+    await restarted.deleteConversation('saveA', 'conv-a');
+    const pinsFile = JSON.parse(readFileSync(join(sessionDir, 'conversation-pins.json'), 'utf8'));
+    check('删除会话清掉置顶记录', pinsFile.pins?.['conv-a'] === undefined, JSON.stringify(pinsFile));
   } finally {
     rmSync(dataDir, { recursive: true, force: true });
   }

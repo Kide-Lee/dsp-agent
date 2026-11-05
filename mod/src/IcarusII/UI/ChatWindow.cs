@@ -70,7 +70,14 @@ namespace IcarusII.UI
         private static readonly Color DefaultTextDim = new Color(0.596f, 0.678f, 0.757f, 1f);
         private static readonly Color DefaultAccent = new Color(0.353f, 0.749f, 1f, 1f);
 
-        /// <summary>UIButton.onClick 是 event，外部只能 +=/-=；这里用它清理游戏自己的订阅。</summary>
+        /// <summary>GameMain.gameTick 是 60 tick/秒，界面里的“游戏时间”都按它换算。</summary>
+        private const long GameTickPerSecond = 60L;
+        /// <summary>删除按钮悬停时的红色（与标题/时间标记的常态色区分开）。</summary>
+        private static readonly Color ConversationDeleteHoverColor = new Color(1f, 0.36f, 0.36f, 1f);
+        /// <summary>标题还没排版完成时用的兜底宽度；等于 prefab 里 title-mask 的实际宽度。</summary>
+        private const float ConversationTitleFallbackWidth = 150f;
+
+        /// <summary>UIButton.onClick 是 event，外部只能 +=/-=；这里用它清理自己挂的订阅。</summary>
         private static readonly System.Reflection.FieldInfo UiButtonOnClickField =
             typeof(UIButton).GetField("onClick",
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
@@ -255,6 +262,7 @@ namespace IcarusII.UI
             public GameObject Go;
             public RectTransform Header;
             public RectTransform Records;
+            public RectTransform TitleMask;
             public Text Title;
             public Color TitleColor;
             public Image StatusChevron;
@@ -263,7 +271,10 @@ namespace IcarusII.UI
             public Image StatusNew;
             public ChevronSpin StatusChevronSpin;
             public LoadingSpin StatusLoadingSpin;
-            public ConversationDeleteHover DeleteHover;
+            public ConversationIconHover DeleteHover;
+            public ConversationIconHover PinHover;
+            public ConversationHeaderHover HeaderHover;
+            public Text TimeText;
             public GameObject ExpandMore;
             public Text ExpandMoreText;
             public bool Expanded;
@@ -1629,6 +1640,8 @@ namespace IcarusII.UI
                 EnsureIconMappings();
                 RefreshLinkCardInfos();
                 BindTitleIconButton();
+                // 打开窗口就刷一次所有会话的时间标记：“刚刚 / x分钟”只在打开那一刻是对的。
+                RefreshConversationTimes();
             }
         }
 
@@ -1956,6 +1969,8 @@ namespace IcarusII.UI
         /// <summary>玩家点了会话标题右侧的删除按钮（A.13）。</summary>
         public event Action<string> ConversationDeleteRequested;
         public event Action<string, string> ConversationRenameRequested;
+        /// <summary>玩家点了会话标题右侧的置顶按钮；参数是点完之后的目标状态。</summary>
+        public event Action<string, bool> ConversationPinRequested;
 
         /// <summary>
         /// 玩家点了压缩记录行的删除：请求 sidecar 撤销最近一次压缩（协议 A.11）。
@@ -4473,6 +4488,12 @@ namespace IcarusII.UI
         /// <summary>给 Plugin 回存 reply.time 用；与脚注显示的是同一套 HH:mm:ss。</summary>
         public static string CurrentGameClock() => GameClock();
 
+        /// <summary>
+        /// 给 Plugin 回存 reply.time 用：绝对游戏时刻，左侧会话时间标记按它算“过了多久”。
+        /// 没有游戏数据时返回 0（那个会话就退回显示时钟）。
+        /// </summary>
+        public static long CurrentGameTick() => GameMain.data != null ? GameMain.gameTick : 0L;
+
         /// <summary>旧历史只存 HH:mm；显示时补成 HH:mm:ss，保证所有脚注都含秒。</summary>
         private static string FormatGameTime(string value)
         {
@@ -5037,6 +5058,7 @@ namespace IcarusII.UI
                 _conversationVisible[conversation.Id] = 5;
             _conversations.Remove(conversation);
             _conversations.Insert(0, conversation);
+            SortConversations();
             RebuildConversationIndex();
         }
 
@@ -5055,6 +5077,53 @@ namespace IcarusII.UI
             return null;
         }
 
+        /// <summary>
+        /// 左侧列表顺序：置顶会话固定在所有会话前面。
+        /// 置顶之间按最后回复的游戏时间从新到旧（没有记录的排在有记录之后）；
+        /// 其余按 updatedAt 降序，最后用 id 保证顺序稳定。
+        /// 返回顺序是否真的变了——变了才值得重建索引。
+        /// </summary>
+        private bool SortConversations()
+        {
+            var before = _conversations.ConvertAll(conversation => conversation?.Id);
+            _conversations.Sort(CompareConversations);
+            for (int i = 0; i < _conversations.Count; i++)
+            {
+                if (!string.Equals(before[i], _conversations[i]?.Id, StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
+        }
+
+        private static int CompareConversations(ConversationInfo a, ConversationInfo b)
+        {
+            if (a is null) return 1;
+            if (b is null) return -1;
+            if (a.Pinned != b.Pinned) return a.Pinned ? -1 : 1;
+            if (a.Pinned)
+            {
+                var tickA = a.LastReplyTick > 0 ? a.LastReplyTick : -1L;
+                var tickB = b.LastReplyTick > 0 ? b.LastReplyTick : -1L;
+                if (tickA != tickB) return tickB.CompareTo(tickA);
+            }
+            var byUpdated = b.UpdatedAt.CompareTo(a.UpdatedAt);
+            if (byUpdated != 0) return byUpdated;
+            return string.CompareOrdinal(a.Id, b.Id);
+        }
+
+        /// <summary>
+        /// 对齐某个会话的置顶状态并重排列表。
+        /// 玩家点击时先乐观置顶，sidecar 回执（或发送失败回滚）再走这里。
+        /// </summary>
+        public void SetConversationPinned(string conversationId, bool pinned)
+        {
+            var conversation = FindConversation(conversationId);
+            if (conversation == null || conversation.Pinned == pinned) return;
+            conversation.SetPinned(pinned);
+            SortConversations();
+            RebuildConversationIndex();
+        }
+
         public string ActiveConversationId => _activeConversationId;
 
         /// <summary>用 sidecar 返回的会话列表整体替换左侧索引（save.bind / 删除会话后）。</summary>
@@ -5065,6 +5134,7 @@ namespace IcarusII.UI
                 foreach (var conversation in conversations)
                     if (conversation != null) _conversations.Add(conversation);
             _activeConversationId = activeId;
+            SortConversations();
             if (string.IsNullOrEmpty(_activeConversationId) && _conversations.Count > 0)
                 _activeConversationId = _conversations[0].Id;
             MarkConversationSeen(_activeConversationId);
@@ -5086,6 +5156,7 @@ namespace IcarusII.UI
             }
             if (index >= 0) _conversations[index] = conversation;
             else _conversations.Insert(0, conversation);
+            SortConversations();
             if (makeActive)
             {
                 _activeConversationId = conversation.Id;
@@ -5276,6 +5347,7 @@ namespace IcarusII.UI
                 Go = go,
                 Header = header,
                 Records = records,
+                TitleMask = header.Find("title-mask") as RectTransform,
                 Title = header.Find("title-mask/title")?.GetComponent<Text>(),
                 StatusChevron = status?.Find("chevron")?.GetComponent<Image>()
                     ?? status?.Find("icon")?.GetComponent<Image>(),
@@ -5302,6 +5374,7 @@ namespace IcarusII.UI
             if (headerHover == null) headerHover = header.gameObject.AddComponent<ConversationHeaderHover>();
             headerHover.Background = header.GetComponent<Image>();
             headerHover.HoverColor = new Color(_accent.r, _accent.g, _accent.b, 0.10f);
+            view.HeaderHover = headerHover;
 
             var headerButton = header.GetComponent<Button>();
             if (headerButton != null)
@@ -5345,12 +5418,47 @@ namespace IcarusII.UI
             }
             if (delete != null)
             {
-                var deleteHover = delete.GetComponent<ConversationDeleteHover>();
-                if (deleteHover == null) deleteHover = delete.gameObject.AddComponent<ConversationDeleteHover>();
+                var deleteHover = delete.GetComponent<ConversationIconHover>();
+                if (deleteHover == null) deleteHover = delete.gameObject.AddComponent<ConversationIconHover>();
                 deleteHover.Icon = delete.Find("x")?.GetComponent<Image>();
+                deleteHover.HoverColor = ConversationDeleteHoverColor;
                 view.DeleteHover = deleteHover;
             }
+
+            var pin = header.Find("pin");
+            var pinButton = pin != null ? pin.GetComponent<Button>() : null;
+            if (pinButton != null)
+            {
+                pinButton.onClick.RemoveAllListeners();
+                pinButton.onClick.AddListener(() =>
+                {
+                    // 置顶按钮嵌在可切换会话的 header 里；记录本帧，防止冒泡把“置顶”变成“切换”。
+                    _suppressHeaderClickFrame = Time.frameCount;
+                    OnConversationPinClicked(info.Id);
+                });
+            }
+            if (pin != null)
+            {
+                var pinHover = pin.GetComponent<ConversationIconHover>();
+                if (pinHover == null) pinHover = pin.gameObject.AddComponent<ConversationIconHover>();
+                pinHover.Icon = pin.Find("pin")?.GetComponent<Image>();
+                pinHover.HoverColor = Color.white;
+                view.PinHover = pinHover;
+            }
+
+            var time = header.Find("time");
+            view.TimeText = time != null ? time.Find("num")?.GetComponent<Text>() : null;
+            // prefab 的 time 自带一个空 Button；它挡在标题行前面，不接线的话点这块会没反应。
+            var timeButton = time != null ? time.GetComponent<Button>() : null;
+            if (timeButton != null)
+            {
+                timeButton.onClick.RemoveAllListeners();
+                timeButton.onClick.AddListener(() => OnConversationHeaderClicked(info.Id));
+            }
+
             headerHover.DeleteButton = delete != null ? delete.gameObject : null;
+            headerHover.PinButton = pin != null ? pin.gameObject : null;
+            headerHover.TimeLabel = time != null ? time.gameObject : null;
 
             BuildConversationRecords(view);
             UpdateConversationHeader(view);
@@ -5363,13 +5471,91 @@ namespace IcarusII.UI
             var titleColor = view.Id == _activeConversationId ? _accent : view.TitleColor;
             if (view.Title != null)
             {
-                view.Title.text = HeaderTitleLabel(
+                view.Title.text = HeaderTitleLabel(view,
                     string.IsNullOrEmpty(view.Info.Title) ? Strings.Get("chat.conversation.new") : view.Info.Title);
                 view.Title.color = titleColor;
             }
             ApplyConversationStatus(view);
             if (view.DeleteHover != null) view.DeleteHover.SetNormal(titleColor);
+            // 时间标记和置顶按钮都与标题同色，只有悬停置顶按钮时变成白色。
+            if (view.TimeText != null) view.TimeText.color = titleColor;
+            if (view.PinHover != null) view.PinHover.SetNormal(titleColor);
+            RefreshConversationTime(view);
             if (view.Records != null) view.Records.gameObject.SetActive(view.Expanded);
+        }
+
+        /// <summary>刷新一个会话右侧的时间标记，并让标题行按“置顶 / 有无时间”决定显隐。</summary>
+        private void RefreshConversationTime(ConversationView view)
+        {
+            if (view == null) return;
+            var label = ConversationTimeLabel(view.Info);
+            if (view.TimeText != null) view.TimeText.text = label;
+            if (view.HeaderHover != null)
+            {
+                view.HeaderHover.HasTime = !string.IsNullOrEmpty(label);
+                view.HeaderHover.Pinned = view.Info != null && view.Info.Pinned;
+                view.HeaderHover.Refresh();
+            }
+        }
+
+        /// <summary>
+        /// 每次打开聊天窗、每轮回答完成时刷新所有会话的时间标记。
+        /// 只改文本和显隐，不重建索引，避免打断悬停和滚动位置。
+        /// </summary>
+        public void RefreshConversationTimes()
+        {
+            foreach (var view in _conversationViews) RefreshConversationTime(view);
+        }
+
+        /// <summary>
+        /// 某一轮回答完成：就地记下当时的游戏时刻，刷新所有时间标记。
+        /// 置顶会话之间按最后回复排先后，所以刚回复的置顶会话可能要换位置。
+        /// </summary>
+        public void MarkConversationReplied(string conversationId, long gameTick)
+        {
+            var conversation = FindConversation(conversationId);
+            if (conversation != null)
+            {
+                conversation.MarkReplied(gameTick);
+                if (conversation.Pinned && SortConversations())
+                {
+                    RebuildConversationIndex();
+                    return;
+                }
+            }
+            RefreshConversationTimes();
+        }
+
+        /// <summary>
+        /// 左侧时间标记：按“当前游戏时间 − 最后回复的游戏时间”显示刚刚 / x分钟 / x.x小时 / xx小时。
+        /// 老记录没有 gameTick 时退回显示那轮回答的时钟，宁可少一点精度也不留空白。
+        /// </summary>
+        private static string ConversationTimeLabel(ConversationInfo info)
+        {
+            if (info == null) return string.Empty;
+            if (info.LastReplyTick <= 0) return LastRecordGameTime(info);
+            if (GameMain.data == null) return string.Empty;
+            long elapsedSeconds = (GameMain.gameTick - info.LastReplyTick) / GameTickPerSecond;
+            if (elapsedSeconds < 0) elapsedSeconds = 0;
+            if (elapsedSeconds < 60L) return Strings.Get("chat.conversation.time.just_now");
+            if (elapsedSeconds < 3600L)
+                return Strings.Get("chat.conversation.time.minutes", elapsedSeconds / 60L);
+            // 保留一位小数并向下取整，避免 9.96 小时被格式化成“10.0小时”，与“10 小时以上用整数”打架。
+            long tenths = elapsedSeconds * 10L / 3600L;
+            if (tenths < 100L)
+                return Strings.GetInvariant("chat.conversation.time.hours_tenths", tenths / 10L, tenths % 10L);
+            return Strings.Get("chat.conversation.time.hours", elapsedSeconds / 3600L);
+        }
+
+        /// <summary>没有 gameTick 的老会话：最后一条记录的 gameTime 就是那轮回答完成的时钟。</summary>
+        private static string LastRecordGameTime(ConversationInfo info)
+        {
+            for (int i = info.Records.Count - 1; i >= 0; i--)
+            {
+                var record = info.Records[i];
+                if (record != null && !string.IsNullOrEmpty(record.GameTime)) return record.GameTime;
+            }
+            return string.Empty;
         }
 
         /// <summary>外部状态帧：running=loading，attention=warning，completed=new，idle=chevron。</summary>
@@ -5603,6 +5789,23 @@ namespace IcarusII.UI
             }
         }
 
+        /// <summary>玩家点置顶按钮：先本地重排让列表立刻响应，再发请求；发送失败由 Plugin 回滚。</summary>
+        private void OnConversationPinClicked(string conversationId)
+        {
+            var conversation = FindConversation(conversationId);
+            if (conversation == null) return;
+            var pinned = !conversation.Pinned;
+            SetConversationPinned(conversationId, pinned);
+            try
+            {
+                ConversationPinRequested?.Invoke(conversationId, pinned);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[索引] 请求置顶会话失败：{ex.Message}");
+            }
+        }
+
         private void OnConversationRecordClicked(string conversationId, ConversationRecordInfo record)
         {
             if (record == null) return;
@@ -5747,10 +5950,15 @@ namespace IcarusII.UI
             return false;
         }
 
-        /// <summary>左栏会话标题：最多 144px，超出用省略号，避免压到“# 条”和删除按钮。</summary>
-        private static string HeaderTitleLabel(string text)
+        /// <summary>
+        /// 左侧会话标题：按 title-mask 的实际宽度截断，避免压到右侧的时间标记/置顶/删除按钮。
+        /// 首次创建时布局还没跑，rect 宽度不可信，退回 prefab 的宽度。
+        /// </summary>
+        private static string HeaderTitleLabel(ConversationView view, string text)
         {
-            return FitLabel(text, 13, 182f);
+            var width = view?.TitleMask != null ? view.TitleMask.rect.width : 0f;
+            if (width <= 20f) width = ConversationTitleFallbackWidth;
+            return FitLabel(text, 13, width - 4f);
         }
 
         private void EnsureConversationTitle()

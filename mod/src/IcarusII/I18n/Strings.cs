@@ -344,6 +344,11 @@ namespace IcarusII.I18n
             ["tool.name.game_take_output"] = "取成品",
             ["tool.name.game_undo_last_write"] = "撤销写操作",
             // 会话索引 / 回复脚注
+            // 左侧会话标题右侧的时间标记：最后一条回答距今的游戏时间。
+            ["chat.conversation.time.just_now"] = "刚刚",
+            ["chat.conversation.time.minutes"] = "{0}分钟",
+            ["chat.conversation.time.hours_tenths"] = "{0}.{1}小时",
+            ["chat.conversation.time.hours"] = "{0}小时",
             ["chat.conversation.current"] = "当前会话",
             ["chat.conversation.new"] = "新会话",
             ["chat.index.expand_more"] = "展开其余 {0} 条记录",

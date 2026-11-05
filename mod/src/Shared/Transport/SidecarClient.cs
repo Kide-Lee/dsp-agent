@@ -314,6 +314,21 @@ namespace IcarusII.Common.Transport
             return env["id"].AsString();
         }
 
+        /// <summary>A.13：置顶/取消置顶会话；saveKey 可选（A.14.4 跨存档）。</summary>
+        public string SendConversationPin(string conversationId, bool pinned, string saveKey = null)
+        {
+            if (_state != ConnectionState.Ready || string.IsNullOrEmpty(conversationId)) return null;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ConversationPin,
+                Protocol.Protocol.BuildConversationPin(conversationId, pinned, saveKey),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return env["id"].AsString();
+        }
+
         /// <summary>A.13：删除会话；saveKey 可选（A.14.4 跨存档）。</summary>
         public string SendConversationDelete(string conversationId, string saveKey = null)
         {
@@ -490,14 +505,14 @@ namespace IcarusII.Common.Transport
         /// 连接未就绪时返回 false，历史脚注退化为当前时间。
         /// </summary>
         public bool SendReplyTime(string prompt, string reply, string gameTime,
-            string conversationId = null)
+            string conversationId = null, long gameTick = 0)
         {
             if (_state != ConnectionState.Ready || string.IsNullOrEmpty(prompt) || string.IsNullOrEmpty(gameTime))
                 return false;
 
             var env = Protocol.Protocol.Envelope(
                 Protocol.Protocol.ReplyTime,
-                Protocol.Protocol.BuildReplyTime(prompt, reply, gameTime, conversationId),
+                Protocol.Protocol.BuildReplyTime(prompt, reply, gameTime, conversationId, gameTick),
                 NextId(), null);
 
             _sendQueue.Enqueue(env);

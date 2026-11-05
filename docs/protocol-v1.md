@@ -929,7 +929,8 @@ mod 收到 `message{final}` 并完成渲染后发送。sidecar 不回复；它�
     "conversationId": "conv_7c1e…",
     "prompt": "帮我看看这条日志里的过滤规则是什么？",
     "reply": "日志里是 Filter: legacy……",
-    "gameTime": "08:42:00"
+    "gameTime": "08:42:00",
+    "gameTick": 42123456
   }
 }
 ```
@@ -940,6 +941,11 @@ mod 收到 `message{final}` 并完成渲染后发送。sidecar 不回复；它�
 - `reply`（可选）：本轮 assistant 终稿原文。sidecar 优先按回答原文匹配，能区分
   “继续”这类重复提问；过长时截断。
 - `gameTime`：`HH:mm:ss`；没有游戏数据时 mod 可跳过不发。
+- `gameTick`（可选）：回答完成时的 `GameMain.gameTick`（60 tick = 1 秒）。
+  `gameTime` 是取模到 24 小时的时钟，算不出“过了多久”；sidecar 用 `gameTick`
+  得到该会话**最后回复**的绝对游戏时刻，再通过 `conversations[].lastReplyTick`
+  回传给 mod 显示左侧会话的时间标记。老 mod 不传该字段，该会话就没有
+  `lastReplyTick`。
 - sidecar 忽略空值/非法值，不因记录失败影响回答；同一提问/回答以最后一条记录为准。
 - 老 sidecar 忽略未知 `type`；老 mod 不发该消息，历史脚注退回显示 `--:--` 或当前时间。
 
@@ -1154,7 +1160,12 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
   优先级高于自动生成。已有 `session_info.name` 的会话不会自动覆盖。
 - 空 draft 的改名先写在 `active.json.title`，第一次提问创建 session 时补写
   `session_info`；没有消息前不单独创建 session 文件。
-- 会话按 `updatedAt` 降序排列（最近活动的在前）。
+- 会话置顶状态记录在 `sessions/<saveKey>/conversation-pins.json`：
+  `{"pins":{"<conversationId>":1760000000000}}`，值是置顶时间（毫秒）；该文件同样
+  不是 pi session，`SessionManager.list` 会忽略它。删除会话时同时删掉它的置顶记录。
+- 会话排序：**置顶会话排在最前**，置顶会话之间按最后回复的游戏时间从新到旧
+  （没有 `lastReplyTick` 的排在有记录之后，再按 `updatedAt` 降序）；其余会话按
+  `updatedAt` 降序（最近活动的在前）。mod 用同一套规则在本地重排，置顶点击后立即生效。
 
 #### `save.bound` 新增字段（sidecar → mod，均可选）
 
@@ -1172,6 +1183,8 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
       "createdAt": 1760000000000,
       "updatedAt": 1760000100000,
       "recordCount": 12,
+      "pinned": true,
+      "lastReplyTick": 42123456,
       "records": [
         { "text": "帮我规划一条量子芯片产线", "timestamp": 1760000000000,
           "gameTime": "08:42:00" }
@@ -1184,6 +1197,10 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 
 - `conversations` 里的 `records` 只包含**用户提问**，用于聊天窗左侧分组索引；
   每项 `text` / `timestamp` / 可选 `gameTime` 与 `history` 的 user 消息一致。
+- `pinned`（可选）：该会话是否置顶；缺省 false。
+- `lastReplyTick`（可选）：该会话最后一条回答完成时的 `GameMain.gameTick`
+  （来源见 A.10）。mod 用“当前 gameTick − lastReplyTick”显示「刚刚 / x分钟 / x小时」；
+  缺省表示没有记录，mod 退回显示该会话最后一条记录的 `gameTime` 时钟。
 - sidecar 对会话数、每个会话的记录数做上限（建议 50 个会话、每个最多 40 条用户提问），
   超出时只返回最近的部分；`recordCount` 是实际返回的 `records` 条数，UI 用它显示“# 条”。
 - 老 mod 忽略新字段，仍按 A.6 的单会话 `history` 回放；新 mod 在缺少
@@ -1341,6 +1358,38 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
   没有剩余会话时新建一个空会话。返回的 `history` 是新的活动会话历史。
 - 如果删除的是非活动会话，活动会话与 `history` 保持不变。
 
+#### `conversation.pin`（mod → sidecar）
+
+玩家点击左侧会话的置顶按钮时发送；`pinned` 是点完之后的目标状态（幂等）：
+
+```jsonc
+{ "v": 1, "id": "m-85", "type": "conversation.pin",
+  "payload": { "conversationId": "conv_7c1e…", "pinned": true } }
+```
+
+返回：
+
+```jsonc
+{
+  "v": 1, "id": "s-85", "type": "conversation.pinned", "replyTo": "m-85",
+  "payload": {
+    "saveKey": "3f2a91c4d8e05b17",
+    "conversationId": "conv_7c1e…",
+    "pinned": true,
+    "ok": true,
+    "error": null
+  }
+}
+```
+
+- `saveKey`（可选）：跨存档置顶，语义同 A.14.4；缺省走当前存档。
+- 置顶只影响排序，不改会话内容、不切换活动会话、不算"已读"。
+- `conversationId` 不存在时返回 `ok:false,error:"conversation_not_found"`；
+  没有存档返回 `ok:false,error:"save_required"`。
+- mod 先本地乐观置顶/取消置顶并重排，收到回执后再对齐 `pinned`；
+  请求发不出去（连接未就绪）立即回滚并提示。
+- 排序规则见上文“存储”：置顶会话在最前，置顶之间按最后回复游戏时间从新到旧。
+
 #### `prompt.conversationId`
 
 - `prompt` 的 `conversationId` 是可选字段（§4.4）；新 mod 会始终带上当前活动会话 id。
@@ -1354,7 +1403,11 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
   `RESERVED_TYPES`/未知类型忽略；老 mod 不发这些消息，仍按单会话工作。
 - `save.bound.conversations` 缺失时，新 mod 用 `history` 构造一个“当前会话”，
   只显示一个分组；不会因为连到老 sidecar 而失去索引。
-- 会话文件、卡片记录和 `active.json` 都只落在 sidecar 数据目录内，不写入游戏目录。
+- `pinned` / `lastReplyTick` 与 `conversation.pin` 都是可选能力：老 sidecar 不返回
+  这两个字段时 mod 按“未置顶 + 无最后回复时刻”处理，点击置顶仍会发请求，
+  失败时只提示不破坏列表。
+- 会话文件、卡片记录、置顶记录和 `active.json` 都只落在 sidecar 数据目录内，
+  不写入游戏目录。
 
 ### A.13.1 `conversation.activity` — 左侧会话状态图标
 
@@ -1503,19 +1556,20 @@ sidecar → mod，可选。只用于会话列表的图标，不进入模型上�
 - 其他失败：`no_save` / `conversation_not_found` / `io_error`。
 - 导出是只读操作：不切换活动会话、不修改会话文件。
 
-#### A.14.4 `conversation.rename` / `conversation.delete` 的 `saveKey`
+#### A.14.4 `conversation.rename` / `conversation.delete` / `conversation.pin` 的 `saveKey`
 
-两个消息增加**可选** `saveKey`（缺省 = 当前存档）：
+三个消息增加**可选** `saveKey`（缺省 = 当前存档）：
 
 ```jsonc
 { "v": 1, "id": "m-93", "type": "conversation.rename",
   "payload": { "conversationId": "conv_7c1e…", "title": "新标题", "saveKey": "3f2a…" } }
 ```
 
-- 非当前存档时允许重命名/删除，但**不切换**活动会话、不修改当前存档的
+- 非当前存档时允许重命名/删除/置顶，但**不切换**活动会话、不修改当前存档的
   `active.json`；删除正在回答的会话返回 `conversation_busy`。
-- `conversation.renamed` / `conversation.deleted` 的 `payload.saveKey` 回传实际
-  操作的存档（缺省时即当前存档），便于 UI 把结果写回正确的分组。
+- `conversation.renamed` / `conversation.deleted` / `conversation.pinned` 的
+  `payload.saveKey` 回传实际操作的存档（缺省时即当前存档），便于 UI 把结果写回
+  正确的分组。
 - 老 mod 不带 `saveKey`，行为与 A.13 完全一致。
 
 #### A.14.5 `config.set` / `config.state` 的 `disabledTools`

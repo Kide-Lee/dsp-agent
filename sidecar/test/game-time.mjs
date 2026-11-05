@@ -7,6 +7,7 @@
  */
 
 import { attachGameTimes } from '../dist/history/game-time.js';
+import { parseReplyTimePayload } from '../dist/protocol.js';
 
 let passed = 0;
 let failed = 0;
@@ -134,6 +135,23 @@ console.log('── 回答游戏时间挂载 ──');
   ], 'conv-a');
   check('老记录无会话归属时仍可按回答回退匹配', legacy[1].gameTime === '07:00' && legacy[3].gameTime === '07:30',
     JSON.stringify(legacy));
+}
+
+console.log('── reply.time 的 gameTick ──');
+{
+  const parsed = parseReplyTimePayload({
+    prompt: '问题', reply: '回答', gameTime: '08:42:00', gameTick: 42123456,
+  });
+  check('接受合法 gameTick', parsed?.gameTick === 42123456, JSON.stringify(parsed));
+
+  const legacy = parseReplyTimePayload({ prompt: '问题', gameTime: '08:42:00' });
+  check('没有 gameTick 时字段缺省', legacy !== null && legacy.gameTick === undefined, JSON.stringify(legacy));
+
+  for (const [name, value] of [['负数', -1], ['小数', 1.5], ['字符串', '42'], ['NaN', Number.NaN]]) {
+    const bad = parseReplyTimePayload({ prompt: '问题', gameTime: '08:42:00', gameTick: value });
+    check(`非法 gameTick（${name}）不影响其它字段`,
+      bad !== null && bad.gameTick === undefined && bad.gameTime === '08:42:00', JSON.stringify(bad));
+  }
 }
 
 console.log(`\n${failed === 0 ? '✅ 全部通过' : '❌ 失败'}（${passed} 项断言${failed > 0 ? `，${failed} 失败` : ''}）\n`);

@@ -4,8 +4,11 @@ using UnityEngine.UI;
 
 namespace IcarusII.UI
 {
-    /// <summary>会话标题的删除按钮：平时跟随标题颜色，鼠标移到按钮上变红。</summary>
-    public sealed class ConversationDeleteHover : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
+    /// <summary>
+    /// 会话标题行上的小图标按钮：平时跟随标题颜色，鼠标移到按钮上换成强调色。
+    /// 删除按钮悬停变红、置顶按钮悬停变白，颜色都由调用方给定。
+    /// </summary>
+    public sealed class ConversationIconHover : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
     {
         public Graphic Icon;
         public Color NormalColor = Color.white;
@@ -34,6 +37,7 @@ namespace IcarusII.UI
         private void OnDisable()
         {
             _hovered = false;
+            if (Icon != null) Icon.color = NormalColor;
         }
     }
 }
