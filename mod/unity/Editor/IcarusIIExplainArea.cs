@@ -46,7 +46,7 @@ namespace IcarusII.EditorTools
         private const float RightInset = 8f;
         /// <summary>首行字形会探出 Text 矩形顶边，遮罩贴着它就会切掉上半截；这里把遮罩往上让出余量。</summary>
         private const float TopSlack = 4f;
-        private const int TextFontSize = 14;
+        private const int TextFontSize = 12;
         private const string SampleText = "AI 发起的请求详情显示在这里。";
 
         private static readonly Color ScrollbarBgColor = Rgba(0x00, 0x00, 0x00, 0xDE);
@@ -123,6 +123,9 @@ namespace IcarusII.EditorTools
             explain.pivot = new Vector2(0.5f, 1f);
             explain.offsetMin = new Vector2(0f, ButtonBarHeight);
             explain.offsetMax = new Vector2(0f, -TitleHeight);
+            // 排在 btn-grop 前面：按钮后画，压在说明区之上（与首次加这个节点时的层级一致）。
+            var buttons = device.Find("btn-grop");
+            if (buttons != null) explain.SetSiblingIndex(buttons.GetSiblingIndex());
 
             // 与 input/editor、output 同一套命名：说明区本身只是个容器，
             // 滚动结构放在 scroll-view 里；mod 按 `explain/scroll-view/viewport/content` 取文本。
