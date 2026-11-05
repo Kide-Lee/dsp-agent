@@ -633,7 +633,7 @@ namespace IcarusII.EditorTools
             descMask.pivot = new Vector2(0.5f, 1f);
             descMask.anchoredPosition = new Vector2(0f, -20f);
             descMask.sizeDelta = new Vector2(0f, 70f);
-            descMask.gameObject.AddComponent<RectMask2D>();
+            IcarusIIMaskUtil.EnsureStencilMask(descMask);
             var desc = NewRect("description", descMask);
             Stretch(desc);
             var descText = AddLabel(desc, body, 11, new Color(TextDim.r, TextDim.g, TextDim.b, 0.95f),

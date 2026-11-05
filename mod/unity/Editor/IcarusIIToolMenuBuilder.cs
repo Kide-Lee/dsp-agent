@@ -186,10 +186,10 @@ namespace IcarusII.EditorTools
 
             var viewport = NewRect("viewport", scroll);
             Stretch(viewport);
-            viewport.gameObject.AddComponent<RectMask2D>();
             var viewportImage = viewport.gameObject.AddComponent<Image>();
             viewportImage.color = new Color(0f, 0f, 0f, 0f);
             viewportImage.raycastTarget = false;
+            IcarusIIMaskUtil.EnsureStencilMask(viewport);
 
             var content = NewRect("content", viewport);
             content.anchorMin = new Vector2(0f, 1f);

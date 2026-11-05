@@ -117,8 +117,7 @@ namespace IcarusII.EditorTools
                         viewport = NewRect(ViewportName, scroll);
                         Stretch(viewport);
                     }
-                    if (viewport.GetComponent<RectMask2D>() == null)
-                        viewport.gameObject.AddComponent<RectMask2D>();
+                    IcarusIIMaskUtil.EnsureStencilMask(viewport);
 
                     if (content == null)
                     {
@@ -215,7 +214,7 @@ namespace IcarusII.EditorTools
             var linkHit = link.gameObject.AddComponent<Image>();
             linkHit.color = Color.clear;
             linkHit.raycastTarget = true;
-            link.gameObject.AddComponent<RectMask2D>();
+            IcarusIIMaskUtil.EnsureStencilMask(link);
 
             var label = NewRect("label", link);
             Stretch(label);

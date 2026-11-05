@@ -75,14 +75,14 @@ namespace IcarusII.EditorTools
 
         /// <summary>
         /// 把 thinking-block 的 body 收进 body-clip。返回 true 表示改了 prefab。
-        /// 已有裁切框时只升级遮罩（旧版本用的是对文本无效的 RectMask2D）。
+        /// 已有裁切框时只确保遮罩是最新做法（见 IcarusIIMaskUtil）。
         /// </summary>
         public static bool Patch(RectTransform block)
         {
             if (block == null) return false;
 
             var existing = block.Find(ClipName) as RectTransform;
-            if (existing != null) return EnsureMask(existing);
+            if (existing != null) return IcarusIIMaskUtil.EnsureStencilMask(existing);
 
             var body = block.Find("body") as RectTransform;
             if (body == null)
@@ -118,46 +118,8 @@ namespace IcarusII.EditorTools
             fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            EnsureMask(clipRect);
+            IcarusIIMaskUtil.EnsureStencilMask(clipRect);
             return true;
-        }
-
-        /// <summary>
-        /// 保证裁切框用 Mask（模板缓冲）而不是 RectMask2D。返回 true 表示做了改动。
-        /// Mask 要求同一节点上有 Graphic：用一张无贴图的 Image 当遮罩模板，图形本身不显示。
-        /// </summary>
-        private static bool EnsureMask(RectTransform clip)
-        {
-            var changed = false;
-
-            var rectMask = clip.GetComponent<RectMask2D>();
-            if (rectMask != null)
-            {
-                Object.DestroyImmediate(rectMask, true);
-                changed = true;
-            }
-
-            var image = clip.GetComponent<Image>();
-            if (image == null)
-            {
-                image = clip.gameObject.AddComponent<Image>();
-                changed = true;
-            }
-            image.sprite = null;
-            image.type = Image.Type.Simple;
-            image.color = Color.white;
-            image.raycastTarget = false;
-
-            var mask = clip.GetComponent<Mask>();
-            if (mask == null)
-            {
-                // Image 必须先存在，Mask.OnEnable 要靠它当遮罩模板。
-                mask = clip.gameObject.AddComponent<Mask>();
-                changed = true;
-            }
-            mask.showMaskGraphic = false;
-
-            return changed;
         }
     }
 }

@@ -96,7 +96,7 @@ namespace IcarusII.EditorTools
     ///   │   ├── Title                 Text
     ///   │   └── Status                Text
     ///   ├── Scroll                    ScrollRect
-    ///   │   └── Viewport              RectMask2D + 透明 Image（raycastTarget，滚动用）
+    ///   │   └── Viewport              Mask + 透明 Image（raycastTarget，滚动用）
     ///   │       └── Content           Text（正文控件挂在 Content 上）+ ContentSizeFitter
     ///   └── InputBar
     ///       └── Input                 信标待办框整块（结构见"二、输入框"）
@@ -469,12 +469,12 @@ namespace IcarusII.EditorTools
 
             var viewport = Node("Viewport", scroll);
             Stretch(viewport);
-            viewport.gameObject.AddComponent<RectMask2D>();
             // 透明但收射线的底：滚轮/拖拽命中它以后会冒泡到 Scroll 上的 ScrollRect，
             // 否则正文区没有任何 Graphic，拖动与滚轮都到不了 ScrollRect。
             var viewportHit = viewport.gameObject.AddComponent<Image>();
             viewportHit.color = Rgba(0, 0, 0, 0);
             viewportHit.raycastTarget = true;
+            IcarusIIMaskUtil.EnsureStencilMask(viewport);
 
             var content = Node("Content", viewport);
             content.anchorMin = new Vector2(0f, 1f);
