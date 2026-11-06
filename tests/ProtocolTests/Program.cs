@@ -870,19 +870,13 @@ namespace IcarusII.Tests
             Eq("conversation record text", "帮我规划", multi.Conversations[0].Records[0].Text);
             Eq("conversation record gameTime", "08:42", multi.Conversations[0].Records[1].GameTime);
             Eq("conversation 未置顶缺省 false", false, multi.Conversations[0].Pinned);
-            Eq("conversation 无 lastReplyTick 缺省 0", 0L, multi.Conversations[0].LastReplyTick);
 
             var pinnedInfo = ConversationInfo.Parse(JsonValue.Parse(
                 "{\"id\":\"conv-a\",\"title\":\"量子芯片\",\"recordCount\":1,\"records\":[]," +
-                "\"pinned\":true,\"lastReplyTick\":42123456}"));
+                "\"pinned\":true}"));
             Eq("conversation pinned", true, pinnedInfo.Pinned);
-            Eq("conversation lastReplyTick", 42123456L, pinnedInfo.LastReplyTick);
             pinnedInfo.SetPinned(false);
             Eq("conversation SetPinned", false, pinnedInfo.Pinned);
-            pinnedInfo.MarkReplied(9000L);
-            Eq("conversation MarkReplied 前进", 42123456L, pinnedInfo.LastReplyTick);
-            pinnedInfo.MarkReplied(99999999L);
-            Eq("conversation MarkReplied 更新", 99999999L, pinnedInfo.LastReplyTick);
 
             var switched = ConversationEventInfo.Parse(JsonValue.Parse(
                 "{\"saveKey\":\"3f2a\",\"conversationId\":\"conv-a\",\"existed\":true,\"messageCount\":2," +
@@ -956,9 +950,6 @@ namespace IcarusII.Tests
             Eq("reply.time reply", "回答", replyTime["reply"].AsString());
             Eq("reply.time gameTime", "08:42", replyTime["gameTime"].AsString());
             Eq("reply.time conversationId", "conv-a", replyTime["conversationId"].AsString());
-            Eq("reply.time 无 gameTick 时不写字段", 0L, replyTime["gameTick"].AsLong(0));
-            var replyTimeTick = Protocol.BuildReplyTime("问题", "回答", "08:42", "conv-a", 42123456L);
-            Eq("reply.time gameTick", 42123456L, replyTimeTick["gameTick"].AsLong(0));
 
             Eq("conversation.pin builder id", "conv-a",
                 Protocol.BuildConversationPin("conv-a", true)["conversationId"].AsString());

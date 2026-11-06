@@ -815,8 +815,6 @@ export interface ReplyTimePayload {
   prompt: string;
   reply?: string;
   gameTime: string;
-  /** 可选：回答完成时的 GameMain.gameTick；左上会话时间标记按它算“过了多久”。 */
-  gameTick?: number;
 }
 
 export function parseReplyTimePayload(payload: JsonObject): ReplyTimePayload | null {
@@ -836,7 +834,6 @@ export function parseReplyTimePayload(payload: JsonObject): ReplyTimePayload | n
   }
   const time = gameTime.trim();
   if (time.length === 0 || time.length > 16) return null;
-  const gameTick = parseGameTick(payload['gameTick']);
   const trimmedReply = typeof reply === 'string' ? reply.trim() : '';
   return {
     ...(typeof conversationId === 'string' && conversationId.trim()
@@ -845,15 +842,7 @@ export function parseReplyTimePayload(payload: JsonObject): ReplyTimePayload | n
     prompt: prompt.trim(),
     ...(trimmedReply ? { reply: trimmedReply } : {}),
     gameTime: time,
-    ...(gameTick !== null ? { gameTick } : {}),
   };
-}
-
-/** gameTick 只接受有限非负整数；非法值按“没有”处理，不影响其它字段。 */
-export function parseGameTick(raw: unknown): number | null {
-  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
-  if (!Number.isInteger(raw) || raw < 0) return null;
-  return raw;
 }
 
 export function buildSaveBoundPayload(args: {
@@ -896,8 +885,6 @@ export interface ConversationInfo {
   records: ConversationRecord[];
   /** 是否置顶（缺省 false）；置顶会话排在列表最前面。 */
   pinned?: boolean;
-  /** 该会话最后一条回答完成时的 GameMain.gameTick；缺省表示没有记录。 */
-  lastReplyTick?: number;
 }
 
 export interface ConversationTargetPayload {

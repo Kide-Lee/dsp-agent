@@ -1921,7 +1921,6 @@ export class Session {
         this.focusedConversationId ??
         this.options.agent.getActiveConversationId?.() ??
         null,
-      parsed.gameTick ?? null,
     );
   }
 

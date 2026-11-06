@@ -505,14 +505,14 @@ namespace IcarusII.Common.Transport
         /// 连接未就绪时返回 false，历史脚注退化为当前时间。
         /// </summary>
         public bool SendReplyTime(string prompt, string reply, string gameTime,
-            string conversationId = null, long gameTick = 0)
+            string conversationId = null)
         {
             if (_state != ConnectionState.Ready || string.IsNullOrEmpty(prompt) || string.IsNullOrEmpty(gameTime))
                 return false;
 
             var env = Protocol.Protocol.Envelope(
                 Protocol.Protocol.ReplyTime,
-                Protocol.Protocol.BuildReplyTime(prompt, reply, gameTime, conversationId, gameTick),
+                Protocol.Protocol.BuildReplyTime(prompt, reply, gameTime, conversationId),
                 NextId(), null);
 
             _sendQueue.Enqueue(env);

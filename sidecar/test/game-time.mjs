@@ -137,21 +137,16 @@ console.log('── 回答游戏时间挂载 ──');
     JSON.stringify(legacy));
 }
 
-console.log('── reply.time 的 gameTick ──');
+console.log('── reply.time 载荷 ──');
 {
   const parsed = parseReplyTimePayload({
-    prompt: '问题', reply: '回答', gameTime: '08:42:00', gameTick: 42123456,
+    prompt: '问题', reply: '回答', gameTime: '08:42:00', conversationId: 'conv-a',
   });
-  check('接受合法 gameTick', parsed?.gameTick === 42123456, JSON.stringify(parsed));
-
-  const legacy = parseReplyTimePayload({ prompt: '问题', gameTime: '08:42:00' });
-  check('没有 gameTick 时字段缺省', legacy !== null && legacy.gameTick === undefined, JSON.stringify(legacy));
-
-  for (const [name, value] of [['负数', -1], ['小数', 1.5], ['字符串', '42'], ['NaN', Number.NaN]]) {
-    const bad = parseReplyTimePayload({ prompt: '问题', gameTime: '08:42:00', gameTick: value });
-    check(`非法 gameTick（${name}）不影响其它字段`,
-      bad !== null && bad.gameTick === undefined && bad.gameTime === '08:42:00', JSON.stringify(bad));
-  }
+  check('解析 prompt/reply/gameTime/会话',
+    parsed?.prompt === '问题' && parsed.reply === '回答' && parsed.gameTime === '08:42:00' &&
+      parsed.conversationId === 'conv-a', JSON.stringify(parsed));
+  check('缺 prompt 拒绝', parseReplyTimePayload({ gameTime: '08:42:00' }) === null);
+  check('缺 gameTime 拒绝', parseReplyTimePayload({ prompt: '问题' }) === null);
 }
 
 console.log(`\n${failed === 0 ? '✅ 全部通过' : '❌ 失败'}（${passed} 项断言${failed > 0 ? `，${failed} 失败` : ''}）\n`);

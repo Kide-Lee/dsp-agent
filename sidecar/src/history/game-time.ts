@@ -8,8 +8,6 @@ export interface GameTimeRecord {
   prompt: string;
   reply?: string;
   gameTime: string;
-  /** 回答完成时的 GameMain.gameTick；会话时间标记按它算“过了多久”。 */
-  gameTick?: number;
   /** 写入时间（毫秒），仅用于排障。 */
   timestamp?: number;
 }

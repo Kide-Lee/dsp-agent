@@ -7,7 +7,7 @@
  *   node test/conversations.mjs
  */
 
-import { readFileSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, rmSync, existsSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { Session } from '../dist/session.js';
 import {
@@ -363,8 +363,8 @@ console.log('── 2. PiAgent 会话文件 ──');
   }
 }
 
-// ---------------------------------------------------------------- 2.4 置顶与最后回复时刻
-console.log('── 2.4 置顶与最后回复时刻 ──');
+// ---------------------------------------------------------------- 2.4 置顶与最后回复时间
+console.log('── 2.4 置顶与最后回复时间 ──');
 {
   const dataDir = makeTempDir('icarus-conv-pin-');
   const sessionDir = join(dataDir, 'sessions', 'saveA');
@@ -386,18 +386,15 @@ console.log('── 2.4 置顶与最后回复时刻 ──');
     b.appendMessage({ role: 'user', content: '提问 B', timestamp: 3 });
     b.appendMessage({ role: 'assistant', content: [{ type: 'text', text: '回答 B' }], timestamp: 4 });
 
+    const fileOf = (id) => pi.SessionManager.findById(dataDir, id, sessionDir);
+    // 把会话文件的 mtime 当成“最后一条回答的时间”来安排顺序。
+    const touch = (id, epochMs) => utimesSync(fileOf(id), new Date(epochMs), new Date(epochMs));
+
     const agent = makeAgent();
     agent.onSaveChanged('saveA');
-    check('未置顶时排在前面的是最新会话', (await agent.getConversations('saveA'))[0]?.id === 'conv-b');
-    check('初始没有 lastReplyTick', (await agent.getConversations('saveA')).every((c) => c.lastReplyTick === undefined));
-
-    agent.recordReplyTime('saveA', '提问 A', '回答 A', '08:42:00', 'conv-a', 5000);
-    agent.recordReplyTime('saveA', '提问 A', '回答 A', '09:42:00', 'conv-a', 9000);
-    const withTick = await agent.getConversations('saveA');
-    check('lastReplyTick 取该会话最新的 gameTick',
-      withTick.find((c) => c.id === 'conv-a')?.lastReplyTick === 9000,
-      JSON.stringify(withTick.map((c) => [c.id, c.lastReplyTick])));
-    check('没有回复记录的会话没有 lastReplyTick', withTick.find((c) => c.id === 'conv-b')?.lastReplyTick === undefined);
+    check('未置顶时排在前面的是最后回复更新的会话',
+      (await agent.getConversations('saveA'))[0]?.id === 'conv-b',
+      JSON.stringify((await agent.getConversations('saveA')).map((c) => c.id)));
 
     const missing = await agent.pinConversation('saveA', 'conv-missing', true);
     check('置顶不存在的会话被拒绝', missing.ok === false && missing.error === 'conversation_not_found',
@@ -411,12 +408,12 @@ console.log('── 2.4 置顶与最后回复时刻 ──');
     check('置顶状态回传', pinnedList[0]?.pinned === true && pinnedList[1]?.pinned !== true);
     check('置顶记录落盘', existsSync(join(sessionDir, 'conversation-pins.json')));
 
-    agent.recordReplyTime('saveA', '提问 B', '回答 B', '10:00:00', 'conv-b', 20000);
     await agent.pinConversation('saveA', 'conv-b', true);
+    touch('conv-a', Date.now() - 60_000);
     const bothPinned = await agent.getConversations('saveA');
-    check('多个置顶按最后回复从新到旧', bothPinned[0]?.id === 'conv-b' && bothPinned[1]?.id === 'conv-a',
-      JSON.stringify(bothPinned.map((c) => [c.id, c.lastReplyTick])));
-    check('未置顶会话排在置顶之后', bothPinned.filter((c) => c.pinned !== true).every((c, i, arr) => i === arr.length - 1 || true));
+    check('多个置顶按最后回复从新到旧',
+      bothPinned[0]?.id === 'conv-b' && bothPinned[1]?.id === 'conv-a',
+      JSON.stringify(bothPinned.map((c) => c.id)));
 
     const restarted = makeAgent();
     restarted.onSaveChanged('saveA');
@@ -445,6 +442,7 @@ console.log('── 2.4 置顶与最后回复时刻 ──');
       `${beforeSwitch} → ${afterSwitch.map((c) => c.id).join(',')}`);
 
     // 取消置顶要落到「按最后回复」该在的位置，而不是留在置顶区。
+    await restarted.pinConversation('saveA', 'conv-a', true);
     const pinnedOrder = (await restarted.getConversations('saveA')).map((c) => c.id).join(',');
     check('置顶会话排在最前', pinnedOrder === 'conv-a,conv-b', pinnedOrder);
     await restarted.pinConversation('saveA', 'conv-a', false);
@@ -452,11 +450,9 @@ console.log('── 2.4 置顶与最后回复时刻 ──');
     check('取消置顶后按最后回复重新落位', unpinnedOrder === 'conv-b,conv-a', unpinnedOrder);
     await restarted.pinConversation('saveA', 'conv-a', true);
 
-    // 切换会话的回执也要带 pinned/lastReplyTick：mod 会用它整体覆盖列表项。
+    // 切换会话的回执也要带 pinned：mod 会用它整体覆盖列表项。
     const switchedPinned = await restarted.switchConversation('saveA', 'conv-a');
     check('切换回执带 pinned', switchedPinned.conversation?.pinned === true, JSON.stringify(switchedPinned.conversation));
-    check('切换回执带 lastReplyTick', switchedPinned.conversation?.lastReplyTick === 9000,
-      JSON.stringify(switchedPinned.conversation?.lastReplyTick));
 
     await restarted.pinConversation('saveA', 'conv-a', true);
     await restarted.deleteConversation('saveA', 'conv-a');
@@ -532,23 +528,18 @@ console.log('── 2.6 会话排序规则 ──');
     recordCount: 0,
     records: [],
     ...(extra.pinned ? { pinned: true } : {}),
-    ...(typeof extra.tick === 'number' ? { lastReplyTick: extra.tick } : {}),
   });
 
   const order = (list) => [...list].sort(compareConversations).map((c) => c.id);
 
-  check('置顶排在最前', order([conv('a', { tick: 9000 }), conv('b', { pinned: true, tick: 10 })]).join(',') === 'b,a');
+  check('置顶排在最前', order([conv('a', { updatedAt: 9000 }), conv('b', { pinned: true, updatedAt: 10 })]).join(',') === 'b,a');
   check('置顶之间按最后回复从新到旧',
-    order([conv('a', { pinned: true, tick: 500 }), conv('b', { pinned: true, tick: 900 })]).join(',') === 'b,a');
+    order([conv('a', { pinned: true, updatedAt: 500 }), conv('b', { pinned: true, updatedAt: 900 })]).join(',') === 'b,a');
   check('未置顶也按最后回复从新到旧',
-    order([conv('a', { tick: 100 }), conv('b', { tick: 900 })]).join(',') === 'b,a');
-  check('有回复的排在没有回复的前面',
-    order([conv('a', { createdAt: 5000 }), conv('b', { tick: 100 })]).join(',') === 'b,a');
-  check('都没有回复时按创建时间从新到旧',
-    order([conv('a', { createdAt: 100 }), conv('b', { createdAt: 900 })]).join(',') === 'b,a');
-  check('updatedAt 变了也不影响顺序',
-    order([conv('a', { tick: 100, updatedAt: 99999 }), conv('b', { tick: 900, updatedAt: 1 })]).join(',') === 'b,a');
-  check('同分时按 id 稳定',
+    order([conv('a', { updatedAt: 100 }), conv('b', { updatedAt: 900 })]).join(',') === 'b,a');
+  check('最后回复相同才比创建时间',
+    order([conv('a', { updatedAt: 500, createdAt: 100 }), conv('b', { updatedAt: 500, createdAt: 900 })]).join(',') === 'b,a');
+  check('创建时间也相同时按 id 稳定',
     order([conv('b'), conv('a')]).join(',') === 'a,b');
 }
 

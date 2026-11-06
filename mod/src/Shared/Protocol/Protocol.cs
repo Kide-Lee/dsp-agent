@@ -803,14 +803,13 @@ namespace IcarusII.Common.Protocol
 
         /// <summary>构造 reply.time 载荷（协议附录 A.10）。</summary>
         public static JsonValue BuildReplyTime(string prompt, string reply, string gameTime,
-            string conversationId = null, long gameTick = 0)
+            string conversationId = null)
         {
             var p = JsonValue.NewObject();
             if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
             p.Set("prompt", prompt ?? string.Empty);
             p.Set("reply", reply ?? string.Empty);
             p.Set("gameTime", gameTime ?? string.Empty);
-            if (gameTick > 0) p.Set("gameTick", gameTick);
             return p;
         }
 
@@ -1310,8 +1309,6 @@ namespace IcarusII.Common.Protocol
         public List<ConversationRecordInfo> Records { get; private set; } = new List<ConversationRecordInfo>();
         /// <summary>是否置顶；置顶会话排在左侧列表最前面。</summary>
         public bool Pinned { get; private set; }
-        /// <summary>该会话最后一条回答完成时的 gameTick；0 = 没有记录。</summary>
-        public long LastReplyTick { get; private set; }
 
         public static ConversationInfo Create(string id, string title)
         {
@@ -1364,12 +1361,6 @@ namespace IcarusII.Common.Protocol
             Pinned = pinned;
         }
 
-        /// <summary>回答完成时记下当时的 gameTick，左侧时间标记按它算“过了多久”。</summary>
-        public void MarkReplied(long gameTick)
-        {
-            if (gameTick > LastReplyTick) LastReplyTick = gameTick;
-        }
-
         public static ConversationInfo Parse(JsonValue value)
         {
             if (value is null || value.IsNull) return null;
@@ -1383,7 +1374,6 @@ namespace IcarusII.Common.Protocol
                 UpdatedAt = value["updatedAt"].AsLong(0),
                 RecordCount = value["recordCount"].AsInt(0),
                 Pinned = value["pinned"].AsBool(false),
-                LastReplyTick = value["lastReplyTick"].AsLong(0),
             };
             var records = value["records"];
             if (records is not null && records.Count > 0)

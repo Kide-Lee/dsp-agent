@@ -929,8 +929,7 @@ mod 收到 `message{final}` 并完成渲染后发送。sidecar 不回复；它�
     "conversationId": "conv_7c1e…",
     "prompt": "帮我看看这条日志里的过滤规则是什么？",
     "reply": "日志里是 Filter: legacy……",
-    "gameTime": "08:42:00",
-    "gameTick": 42123456
+    "gameTime": "08:42:00"
   }
 }
 ```
@@ -940,12 +939,9 @@ mod 收到 `message{final}` 并完成渲染后发送。sidecar 不回复；它�
   老 mod 不传该字段，旧记录没有会话归属，仍按提问/回答原文匹配。
 - `reply`（可选）：本轮 assistant 终稿原文。sidecar 优先按回答原文匹配，能区分
   “继续”这类重复提问；过长时截断。
-- `gameTime`：`HH:mm:ss`；没有游戏数据时 mod 可跳过不发。
-- `gameTick`（可选）：回答完成时的 `GameMain.gameTick`（60 tick = 1 秒）。
-  `gameTime` 是取模到 24 小时的时钟，算不出“过了多久”；sidecar 用 `gameTick`
-  得到该会话**最后回复**的绝对游戏时刻，再通过 `conversations[].lastReplyTick`
-  回传给 mod 显示左侧会话的时间标记。老 mod 不传该字段，该会话就没有
-  `lastReplyTick`。
+- `gameTime`：`HH:mm:ss`；没有游戏数据时 mod 可跳过不发。它只用于历史脚注的时钟，
+  **不参与**左栏时间标记：那个标记用 `conversations[].updatedAt`（会话文件最后写入时间）
+  自己算“距今多久”，不需要额外字段。
 - sidecar 忽略空值/非法值，不因记录失败影响回答；同一提问/回答以最后一条记录为准。
 - 老 sidecar 忽略未知 `type`；老 mod 不发该消息，历史脚注退回显示 `--:--` 或当前时间。
 
@@ -1163,11 +1159,10 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 - 会话置顶状态记录在 `sessions/<saveKey>/conversation-pins.json`：
   `{"pins":{"<conversationId>":1760000000000}}`，值是置顶时间（毫秒）；该文件同样
   不是 pi session，`SessionManager.list` 会忽略它。删除会话时同时删掉它的置顶记录。
-- 会话排序**只**由两件事决定：是否置顶、最后一条回答的游戏时间。置顶会话排在最前；
-  其后按 `lastReplyTick` 从新到旧，没有 `lastReplyTick` 的排在有记录的之后，
-  它们之间按 `createdAt` 降序。**`updatedAt` 与切换会话都不参与排序**，
-  所以点击某个会话不会让它跳到列表最前面。mod 在本地用同一套规则重排
-  （同分保持原顺序），置顶点击后立即生效。
+- 会话排序**只**由两件事决定：是否置顶、最后回复时间（`updatedAt` = 会话文件最后写入时间）。
+  置顶会话排在最前，其后按 `updatedAt` 从新到旧，时间相同再按 `createdAt` 降序。
+  切换会话**不写** `updatedAt`（见下），所以点击某个会话不会让它跳到列表最前面。
+  mod 在本地用同一套规则重排（同分保持原顺序），置顶点击后立即生效。
 
 #### `save.bound` 新增字段（sidecar → mod，均可选）
 
@@ -1186,7 +1181,6 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
       "updatedAt": 1760000100000,
       "recordCount": 12,
       "pinned": true,
-      "lastReplyTick": 42123456,
       "records": [
         { "text": "帮我规划一条量子芯片产线", "timestamp": 1760000000000,
           "gameTime": "08:42:00" }
@@ -1199,10 +1193,10 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
 
 - `conversations` 里的 `records` 只包含**用户提问**，用于聊天窗左侧分组索引；
   每项 `text` / `timestamp` / 可选 `gameTime` 与 `history` 的 user 消息一致。
-- `pinned`（可选）：该会话是否置顶；缺省 false。
-- `lastReplyTick`（可选）：该会话最后一条回答完成时的 `GameMain.gameTick`
-  （来源见 A.10）。mod 用“当前 gameTick − lastReplyTick”显示「刚刚 / x分钟 / x小时」；
-  缺省表示没有记录，mod 退回显示该会话最后一条记录的 `gameTime` 时钟。
+- `pinned`（可选）：该会话是否置顶；缺省 false。置顶是玩家选择，不能从会话内容推导，
+  所以它是唯一新增的持久状态（存在 `conversation-pins.json`）。
+- `updatedAt`：会话文件的最后写入时间，也就是最后一条回答完成的时间。mod 用它算
+  「刚刚 / x分钟 / x.x小时 / xx小时」；它同时在排序里代表“最后回复时间”。
 - sidecar 对会话数、每个会话的记录数做上限（建议 50 个会话、每个最多 40 条用户提问），
   超出时只返回最近的部分；`recordCount` 是实际返回的 `records` 条数，UI 用它显示“# 条”。
 - 老 mod 忽略新字段，仍按 A.6 的单会话 `history` 回放；新 mod 在缺少
@@ -1406,9 +1400,8 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
   `RESERVED_TYPES`/未知类型忽略；老 mod 不发这些消息，仍按单会话工作。
 - `save.bound.conversations` 缺失时，新 mod 用 `history` 构造一个“当前会话”，
   只显示一个分组；不会因为连到老 sidecar 而失去索引。
-- `pinned` / `lastReplyTick` 与 `conversation.pin` 都是可选能力：老 sidecar 不返回
-  这两个字段时 mod 按“未置顶 + 无最后回复时刻”处理，点击置顶仍会发请求，
-  失败时只提示不破坏列表。
+- `pinned` 与 `conversation.pin` 都是可选能力：老 sidecar 不返回 `pinned` 时
+  mod 按“未置顶”处理，点击置顶仍会发请求，失败时只提示不破坏列表。
 - 会话文件、卡片记录、置顶记录和 `active.json` 都只落在 sidecar 数据目录内，
   不写入游戏目录。
 
