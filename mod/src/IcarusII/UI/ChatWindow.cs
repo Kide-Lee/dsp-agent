@@ -5881,6 +5881,7 @@ namespace IcarusII.UI
             var layout = records.GetComponent<VerticalLayoutGroup>();
             var fitter = records.GetComponent<ContentSizeFitter>();
             var element = records.GetComponent<LayoutElement>();
+            var canvasGroup = records.GetComponent<CanvasGroup>();
             if (layout == null || fitter == null || element == null) return;
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(records);
@@ -5892,16 +5893,21 @@ namespace IcarusII.UI
             layout.enabled = false;
             fitter.enabled = false;
             element.preferredHeight = start;
+            if (canvasGroup != null) canvasGroup.alpha = 0f;
             MarkIndexLayoutDirty();
             StartIndexTween(RecordsTweenKey(view.Id), IndexExpandDuration,
                 progress =>
                 {
                     if (element == null) return;
                     element.preferredHeight = Mathf.LerpUnclamped(start, target, progress);
+                    // 文字材质不吃 RectMask2D 的裁剪，只靠高度会让行停在那里直到动画结束，
+                    // 所以同时把整块记录淡入淡出。
+                    if (canvasGroup != null) canvasGroup.alpha = progress;
                     MarkIndexLayoutDirty();
                 },
                 () =>
                 {
+                    if (canvasGroup != null) canvasGroup.alpha = 1f;
                     if (element == null || fitter == null || layout == null) return;
                     element.preferredHeight = -1f;
                     layout.enabled = true;
@@ -5923,13 +5929,23 @@ namespace IcarusII.UI
             var element = records.GetComponent<LayoutElement>();
             if (fitter == null || element == null || !records.gameObject.activeInHierarchy)
             {
+                Plugin.Log.LogInfo(
+                    $"[索引] 收起没有动画：fitter={(fitter != null)} element={(element != null)} " +
+                    $"active={records.gameObject.activeInHierarchy}");
                 after?.Invoke();
                 return;
             }
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(records);
             var start = records.rect.height;
+            if (start <= 0.5f)
+            {
+                Plugin.Log.LogInfo("[索引] 收起没有动画：记录区高度为 0");
+                after?.Invoke();
+                return;
+            }
             var layout = records.GetComponent<VerticalLayoutGroup>();
+            var canvasGroup = records.GetComponent<CanvasGroup>();
             FinishIndexTween(RecordsTweenKey(view.Id));
             if (layout != null) layout.enabled = false;
             fitter.enabled = false;
@@ -5938,10 +5954,12 @@ namespace IcarusII.UI
                 {
                     if (element == null) return;
                     element.preferredHeight = Mathf.LerpUnclamped(start, 0f, progress);
+                    if (canvasGroup != null) canvasGroup.alpha = 1f - progress;
                     MarkIndexLayoutDirty();
                 },
                 () =>
                 {
+                    if (canvasGroup != null) canvasGroup.alpha = 1f;
                     if (element == null || fitter == null) return;
                     element.preferredHeight = -1f;
                     fitter.enabled = true;
