@@ -14,6 +14,7 @@
 | [dsp-handcraft](https://github.com/zoujack018/dsp-handcraft) | 蓝图生成器的参考实现（排线 / 分馏阵列 / 集装机等做法） | GPL-3.0 | **不随包分发、不复制代码**；开发期克隆到 `dsp-handcraft/`（已被 `.gitignore` 忽略），仅作只读参考 |
 | [Unity Skills](https://github.com/Unity-Technologies/skills) — `ui-ugui` | Agent Skill：Unity uGUI / Canvas / RectTransform / Layout Group 开发规范 | Unity Companion License | 内容收录于 `.dsh/skills/ui-ugui/`，仅用于开发期辅助，不进入发布产物 |
 | [Lucide](https://lucide.dev/) — `message-circle-plus` | 左栏“新会话”按钮图标 | ISC | 转成白色 PNG 后打包进 UI AssetBundle（`new-conversation.png`） |
+| [Feather](https://feathericons.com/) — `refresh-cw` | 回复 footer 的“重新生成”图标 | MIT | 转成白色 PNG 后打包进 UI AssetBundle（`regenerate.png`） |
 
 ## 关于 BepInEx
 
