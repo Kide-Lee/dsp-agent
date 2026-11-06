@@ -354,9 +354,6 @@ namespace IcarusII.I18n
             ["chat.index.expand_more"] = "展开其余 {0} 条记录",
             ["chat.index.title_placeholder"] = "会话标题",
             ["reply.footer.copy"] = "点击复制",
-            ["reply.regenerate"] = "重新生成这条回答",
-            ["reply.withdraw"] = "撤回这一轮",
-            ["reply.undo_compaction"] = "撤销压缩",
             // 提问面板（复核页）
             ["ask.review.title"] = "请确认你的回答",
             // 插件层状态 / 系统消息 / 错误

@@ -343,6 +343,10 @@ namespace IcarusII.EditorTools
                 "Assets/IcarusII/Resources/console.png.meta",
                 "Assets/IcarusII/Resources/new-conversation.png",
                 "Assets/IcarusII/Resources/new-conversation.png.meta",
+                "Assets/IcarusII/Resources/icons/regenerate.png",
+                "Assets/IcarusII/Resources/icons/regenerate.png.meta",
+                "Assets/IcarusII/Resources/icons/withdraw.png",
+                "Assets/IcarusII/Resources/icons/withdraw.png.meta",
             };
             foreach (var relative in files)
             {

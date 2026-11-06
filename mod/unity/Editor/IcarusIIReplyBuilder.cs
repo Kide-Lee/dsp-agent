@@ -169,12 +169,12 @@ namespace IcarusII.EditorTools
             var changed = false;
             if (footer.Find("return") == null)
             {
-                BuildFooterIconButton(footer, "return", "Assets/Resources/UI/Textures/Sprites/Icons/refresh-32-icon.png");
+                BuildFooterIconButton(footer, "return", "Assets/IcarusII/Resources/icons/regenerate.png");
                 changed = true;
             }
             if (footer.Find("withdraw") == null)
             {
-                BuildFooterIconButton(footer, "withdraw", "Assets/Resources/UI/Textures/Sprites/Icons/return_icon.png");
+                BuildFooterIconButton(footer, "withdraw", "Assets/IcarusII/Resources/icons/withdraw.png");
                 changed = true;
             }
             return changed;
@@ -754,9 +754,8 @@ namespace IcarusII.EditorTools
             timeText.verticalOverflow = VerticalWrapMode.Truncate;
 
             BuildFooterIconButton(footer, "copy", "Assets/Resources/UI/Textures/Sprites/Icons/copy.png");
-            BuildFooterIconButton(footer, "return",
-                "Assets/Resources/UI/Textures/Sprites/Icons/refresh-32-icon.png");
-            BuildFooterIconButton(footer, "withdraw", "Assets/Resources/UI/Textures/Sprites/Icons/return_icon.png");
+            BuildFooterIconButton(footer, "return", "Assets/IcarusII/Resources/icons/regenerate.png");
+            BuildFooterIconButton(footer, "withdraw", "Assets/IcarusII/Resources/icons/withdraw.png");
         }
 
         private static void ConfigureButtonColors(Button button)

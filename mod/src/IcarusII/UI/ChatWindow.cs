@@ -602,8 +602,6 @@ namespace IcarusII.UI
             public Button Return;
             /// <summary>footer 的撤回按钮（只有最后一条回答可见，压缩记录上显示为撤销压缩）。</summary>
             public Button Withdraw;
-            /// <summary>撤回按钮当前用的提示文案 key；压缩记录会换成“撤销压缩”。</summary>
-            public string WithdrawTipKey;
         }
 
         /// <summary>一张固定尺寸蓝图卡片的绑定结果。</summary>
@@ -4298,13 +4296,6 @@ namespace IcarusII.UI
                 var compaction = IsCompactionTurn(item.TurnId);
                 SetActive(item.Reply.Return, isLast && !compaction);
                 SetActive(item.Reply.Withdraw, isLast);
-
-                var tipKey = compaction ? "reply.undo_compaction" : "reply.withdraw";
-                if (item.Reply.WithdrawTipKey != tipKey)
-                {
-                    item.Reply.WithdrawTipKey = tipKey;
-                    ApplyTip(item.Reply.Withdraw, tipKey);
-                }
             }
         }
 
@@ -6975,7 +6966,6 @@ namespace IcarusII.UI
                 {
                     view.Return.onClick.RemoveAllListeners();
                     view.Return.onClick.AddListener(() => RequestRegenerate(view));
-                    ApplyTip(view.Return, "reply.regenerate");
                     view.Return.gameObject.SetActive(false);   // 由 UpdateReplyActionAvailability 决定
                 }
 
@@ -6997,19 +6987,6 @@ namespace IcarusII.UI
             }
             view.TurnId = _currentTurnId;
             return view;
-        }
-
-        /// <summary>给 prefab 里的按钮写悬停提示；提示文字走 I18n，prefab 只留布局与图标。</summary>
-        private static void ApplyTip(Button button, string key)
-        {
-            var tipButton = button != null ? button.GetComponent<UIButton>() : null;
-            if (tipButton == null) return;
-            var tips = tipButton.tips;
-            tips.tipTitle = Strings.Get(key);
-            tips.tipText = string.Empty;
-            if (tips.corner == 0) tips.corner = 9;
-            tipButton.tips = tips;
-            tipButton.UpdateTip();
         }
 
         /// <summary>
