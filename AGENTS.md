@@ -32,6 +32,8 @@ IcarusII 是《戴森球计划》的 Agent。它包括：
 - prefab 是二进制，`git diff` 只显示 `Bin`，判断布局是否漂移只能靠 dump 对比，不能靠 diff。
 - 一般的 UI 动效，必须复用游戏本就有的组件来实现，比如按钮、图标 tag、tooltip 的显示/隐藏与跟随等。
   - 只有在游戏原生组件确实无法实现预期时，才在 mod 中通过代码生成。
+  - 唯一例外：左栏会话记录展开/收起与换位需要逐行高度/位置插值，uGUI 没有可复用的列表布局动画组件，
+    由 `ChatWindow` 的 `IndexTween` 驱动；动画结束必须把 `VerticalLayoutGroup` / `ContentSizeFitter` 恢复原状。
 - UI中的Icon，优先复用游戏中本就存在的Icon；若没有，就在网上寻找可匹配游戏美术风格的图标。禁止用emoji来作为本mod的Icon。
 - 原生组件的字段、事件和常见组合见 skill `dsp-native-ui`（数据来自 DSPGame.unity 的 In Game 子树实测）。
 
