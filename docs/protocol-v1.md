@@ -695,7 +695,8 @@ mod                                   sidecar
   并把这条记录之前的回合标灰、禁止单独删除。老 mod 忽略 `kind`，按普通 assistant 显示。
 - `history` 的 `assistant` 消息可带可选的 `cards`（附录 A.9）：该回答产出的蓝图卡片，
   形如 `[{fileName, path, name, ...}]`。老客户端忽略该字段；mod 回放时在回答后重建卡片。
-- `history` 的 `assistant` 消息可带可选的 `gameTime`（字符串，`HH:mm:ss`）：该回答完成时的
+- `history` 的 `assistant` 消息可带可选的 `gameTime`（字符串，`H:mm:ss`，小时 `000`–`999`，
+  满 1000 小时归零）：该回答完成时的
   游戏时间。老 mod 忽略该字段；mod 回放时显示在回答脚注。
 - `history` 的 `user` 消息也可带同一个可选的 `gameTime`：用于回放用户气泡下面的脚注
   （只有时间 + 复制）。sidecar 用同一回合记录的时间近似提问时间；没有记录时省略，
@@ -940,7 +941,8 @@ mod 收到 `message{final}` 并完成渲染后发送。sidecar 不回复；它�
   老 mod 不传该字段，旧记录没有会话归属，仍按提问/回答原文匹配。
 - `reply`（可选）：本轮 assistant 终稿原文。sidecar 优先按回答原文匹配，能区分
   “继续”这类重复提问；过长时截断。
-- `gameTime`：`HH:mm:ss`；没有游戏数据时 mod 可跳过不发。历史脚注用它显示时钟。
+- `gameTime`：游戏时钟 `H:mm:ss`（小时 `000`–`999`，满 1000 小时归零，不按 24 小时重置）；
+  没有游戏数据时 mod 可跳过不发。历史脚注用它显示时钟。
 - `gameTick`（可选）：回答完成时的 `GameMain.gameTick`（60 tick = 1 秒）。
   `gameTime` 是会 24 小时归零的时钟读数，隔天就减出负数；左栏时间标记要算“距今多久”，
   只能靠这个绝对时刻（且暂停游戏时会冻结）。sidecar 按会话聚合成

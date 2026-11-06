@@ -1902,7 +1902,7 @@ namespace IcarusII
 
         /// <summary>
         /// 回存一轮回答完成时的游戏时间（协议 A.10），并立刻刷新左侧所有会话的时间标记。
-        /// 除了 HH:mm:ss 时钟，还要回存绝对 gameTick：时钟每 24 小时归零，算不出间隔。
+        /// 除了游戏时钟，还要回存绝对 gameTick：时钟也会在 1000 小时处归零，算不出间隔。
         /// </summary>
         private void RecordReplyTime(string prompt, string reply, string conversationId)
         {

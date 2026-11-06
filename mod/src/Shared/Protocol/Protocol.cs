@@ -1189,7 +1189,7 @@ namespace IcarusII.Common.Protocol
         public string Role { get; set; }
         public string Text { get; set; }
         public long Timestamp { get; set; }
-        /// <summary>回答完成时的游戏时间 HH:mm:ss（附录 A.6/A.10，可选）。</summary>
+        /// <summary>回答完成时的游戏时钟 H:mm:ss（小时 000–999，附录 A.6/A.10，可选）。</summary>
         public string GameTime { get; set; }
         /// <summary>
         /// `compaction` = 上下文压缩记录（附录 A.11）；普通回答为 null。

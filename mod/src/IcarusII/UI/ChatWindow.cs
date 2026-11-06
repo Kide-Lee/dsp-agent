@@ -4495,17 +4495,20 @@ namespace IcarusII.UI
             _dirty = true;
         }
 
-        /// <summary>给 Plugin 回存 reply.time 用；与脚注显示的是同一套 HH:mm:ss。</summary>
+        /// <summary>
+        /// 游戏时钟：`H:mm:ss`，小时 000–999，满 1000 小时归零。
+        /// 不按 24 小时归零——那会让存档里的时间读数隔天就对不上。
+        /// </summary>
         public static string CurrentGameClock() => GameClock();
 
         /// <summary>
         /// 给 Plugin 回存 reply.time 用：绝对游戏时刻。
-        /// 时钟读数每 24 小时归零，算不出间隔，时间标记必须靠这个值。
+        /// 时钟读数会归零，算不出间隔，时间标记必须靠这个值。
         /// 没有游戏数据时返回 0。
         /// </summary>
         public static long CurrentGameTick() => GameMain.data != null ? GameMain.gameTick : 0L;
 
-        /// <summary>旧历史只存 HH:mm；显示时补成 HH:mm:ss，保证所有脚注都含秒。</summary>
+        /// <summary>旧历史只存 H:mm；显示时补成 H:mm:ss，保证所有脚注都含秒。</summary>
         private static string FormatGameTime(string value)
         {
             if (string.IsNullOrEmpty(value)) return GameClock();
@@ -4521,10 +4524,10 @@ namespace IcarusII.UI
         {
             if (GameMain.data == null) return "--:--";
             long sec = GameMain.gameTick / 60L;
-            int hour = (int)((sec / 3600L) % 24L);
+            int hour = (int)((sec / 3600L) % 1000L);
             int min = (int)((sec / 60L) % 60L);
             int second = (int)(sec % 60L);
-            return hour.ToString("00") + ":" + min.ToString("00") + ":" + second.ToString("00");
+            return hour.ToString("000") + ":" + min.ToString("00") + ":" + second.ToString("00");
         }
 
         /// <summary>
@@ -5579,7 +5582,7 @@ namespace IcarusII.UI
 
         /// <summary>
         /// 左侧时间标记：按游戏时间显示距最后一条回答多久（刚刚 / x分钟 / x.x小时 / xx小时）。
-        /// 用绝对 gameTick 而不是 HH:mm:ss 时钟——时钟每 24 小时归零，隔天就减出负数；
+        /// 用绝对 gameTick 而不是游戏时钟——时钟也会在 1000 小时处归零；
         /// 也没有用墙上时间，暂停游戏时游戏时间应当冻结。
         /// 老会话没有 gameTick 时退回会话时间戳（真实时间），差一点精度也不留空白。
         /// </summary>

@@ -767,7 +767,7 @@ export interface HistoryMessage {
   cards?: BlueprintCardPayload[];
   /** 该回答产出的实体链接卡片（建筑/星球）；可选。 */
   linkCards?: LinkCardPayload[];
-  /** 该回答完成时的游戏时间 HH:mm:ss（附录 A.6/A.10）。 */
+  /** 该回答完成时的游戏时钟 H:mm:ss（小时 000–999，附录 A.6/A.10）。 */
   gameTime?: string;
   /**
    * `compaction` = 压缩记录（附录 A.11）。UI 用它插入“自动压缩上下文”记录；
