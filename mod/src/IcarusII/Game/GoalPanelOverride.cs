@@ -31,7 +31,12 @@ namespace IcarusII.Game
             try
             {
                 _harmony = new Harmony("icarus-ii.goal-panel");
-                _harmony.PatchAll(typeof(GoalPanelOverride).Assembly);
+                // 只注册这四个已审查的补丁；不要用 PatchAll(Assembly)，否则以后新增的
+                // 补丁类会被静默应用，绕过 AGENTS 的补丁审查要求。
+                _harmony.PatchAll(typeof(SandboxGoalGatePatch));
+                _harmony.PatchAll(typeof(GoalPanelVisiablePatch));
+                _harmony.PatchAll(typeof(GoalPanelTransformPatch));
+                _harmony.PatchAll(typeof(GoalPanelUpdateTransformPatch));
                 Plugin.Log.LogInfo("目标面板补丁已注册：自由探索/沙盒下仍显示 AI 目标");
             }
             catch (Exception ex)

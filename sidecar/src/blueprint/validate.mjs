@@ -1,6 +1,8 @@
 // 蓝图硬校验：只解码蓝图本身，按游戏放置规则逐条检查。
 // 出图后必须全过；它拦的是“贴进游戏报红/拒绝”的那几类：建筑碰撞、分拣器够不着、断带、越界。
 import { fromStr } from '../../vendor/dsp-calc/src/blueprint/parser.js';
+import { SLOTS } from './slots.mjs';
+import { PORT_OFFSETS } from './ports.mjs';
 import vanilla from '../../vendor/dsp-calc/data/Vanilla.mjs';
 import buildingData from '../../vendor/dsp-calc/data/Buildings.mjs';
 import { COLLIDERS } from './colliders.mjs';
@@ -228,6 +230,14 @@ export function validateParsed(bp, options = {}) {
         }
       } else if (!Number.isInteger(check.slot) || check.slot < 0 || check.slot > 15) {
         errors.push(`分拣器 #${building.index} 连到建筑 #${target.index} 时 ${check.label}=${check.slot}，槽位号无效`);
+      } else {
+        const portSlots = PORT_OFFSETS.get(target.itemId);
+        const knownSlots = SLOTS.get(target.itemId);
+        if (portSlots && !portSlots.has(check.slot)) {
+          errors.push(`分拣器 #${building.index} 连到建筑 #${target.index} 的 ${check.slot} 号口，但该建筑没有这个端口`);
+        } else if (!portSlots && knownSlots && check.slot >= knownSlots.length) {
+          errors.push(`分拣器 #${building.index} 连到建筑 #${target.index} 的 ${check.slot} 号槽，但该建筑只有 ${knownSlots.length} 个槽`);
+        }
       }
     }
   }
