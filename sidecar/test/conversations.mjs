@@ -392,6 +392,15 @@ console.log('── 2.4 置顶与最后回复时间 ──');
 
     const agent = makeAgent();
     agent.onSaveChanged('saveA');
+
+    // 时间标记用的绝对 gameTick（时钟读数会 24 小时归零，算不出间隔）。
+    agent.recordReplyTime('saveA', '提问 A', '回答 A', '08:42:00', 'conv-a', 9000);
+    const withTick = await agent.getConversations('saveA');
+    check('lastReplyTick 回传该会话最后一条回答的 tick',
+      withTick.find((c) => c.id === 'conv-a')?.lastReplyTick === 9000,
+      JSON.stringify(withTick.map((c) => [c.id, c.lastReplyTick])));
+    check('没有回答记录的会话没有 lastReplyTick',
+      withTick.find((c) => c.id === 'conv-b')?.lastReplyTick === undefined);
     check('未置顶时排在前面的是最后回复更新的会话',
       (await agent.getConversations('saveA'))[0]?.id === 'conv-b',
       JSON.stringify((await agent.getConversations('saveA')).map((c) => c.id)));

@@ -1902,16 +1902,18 @@ namespace IcarusII
 
         /// <summary>
         /// 回存一轮回答完成时的游戏时间（协议 A.10），并立刻刷新左侧所有会话的时间标记。
-        /// 左栏时间标记用的是会话自己的时间戳（最后写入 = 最后一条回答），不需要额外字段。
+        /// 除了 HH:mm:ss 时钟，还要回存绝对 gameTick：时钟每 24 小时归零，算不出间隔。
         /// </summary>
         private void RecordReplyTime(string prompt, string reply, string conversationId)
         {
+            var gameTick = ChatWindow.CurrentGameTick();
             _client?.SendReplyTime(
                 prompt,
                 reply,
                 ChatWindow.CurrentGameClock(),
-                conversationId);
-            _chat?.MarkConversationReplied(conversationId);
+                conversationId,
+                gameTick);
+            _chat?.MarkConversationReplied(conversationId, gameTick);
         }
 
         private void OnConversationActivity(ConversationActivityInfo info)

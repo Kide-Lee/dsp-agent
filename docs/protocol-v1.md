@@ -929,7 +929,8 @@ mod 收到 `message{final}` 并完成渲染后发送。sidecar 不回复；它�
     "conversationId": "conv_7c1e…",
     "prompt": "帮我看看这条日志里的过滤规则是什么？",
     "reply": "日志里是 Filter: legacy……",
-    "gameTime": "08:42:00"
+    "gameTime": "08:42:00",
+    "gameTick": 42123456
   }
 }
 ```
@@ -939,9 +940,11 @@ mod 收到 `message{final}` 并完成渲染后发送。sidecar 不回复；它�
   老 mod 不传该字段，旧记录没有会话归属，仍按提问/回答原文匹配。
 - `reply`（可选）：本轮 assistant 终稿原文。sidecar 优先按回答原文匹配，能区分
   “继续”这类重复提问；过长时截断。
-- `gameTime`：`HH:mm:ss`；没有游戏数据时 mod 可跳过不发。它只用于历史脚注的时钟，
-  **不参与**左栏时间标记：那个标记用 `conversations[].updatedAt`（会话文件最后写入时间）
-  自己算“距今多久”，不需要额外字段。
+- `gameTime`：`HH:mm:ss`；没有游戏数据时 mod 可跳过不发。历史脚注用它显示时钟。
+- `gameTick`（可选）：回答完成时的 `GameMain.gameTick`（60 tick = 1 秒）。
+  `gameTime` 是会 24 小时归零的时钟读数，隔天就减出负数；左栏时间标记要算“距今多久”，
+  只能靠这个绝对时刻（且暂停游戏时会冻结）。sidecar 按会话聚合成
+  `conversations[].lastReplyTick` 回传。老 mod 不传该字段，该会话就退回按 `updatedAt` 估算。
 - sidecar 忽略空值/非法值，不因记录失败影响回答；同一提问/回答以最后一条记录为准。
 - 老 sidecar 忽略未知 `type`；老 mod 不发该消息，历史脚注退回显示 `--:--` 或当前时间。
 
@@ -1181,6 +1184,7 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
       "updatedAt": 1760000100000,
       "recordCount": 12,
       "pinned": true,
+      "lastReplyTick": 42123456,
       "records": [
         { "text": "帮我规划一条量子芯片产线", "timestamp": 1760000000000,
           "gameTime": "08:42:00" }
@@ -1195,8 +1199,11 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
   每项 `text` / `timestamp` / 可选 `gameTime` 与 `history` 的 user 消息一致。
 - `pinned`（可选）：该会话是否置顶；缺省 false。置顶是玩家选择，不能从会话内容推导，
   所以它是唯一新增的持久状态（存在 `conversation-pins.json`）。
-- `updatedAt`：会话文件的最后写入时间，也就是最后一条回答完成的时间。mod 用它算
-  「刚刚 / x分钟 / x.x小时 / xx小时」；它同时在排序里代表“最后回复时间”。
+- `lastReplyTick`（可选）：该会话最后一条回答完成时的 `GameMain.gameTick`（来源见 A.10）。
+  mod 用「当前 gameTick − lastReplyTick」显示「刚刚 / x分钟 / x.x小时 / xx小时」，
+  是游戏时间（暂停会冻结）。缺省表示老数据，mod 退回按 `updatedAt` 的真实时间估算。
+- `updatedAt`：会话文件的最后写入时间，也就是最后一条回答完成的时间。**排序**用它
+  （真实时间，单调递增，不受时钟归零影响）。
 - sidecar 对会话数、每个会话的记录数做上限（建议 50 个会话、每个最多 40 条用户提问），
   超出时只返回最近的部分；`recordCount` 是实际返回的 `records` 条数，UI 用它显示“# 条”。
 - 老 mod 忽略新字段，仍按 A.6 的单会话 `history` 回放；新 mod 在缺少

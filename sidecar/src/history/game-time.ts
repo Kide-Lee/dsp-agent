@@ -8,6 +8,8 @@ export interface GameTimeRecord {
   prompt: string;
   reply?: string;
   gameTime: string;
+  /** 回答完成时的 GameMain.gameTick（绝对时刻）；老记录没有该字段。 */
+  gameTick?: number;
   /** 写入时间（毫秒），仅用于排障。 */
   timestamp?: number;
 }

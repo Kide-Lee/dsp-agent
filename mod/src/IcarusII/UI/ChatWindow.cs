@@ -71,6 +71,8 @@ namespace IcarusII.UI
         private static readonly Color DefaultTextDim = new Color(0.596f, 0.678f, 0.757f, 1f);
         private static readonly Color DefaultAccent = new Color(0.353f, 0.749f, 1f, 1f);
 
+        /// <summary>GameMain.gameTick 是 60 tick/秒，游戏时间按它换算。</summary>
+        private const long GameTickPerSecond = 60L;
         /// <summary>删除按钮悬停时的红色（与标题/时间标记的常态色区分开）。</summary>
         private static readonly Color ConversationDeleteHoverColor = new Color(1f, 0.36f, 0.36f, 1f);
         /// <summary>置顶按钮悬停时的亮青蓝：比标题色和主题蓝都更亮，一眼能看出被点亮。</summary>
@@ -4496,6 +4498,13 @@ namespace IcarusII.UI
         /// <summary>给 Plugin 回存 reply.time 用；与脚注显示的是同一套 HH:mm:ss。</summary>
         public static string CurrentGameClock() => GameClock();
 
+        /// <summary>
+        /// 给 Plugin 回存 reply.time 用：绝对游戏时刻。
+        /// 时钟读数每 24 小时归零，算不出间隔，时间标记必须靠这个值。
+        /// 没有游戏数据时返回 0。
+        /// </summary>
+        public static long CurrentGameTick() => GameMain.data != null ? GameMain.gameTick : 0L;
+
         /// <summary>旧历史只存 HH:mm；显示时补成 HH:mm:ss，保证所有脚注都含秒。</summary>
         private static string FormatGameTime(string value)
         {
@@ -5539,6 +5548,7 @@ namespace IcarusII.UI
                 $"[索引] 时间标记：rows={_conversationViews.Count} hasText={hasText} " +
                 $"records={(info != null ? info.Records.Count : -1)} " +
                 $"updatedAt={(info != null ? info.UpdatedAt : -1)} " +
+                $"lastReplyTick={(info != null ? info.LastReplyTick : -1)} " +
                 $"text={((text != null && text.text != null) ? text.text : "<null>")} " +
                 $"node={(node != null && node.activeSelf)} " +
                 $"size={((text != null) ? text.rectTransform.rect.size.ToString() : "-")} " +
@@ -5548,14 +5558,15 @@ namespace IcarusII.UI
         }
 
         /// <summary>
-        /// 某一轮回答完成：把该会话的时间戳推到当前时刻（= 最后一条回答的时间），
+        /// 某一轮回答完成：记下当时的 gameTick（时间标记用）与当前时间戳（排序用），
         /// 刷新所有时间标记，并按「置顶 → 最后回复」重排。
         /// </summary>
-        public void MarkConversationReplied(string conversationId)
+        public void MarkConversationReplied(string conversationId, long gameTick)
         {
             var conversation = FindConversation(conversationId);
             if (conversation != null)
             {
+                conversation.MarkReplied(gameTick);
                 conversation.MarkUpdated(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                 if (SortConversations())
                 {
@@ -5567,15 +5578,25 @@ namespace IcarusII.UI
         }
 
         /// <summary>
-        /// 左侧时间标记：用会话自己的时间戳（最后一次写入 = 最后一条回答）算距今多久，
-        /// 显示刚刚 / x分钟 / x.x小时 / xx小时。不用游戏时钟：那是会 24 小时取模的读数，
-        /// 算不出间隔。
+        /// 左侧时间标记：按游戏时间显示距最后一条回答多久（刚刚 / x分钟 / x.x小时 / xx小时）。
+        /// 用绝对 gameTick 而不是 HH:mm:ss 时钟——时钟每 24 小时归零，隔天就减出负数；
+        /// 也没有用墙上时间，暂停游戏时游戏时间应当冻结。
+        /// 老会话没有 gameTick 时退回会话时间戳（真实时间），差一点精度也不留空白。
         /// </summary>
         private static string ConversationTimeLabel(ConversationInfo info)
         {
-            if (info == null || info.UpdatedAt <= 0) return string.Empty;
-            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var elapsedSeconds = (nowMs - info.UpdatedAt) / 1000L;
+            if (info == null) return string.Empty;
+            long elapsedSeconds;
+            if (info.LastReplyTick > 0 && GameMain.data != null)
+            {
+                elapsedSeconds = (GameMain.gameTick - info.LastReplyTick) / GameTickPerSecond;
+            }
+            else
+            {
+                if (info.UpdatedAt <= 0) return string.Empty;
+                var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                elapsedSeconds = (nowMs - info.UpdatedAt) / 1000L;
+            }
             if (elapsedSeconds < 0) elapsedSeconds = 0;
             if (elapsedSeconds < 60L) return Strings.Get("chat.conversation.time.just_now");
             if (elapsedSeconds < 3600L)

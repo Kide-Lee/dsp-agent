@@ -340,6 +340,7 @@ export interface AgentRunner {
     reply: string,
     gameTime: string,
     conversationId?: string | null,
+    gameTick?: number | null,
   ): void;
   /** A.13：置顶/取消置顶一个会话；只影响左栏排序。 */
   pinConversation?(saveKey: string | null, conversationId: string, pinned: boolean): Promise<{
@@ -708,6 +709,19 @@ export function normalizeConversationRename(raw: string): string {
   return chars.length > CONVERSATION_RENAME_MAX_CHARS
     ? chars.slice(0, CONVERSATION_RENAME_MAX_CHARS).join('')
     : text;
+}
+
+/** 每个会话最后一条回答的 gameTick：同一会话取最大值；没有归属或没有 tick 的记录跳过。 */
+function lastReplyTicks(records: readonly GameTimeRecord[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const record of records) {
+    if (!record.conversationId || typeof record.gameTick !== 'number') continue;
+    const current = out.get(record.conversationId);
+    if (current === undefined || record.gameTick > current) {
+      out.set(record.conversationId, record.gameTick);
+    }
+  }
+  return out;
 }
 
 /**
@@ -1883,12 +1897,14 @@ export class PiAgent implements AgentRunner {
       modified: Date;
       history?: HistoryMessage[];
     },
-    meta?: { pins?: Record<string, number> },
+    meta?: { pins?: Record<string, number>; replyTicks?: Map<string, number> },
   ): ConversationInfo {
     const records = this.readConversationRecords(pi, saveKey, info.id, info.history);
-    // 缺省就从盘上读一次：切换/新建会话的回执也要带上 pinned，
-    // 否则 mod 拿这条回执覆盖列表项时会把置顶丢掉。
+    // 缺省就从盘上读一次：切换/新建会话的回执也要带上 pinned / lastReplyTick，
+    // 否则 mod 拿这条回执覆盖列表项时会把置顶和时间标记丢掉。
     const pins = meta ? meta.pins : this.readConversationPins(saveKey);
+    const replyTicks = meta ? meta.replyTicks : lastReplyTicks(this.readReplyTimes(saveKey));
+    const replyTick = replyTicks?.get(info.id);
     return {
       id: info.id,
       title: this.conversationTitle(info),
@@ -1897,6 +1913,7 @@ export class PiAgent implements AgentRunner {
       recordCount: records.length,
       records,
       ...(pins?.[info.id] !== undefined ? { pinned: true } : {}),
+      ...(typeof replyTick === 'number' ? { lastReplyTick: replyTick } : {}),
     };
   }
 
@@ -2248,7 +2265,10 @@ export class PiAgent implements AgentRunner {
       this.logger.warn('列出存档会话失败', { saveKey, ...errorFields(err) });
     }
 
-    const meta = { pins: this.readConversationPins(saveKey) };
+    const meta = {
+      pins: this.readConversationPins(saveKey),
+      replyTicks: lastReplyTicks(this.readReplyTimes(saveKey)),
+    };
     const out: ConversationInfo[] = [];
     const seen = new Set<string>();
     for (const info of list) {
@@ -2510,6 +2530,7 @@ export class PiAgent implements AgentRunner {
     prompt: string,
     cards: readonly BlueprintCardPayload[],
     conversationId?: string | null,
+    gameTick?: number | null,
   ): void {
     const path = this.blueprintCardLogPath(saveKey);
     if (!path || cards.length === 0) return;
@@ -2683,6 +2704,7 @@ export class PiAgent implements AgentRunner {
     reply: string,
     gameTime: string,
     conversationId?: string | null,
+    gameTick?: number | null,
   ): void {
     const path = this.replyTimeLogPath(saveKey);
     const text = prompt.trim();
@@ -2697,6 +2719,9 @@ export class PiAgent implements AgentRunner {
         prompt: text.slice(0, 4000),
         ...(answer ? { reply: answer.slice(0, 4000) } : {}),
         gameTime: time.slice(0, 16),
+        ...(typeof gameTick === 'number' && Number.isFinite(gameTick) && gameTick >= 0
+          ? { gameTick }
+          : {}),
         timestamp: Date.now(),
       };
       appendFileSync(path, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 });
@@ -2733,6 +2758,9 @@ export class PiAgent implements AgentRunner {
             ? { reply: parsed.reply }
             : {}),
           gameTime: parsed.gameTime,
+          ...(typeof parsed.gameTick === 'number' && Number.isFinite(parsed.gameTick)
+            ? { gameTick: parsed.gameTick }
+            : {}),
           ...(typeof parsed.timestamp === 'number' ? { timestamp: parsed.timestamp } : {}),
         });
       } catch {
