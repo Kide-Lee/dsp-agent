@@ -239,7 +239,6 @@ namespace IcarusII.UI
             public GameObject UserGo;
             public GameObject Row;
             public Text Link;
-            public ChatIndexRowHover Hover;
             /// <summary>压缩记录行（“自动压缩上下文” + 摘要）；删除它 = 撤销压缩。</summary>
             public bool IsCompaction;
             /// <summary>对应的 pi compaction entry id；为空时撤销最近一次。</summary>
@@ -5110,8 +5109,8 @@ namespace IcarusII.UI
 
         /// <summary>
         /// 稳定排序：LINQ 的 OrderBy 对相等的项保留原顺序，List.Sort 不保证。
-        /// 没有「最后回复时间」的会话之间不比较大小，直接沿用 sidecar 给的先后
-        /// （sidecar 那边按 createdAt 排过）。
+        /// 没有「最后回复时间」的会话按创建时间从新到旧——这两个字段都不随点击变化，
+        /// 所以取消置顶后会话会回到它该在的位置，而点一下不会让列表重排。
         /// </summary>
         private static List<ConversationInfo> OrderConversations(List<ConversationInfo> source)
         {
@@ -5120,6 +5119,7 @@ namespace IcarusII.UI
                 .ThenByDescending(conversation => conversation != null && conversation.LastReplyTick > 0
                     ? conversation.LastReplyTick
                     : -1L)
+                .ThenByDescending(conversation => conversation?.CreatedAt ?? 0L)
                 .ToList();
         }
 
@@ -5330,7 +5330,6 @@ namespace IcarusII.UI
             {
                 entry.Row = null;
                 entry.Link = null;
-                entry.Hover = null;
             }
         }
 
@@ -5461,6 +5460,13 @@ namespace IcarusII.UI
 
             var time = header.Find("time");
             view.TimeText = time != null ? time.Find("num")?.GetComponent<Text>() : null;
+            if (view.TimeText != null)
+            {
+                // 和其它运行期文本一样走游戏文字材质：prefab 里若引用内置默认材质，
+                // 进 bundle 后那份引用会丢，字会暗到看不见（历史坑）。
+                GameTextStyle.Apply(view.TimeText);
+                ApplyBodyFont(view.TimeText);
+            }
             // prefab 的 time 自带一个空 Button；它挡在标题行前面，不接线的话点这块会没反应。
             var timeButton = time != null ? time.GetComponent<Button>() : null;
             if (timeButton != null)
@@ -5523,24 +5529,32 @@ namespace IcarusII.UI
                 RefreshConversationTime(view);
                 if (view?.TimeText != null && !string.IsNullOrEmpty(view.TimeText.text)) hasText = true;
             }
-            if (!hasText) LogMissingConversationTimes();
+            LogTimeMarkerSample(hasText);
         }
 
         /// <summary>
-        /// 一行时间都没有时打一次排查日志：能区分“没数据”和“节点没找到”，
-        /// 免得下次再靠猜 prefab 到底有没有生效。
+        /// 每个存档绑定后的第一次刷新打一行时间标记实况：
+        /// 有没有文本、节点在不在、用的什么字体/材质、显不显示。
+        /// 只打一次，排查“游戏里看不到时间”时不用再猜 prefab 到底生效没有。
         /// </summary>
-        private void LogMissingConversationTimes()
+        private void LogTimeMarkerSample(bool hasText)
         {
             if (_timeMarkerDiagnosticLogged || _conversationViews.Count == 0) return;
             _timeMarkerDiagnosticLogged = true;
             var view = _conversationViews[0];
             var info = view?.Info;
+            var text = view?.TimeText;
+            var node = text != null ? text.transform.parent.gameObject : null;
             Plugin.Log.LogInfo(
-                $"[索引] 会话时间标记都没有文本：rows={_conversationViews.Count} " +
+                $"[索引] 时间标记：rows={_conversationViews.Count} hasText={hasText} " +
                 $"records={(info != null ? info.Records.Count : -1)} " +
                 $"lastReplyTick={(info != null ? info.LastReplyTick : -1)} " +
-                $"timeNode={(view != null && view.TimeText != null)}");
+                $"text={((text != null && text.text != null) ? text.text : "<null>")} " +
+                $"node={(node != null && node.activeSelf)} " +
+                $"size={((text != null) ? text.rectTransform.rect.size.ToString() : "-")} " +
+                $"font={(text != null && text.font != null ? text.font.name : "<null>")} " +
+                $"mat={(text != null && text.material != null ? text.material.name : "<null>")} " +
+                $"color={(text != null ? text.color.ToString() : "-")}");
         }
 
         /// <summary>
@@ -5583,13 +5597,18 @@ namespace IcarusII.UI
             return Strings.Get("chat.conversation.time.hours", elapsedSeconds / 3600L);
         }
 
-        /// <summary>没有 gameTick 的老会话：最后一条记录的 gameTime 就是那轮回答完成的时钟。</summary>
+        /// <summary>
+        /// 没有 gameTick 的老会话：最后一条记录的 gameTime 就是那轮回答完成的时钟。
+        /// 只取到分钟——时间标记只有 54px 宽，带上秒（08 个字符）会换行被裁掉。
+        /// </summary>
         private static string LastRecordGameTime(ConversationInfo info)
         {
             for (int i = info.Records.Count - 1; i >= 0; i--)
             {
                 var record = info.Records[i];
-                if (record != null && !string.IsNullOrEmpty(record.GameTime)) return record.GameTime;
+                if (record == null || string.IsNullOrEmpty(record.GameTime)) continue;
+                var clock = record.GameTime;
+                return clock.Length > 5 && clock[2] == ':' ? clock.Substring(0, 5) : clock;
             }
             return string.Empty;
         }
@@ -5706,7 +5725,7 @@ namespace IcarusII.UI
                     if (maxWidth <= 20f) maxWidth = 210f;
                     label.text = FitLabel(record.Text, label.fontSize, maxWidth - 4f);
                     // 常态是白色；右栏正对着的那条由 RefreshIndexSelection 单独染蓝。
-                    label.color = _textMain;
+                    label.color = Color.white;
                 }
                 var hover = row.GetComponent<ChatIndexRowHover>();
                 if (hover == null) hover = row.AddComponent<ChatIndexRowHover>();
@@ -5896,7 +5915,6 @@ namespace IcarusII.UI
             {
                 entry.Row = null;
                 entry.Link = null;
-                entry.Hover = null;
             }
             var view = FindConversationView(_activeConversationId);
             if (view == null || view.Info == null) return;
@@ -5917,7 +5935,6 @@ namespace IcarusII.UI
                     var row = view.Rows[i];
                     entry.Row = row;
                     entry.Link = row.transform.Find("link/label")?.GetComponent<Text>();
-                    entry.Hover = row.GetComponent<ChatIndexRowHover>();
                     break;
                 }
             }
@@ -6445,8 +6462,7 @@ namespace IcarusII.UI
             foreach (var entry in _turns)
             {
                 if (entry.Link != null)
-                    entry.Link.color = entry.Id == _focusedTurnId ? _accent : _textMain;
-                entry.Hover?.SetSelected(entry.Id == _focusedTurnId);
+                    entry.Link.color = entry.Id == _focusedTurnId ? _accent : Color.white;
             }
         }
 

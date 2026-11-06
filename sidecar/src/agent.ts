@@ -17,9 +17,12 @@
 
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -1976,6 +1979,41 @@ export class PiAgent implements AgentRunner {
     }
   }
 
+  /**
+   * 会话的创建/修改时间：创建时间取 session 文件头里的 timestamp（首行 JSON），
+   * 修改时间取文件 mtime。切换会话不能用 `new Date()` 伪造——这两个值参与左栏排序，
+   * 伪造会让“点一下会话”改变列表顺序。
+   */
+  private sessionTimes(filePath: string | null | undefined): { created: Date; modified: Date } {
+    const now = new Date();
+    if (!filePath) return { created: now, modified: now };
+    let created = now;
+    try {
+      const fd = openSync(filePath, 'r');
+      try {
+        const buffer = Buffer.alloc(1024);
+        const read = readSync(fd, buffer, 0, buffer.length, 0);
+        const line = buffer.subarray(0, read).toString('utf8').split('\n', 1)[0] ?? '';
+        const header = JSON.parse(line) as { timestamp?: unknown };
+        if (typeof header.timestamp === 'string') {
+          const ms = Date.parse(header.timestamp);
+          if (Number.isFinite(ms)) created = new Date(ms);
+        }
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      // 读不到就退回 now；排序仍可用（同分按稳定顺序）。
+    }
+    let modified = now;
+    try {
+      modified = statSync(filePath).mtime;
+    } catch {
+      // 同上。
+    }
+    return { created, modified };
+  }
+
   private conversationPinsPath(saveKey: string | null): string | null {
     if (!saveKey) return null;
     return join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey), 'conversation-pins.json');
@@ -2302,14 +2340,17 @@ export class PiAgent implements AgentRunner {
     const activeId = await this.ensureActiveConversation(saveKey, pi);
     if (conversationId === activeId) {
       const { history, name } = this.readConversation(pi, saveKey, conversationId);
+      const sameFile = pi.SessionManager.findById(this.dataDir, conversationId,
+        this.conversationSessionDir(saveKey));
+      const times = this.sessionTimes(sameFile);
       const conversation = this.activeConversationDraft
         ? this.draftConversationInfo(conversationId, this.activeConversationDraftTitle)
         : this.conversationInfoFrom(pi, saveKey, {
             id: conversationId,
             name: name ?? undefined,
             firstMessage: history.find((m) => m.role === 'user')?.text ?? '',
-            created: new Date(),
-            modified: new Date(),
+            created: times.created,
+            modified: times.modified,
             history,
           });
       return { ok: true, conversation, history };
@@ -2333,12 +2374,13 @@ export class PiAgent implements AgentRunner {
     this.activeConversationDraftTitle = null;
     this.writeActiveConversationId(saveKey, conversationId);
     const { history, name } = this.readConversation(pi, saveKey, conversationId);
+    const times = this.sessionTimes(file);
     const conversation = this.conversationInfoFrom(pi, saveKey, {
       id: conversationId,
       name: name ?? undefined,
       firstMessage: history.find((m) => m.role === 'user')?.text ?? '',
-      created: new Date(),
-      modified: new Date(),
+      created: times.created,
+      modified: times.modified,
       history,
     });
     return {

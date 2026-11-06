@@ -426,14 +426,31 @@ console.log('── 2.4 置顶与最后回复时刻 ──');
 
     await restarted.pinConversation('saveA', 'conv-b', false);
     const unpinned = await restarted.getConversations('saveA');
-    check('取消置顶后回到 updatedAt 排序', unpinned[0]?.id === 'conv-a', JSON.stringify(unpinned.map((c) => c.id)));
+    check('取消置顶后回到按最后回复排序', unpinned[0]?.id === 'conv-a', JSON.stringify(unpinned.map((c) => c.id)));
 
     // 切换会话不写任何参与排序的字段：点一下不会让会话跳到最前。
     const beforeSwitch = (await restarted.getConversations('saveA')).map((c) => c.id).join(',');
-    await restarted.switchConversation('saveA', 'conv-b');
+    const firstSwitch = await restarted.switchConversation('saveA', 'conv-b');
+    const againSwitch = await restarted.switchConversation('saveA', 'conv-a');
+    const backSwitch = await restarted.switchConversation('saveA', 'conv-b');
+    check('切换回执的 createdAt 是会话文件的创建时间（切换不刷新）',
+      firstSwitch.conversation?.createdAt === backSwitch.conversation?.createdAt,
+      `${JSON.stringify(firstSwitch.conversation?.createdAt)} vs ${JSON.stringify(backSwitch.conversation?.createdAt)}`);
+    check('切换回执的 updatedAt 是文件 mtime（切换不刷新）',
+      typeof againSwitch.conversation?.updatedAt === 'number' &&
+        firstSwitch.conversation?.updatedAt === backSwitch.conversation?.updatedAt,
+      JSON.stringify([firstSwitch.conversation?.updatedAt, backSwitch.conversation?.updatedAt]));
     const afterSwitch = await restarted.getConversations('saveA');
     check('切换会话不改变列表顺序', afterSwitch.map((c) => c.id).join(',') === beforeSwitch,
       `${beforeSwitch} → ${afterSwitch.map((c) => c.id).join(',')}`);
+
+    // 取消置顶要落到「按最后回复」该在的位置，而不是留在置顶区。
+    const pinnedOrder = (await restarted.getConversations('saveA')).map((c) => c.id).join(',');
+    check('置顶会话排在最前', pinnedOrder === 'conv-a,conv-b', pinnedOrder);
+    await restarted.pinConversation('saveA', 'conv-a', false);
+    const unpinnedOrder = (await restarted.getConversations('saveA')).map((c) => c.id).join(',');
+    check('取消置顶后按最后回复重新落位', unpinnedOrder === 'conv-b,conv-a', unpinnedOrder);
+    await restarted.pinConversation('saveA', 'conv-a', true);
 
     // 切换会话的回执也要带 pinned/lastReplyTick：mod 会用它整体覆盖列表项。
     const switchedPinned = await restarted.switchConversation('saveA', 'conv-a');
