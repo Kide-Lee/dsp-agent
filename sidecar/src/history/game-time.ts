@@ -135,3 +135,56 @@ function replyMatchesHistory(historyText: string, reply: string): boolean {
   // 记录侧也可能被存储上限截断；历史文本更长时按前缀比较。
   return reply.length > historyText.length && reply.startsWith(historyText);
 }
+
+/** 压缩记录的游戏时间（附录 A.11）：按 compactionId 对应；没有 id 的记录按“最近一次”回填。 */
+export interface CompactionTimeRecord {
+  compactionId?: string;
+  conversationId?: string;
+  gameTime: string;
+  gameTick?: number;
+  /** 写入时间（毫秒），仅用于排障。 */
+  timestamp?: number;
+}
+
+/**
+ * 把回存的压缩时间挂回 `kind: "compaction"` 的历史消息。
+ *
+ * 优先按 compactionId 精确对应；事件刚发生时拿不到 id 的记录，按 LIFO 语义
+ * 从最新一条未带时间的压缩往前回填——和 `history.undo_compaction` 的“最近一次”一致。
+ */
+export function attachCompactionTimes(
+  messages: HistoryMessage[],
+  records: readonly CompactionTimeRecord[],
+  conversationId?: string | null,
+): HistoryMessage[] {
+  if (messages.length === 0 || records.length === 0) return messages;
+
+  const scoped = conversationId
+    ? records.filter((record) => !record.conversationId || record.conversationId === conversationId)
+    : records;
+  if (scoped.length === 0) return messages;
+
+  const byId = new Map<string, string>();
+  const loose: string[] = [];
+  for (const record of scoped) {
+    const gameTime = record.gameTime.trim();
+    if (!gameTime) continue;
+    if (record.compactionId) byId.set(record.compactionId, gameTime);
+    else loose.push(gameTime);
+  }
+
+  const unmatched: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i];
+    if (!message || message.kind !== 'compaction' || message.gameTime) continue;
+    const exact = message.compactionId ? byId.get(message.compactionId) : undefined;
+    if (exact) message.gameTime = exact;
+    else unmatched.push(i);
+  }
+
+  // 没有 id 的记录：从最新一条压缩往前回填。
+  for (let n = loose.length - 1, k = unmatched.length - 1; n >= 0 && k >= 0; n--, k--) {
+    messages[unmatched[k]!]!.gameTime = loose[n]!;
+  }
+  return messages;
+}

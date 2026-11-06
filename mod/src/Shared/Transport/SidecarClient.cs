@@ -520,6 +520,26 @@ namespace IcarusII.Common.Transport
             return true;
         }
 
+        /// <summary>
+        /// 回存压缩记录的游戏时间（协议附录 A.11）。不要求 sidecar 回复；
+        /// 连接未就绪时返回 false，回放时该记录就不显示时间。
+        /// </summary>
+        public bool SendContextCompactedTime(string compactionId, string conversationId,
+            string gameTime, long gameTick = 0, long timestamp = 0)
+        {
+            if (_state != ConnectionState.Ready || string.IsNullOrEmpty(gameTime)) return false;
+
+            var env = Protocol.Protocol.Envelope(
+                Protocol.Protocol.ContextCompactedTime,
+                Protocol.Protocol.BuildContextCompactedTime(
+                    compactionId, conversationId, gameTime, gameTick, timestamp),
+                NextId(), null);
+
+            _sendQueue.Enqueue(env);
+            try { _sendSignal.Release(); } catch (SemaphoreFullException) { /* ignore */ }
+            return true;
+        }
+
         private string NextId() => "m-" + Interlocked.Increment(ref _messageCounter);
 
         // ---------------------------------------------------------------- 重连主循环

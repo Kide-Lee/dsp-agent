@@ -69,6 +69,7 @@ import {
   parseModelCatalogPayload,
   parsePromptPayload,
   parseProviderTestPayload,
+  parseContextCompactedTimePayload,
   parseReplyTimePayload,
   parseSaveBindPayload,
   parseToolResultPayload,
@@ -618,6 +619,9 @@ export class Session {
         return;
       case MessageType.ReplyTime:
         this.handleReplyTime(env);
+        return;
+      case MessageType.ContextCompactedTime:
+        this.handleContextCompactedTime(env);
         return;
       case MessageType.ToolResult:
         this.handleToolResult(env);
@@ -1923,6 +1927,24 @@ export class Session {
         null,
       parsed.gameTick ?? null,
     );
+  }
+
+  private handleContextCompactedTime(env: import('./protocol.js').ParsedEnvelope): void {
+    const parsed = parseContextCompactedTimePayload(env.payload);
+    if (!parsed) {
+      this.logger.warn('context.compacted.time 载荷无效，已忽略', { promptId: env.id ?? null });
+      return;
+    }
+    this.options.agent.recordCompactionTime?.(this.boundSaveKey, {
+      ...(parsed.compactionId ? { compactionId: parsed.compactionId } : {}),
+      conversationId:
+        parsed.conversationId ??
+        this.focusedConversationId ??
+        this.options.agent.getActiveConversationId?.() ??
+        undefined,
+      gameTime: parsed.gameTime,
+      ...(typeof parsed.gameTick === 'number' ? { gameTick: parsed.gameTick } : {}),
+    });
   }
 
   // ---------------------------------------------------------------- 工具调用

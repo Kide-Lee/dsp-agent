@@ -82,6 +82,8 @@ export const MessageType = {
   LinkCard: 'link_card',
   // 回存回答完成时的游戏时间（附录 A.10）
   ReplyTime: 'reply.time',
+  /** 压缩记录的游戏时间（附录 A.11）：只用于回放显示。 */
+  ContextCompactedTime: 'context.compacted.time',
   // M3：拉取供应商的可用模型目录 / 检测 Key
   ModelCatalog: 'model.catalog',
   // 设置页预设供应商下拉框：pi 内置目录的全部供应商
@@ -846,6 +848,45 @@ export function parseReplyTimePayload(payload: JsonObject): ReplyTimePayload | n
     ...(trimmedReply ? { reply: trimmedReply } : {}),
     gameTime: time,
     ...(gameTick !== null ? { gameTick } : {}),
+  };
+}
+
+export interface ContextCompactedTimePayload {
+  compactionId?: string;
+  conversationId?: string;
+  gameTime: string;
+  gameTick?: number;
+  timestamp?: number;
+}
+
+/**
+ * 压缩记录的游戏时间（附录 A.11）：只用于回放显示。
+ * 只要求 gameTime；compactionId 缺省时 sidecar 按“最近一次压缩”回填。
+ */
+export function parseContextCompactedTimePayload(raw: unknown): ContextCompactedTimePayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const payload = raw as Record<string, unknown>;
+  const gameTime = typeof payload['gameTime'] === 'string' ? payload['gameTime'].trim() : '';
+  if (gameTime.length === 0) return null;
+  const compactionId =
+    typeof payload['compactionId'] === 'string' && payload['compactionId']
+      ? payload['compactionId']
+      : undefined;
+  const conversationId =
+    typeof payload['conversationId'] === 'string' && payload['conversationId']
+      ? payload['conversationId']
+      : undefined;
+  const gameTick = parseGameTick(payload['gameTick']);
+  const timestamp =
+    typeof payload['timestamp'] === 'number' && Number.isFinite(payload['timestamp'])
+      ? payload['timestamp']
+      : undefined;
+  return {
+    ...(compactionId ? { compactionId } : {}),
+    ...(conversationId ? { conversationId } : {}),
+    gameTime,
+    ...(gameTick !== null ? { gameTick } : {}),
+    ...(timestamp !== undefined ? { timestamp } : {}),
   };
 }
 

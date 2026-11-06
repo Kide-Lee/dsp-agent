@@ -696,7 +696,8 @@ mod                                   sidecar
 - `history` 的 `assistant` 消息可带可选的 `cards`（附录 A.9）：该回答产出的蓝图卡片，
   形如 `[{fileName, path, name, ...}]`。老客户端忽略该字段；mod 回放时在回答后重建卡片。
 - `history` 的 `assistant` 消息可带可选的 `gameTime`（字符串，`H:mm:ss`，小时 `000`–`999`，
-  满 1000 小时归零）：该回答完成时的
+  满 1000 小时归零）；`kind:"compaction"` 的压缩记录也用同一个字段带压缩时的游戏时钟
+  （来源见 A.11 `context.compacted.time`）。`gameTime` 是该记录完成时的
   游戏时间。老 mod 忽略该字段；mod 回放时显示在回答脚注。
 - `history` 的 `user` 消息也可带同一个可选的 `gameTime`：用于回放用户气泡下面的脚注
   （只有时间 + 复制）。sidecar 用同一回合记录的时间近似提问时间；没有记录时省略，
@@ -950,7 +951,7 @@ mod 收到 `message{final}` 并完成渲染后发送。sidecar 不回复；它�
 - sidecar 忽略空值/非法值，不因记录失败影响回答；同一提问/回答以最后一条记录为准。
 - 老 sidecar 忽略未知 `type`；老 mod 不发该消息，历史脚注退回显示 `--:--` 或当前时间。
 
-### A.11 `context.compacted` / `history.undo_compaction` — 压缩记录与撤销
+### A.11 `context.compacted` / `context.compacted.time` / `history.undo_compaction` — 压缩记录与撤销
 
 pi 的自动压缩完成后，sidecar 把摘要作为一条**只给 UI** 的记录发给 mod，并提供
 “撤销最近一次压缩”的请求。压缩记录和撤销都不改变模型可见的普通消息格式；
@@ -976,11 +977,42 @@ pi 的自动压缩完成后，sidecar 把摘要作为一条**只给 UI** 的记�
 - `summary`：pi 生成的压缩摘要；mod 作为一条 assistant 记录渲染。
 - `conversationId`（可选）：压缩所属会话；后台会话的压缩不实时显示，切回后从历史回放。
 - `compactionId`：pi compaction entry id；事件刚发生时可能缺省，撤销时可省略。
-- `timestamp`：压缩完成时间（毫秒）；mod 用本地时间生成 `[HH:mm:ss]`。
+- `timestamp`：压缩完成时间（毫秒，真实时间）；**不用于显示**，只做对齐参考。
+  记录里的时间是游戏时钟，见下面的 `context.compacted.time`。
 - `tokensBefore` / `estimatedTokensAfter`：可选，只用于展示。
 - `reason`：`manual` | `threshold` | `overflow`，可选。
-- mod 收到后插入一条“`[HH:mm:ss] 自动压缩上下文`”记录，并把它之前的回合标灰、
-  禁止单独删除；老 mod 忽略未知 `type`。
+- mod 收到后插入一条“`[H:mm:ss] 自动压缩上下文`”记录（游戏时钟，小时 `000`–`999`），
+  并把它之前的回合标灰、禁止单独删除；老 mod 忽略未知 `type`。
+- 这条记录只给 UI：不进模型上下文，也不作为 user/assistant 消息写进会话。
+
+#### `context.compacted.time`（mod → sidecar）
+
+压缩发生的瞬间只有 mod 知道游戏时钟，所以要由 mod 回存一份，供切回会话时回放。
+
+```jsonc
+{
+  "v": 1, "id": "m-73", "type": "context.compacted.time",
+  "payload": {
+    "compactionId": "a1b2c3d4",
+    "conversationId": "conv_7c1e…",
+    "gameTime": "123:45:06",
+    "gameTick": 42123456,
+    "timestamp": 1760000000000
+  }
+}
+```
+
+- `gameTime`（必填）：压缩发生时的游戏时钟 `H:mm:ss`。缺省或空串时 sidecar 忽略整条消息。
+- `compactionId`（可选）：`context.compacted` 里拿不到 id 时可以省略，
+  sidecar 会把它记成“最近一次压缩”，回放时按 LIFO 回填。
+- `conversationId`（可选）：缺省用当前活动会话。
+- `gameTick` / `timestamp`（可选）：绝对游戏时刻与真实时间，只做排障参考。
+- sidecar 不回执；写盘失败只影响回放显示。
+
+存储：`sessions/<saveKey>/compaction-times.jsonl`，每行一条记录。
+回放时按 `compactionId` 把 `gameTime` 挂到 A.13 `history[]` 里
+`kind:"compaction"` 的消息上（缺 id 的记录按最近一次回填）。没有记录的老会话，
+mod 收到空 `gameTime` 就不写时间。
 
 压缩期间 sidecar 还会发 `status{state:"compacting"}`；mod 应显示“整理上下文中…”。
 
@@ -1161,6 +1193,9 @@ mod 用 `choose/question` 显示 `title`，`choose/explain` 显示 `body`，右�
   优先级高于自动生成。已有 `session_info.name` 的会话不会自动覆盖。
 - 空 draft 的改名先写在 `active.json.title`，第一次提问创建 session 时补写
   `session_info`；没有消息前不单独创建 session 文件。
+- 每轮回答的游戏时钟记在 `sessions/<saveKey>/reply-times.jsonl`（A.10），
+  压缩记录的游戏时钟记在 `sessions/<saveKey>/compaction-times.jsonl`（A.11）。
+  这两个文件都不是 pi session，`SessionManager.list` 会忽略它们。
 - 会话置顶状态记录在 `sessions/<saveKey>/conversation-pins.json`：
   `{"pins":{"<conversationId>":1760000000000}}`，值是置顶时间（毫秒）；该文件同样
   不是 pi session，`SessionManager.list` 会忽略它。删除会话时同时删掉它的置顶记录。

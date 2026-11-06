@@ -2043,6 +2043,7 @@ namespace IcarusII.UI
             if (message == null) return;
             AppendCompaction(
                 message.Text,
+                message.GameTime,
                 message.Timestamp,
                 message.CompactionId,
                 message.TokensBefore,
@@ -2051,6 +2052,7 @@ namespace IcarusII.UI
 
         public void AppendCompaction(
             string summary,
+            string gameTime,
             long timestampMs,
             string compactionId,
             int tokensBefore = 0,
@@ -2064,8 +2066,10 @@ namespace IcarusII.UI
             var answerTurnId = _currentTurnId;
             var wasAwaiting = _awaitingResponse;
             var insertBefore = wasAwaiting && answerTurnId != 0 && !HasAssistantContent(answerTurnId);
-            var time = CompactionClock(timestampMs);
-            var label = $"[{time}] {Strings.Get("chat.compaction.label")}";
+            // 时间用游戏时钟：实时压缩由 Plugin 传当前时钟并回存给回放；
+            // 老记录没有回存过时间，就不写时间（拿“现在”的时钟冒充是错的）。
+            var name = Strings.Get("chat.compaction.label");
+            var label = string.IsNullOrEmpty(gameTime) ? name : $"[{gameTime}] {name}";
 
             _currentTurnId = ++_nextTurnId;
             _awaitingResponse = false;
@@ -2163,13 +2167,6 @@ namespace IcarusII.UI
             {
                 _turns[i].Compacted = latest >= 0 && i < latest;
             }
-        }
-
-        private static string CompactionClock(long timestampMs)
-        {
-            if (timestampMs <= 0) return DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
-            return DateTimeOffset.FromUnixTimeMilliseconds(timestampMs)
-                .LocalDateTime.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         }
 
         /// <summary>

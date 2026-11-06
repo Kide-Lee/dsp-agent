@@ -130,11 +130,21 @@ import {
   isStoredLinkCard,
   type LinkCardRecord,
 } from './link/card.js';
-import { attachGameTimes, type GameTimeRecord } from './history/game-time.js';
+import {
+  attachCompactionTimes,
+  attachGameTimes,
+  type CompactionTimeRecord,
+  type GameTimeRecord,
+} from './history/game-time.js';
 import type { KnowledgeStore } from './kb/store.js';
 
 /** 会话目录里的元数据日志；它们不是 pi 会话文件，不能被当成会话读取/删除。 */
-const SESSION_METADATA_FILES = new Set(['blueprint-cards.jsonl', 'link-cards.jsonl', 'reply-times.jsonl']);
+const SESSION_METADATA_FILES = new Set([
+  'blueprint-cards.jsonl',
+  'link-cards.jsonl',
+  'reply-times.jsonl',
+  'compaction-times.jsonl',
+]);
 
 /** 判断一个文件名是否是可读的 pi 会话 JSONL。 */
 function isSessionFile(name: string): boolean {
@@ -342,6 +352,7 @@ export interface AgentRunner {
     conversationId?: string | null,
     gameTick?: number | null,
   ): void;
+  recordCompactionTime?(saveKey: string | null, record: CompactionTimeRecord): void;
   /** A.13：置顶/取消置顶一个会话；只影响左栏排序。 */
   pinConversation?(saveKey: string | null, conversationId: string, pinned: boolean): Promise<{
     ok: boolean;
@@ -1845,7 +1856,12 @@ export class PiAgent implements AgentRunner {
     const linkRecords = this.readLinkCards(saveKey);
     const withLinks = attachLinkCards(withCards, linkRecords, conversationId);
     const timeRecords = this.readReplyTimes(saveKey);
-    const withTimes = attachGameTimes(withLinks, timeRecords, conversationId);
+    const compactionRecords = this.readCompactionTimes(saveKey);
+    const withTimes = attachCompactionTimes(
+      attachGameTimes(withLinks, timeRecords, conversationId),
+      compactionRecords,
+      conversationId,
+    );
     this.logger.info('读取会话历史', {
       saveKey,
       conversationId,
@@ -2765,6 +2781,71 @@ export class PiAgent implements AgentRunner {
         });
       } catch {
         // 坏行跳过，不因一条记录损坏丢掉整段历史。
+      }
+    }
+    return records;
+  }
+
+  private compactionTimeLogPath(saveKey: string | null): string | null {
+    if (!saveKey) return null;
+    return join(this.dataDir, 'sessions', this.sessionDirNameFor(saveKey), 'compaction-times.jsonl');
+  }
+
+  /** 回存压缩记录的游戏时间（协议 A.11）：压缩时间只用于回放显示，不写进模型上下文。 */
+  recordCompactionTime(saveKey: string | null, record: CompactionTimeRecord): void {
+    const path = this.compactionTimeLogPath(saveKey);
+    const gameTime = (record.gameTime ?? '').trim();
+    if (!path || !gameTime) return;
+
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      const item: CompactionTimeRecord = {
+        ...(record.compactionId ? { compactionId: record.compactionId } : {}),
+        ...(record.conversationId ? { conversationId: record.conversationId } : {}),
+        gameTime,
+        ...(typeof record.gameTick === 'number' && Number.isFinite(record.gameTick)
+          ? { gameTick: record.gameTick }
+          : {}),
+        timestamp: Date.now(),
+      };
+      appendFileSync(path, `${JSON.stringify(item)}\n`, { encoding: 'utf8', mode: 0o600 });
+    } catch (err) {
+      this.logger.warn('写压缩记录游戏时间失败', { saveKey, ...errorFields(err) });
+    }
+  }
+
+  private readCompactionTimes(saveKey: string | null): CompactionTimeRecord[] {
+    const path = this.compactionTimeLogPath(saveKey);
+    if (!path || !existsSync(path)) return [];
+    let raw: string;
+    try {
+      raw = readFileSync(path, 'utf8');
+    } catch (err) {
+      this.logger.warn('读压缩记录游戏时间失败', { saveKey, ...errorFields(err) });
+      return [];
+    }
+
+    const records: CompactionTimeRecord[] = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as Partial<CompactionTimeRecord>;
+        if (typeof parsed.gameTime !== 'string' || !parsed.gameTime.trim()) continue;
+        records.push({
+          ...(typeof parsed.compactionId === 'string' && parsed.compactionId
+            ? { compactionId: parsed.compactionId }
+            : {}),
+          ...(typeof parsed.conversationId === 'string' && parsed.conversationId.trim()
+            ? { conversationId: parsed.conversationId }
+            : {}),
+          gameTime: parsed.gameTime,
+          ...(typeof parsed.gameTick === 'number' && Number.isFinite(parsed.gameTick)
+            ? { gameTick: parsed.gameTick }
+            : {}),
+          ...(typeof parsed.timestamp === 'number' ? { timestamp: parsed.timestamp } : {}),
+        });
+      } catch {
+        // 坏行跳过：时间只是展示信息，不因一条记录损坏丢掉整段历史。
       }
     }
     return records;

@@ -658,10 +658,18 @@ namespace IcarusII
                         _streaming = false;
                         _chat.AppendCompaction(
                             info.Summary,
+                            ChatWindow.CurrentGameClock(),
                             info.Timestamp,
                             info.CompactionId,
                             info.TokensBefore,
                             info.EstimatedTokensAfter);
+                        // 回放时要用同一份游戏时钟：压缩记录的时间是游戏时间，不能事后重算。
+                        _client?.SendContextCompactedTime(
+                            info.CompactionId,
+                            info.ConversationId ?? _chat.ActiveConversationId,
+                            ChatWindow.CurrentGameClock(),
+                            ChatWindow.CurrentGameTick(),
+                            info.Timestamp);
                     }
                     break;
                 }

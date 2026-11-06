@@ -960,6 +960,16 @@ namespace IcarusII.Tests
             var replyTimeTick = Protocol.BuildReplyTime("问题", "回答", "08:42", "conv-a", 42123456L);
             Eq("reply.time gameTick", 42123456L, replyTimeTick["gameTick"].AsLong(0));
 
+            var compactionTime = Protocol.BuildContextCompactedTime("c1", "conv-a", "123:45:06", 42123456L, 1760000000000L);
+            Eq("context.compacted.time 类型名", "context.compacted.time", Protocol.ContextCompactedTime);
+            Eq("context.compacted.time compactionId", "c1", compactionTime["compactionId"].AsString());
+            Eq("context.compacted.time conversationId", "conv-a", compactionTime["conversationId"].AsString());
+            Eq("context.compacted.time gameTime", "123:45:06", compactionTime["gameTime"].AsString());
+            Eq("context.compacted.time gameTick", 42123456L, compactionTime["gameTick"].AsLong(0));
+            var compactionTimeBare = Protocol.BuildContextCompactedTime(null, null, "001:00:00");
+            Eq("context.compacted.time 省略空 id", 0, compactionTimeBare["compactionId"].Count == 0 ? 0 : 1);
+            Eq("context.compacted.time 无 tick 不写字段", 0L, compactionTimeBare["gameTick"].AsLong(0));
+
             Eq("conversation.pin builder id", "conv-a",
                 Protocol.BuildConversationPin("conv-a", true)["conversationId"].AsString());
             Eq("conversation.pin builder pinned", true,

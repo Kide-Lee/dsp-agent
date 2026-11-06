@@ -10,6 +10,7 @@
 
 import { Session } from '../dist/session.js';
 import { extractHistoryMessages } from '../dist/agent.js';
+import { attachCompactionTimes } from '../dist/history/game-time.js';
 
 let passed = 0;
 let failed = 0;
@@ -128,6 +129,35 @@ check('压缩记录被回放', withCompaction.length === 3, JSON.stringify(withC
 check('压缩记录 kind', withCompaction[1]?.kind === 'compaction');
 check('压缩记录摘要', withCompaction[1]?.text === '之前的对话摘要');
 check('压缩记录 id/token', withCompaction[1]?.compactionId === 'c1' && withCompaction[1]?.tokensBefore === 1000 && withCompaction[1]?.estimatedTokensAfter === 200);
+
+// 压缩记录的时间是游戏时钟（附录 A.11），按 compactionId 挂回；事件刚发生时拿不到 id 的记录按最近一次回填。
+{
+  const byId = [
+    { role: 'assistant', kind: 'compaction', text: '摘要A', compactionId: 'c1' },
+    { role: 'user', text: '问题' },
+    { role: 'assistant', kind: 'compaction', text: '摘要B', compactionId: 'c2' },
+  ];
+  attachCompactionTimes(byId, [{ compactionId: 'c2', gameTime: '123:45:06' }]);
+  check('压缩时间按 compactionId 精确挂回', byId[2]?.gameTime === '123:45:06' && byId[0]?.gameTime === undefined,
+    JSON.stringify(byId.map((m) => m.gameTime)));
+
+  const loose = [
+    { role: 'assistant', kind: 'compaction', text: '摘要A', compactionId: 'c1' },
+    { role: 'assistant', kind: 'compaction', text: '摘要B', compactionId: 'c2' },
+  ];
+  attachCompactionTimes(loose, [{ gameTime: '010:00:00' }, { gameTime: '020:00:00' }]);
+  check('没有 compactionId 的记录按最近一次回填',
+    loose[1]?.gameTime === '020:00:00' && loose[0]?.gameTime === '010:00:00',
+    JSON.stringify(loose.map((m) => m.gameTime)));
+
+  const scoped = [{ role: 'assistant', kind: 'compaction', text: 'A', compactionId: 'c1' }];
+  attachCompactionTimes(scoped, [{ compactionId: 'c1', conversationId: 'other', gameTime: '001:00:00' }], 'conv-a');
+  check('别的会话的压缩时间不串用', scoped[0]?.gameTime === undefined, JSON.stringify(scoped[0]));
+
+  const untouched = [{ role: 'assistant', text: '普通回答', gameTime: '005:00:00' }];
+  attachCompactionTimes(untouched, [{ compactionId: 'c1', gameTime: '001:00:00' }]);
+  check('普通回答的游戏时间不被压缩记录覆盖', untouched[0]?.gameTime === '005:00:00');
+}
 
 const clipped = extractHistoryMessages([
   { type: 'message', message: { role: 'user', content: 'x'.repeat(30) } },
@@ -368,6 +398,28 @@ console.log('── 5. reply.time ──');
     payload: { prompt: '', gameTime: '09:00' },
   })), false);
   check('空 prompt 被忽略', calls.length === 1);
+
+  // 压缩记录的游戏时间（附录 A.11）：只回存，供回放显示。
+  const compactionCalls = [];
+  agent.recordCompactionTime = (saveKey, record) => { compactionCalls.push({ saveKey, ...record }); };
+  session.handleFrame(Buffer.from(JSON.stringify({
+    v: 1,
+    id: 'm-3',
+    type: 'context.compacted.time',
+    payload: { compactionId: 'c1', conversationId: 'conv-a', gameTime: '123:45:06', gameTick: 42123456 },
+  })), false);
+  check('context.compacted.time 传到 agent', compactionCalls.length === 1
+    && compactionCalls[0]?.compactionId === 'c1' && compactionCalls[0]?.gameTime === '123:45:06'
+    && compactionCalls[0]?.gameTick === 42123456 && compactionCalls[0]?.saveKey === 'saveA',
+  JSON.stringify(compactionCalls));
+
+  session.handleFrame(Buffer.from(JSON.stringify({
+    v: 1,
+    id: 'm-4',
+    type: 'context.compacted.time',
+    payload: { gameTime: '' },
+  })), false);
+  check('缺 gameTime 被忽略', compactionCalls.length === 1);
 }
 
 // ---- 6. 撤销压缩 ----

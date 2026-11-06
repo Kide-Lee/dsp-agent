@@ -176,6 +176,9 @@ namespace IcarusII.Common.Protocol
         /// <summary>mod → sidecar：回存回答完成时的游戏时间（附录 A.10）。</summary>
         public const string ReplyTime = "reply.time";
 
+        /// <summary>压缩记录的游戏时间（附录 A.11）：只用于回放显示，不改变模型上下文。</summary>
+        public const string ContextCompactedTime = "context.compacted.time";
+
         /// <summary>error.payload.code 的 M1 新增取值。</summary>
         public const string CodeInvalidKey = "invalid_key";
         public const string CodeUpstreamError = "upstream_error";
@@ -815,6 +818,22 @@ namespace IcarusII.Common.Protocol
         }
 
         /// <summary>
+        /// 构造 context.compacted.time 载荷（协议附录 A.11）：压缩记录的游戏时间。
+        /// 只用于回放显示，sidecar 不回执、不写进模型上下文。
+        /// </summary>
+        public static JsonValue BuildContextCompactedTime(string compactionId, string conversationId,
+            string gameTime, long gameTick = 0, long timestamp = 0)
+        {
+            var p = JsonValue.NewObject();
+            if (!string.IsNullOrEmpty(compactionId)) p.Set("compactionId", compactionId);
+            if (!string.IsNullOrEmpty(conversationId)) p.Set("conversationId", conversationId);
+            p.Set("gameTime", gameTime ?? string.Empty);
+            if (gameTick > 0) p.Set("gameTick", gameTick);
+            if (timestamp > 0) p.Set("timestamp", timestamp);
+            return p;
+        }
+
+        /// <summary>
         /// 构造 tool_result 载荷（协议附录 B）。`error` 与 `meta` 始终写出，
         /// 便于 sidecar 端做统一解析，避免"字段缺失"与"空值"两种形态。
         /// </summary>
@@ -1042,6 +1061,8 @@ namespace IcarusII.Common.Protocol
     {
         public string Summary { get; private set; }
         public string CompactionId { get; private set; }
+        /// <summary>压缩所属会话（附录 A.11，可选）；后台会话的压缩靠它回存时间。</summary>
+        public string ConversationId { get; private set; }
         public long Timestamp { get; private set; }
         public int TokensBefore { get; private set; }
         public int EstimatedTokensAfter { get; private set; }
@@ -1056,6 +1077,7 @@ namespace IcarusII.Common.Protocol
             {
                 Summary = summary,
                 CompactionId = payload["compactionId"].AsString(null),
+                ConversationId = payload["conversationId"].AsString(null),
                 Timestamp = payload["timestamp"].AsLong(0),
                 TokensBefore = payload["tokensBefore"].AsInt(0),
                 EstimatedTokensAfter = payload["estimatedTokensAfter"].AsInt(0),
