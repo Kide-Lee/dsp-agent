@@ -5869,104 +5869,74 @@ namespace IcarusII.UI
         }
 
         /// <summary>
-        /// 展开：records 的高度从 fromHeight 长到内容高度，超出当前高度的部分由 RectMask2D 挡住。
-        /// 动画期间要同时关掉 records 自己的 VerticalLayoutGroup——它也算 ILayoutElement，
-        /// 会把内容高度报给父级，压过 LayoutElement 设的值。
+        /// 记录行的展开/收起：直接动画每一行的高度（LayoutElement 的 min/preferred）。
+        /// 行的 link 上有 stencil Mask，行变矮时文字会被裁掉，所以既不依赖材质支不支持裁剪，
+        /// 也不依赖 records 整块是否激活——容器高度由布局自己跟着算。
         /// </summary>
-        private void AnimateRecordsReveal(ConversationView view, float fromHeight = 0f)
+        private void AnimateRecordRows(ConversationView view, bool reveal, Action after)
         {
-            if (view?.Records == null) return;
-            var records = view.Records;
-            if (!records.gameObject.activeInHierarchy) return;
-            var layout = records.GetComponent<VerticalLayoutGroup>();
-            var fitter = records.GetComponent<ContentSizeFitter>();
-            var element = records.GetComponent<LayoutElement>();
-            var canvasGroup = records.GetComponent<CanvasGroup>();
-            if (layout == null || fitter == null || element == null) return;
+            var rows = CollectRecordRows(view);
+            if (rows.Count == 0)
+            {
+                after?.Invoke();
+                return;
+            }
+            if (view.Records != null && !view.Records.gameObject.activeSelf)
+                view.Records.gameObject.SetActive(true);
 
-            LayoutRebuilder.ForceRebuildLayoutImmediate(records);
-            var target = records.rect.height;
-            if (target <= 0.5f) return;
-
-            var start = Mathf.Clamp(fromHeight, 0f, target);
-            FinishIndexTween(RecordsTweenKey(view.Id));
-            layout.enabled = false;
-            fitter.enabled = false;
-            element.preferredHeight = start;
-            if (canvasGroup != null) canvasGroup.alpha = 0f;
+            var key = RecordsTweenKey(view.Id);
+            FinishIndexTween(key);
+            foreach (var row in rows)
+            {
+                if (row.Element == null) continue;
+                row.Element.minHeight = 0f;
+                row.Element.preferredHeight = reveal ? 0f : row.Height;
+            }
             MarkIndexLayoutDirty();
-            StartIndexTween(RecordsTweenKey(view.Id), IndexExpandDuration,
+            StartIndexTween(key, IndexExpandDuration,
                 progress =>
                 {
-                    if (element == null) return;
-                    element.preferredHeight = Mathf.LerpUnclamped(start, target, progress);
-                    // 文字材质不吃 RectMask2D 的裁剪，只靠高度会让行停在那里直到动画结束，
-                    // 所以同时把整块记录淡入淡出。
-                    if (canvasGroup != null) canvasGroup.alpha = progress;
+                    for (int i = 0; i < rows.Count; i++)
+                    {
+                        var row = rows[i];
+                        if (row.Element == null) continue;
+                        row.Element.preferredHeight = reveal
+                            ? Mathf.LerpUnclamped(0f, row.Height, progress)
+                            : Mathf.LerpUnclamped(row.Height, 0f, progress);
+                    }
                     MarkIndexLayoutDirty();
                 },
                 () =>
                 {
-                    if (canvasGroup != null) canvasGroup.alpha = 1f;
-                    if (element == null || fitter == null || layout == null) return;
-                    element.preferredHeight = -1f;
-                    layout.enabled = true;
-                    fitter.enabled = true;
+                    foreach (var row in rows)
+                    {
+                        if (row.Element == null) continue;
+                        row.Element.minHeight = row.Height;
+                        row.Element.preferredHeight = row.Height;
+                    }
                     MarkIndexLayoutDirty();
+                    after?.Invoke();
                 });
         }
 
-        /// <summary>收起：高度收到 0 之后再真正销毁/隐藏记录行（after 里重建）。</summary>
-        private void AnimateRecordsHide(ConversationView view, Action after)
+        /// <summary>当前可见的记录行（含「展开其余 N 条」）：高度取自各自的 LayoutElement。</summary>
+        private static List<(LayoutElement Element, float Height)> CollectRecordRows(ConversationView view)
         {
-            if (view?.Records == null)
+            var rows = new List<(LayoutElement Element, float Height)>();
+            if (view?.Records == null) return rows;
+            for (int i = 0; i < view.Records.childCount; i++)
             {
-                after?.Invoke();
-                return;
+                var child = view.Records.GetChild(i);
+                if (!child.gameObject.activeSelf) continue;
+                var element = child.GetComponent<LayoutElement>();
+                if (element == null) continue;
+                var height = element.preferredHeight > 0.5f
+                    ? element.preferredHeight
+                    : ((RectTransform)child).rect.height;
+                if (height <= 0.5f) continue;
+                rows.Add((element, height));
             }
-            var records = view.Records;
-            var fitter = records.GetComponent<ContentSizeFitter>();
-            var element = records.GetComponent<LayoutElement>();
-            if (fitter == null || element == null || !records.gameObject.activeInHierarchy)
-            {
-                Plugin.Log.LogInfo(
-                    $"[索引] 收起没有动画：fitter={(fitter != null)} element={(element != null)} " +
-                    $"active={records.gameObject.activeInHierarchy}");
-                after?.Invoke();
-                return;
-            }
-
-            LayoutRebuilder.ForceRebuildLayoutImmediate(records);
-            var start = records.rect.height;
-            if (start <= 0.5f)
-            {
-                Plugin.Log.LogInfo("[索引] 收起没有动画：记录区高度为 0");
-                after?.Invoke();
-                return;
-            }
-            var layout = records.GetComponent<VerticalLayoutGroup>();
-            var canvasGroup = records.GetComponent<CanvasGroup>();
-            FinishIndexTween(RecordsTweenKey(view.Id));
-            if (layout != null) layout.enabled = false;
-            fitter.enabled = false;
-            StartIndexTween(RecordsTweenKey(view.Id), IndexExpandDuration,
-                progress =>
-                {
-                    if (element == null) return;
-                    element.preferredHeight = Mathf.LerpUnclamped(start, 0f, progress);
-                    if (canvasGroup != null) canvasGroup.alpha = 1f - progress;
-                    MarkIndexLayoutDirty();
-                },
-                () =>
-                {
-                    if (canvasGroup != null) canvasGroup.alpha = 1f;
-                    if (element == null || fitter == null) return;
-                    element.preferredHeight = -1f;
-                    fitter.enabled = true;
-                    if (layout != null) layout.enabled = true;
-                    after?.Invoke();
-                    MarkIndexLayoutDirty();
-                });
+            return rows;
         }
 
         private static string RecordsTweenKey(string conversationId) => "records:" + conversationId;
@@ -6039,19 +6009,17 @@ namespace IcarusII.UI
             if (view.Expanded)
             {
                 BuildConversationRecords(view);
-                AnimateRecordsReveal(view);
+                AnimateRecordRows(view, true, null);
                 return;
             }
-            // 收起先播高度动画，结束后再重建（重建会把记录行销毁并隐藏 records）。
-            AnimateRecordsHide(view, () => BuildConversationRecords(view));
+            // 收起：先把每行压扁（文字被行的 Mask 裁掉），结束后再重建（重建会销毁行并隐藏 records）。
+            AnimateRecordRows(view, false, () => BuildConversationRecords(view));
         }
 
         private void ExpandConversation(string conversationId)
         {
             var view = FindConversationView(conversationId);
             if (view == null) return;
-            var before = view.Records as RectTransform;
-            float beforeHeight = before != null && before.gameObject.activeSelf ? before.rect.height : 0f;
             int count = view.Info != null ? view.Info.Records.Count : 0;
             view.Visible = Mathf.Min(view.Visible + 5, count);
             _conversationVisible[view.Id] = view.Visible;
@@ -6059,7 +6027,7 @@ namespace IcarusII.UI
             UpdateConversationHeader(view);
             LinkTurnsToConversationRows();
             RefreshIndexSelection();
-            AnimateRecordsReveal(view, beforeHeight);
+            AnimateRecordRows(view, true, null);
         }
 
         private ConversationView FindConversationView(string id)
