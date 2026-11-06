@@ -41,9 +41,7 @@ function reportOf(parsed, plan, meta) {
     stations.push({ itemId: building.itemId, x: building.localOffset[0].x, y: building.localOffset[0].y, storage, ports });
   }
   const area = meta.width * meta.height;
-  // 2300..2399 / 2900..2999 是生产机器；2001..2014 是带子/分拣器，2103/2104 是物流站。
-  const isMachine = (itemId) => (itemId >= 2300 && itemId < 2400) || (itemId >= 2900 && itemId < 3000);
-  const machineArea = rows.filter((row) => isMachine(row.itemId)).reduce((total, row) => total + row.count * 2.25, 0);
+  const machineArea = rows.filter((row) => row.itemId < 2000).reduce((total, row) => total + row.count * 2.25, 0);
   return {
     area: { width: meta.width, height: meta.height },
     buildings: rows,
@@ -97,8 +95,7 @@ export function planBlueprint(plan, options = {}) {
   const maxHeight = options.layout === 'factory' ? MAX_FACTORY_HEIGHT : MAX_HEIGHT;
   const hard = validateParsed(parsed, { maxWidth: MAX_WIDTH, maxHeight, limitsAreErrors: true });
   if (!hard.ok) {
-    const layoutName = options.layout === 'factory' ? '工厂布局' : '总线布局';
-    throw new Error(`${layoutName}未通过硬校验：${hard.errors.slice(0, 3).join('；')}`);
+    throw new Error(`总线布局未通过硬校验：${hard.errors.slice(0, 3).join('；')}`);
   }
 
   const machines = plan.recipes.reduce((sum, row) => sum + (row.buildingCount || 0), 0);

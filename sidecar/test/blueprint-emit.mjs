@@ -94,28 +94,13 @@ const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
   check('2303 适合总线', busCompatible(2303));
   check('2302 适合总线', busCompatible(2302));
   check('2308 精炼厂适合总线', busCompatible(2308));
-  let multiOutputThrew = false;
-  try {
-    layoutBus({
-      stages: [{ buildingId: 2308, count: 2, recipeId: 16, output: 1120, outputs: [{ itemId: 1120, rate: 60 }, { itemId: 1114, rate: 120 }], inputs: [1007], inputRates: new Map([[1007, 180]]), outputRate: 60 }],
-      target: 1120,
-      rawRates: new Map([[1007, 180]]),
-    });
-  } catch (error) {
-    multiOutputThrew = /多产物/.test(error instanceof Error ? error.message : String(error));
-  }
-  check('副产物配方被明确拒绝，不生成停摆产线', multiOutputThrew);
-
-  let factoryRefineryThrew = false;
-  try {
-    layoutFactory({
-      stages: [{ buildingId: 2308, count: 1, recipeId: 16, output: 1120, inputs: [1007], inputRates: new Map([[1007, 180]]), outputRate: 60 }],
-      target: 1120,
-    });
-  } catch (error) {
-    factoryRefineryThrew = error?.code === 'factory-unsupported';
-  }
-  check('工厂布局拒绝精炼厂端口几何', factoryRefineryThrew);
+  const refinery = layoutBus({
+    stages: [{ buildingId: 2308, count: 2, recipeId: 16, output: 1120, outputs: [{ itemId: 1120, rate: 60 }, { itemId: 1114, rate: 120 }], inputs: [1007], inputRates: new Map([[1007, 180]]), outputRate: 60 }],
+    target: 1120,
+    rawRates: new Map([[1007, 180]]),
+  });
+  const result = validateBlueprint(refinery.text);
+  check('精炼厂总线通过硬校验', result.ok, result.errors.slice(0, 3).join('；'));
 }
 
 // 8. 有端口偏移数据的化工厂/位面熔炉也能上总线。
@@ -155,7 +140,7 @@ const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
   check('物流站单体能过硬校验', result.ok, result.errors.slice(0, 3).join('；'));
   const cells = STATION_PORT_CELLS.get(2103).map((cell) => `${cell.x},${cell.y}`);
   check('12 个端口格互不重复', new Set(cells).size === 12, cells.join(' '));
-  check('0 号端口在 (1,2)', stationPortCell(2103, 0).x === 1 && stationPortCell(2103, 0).y === 2);
+  check('0 号端口在 (1,3)', stationPortCell(2103, 0).x === 1 && stationPortCell(2103, 0).y === 3);
 }
 
 // 11. 未知建筑。

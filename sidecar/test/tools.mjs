@@ -138,7 +138,7 @@ async function run() {
     const ready = socket.frames.find((f) => f.type === 'ready');
     check('收到 ready', !!ready);
     const tools = ready?.payload?.tools ?? [];
-    check('六个只读 + 四个 kb + 两个 wiki + 六个蓝图 + 脚本', tools.length === 19, JSON.stringify(tools));
+    check('六个只读 + 四个 kb + 两个 wiki + 五个蓝图 + 脚本', tools.length === 18, JSON.stringify(tools));
     check('包含 game_get_production', tools.includes('game_get_production'));
     check('包含 kb_search / kb_get / kb_recipe_tree / kb_plan', ['kb_search', 'kb_get', 'kb_recipe_tree', 'kb_plan'].every((name) => tools.includes(name)));
     const catalog = ready?.payload?.toolCatalog ?? [];
@@ -181,7 +181,7 @@ async function run() {
     empty.session.handleFrame(Buffer.from(JSON.stringify(hello([]))), false);
     const emptyReady = empty.socket.frames.find((f) => f.type === 'ready');
     const emptyTools = emptyReady?.payload?.tools ?? [];
-    check('无 game 能力时仍声明 kb/wiki/blueprint/脚本', emptyTools.length === 13 && emptyTools.every((name) => name.startsWith('kb_') || name.startsWith('wiki_') || name.startsWith('blueprint_') || name === 'run_script'));
+    check('无 game 能力时仍声明 kb/wiki/blueprint/脚本', emptyTools.length === 12 && emptyTools.every((name) => name.startsWith('kb_') || name.startsWith('wiki_') || name.startsWith('blueprint_') || name === 'run_script'));
   }
 
   console.log('── 1b. 权限不是能力：只读仍注册写工具，但写操作走确认 ──');

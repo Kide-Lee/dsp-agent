@@ -120,77 +120,6 @@
       "notes": null
     },
     {
-      "name": "blueprint_compile",
-      "label": "编译蓝图 DSL",
-      "description": "编译一段蓝图 DSL（JavaScript 子集）并保存为蓝图文件。DSL 在 QuickJS 沙箱里执行。M1 支持 target(物品, 每分钟) 与 options(belt/sorter/assembler)；raw/module/connect/group/station/constraint 尚未实现，出现会明确报错而不是静默忽略。编译是确定性的：展开配方、算机器数、布局、校验，然后出图。",
-      "promptGuidelines": [
-        "玩家要求用代码描述产线、或要可检查、可反复修改的蓝图时使用。",
-        "先写最小源码：target(物品, 每分钟)；需要时加 options({ belt, sorter, assembler })。",
-        "需要从中间产物或外部原料开始时用 blueprint_generate 的 from，不要用 raw(...)。",
-        "编译失败会返回带错误码的诊断；按建议改源码后重试。"
-      ],
-      "parameters": {
-        "type": "object",
-        "required": [
-          "source"
-        ],
-        "properties": {
-          "source": {
-            "type": "string",
-            "description": "DSL 源码（JavaScript 子集）"
-          },
-          "dir": {
-            "type": "string",
-            "description": "保存目录（相对蓝图根，默认 /IcarusII）"
-          },
-          "name": {
-            "type": "string",
-            "description": "蓝图文件名（不含扩展名）"
-          },
-          "beltType": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 2,
-            "description": "传送带档位：0 黄 / 1 绿 / 2 蓝（默认 2）"
-          },
-          "insertType": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 3,
-            "description": "分拣器档位：0..3（默认 3 集装）"
-          },
-          "buildingTier": {
-            "anyOf": [
-              {
-                "type": "string",
-                "const": "base"
-              },
-              {
-                "type": "string",
-                "const": "mk2"
-              },
-              {
-                "type": "string",
-                "const": "mk3"
-              }
-            ],
-            "description": "机器档位（默认 base）"
-          }
-        }
-      },
-      "source": "blueprint",
-      "capability": null,
-      "risk": 1,
-      "timeoutMs": null,
-      "group": "blueprint.md",
-      "cs": {
-        "timeoutMs": null,
-        "topFields": [],
-        "allFields": []
-      },
-      "notes": null
-    },
-    {
       "name": "blueprint_fs",
       "label": "蓝图文件",
       "description": "在游戏的蓝图目录里查看和整理文件，类似受限的 ls/cd/pwd/cat/mkdir/rm/rmdir。路径以蓝图根为 `/`；默认保存目录是 `/IcarusII`。不能访问蓝图目录之外。",
@@ -282,7 +211,7 @@
       },
       "source": "blueprint",
       "capability": null,
-      "risk": 1,
+      "risk": 0,
       "timeoutMs": null,
       "group": "blueprint.md",
       "cs": {
@@ -316,9 +245,7 @@
           },
           "rate": {
             "type": "number",
-            "minimum": 1,
-            "maximum": 1000000,
-            "description": "目标每分钟产量（1..1000000）"
+            "description": "目标每分钟产量"
           },
           "buildingTier": {
             "anyOf": [
@@ -429,7 +356,7 @@
       },
       "source": "blueprint",
       "capability": null,
-      "risk": 1,
+      "risk": 0,
       "timeoutMs": null,
       "group": "blueprint.md",
       "cs": {
@@ -514,7 +441,7 @@
       },
       "source": "blueprint",
       "capability": null,
-      "risk": 1,
+      "risk": 0,
       "timeoutMs": null,
       "group": "blueprint.md",
       "cs": {
@@ -4451,7 +4378,7 @@
       },
       "source": "script",
       "capability": null,
-      "risk": 1,
+      "risk": 0,
       "timeoutMs": null,
       "group": "interactive.md",
       "cs": {

@@ -20,29 +20,18 @@ function safeName(name: string): string {
   return name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 80) || 'DSL-蓝图';
 }
 
-export function createDslTool(
-  kb: KnowledgeBase,
-  ws: BlueprintWorkspace,
-  confirmFileWrite?: (
-    tool: string,
-    args: Record<string, unknown>,
-    body: string,
-    signal?: AbortSignal,
-  ) => Promise<boolean>,
-): ToolDefinition {
+export function createDslTool(kb: KnowledgeBase, ws: BlueprintWorkspace): ToolDefinition {
   return {
     name: 'blueprint_compile',
     label: '编译蓝图 DSL',
     description:
       '编译一段蓝图 DSL（JavaScript 子集）并保存为蓝图文件。' +
-      'DSL 在 QuickJS 沙箱里执行。M1 支持 target(物品, 每分钟) 与 options(belt/sorter/assembler)；' +
-      'raw/module/connect/group/station/constraint 尚未实现，出现会明确报错而不是静默忽略。' +
-      '编译是确定性的：展开配方、算机器数、布局、校验，然后出图。',
+      'DSL 在 QuickJS 沙箱里执行，只能调用 target/raw/options/module/connect/group/station/constraint。' +
+      '编译是确定性的：展开配方、算机器数、站连站布局、校验，然后出图。',
     promptGuidelines: [
       '玩家要求用代码描述产线、或要可检查、可反复修改的蓝图时使用。',
-      '先写最小源码：target(物品, 每分钟)；需要时加 options({ belt, sorter, assembler })。',
-      '需要从中间产物或外部原料开始时用 blueprint_generate 的 from，不要用 raw(...)。',
-      '编译失败会返回带错误码的诊断；按建议改源码后重试。',
+      '先写最小源码：target(物品, 每分钟) + raw(...)，需要时再加 options。',
+      '编译失败会返回带错误码的诊断；按建议改源码后重试，不要改用 blueprint_generate 绕过。',
     ],
     parameters: Type.Object({
       source: Type.String({ description: 'DSL 源码（JavaScript 子集）' }),
@@ -54,12 +43,9 @@ export function createDslTool(
         Type.Union([Type.Literal('base'), Type.Literal('mk2'), Type.Literal('mk3')], { description: '机器档位（默认 base）' }),
       ),
     }),
-    async execute(_callId: string, args: Record<string, unknown>, signal?: AbortSignal) {
+    async execute(_callId: string, args: Record<string, unknown>) {
       const source = typeof args['source'] === 'string' ? args['source'] : '';
       if (!source.trim()) return reply({ error: 'source 不能为空' }, false, 'bad_request');
-      if (!kb || typeof kb.resolveItem !== 'function') {
-        return reply({ error: '知识库尚未建立，无法编译蓝图；先进入存档等原型导出完成' }, false, 'kb_unavailable');
-      }
       let ir: DslIr;
       try {
         ir = await runDsl(source);
@@ -79,16 +65,6 @@ export function createDslTool(
       } catch (error) {
         if (error instanceof DslError) return reply({ error: error.message, code: error.code }, false, 'blueprint_dsl_error');
         return reply({ error: error instanceof Error ? error.message : String(error), code: 'E200' }, false, 'blueprint_dsl_error');
-      }
-      if (confirmFileWrite) {
-        const approved = await confirmFileWrite(
-          'blueprint_compile',
-          { name: typeof args['name'] === 'string' ? args['name'] : undefined, dir: args['dir'] },
-          `编译并保存蓝图：${ir.targets[0]?.item ?? '蓝图'} ${ir.targets[0]?.rate ?? 0}/min\n` +
-            `保存目录：${typeof args['dir'] === 'string' && args['dir'] ? args['dir'] : '/IcarusII'}`,
-          signal,
-        );
-        if (!approved) return reply({ error: '玩家拒绝了编译写蓝图' }, false, 'confirmation_denied');
       }
       let targetDir;
       try {

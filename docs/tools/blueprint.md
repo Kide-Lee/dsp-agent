@@ -1,48 +1,14 @@
 # 蓝图（本地文件 + 社区站点）
 
-蓝图只操作游戏蓝图根目录内的受限路径；`blueprint_save`、`blueprint_generate` 与 `blueprint_compile` 写入的是 `.txt` 蓝图文本，不改变游戏状态，但写文件前仍按权限档位确认。
+蓝图只操作游戏蓝图根目录内的受限路径；`blueprint_save` 与 `blueprint_generate` 写入的是 `.txt` 蓝图文本，不改变游戏状态。
 
-共 6 个工具。提示词如何进入模型上下文见 [prompt-shape.md](prompt-shape.md)。
-
----
-
-### `blueprint_compile`
-
-**label** 编译蓝图 DSL · **能力位** 无（sidecar 本地工具） · **风险** 1（低风险写，可逆） · **超时** —
-
-#### 模型可见 · 工具描述（tools 数组）
-
-```text
-编译一段蓝图 DSL（JavaScript 子集）并保存为蓝图文件。DSL 在 QuickJS 沙箱里执行。M1 支持 target(物品, 每分钟) 与 options(belt/sorter/assembler)；raw/module/connect/group/station/constraint 尚未实现，出现会明确报错而不是静默忽略。编译是确定性的：展开配方、算机器数、布局、校验，然后出图。
-```
-
-#### 模型可见 · 使用规则（system prompt）
-
-- 玩家要求用代码描述产线、或要可检查、可反复修改的蓝图时使用。
-- 先写最小源码：target(物品, 每分钟)；需要时加 options({ belt, sorter, assembler })。
-- 需要从中间产物或外部原料开始时用 blueprint_generate 的 from，不要用 raw(...)。
-- 编译失败会返回带错误码的诊断；按建议改源码后重试。
-
-#### 参数
-
-| 参数 | 类型 | 必填 | 约束 | 说明 |
-| --- | --- | --- | --- | --- |
-| `source` | `string` | 是 | — | DSL 源码（JavaScript 子集） |
-| `dir` | `string` | 否 | — | 保存目录（相对蓝图根，默认 /IcarusII） |
-| `name` | `string` | 否 | — | 蓝图文件名（不含扩展名） |
-| `beltType` | `integer` | 否 | minimum=0，maximum=2 | 传送带档位：0 黄 / 1 绿 / 2 蓝（默认 2） |
-| `insertType` | `integer` | 否 | minimum=0，maximum=3 | 分拣器档位：0..3（默认 3 集装） |
-| `buildingTier` | `string \| string \| string` | 否 | — | 机器档位（默认 base） |
-
-#### 返回
-
-返回文本摘要。写入类工具还会广播蓝图卡片事件（协议 `blueprint_card` / `link_card`），卡片走协议通道，不在工具返回值里。
+共 5 个工具。提示词如何进入模型上下文见 [prompt-shape.md](prompt-shape.md)。
 
 ---
 
 ### `blueprint_fs`
 
-**label** 蓝图文件 · **能力位** 无（sidecar 本地工具） · **风险** 1（低风险写，可逆） · **超时** —
+**label** 蓝图文件 · **能力位** 无（sidecar 本地工具） · **风险** 0（只读） · **超时** —
 
 #### 模型可见 · 工具描述（tools 数组）
 
@@ -144,7 +110,7 @@
 
 ### `blueprint_save`
 
-**label** 保存蓝图 · **能力位** 无（sidecar 本地工具） · **风险** 1（低风险写，可逆） · **超时** —
+**label** 保存蓝图 · **能力位** 无（sidecar 本地工具） · **风险** 0（只读） · **超时** —
 
 #### 模型可见 · 工具描述（tools 数组）
 
@@ -178,7 +144,7 @@
 
 ### `blueprint_generate`
 
-**label** 生成产线蓝图 · **能力位** 无（sidecar 本地工具） · **风险** 1（低风险写，可逆） · **超时** —
+**label** 生成产线蓝图 · **能力位** 无（sidecar 本地工具） · **风险** 0（只读） · **超时** —
 
 #### 模型可见 · 工具描述（tools 数组）
 
@@ -199,7 +165,7 @@
 | 参数 | 类型 | 必填 | 约束 | 说明 |
 | --- | --- | --- | --- | --- |
 | `item` | `string` | 是 | — | 物品名或物品 id |
-| `rate` | `number` | 是 | minimum=1，maximum=1000000 | 目标每分钟产量（1..1000000） |
+| `rate` | `number` | 是 | — | 目标每分钟产量 |
 | `buildingTier` | `string \| string \| string` | 否 | — | 机器档位，默认 base（知识库里的最低速机器） |
 | `beltType` | `integer` | 否 | minimum=0，maximum=2 | 默认 2（蓝带） |
 | `insertType` | `integer` | 否 | minimum=0，maximum=3 | 默认 2（极速） |

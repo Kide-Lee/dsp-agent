@@ -30,7 +30,6 @@ function range(n) { return Array.from({ length: Math.max(0, Number(n) | 0) }, (_
 function repeat(n, fn) { for (let i = 0; i < (Number(n) | 0); i += 1) fn(i); }
 function sum(list) { return (list || []).reduce((a, b) => Number(a) + Number(b), 0); }
 delete globalThis.Date;
-delete Math.random;
 delete globalThis.eval;
 delete globalThis.Function;
 delete globalThis.Proxy;

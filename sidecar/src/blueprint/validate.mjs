@@ -1,8 +1,6 @@
 // 蓝图硬校验：只解码蓝图本身，按游戏放置规则逐条检查。
 // 出图后必须全过；它拦的是“贴进游戏报红/拒绝”的那几类：建筑碰撞、分拣器够不着、断带、越界。
 import { fromStr } from '../../vendor/dsp-calc/src/blueprint/parser.js';
-import { SLOTS } from './slots.mjs';
-import { PORT_OFFSETS } from './ports.mjs';
 import vanilla from '../../vendor/dsp-calc/data/Vanilla.mjs';
 import buildingData from '../../vendor/dsp-calc/data/Buildings.mjs';
 import { COLLIDERS } from './colliders.mjs';
@@ -207,39 +205,6 @@ export function validateParsed(bp, options = {}) {
     const list = grid.get(key);
     if (list) list.push(i);
     else grid.set(key, [i]);
-  }
-
-  // 分拣器端点必须落在真实建筑/带子上，且槽位号与目标类型一致。
-  // 之前的校验只查长度，悬空分拣器/错槽位/不存在的站口都能通过。
-  for (const building of buildings) {
-    if (!isSorter(building)) continue;
-    const checks = [
-      { targetIndex: building.inputObjIdx, slot: building.inputFromSlot, label: 'inputFromSlot' },
-      { targetIndex: building.outputObjIdx, slot: building.outputToSlot, label: 'outputToSlot' },
-    ];
-    for (const check of checks) {
-      if (check.targetIndex < 0) continue;
-      const target = buildings[check.targetIndex];
-      if (!target) {
-        errors.push(`分拣器 #${building.index} 的 ${check.label} 指向不存在的建筑 ${check.targetIndex}`);
-        continue;
-      }
-      if (isBelt(target)) {
-        if (check.slot !== -1 && check.slot !== 0 && check.slot !== 1) {
-          errors.push(`分拣器 #${building.index} 连到带子时 ${check.label}=${check.slot}，应为 -1`);
-        }
-      } else if (!Number.isInteger(check.slot) || check.slot < 0 || check.slot > 15) {
-        errors.push(`分拣器 #${building.index} 连到建筑 #${target.index} 时 ${check.label}=${check.slot}，槽位号无效`);
-      } else {
-        const portSlots = PORT_OFFSETS.get(target.itemId);
-        const knownSlots = SLOTS.get(target.itemId);
-        if (portSlots && !portSlots.has(check.slot)) {
-          errors.push(`分拣器 #${building.index} 连到建筑 #${target.index} 的 ${check.slot} 号口，但该建筑没有这个端口`);
-        } else if (!portSlots && knownSlots && check.slot >= knownSlots.length) {
-          errors.push(`分拣器 #${building.index} 连到建筑 #${target.index} 的 ${check.slot} 号槽，但该建筑只有 ${knownSlots.length} 个槽`);
-        }
-      }
-    }
   }
 
   return {

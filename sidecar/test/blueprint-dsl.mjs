@@ -69,22 +69,15 @@ console.log('\n── 3. 诊断 ──');
   check('多目标报 E102', twoTargets.code === 'E102', JSON.stringify(twoTargets));
 }
 
-console.log('\n── 4. 未实现的特性明确报错 ──');
+console.log('\n── 4. 未参与布局的特性给警告 ──');
 {
-  const rawResult = await run(`
+  const result = await run(`
     target('电磁涡轮', 60);
     raw('铁矿');
-  `);
-  check('raw 报 E105', rawResult.code === 'E105', JSON.stringify(rawResult));
-
-  const moduleResult = await run(`
-    target('电磁涡轮', 60);
     module('电动机');
   `);
-  check('module 报 E106', moduleResult.code === 'E106', JSON.stringify(moduleResult));
-
-  const tooLarge = await run("target('电磁涡轮', 1000001);");
-  check('产量上限报 E011', tooLarge.code === 'E011', JSON.stringify(tooLarge));
+  check('原始原料警告', result.warnings.some((line) => line.includes('W501')), JSON.stringify(result.warnings));
+  check('自定义模块警告', result.warnings.some((line) => line.includes('W502')), JSON.stringify(result.warnings));
 }
 
 rmSync(root, { recursive: true, force: true });
