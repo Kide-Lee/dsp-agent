@@ -691,8 +691,8 @@ mod                                   sidecar
   历史读取失败时为空数组，不阻断 `save.bound`。
 - `history` 的 `assistant` 消息可带可选的 `kind:"compaction"`（附录 A.11）：
   这是一条上下文压缩记录，`text` 是摘要；同时带 `compactionId` / `tokensBefore` /
-  `estimatedTokensAfter`（均可选）。mod 应把它渲染成“自动压缩上下文”对话串，
-  并把这条记录之前的回合标灰、禁止单独删除。老 mod 忽略 `kind`，按普通 assistant 显示。
+  `estimatedTokensAfter`（均可选）。mod 应把它渲染成“自动压缩上下文”对话串；
+  它作为最后一条记录时，撤回它 = 撤销压缩。老 mod 忽略 `kind`，按普通 assistant 显示。
 - `history` 的 `assistant` 消息可带可选的 `cards`（附录 A.9）：该回答产出的蓝图卡片，
   形如 `[{fileName, path, name, ...}]`。老客户端忽略该字段；mod 回放时在回答后重建卡片。
 - `history` 的 `assistant` 消息可带可选的 `gameTime`（字符串，`H:mm:ss`，小时 `000`–`999`，
@@ -732,8 +732,9 @@ mod                                   sidecar
 
 ### A.7 `history.delete` / `history.deleted` — 删除一个问答回合（M4e）
 
-聊天窗的「删除」不能只删 UI：`save.bound.history` 是 sidecar 从会话文件重放的，
-只删窗口的话，重进存档又会出现。因此删除必须落到 sidecar 的会话文件上。
+聊天窗的「撤回」不能只删 UI：`save.bound.history` 是 sidecar 从会话文件重放的，
+只删窗口的话，重进存档又会出现。因此撤回必须落到 sidecar 的会话文件上。
+聊天窗只对**最后一条回答**显示撤回按钮；协议本身仍按文本定位回合，兼容老 mod。
 
 #### `history.delete`（mod → sidecar）
 
@@ -775,14 +776,17 @@ mod                                   sidecar
 
 - 成功时 `removed` 是删掉的会话条目数（通常 user + assistant，可能含工具消息）。
 - 失败时 `ok=false`，`error` 为 `busy`（正在回答）、`no_save`、`turn_not_found`、
-  `conversation_not_found`、`unsupported_session`（会话含压缩/分支/上下文中编辑，拒绝改写）、
-  `io_error` 之一。
+  `conversation_not_found`、`unsupported_session`（压缩/分支/上下文编辑条目落在删除
+  范围里，拒绝改写）、`io_error` 之一。
 - 如果改写的是当前活动会话，成功后 sidecar 会**丢弃当前内存会话**，下一次 `prompt`
   从改写后的文件重建上下文，因此被删回合不会继续进入模型上下文；改写其他会话不会打断
   当前内存上下文。
-- 实现是线性会话重写：保留条目按原顺序重新串成 `parentId` 链；
-  含 `compaction` / `branch_summary` / `context_edit` 的会话拒绝删除（避免破坏上下文树）。
-  已压缩的回合要撤销请走附录 A.11 的 `history.undo_compaction`，不要用 `history.delete`。
+- 实现是线性会话重写：保留条目按原顺序重新串成 `parentId` 链。
+  位于删除回合**之前**的 `compaction` 记录不影响删除（撤回最后一轮时，pi 的压缩记录
+  通常排在提问之前）；`compaction` / `branch_summary` / `context_edit` 只要落在删除
+  范围里或删除回合之后，就拒绝改写，避免摘要悬空。
+  要撤销压缩本身请走附录 A.11 的 `history.undo_compaction`（聊天窗里撤回最后一条
+  压缩记录就是这条请求）。
 
 ### A.8 `tool_activity` — sidecar 本地工具的可视化（M4f）
 
@@ -981,8 +985,8 @@ pi 的自动压缩完成后，sidecar 把摘要作为一条**只给 UI** 的记�
   记录里的时间是游戏时钟，见下面的 `context.compacted.time`。
 - `tokensBefore` / `estimatedTokensAfter`：可选，只用于展示。
 - `reason`：`manual` | `threshold` | `overflow`，可选。
-- mod 收到后插入一条“`[H:mm:ss] 自动压缩上下文`”记录（游戏时钟，小时 `000`–`999`），
-  并把它之前的回合标灰、禁止单独删除；老 mod 忽略未知 `type`。
+- mod 收到后插入一条“`[H:mm:ss] 自动压缩上下文`”记录（游戏时钟，小时 `000`–`999`）；
+  它成为最后一条记录时，撤回按钮对它生效（= 撤销压缩）。老 mod 忽略未知 `type`。
 - 这条记录只给 UI：不进模型上下文，也不作为 user/assistant 消息写进会话。
 
 #### `context.compacted.time`（mod → sidecar）
@@ -1056,12 +1060,13 @@ mod 收到空 `gameTime` 就不写时间。
 ```
 
 - 成功：sidecar 已从会话文件删除 compaction entry，旧消息重新进入模型上下文；
-  mod 移除压缩记录、重新计算灰色区间，并提示“如果上下文再次超限，会重新压缩”。
+  mod 移除压缩记录，并提示“如果上下文再次超限，会重新压缩”。
+  （聊天窗里撤回最后一条压缩记录就是发这条请求。）
 - `mayRecompact`：提示下一次提问可能立刻再次触发压缩。
 - 老 sidecar 不认识该请求；老 mod 不发送，压缩记录保持不可撤销。
 
-**注意**：`history.delete` 仍然拒绝含 `compaction` 的会话（避免删除单轮后摘要悬空）；
-撤销压缩必须走本节的专用消息。
+**注意**：`history.delete` 只在删除回合之外遇到压缩条目时拒绝；撤销压缩本身
+必须走本节的专用消息。
 
 ---
 

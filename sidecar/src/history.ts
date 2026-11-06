@@ -1,13 +1,14 @@
 /**
  * 会话历史的删除（M4e）。
  *
- * 聊天窗的「删除」必须落到 sidecar 的会话文件上：`save.bound.history` 是从
+ * 聊天窗的「撤回」必须落到 sidecar 的会话文件上：`save.bound.history` 是从
  * `.jsonl` 重放的，只删 UI 的话重进存档又会出现。这里做**纯函数**改写，
  * 方便离线测试；文件读写与内存会话重建在 Agent 里。
  *
  * 会话是树（`id` / `parentId`），但本项目实际只产生线性会话。
- * 删除后把保留条目按原顺序重新串成一条链；一旦遇到压缩/分支/上下文编辑条目
- * 就拒绝，避免把上下文树改坏。要撤销压缩请用 `removeCompactionFromEntries()`。
+ * 删除后把保留条目按原顺序重新串成一条链。
+ * 删除范围内的压缩/分支/上下文编辑条目会让摘要悬空，必须拒绝；
+ * 位于删除回合**之前**的压缩记录不受影响（撤回最后一轮时最常见）。
  */
 
 export interface DeleteTurnOutcome {
@@ -66,6 +67,8 @@ function isUnsupported(entry: Entry): boolean {
  * - 定位用户消息：优先时间戳（±1s），否则取最后一条同文本的用户消息。
  * - 删除范围：该用户消息到**下一条用户消息**之前（含助手/工具/模型切换等）。
  * - 保留条目按顺序重连 `parentId`。
+ * - 删除回合之前可以有压缩/分支/上下文编辑条目；它们若落在删除范围里
+ *   （或在它之后）就拒绝，避免摘要/分支指向被删内容。
  */
 export function removeTurnFromEntries(
   entries: readonly unknown[],
@@ -85,9 +88,6 @@ export function removeTurnFromEntries(
   for (const raw of entries.slice(1)) {
     if (!isRecord(raw)) return { outcome: { ok: false, removed: 0, error: 'unsupported_session' } };
     body.push(raw);
-  }
-  if (body.some(isUnsupported)) {
-    return { outcome: { ok: false, removed: 0, error: 'unsupported_session' } };
   }
 
   let start = -1;
@@ -118,6 +118,13 @@ export function removeTurnFromEntries(
     if (userTextOf(body[i] as Entry) !== null) {
       end = i;
       break;
+    }
+  }
+
+  // 压缩/分支条目只在删除回合之前才安全：它们描述的旧内容没有被删。
+  for (let i = start; i < body.length; i += 1) {
+    if (isUnsupported(body[i] as Entry)) {
+      return { outcome: { ok: false, removed: 0, error: 'unsupported_session' } };
     }
   }
 

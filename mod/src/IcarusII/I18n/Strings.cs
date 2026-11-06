@@ -354,6 +354,9 @@ namespace IcarusII.I18n
             ["chat.index.expand_more"] = "展开其余 {0} 条记录",
             ["chat.index.title_placeholder"] = "会话标题",
             ["reply.footer.copy"] = "点击复制",
+            ["reply.regenerate"] = "重新生成这条回答",
+            ["reply.withdraw"] = "撤回这一轮",
+            ["reply.undo_compaction"] = "撤销压缩",
             // 提问面板（复核页）
             ["ask.review.title"] = "请确认你的回答",
             // 插件层状态 / 系统消息 / 错误
@@ -370,8 +373,8 @@ namespace IcarusII.I18n
             ["plugin.regenerate.failed_delete"] = "重新推理失败（无法删除旧回答：{0}）。",
             ["plugin.regenerate.offline"] = "重新推理失败（连接未就绪）。",
             ["plugin.regenerate.changed"] = "重新推理失败（连接状态已变化）。",
-            ["plugin.delete.failed"] = "删除未写入会话（{0}）；重进存档可能仍会出现这条对话。",
-            ["plugin.delete.offline"] = "删除未同步到会话（连接未就绪）；重进存档可能仍会出现这条对话。",
+            ["plugin.withdraw.failed"] = "撤回未写入会话（{0}）；重进存档可能仍会出现这条对话。",
+            ["plugin.withdraw.offline"] = "撤回未同步到会话（连接未就绪）；重进存档可能仍会出现这条对话。",
             ["plugin.compaction_undo.offline"] = "撤销压缩失败（连接未就绪）。",
             ["plugin.compaction_undo.changed"] = "撤销压缩失败（连接状态已变化）。",
             ["plugin.send.offline"] = "尚未连接到 sidecar，消息未发送。",

@@ -187,7 +187,7 @@ namespace IcarusII.UI
             public int TurnId;
             /// <summary>这条消息对应的可见对象（普通消息、工具/思考块或蓝图卡片）。</summary>
             public GameObject Go;
-            /// <summary>工具/思考块（删除整轮时一起移除）；普通消息为 null。</summary>
+            /// <summary>工具/思考块（撤回整轮时一起移除）；普通消息为 null。</summary>
             public Block Block;
             /// <summary>这条回复里的蓝图卡片（可多张，一行 2~3 张）。</summary>
             public List<BlueprintCardInfo> Cards;
@@ -243,12 +243,10 @@ namespace IcarusII.UI
             public GameObject UserGo;
             public GameObject Row;
             public Text Link;
-            /// <summary>压缩记录行（“自动压缩上下文” + 摘要）；删除它 = 撤销压缩。</summary>
+            /// <summary>压缩记录行（“自动压缩上下文” + 摘要）；撤回它 = 撤销压缩。</summary>
             public bool IsCompaction;
             /// <summary>对应的 pi compaction entry id；为空时撤销最近一次。</summary>
             public string CompactionId;
-            /// <summary>被最近一次压缩记录覆盖：灰色、hover 不显示删除。</summary>
-            public bool Compacted;
             public int TokensBefore;
             public int EstimatedTokensAfter;
         }
@@ -598,10 +596,14 @@ namespace IcarusII.UI
             public readonly List<CardView> CardViews = new List<CardView>();
             public readonly List<CardView> LinkCards = new List<CardView>();
             public string CopyText = string.Empty;
-            /// <summary>这段回复属于哪一轮（footer 的刷新按钮用它找回提问）。</summary>
+            /// <summary>这段回复属于哪一轮（footer 的重新生成/撤回按钮用它找回回合）。</summary>
             public int TurnId;
-            /// <summary>footer 的刷新按钮（只有最后一轮可见）。</summary>
-            public Button Refresh;
+            /// <summary>footer 的重新生成按钮（只有最后一条回答可见）。</summary>
+            public Button Return;
+            /// <summary>footer 的撤回按钮（只有最后一条回答可见，压缩记录上显示为撤销压缩）。</summary>
+            public Button Withdraw;
+            /// <summary>撤回按钮当前用的提示文案 key；压缩记录会换成“撤销压缩”。</summary>
+            public string WithdrawTipKey;
         }
 
         /// <summary>一张固定尺寸蓝图卡片的绑定结果。</summary>
@@ -756,6 +758,7 @@ namespace IcarusII.UI
         private Font _bodyFont;
 
         private bool _dirty;
+        private bool _missingReplyActionsLogged;
         private bool _suppressAutoScrollOnce;
         /// <summary>
         /// 内容变化后还需要继续贴底几帧。
@@ -1981,10 +1984,10 @@ namespace IcarusII.UI
         }
 
         /// <summary>
-        /// 玩家删除了一个问答回合。参数是用户消息原文与历史时间戳（0 = 本回合新提问）。
+        /// 玩家撤回了最后一轮问答。参数是用户消息原文与历史时间戳（0 = 本回合新提问）。
         /// 窗口只负责 UI；真正删除会话条目由 Plugin 转给 sidecar（协议 A.7）。
         /// </summary>
-        public event Action<string, long> TurnDeleted;
+        public event Action<string, long> WithdrawRequested;
 
         /// <summary>玩家点了左侧“+ 新会话”。</summary>
         public event Action ConversationCreateRequested;
@@ -2002,14 +2005,14 @@ namespace IcarusII.UI
         public event Action<string, bool> ConversationPinRequested;
 
         /// <summary>
-        /// 玩家点了压缩记录行的删除：请求 sidecar 撤销最近一次压缩（协议 A.11）。
+        /// 玩家撤回了最后一条压缩记录：请求 sidecar 撤销最近一次压缩（协议 A.11）。
         /// 参数是 compaction entry id；空字符串表示撤销最近一次。
-        /// UI 不先删行，等 sidecar 成功后再移除（失败要保留记录）。
+        /// UI 不先删记录，等 sidecar 成功后再移除（失败要保留记录）。
         /// </summary>
         public event Action<string> CompactionUndoRequested;
 
         /// <summary>
-        /// 玩家点了某条回答 footer 的刷新：窗口已经把这一轮的助手侧清空，
+        /// 玩家点了回答 footer 的重新生成：窗口已经把这一轮的助手侧清空，
         /// Plugin 先把旧回合从会话里删掉（A.7），再用同一句提问重新发 prompt。
         /// </summary>
         public event Action<string, long> RegenerateRequested;
@@ -2047,13 +2050,13 @@ namespace IcarusII.UI
         {
             if (text == null) return;
             AddMessage(LineKind.System, text);
-            // 错误/提示类系统消息意味着本轮已经收尾；允许索引删除已完成的回合。
+            // 错误/提示类系统消息意味着本轮已经收尾。
             _awaitingResponse = false;
         }
 
         /// <summary>
         /// 追加一条上下文压缩记录（协议 A.11）：一条“自动压缩上下文”用户消息 +
-        /// 一条摘要回答，并在索引里把之前的对话标灰、禁止删除。
+        /// 一条摘要回答。撤回这条记录 = 撤销压缩。
         ///
         /// 它不能改变 `_currentTurnId` 的归属：压缩可能发生在一轮回答开始前或中途，
         /// 之后模型的正文仍应落回**玩家提问的那一轮**，而不是压缩记录。
@@ -2106,17 +2109,16 @@ namespace IcarusII.UI
             AddMessage(LineKind.Assistant, summary, null);
 
             // 压缩发生在“新问题刚发出、回答还没开始”时：记录应排在问题之前，
-            // 否则会把玩家当前这一问也标灰。压缩发生在回答之后/中途时保持追加。
+            // 这样输出区顺序才和会话文件里“压缩 → 提问 → 回答”一致。
             if (insertBefore)
             {
                 MoveCompactionBeforeTurn(_currentTurnId, answerTurnId);
-                RefreshCompactionStates();
             }
 
             // 后续正文回到玩家提问的那一轮；没有提问时保持压缩记录为当前轮。
             _currentTurnId = answerTurnId != 0 ? answerTurnId : _currentTurnId;
             _awaitingResponse = wasAwaiting;
-            UpdateReplyRefreshAvailability();
+            UpdateReplyActionAvailability();
             _dirty = true;
             ScrollToBottom();
         }
@@ -2172,20 +2174,6 @@ namespace IcarusII.UI
                     var go = block[i].Go;
                     if (go != null) go.transform.SetSiblingIndex(targetItem + i);
                 }
-            }
-        }
-
-        /// <summary>把最近一次压缩记录之前的回合标灰并刷新索引（更早的压缩记录也灰）。</summary>
-        private void RefreshCompactionStates()
-        {
-            var latest = -1;
-            for (int i = 0; i < _turns.Count; i++)
-            {
-                if (_turns[i].IsCompaction) latest = i;
-            }
-            for (int i = 0; i < _turns.Count; i++)
-            {
-                _turns[i].Compacted = latest >= 0 && i < latest;
             }
         }
 
@@ -4277,20 +4265,25 @@ namespace IcarusII.UI
             if (view.Time != null)
                 view.Time.text = FormatGameTime(time);
             if (view.CopyLabel != null) view.CopyLabel.text = Strings.Get("reply.copy");
-            UpdateReplyRefreshAvailability();
+            UpdateReplyActionAvailability();
         }
 
         /// <summary>
-        /// 刷新按钮只给**最后一轮**回答：会话是线性的，重新推理中间一轮会把新回答追加到末尾、
+        /// 重新生成/撤回只给**最后一条回答**：会话是线性的，重开中间一轮会把新回答追加到末尾、
         /// 还会改变后续上下文，语义不对。
+        /// 最后一条是压缩记录时只显示撤回（= 撤销压缩）。
         /// </summary>
-        private void UpdateReplyRefreshAvailability()
+        private void UpdateReplyActionAvailability()
         {
-            int last = -1;
+            // 以 `_turns` 的最后一轮为准，和 RequestRegenerate / RequestWithdraw 的守卫一致。
+            // 压缩发生在回答中途时，最后一条回答仍属于提问那一轮，但最后一条回合是压缩记录；
+            // 这时只把撤回给压缩记录，避免出现“按钮看得见、点了没反应”。
+            var lastTurnId = _turns.Count > 0 ? _turns[_turns.Count - 1].Id : 0;
+            var last = -1;
             for (int i = _items.Count - 1; i >= 0; i--)
             {
                 if (_items[i].Kind == LineKind.Assistant && _items[i].Reply != null &&
-                    !IsCompactionTurn(_items[i].TurnId))
+                    _items[i].TurnId == lastTurnId)
                 {
                     last = i;
                     break;
@@ -4300,11 +4293,25 @@ namespace IcarusII.UI
             for (int i = 0; i < _items.Count; i++)
             {
                 var item = _items[i];
-                if (item.Kind != LineKind.Assistant || item.Reply == null || item.Reply.Refresh == null) continue;
-                bool show = i == last && !IsCompactionTurn(item.TurnId);
-                if (item.Reply.Refresh.gameObject.activeSelf != show)
-                    item.Reply.Refresh.gameObject.SetActive(show);
+                if (item.Kind != LineKind.Assistant || item.Reply == null) continue;
+                var isLast = i == last;
+                var compaction = IsCompactionTurn(item.TurnId);
+                SetActive(item.Reply.Return, isLast && !compaction);
+                SetActive(item.Reply.Withdraw, isLast);
+
+                var tipKey = compaction ? "reply.undo_compaction" : "reply.withdraw";
+                if (item.Reply.WithdrawTipKey != tipKey)
+                {
+                    item.Reply.WithdrawTipKey = tipKey;
+                    ApplyTip(item.Reply.Withdraw, tipKey);
+                }
             }
+        }
+
+        private static void SetActive(Button button, bool active)
+        {
+            if (button != null && button.gameObject.activeSelf != active)
+                button.gameObject.SetActive(active);
         }
 
         private bool IsCompactionTurn(int turnId)
@@ -5050,8 +5057,7 @@ namespace IcarusII.UI
             };
             _turns.Add(entry);
             if (addIndexRecord && !isCompaction) AddActiveConversationRecord(entry.Text, timestampMs);
-            if (isCompaction) RefreshCompactionStates();
-            else RefreshIndexEmpty();
+            if (!isCompaction) RefreshIndexEmpty();
         }
 
         private void UpdateTurnUserGo(int turnId, GameObject go)
@@ -5753,8 +5759,6 @@ namespace IcarusII.UI
                 }
                 var hover = row.GetComponent<ChatIndexRowHover>();
                 if (hover == null) hover = row.AddComponent<ChatIndexRowHover>();
-                hover.DeleteButton = null;
-                hover.AllowDelete = false;
                 hover.HoverBackground = row.GetComponent<Graphic>();
                 var captured = record;
                 hover.Clicked += () => OnConversationRecordClicked(view.Id, captured);
@@ -6481,56 +6485,35 @@ namespace IcarusII.UI
             _scroll.verticalNormalizedPosition = Mathf.Clamp01(1f - (itemTop - viewportHeight * 0.5f) / max);
         }
 
-        private void DeleteTurn(int turnId)
+        /// <summary>
+        /// 撤回最后一轮问答：把提问气泡、回答、索引行一起移除，再让 sidecar 删会话条目。
+        /// 只接受 `_turns` 里的最后一轮（`RequestWithdraw` 已按可见性兜底）。
+        /// </summary>
+        private void WithdrawTurn(TurnEntry entry)
         {
-            // 模型还在回答/思考时不要删，避免流式消息落到已删除的回合。
-            if (_streamItem >= 0 || _awaitingResponse || _thinking != null) return;
+            if (entry == null || entry.IsCompaction) return;
 
-            TurnEntry entry = null;
-            for (int i = 0; i < _turns.Count; i++)
-            {
-                if (_turns[i].Id == turnId) { entry = _turns[i]; break; }
-            }
-            if (entry == null) return;
-
-            // 已被更新一次压缩覆盖的旧记录：不可单独撤销。
-            if (entry.Compacted) return;
-
-            // 压缩记录行：删除它 = 撤销压缩，不能先删 UI；等 sidecar 成功后再移除。
-            if (entry.IsCompaction)
-            {
-                try
-                {
-                    CompactionUndoRequested?.Invoke(entry.CompactionId ?? string.Empty);
-                }
-                catch (Exception ex)
-                {
-                    Plugin.Log.LogWarning($"[索引] 通知 sidecar 撤销压缩失败：{ex.Message}");
-                }
-                return;
-            }
-
-            RemoveTurnVisuals(turnId);
+            RemoveTurnVisuals(entry.Id);
             _turns.Remove(entry);
             RemoveActiveConversationRecord(entry.Text, entry.Timestamp);
-            if (_focusedTurnId == turnId) _focusedTurnId = 0;
-            if (_currentTurnId == turnId)
+            if (_focusedTurnId == entry.Id) _focusedTurnId = 0;
+            if (_currentTurnId == entry.Id)
                 _currentTurnId = _lines.Count > 0 ? _lines[_lines.Count - 1].TurnId : 0;
 
             RebuildConversationIndex();
-            // 删掉的如果是最后一轮，刷新按钮要回到新的最后一轮回答上。
-            UpdateReplyRefreshAvailability();
+            // 撤回的是最后一轮，按钮要回到新的最后一条回答上。
+            UpdateReplyActionAvailability();
             _dirty = true;
-            Plugin.Log.LogInfo($"[索引] 已从窗口删除回合 {turnId}");
+            Plugin.Log.LogInfo($"[撤回] 已从窗口撤回回合 {entry.Id}");
 
             // UI 删掉还不够：save.bound 会从会话文件重放，必须让 sidecar 也删。
             try
             {
-                TurnDeleted?.Invoke(entry.Text, entry.Timestamp);
+                WithdrawRequested?.Invoke(entry.Text, entry.Timestamp);
             }
             catch (Exception ex)
             {
-                Plugin.Log.LogWarning($"[索引] 通知 sidecar 删除回合失败：{ex.Message}");
+                Plugin.Log.LogWarning($"[撤回] 通知 sidecar 删除回合失败：{ex.Message}");
             }
         }
 
@@ -6559,8 +6542,8 @@ namespace IcarusII.UI
         }
 
         /// <summary>
-        /// sidecar 成功撤销压缩后调用：移除压缩记录行，并重新计算灰色区间。
-        /// 如果还有更早的压缩记录，它前面的对话继续保持灰色。
+        /// sidecar 成功撤销压缩后调用：移除压缩记录。
+        /// 撤回顺序是从后往前：压缩记录撤回后，它后面/前面的回答又成为最后一条。
         /// </summary>
         public void RemoveCompaction(string compactionId)
         {
@@ -6582,16 +6565,15 @@ namespace IcarusII.UI
             if (_currentTurnId == entry.Id)
                 _currentTurnId = _lines.Count > 0 ? _lines[_lines.Count - 1].TurnId : 0;
 
-            RefreshCompactionStates();
             RefreshIndexSelection();
             RefreshIndexEmpty();
-            UpdateReplyRefreshAvailability();
+            UpdateReplyActionAvailability();
             _dirty = true;
             Plugin.Log.LogInfo($"[索引] 已撤销压缩记录 {entry.CompactionId ?? "(latest)"}");
         }
 
         /// <summary>
-        /// 点回答 footer 的刷新：只允许重新推理**最后一轮**（会话是线性的）。
+        /// 点回答 footer 的 return：只允许重新生成**最后一条回答**（会话是线性的）。
         /// 保留用户气泡、索引行和回合号，只清掉这一轮的助手内容；
         /// 真正「删旧回合 + 重发提问」由 Plugin 完成（A.7 + prompt）。
         /// </summary>
@@ -6600,7 +6582,7 @@ namespace IcarusII.UI
             if (view == null) return;
             if (_streamItem >= 0 || _awaitingResponse || _thinking != null) return;
 
-            // 只有最后一轮有刷新按钮（UpdateReplyRefreshAvailability），这里再兜一次。
+            // 只有最后一条回答有按钮（UpdateReplyActionAvailability），这里再兜一次。
             if (_turns.Count == 0 || view.TurnId != _turns[_turns.Count - 1].Id) return;
 
             TurnEntry entry = null;
@@ -6612,10 +6594,10 @@ namespace IcarusII.UI
 
             RemoveAssistantSide(view.TurnId);
 
-            // 用户气泡还在，重新回答前先进入「等待响应」，避免索引删除/再次刷新。
+            // 用户气泡还在，重新回答前先进入「等待响应」，避免撤回/再次点按钮。
             _awaitingResponse = true;
             _dirty = true;
-            Plugin.Log.LogInfo($"[刷新] 重新推理回合 {view.TurnId}：{ShortText(entry.Text)}");
+            Plugin.Log.LogInfo($"[重新生成] 重新推理回合 {view.TurnId}：{ShortText(entry.Text)}");
 
             try
             {
@@ -6623,14 +6605,44 @@ namespace IcarusII.UI
             }
             catch (Exception ex)
             {
-                Plugin.Log.LogWarning($"[刷新] 通知 sidecar 重新推理失败：{ex.Message}");
+                Plugin.Log.LogWarning($"[重新生成] 通知 sidecar 重新推理失败：{ex.Message}");
             }
             finally
             {
-                // 会话里这条 user 消息会被重新写成新的时间戳；索引删除改走文本回退，
-                // 否则下次删这一轮会拿旧时间戳去匹配、删不掉。
+                // 会话里这条 user 消息会被重新写成新的时间戳；撤回改走文本回退，
+                // 否则下次撤回这一轮会拿旧时间戳去匹配、删不掉。
                 entry.Timestamp = 0;
             }
+        }
+
+        /// <summary>
+        /// 点回答 footer 的 withdraw：只允许撤回**最后一轮**（会话是线性的）。
+        /// 普通回合：提问 + 回答整轮从窗口移除，并让 sidecar 删会话条目；
+        /// 压缩记录：撤回它 = 撤销压缩，等 sidecar 成功后再移除记录。
+        /// </summary>
+        private void RequestWithdraw(ReplyView view)
+        {
+            if (view == null) return;
+            if (_streamItem >= 0 || _awaitingResponse || _thinking != null) return;
+            if (_turns.Count == 0) return;
+
+            var last = _turns[_turns.Count - 1];
+            if (view.TurnId != last.Id) return;
+
+            if (last.IsCompaction)
+            {
+                try
+                {
+                    CompactionUndoRequested?.Invoke(last.CompactionId ?? string.Empty);
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogWarning($"[撤回] 通知 sidecar 撤销压缩失败：{ex.Message}");
+                }
+                return;
+            }
+
+            WithdrawTurn(last);
         }
 
         /// <summary>只清掉某一轮的助手侧（回复、思考/工具块、卡片、脚注），保留用户气泡与索引行。</summary>
@@ -6659,7 +6671,7 @@ namespace IcarusII.UI
                 _items.RemoveAt(i);
             }
 
-            UpdateReplyRefreshAvailability();
+            UpdateReplyActionAvailability();
         }
 
         private static string ShortText(string text)
@@ -6957,18 +6969,47 @@ namespace IcarusII.UI
                     });
                 }
 
-                var refresh = footer.Find("refresh");
-                view.Refresh = refresh != null ? refresh.GetComponent<Button>() : null;
-                if (view.Refresh != null)
+                var ret = footer.Find("return");
+                view.Return = ret != null ? ret.GetComponent<Button>() : null;
+                if (view.Return != null)
                 {
-                    view.Refresh.onClick.RemoveAllListeners();
-                    view.Refresh.onClick.AddListener(() => RequestRegenerate(view));
-                    view.Refresh.gameObject.SetActive(false);   // 由 UpdateReplyRefreshAvailability 决定
+                    view.Return.onClick.RemoveAllListeners();
+                    view.Return.onClick.AddListener(() => RequestRegenerate(view));
+                    ApplyTip(view.Return, "reply.regenerate");
+                    view.Return.gameObject.SetActive(false);   // 由 UpdateReplyActionAvailability 决定
+                }
+
+                var withdraw = footer.Find("withdraw");
+                view.Withdraw = withdraw != null ? withdraw.GetComponent<Button>() : null;
+                if (view.Withdraw != null)
+                {
+                    view.Withdraw.onClick.RemoveAllListeners();
+                    view.Withdraw.onClick.AddListener(() => RequestWithdraw(view));
+                    view.Withdraw.gameObject.SetActive(false);   // 由 UpdateReplyActionAvailability 决定
+                }
+                // 重建 prefab 时丢过按钮（91f5ea5 的 return-button 同理），缺失必须留痕。
+                if ((view.Return == null || view.Withdraw == null) && !_missingReplyActionsLogged)
+                {
+                    _missingReplyActionsLogged = true;
+                    Plugin.Log.LogWarning("[UI] 回复 footer 缺少 return/withdraw 节点，重新生成/撤回按钮不可用");
                 }
                 footer.gameObject.SetActive(false);
             }
             view.TurnId = _currentTurnId;
             return view;
+        }
+
+        /// <summary>给 prefab 里的按钮写悬停提示；提示文字走 I18n，prefab 只留布局与图标。</summary>
+        private static void ApplyTip(Button button, string key)
+        {
+            var tipButton = button != null ? button.GetComponent<UIButton>() : null;
+            if (tipButton == null) return;
+            var tips = tipButton.tips;
+            tips.tipTitle = Strings.Get(key);
+            tips.tipText = string.Empty;
+            if (tips.corner == 0) tips.corner = 9;
+            tipButton.tips = tips;
+            tipButton.UpdateTip();
         }
 
         /// <summary>

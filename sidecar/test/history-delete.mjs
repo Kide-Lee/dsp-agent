@@ -96,17 +96,26 @@ console.log('\n── 3. 找不到 / 不支持 ──');
   const compacted = fixture();
   compacted.splice(2, 0, { type: 'compaction', id: 'c1', parentId: 'u1', summary: 'x' });
   const unsupported = removeTurnFromEntries(compacted, '第一个问题');
-  check('压缩会话拒绝', unsupported.outcome.error === 'unsupported_session');
+  check('删除范围含压缩条目拒绝', unsupported.outcome.error === 'unsupported_session');
 
   const branched = fixture();
   branched.splice(2, 0, { type: 'branch_summary', id: 'b1', parentId: 'u1', summary: 'x' });
-  check('分支会话拒绝', removeTurnFromEntries(branched, '第一个问题').outcome.error === 'unsupported_session');
+  check('删除范围含分支摘要拒绝', removeTurnFromEntries(branched, '第一个问题').outcome.error === 'unsupported_session');
 
   const edited = fixture();
   edited.splice(2, 0, {
     type: 'context_edit', id: 'e1', parentId: 'u1', targetId: 'a1', replacement: null,
   });
-  check('context_edit 会话拒绝', removeTurnFromEntries(edited, '第一个问题').outcome.error === 'unsupported_session');
+  check('删除范围含 context_edit 拒绝', removeTurnFromEntries(edited, '第一个问题').outcome.error === 'unsupported_session');
+
+  // 撤回最后一轮时，压缩记录通常在它之前（pi 在新提问开头压缩）；必须允许删除。
+  const earlier = fixture();
+  earlier.splice(4, 0, { type: 'compaction', id: 'c2', parentId: 't1', summary: '旧对话摘要' });
+  earlier[5].parentId = 'c2';
+  const afterCompaction = removeTurnFromEntries(earlier, '第二个问题');
+  check('删除回合之前的压缩记录不阻断', afterCompaction.outcome.ok === true, afterCompaction.outcome.error);
+  check('压缩记录保留', afterCompaction.entries?.some((e) => e.id === 'c2') === true);
+  check('保留条目重新接链', afterCompaction.entries?.find((e) => e.id === 'c2')?.parentId === 't1');
 }
 
 console.log('\n── 3.5 pi 1.4 新 entry 的兼容性 ──');

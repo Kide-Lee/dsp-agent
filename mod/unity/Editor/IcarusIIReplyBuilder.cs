@@ -13,7 +13,7 @@ namespace IcarusII.EditorTools
     ///   │   └── tools            工具块容器（内含 tool-template）
     ///   ├── body             助手正文
     ///   ├── blueprint-card   蓝图卡片（header/icon/texts/source/meta/desc/actions）
-    ///   └── footer           time + copy 按钮
+    ///   └── footer           time + copy / return / withdraw 按钮
     ///
     /// 运行期 ChatWindow 只克隆这个模板并绑定数据，不再用代码拼静态布局。
     /// 幂等：已存在 example-reply 时直接跳过；要重做请传 force=true。
@@ -102,6 +102,12 @@ namespace IcarusII.EditorTools
                         AssetDatabase.Refresh();
                         Debug.Log("[IcarusII] 已给 loading 补上 header/content：" + prefabPath);
                     }
+                    if (EnsureFooterButtons(old))
+                    {
+                        PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+                        AssetDatabase.Refresh();
+                        Debug.Log("[IcarusII] 已给回复 footer 补上 return/withdraw：" + prefabPath);
+                    }
                     if (HasAllParts(old))
                     {
                         Debug.Log("[IcarusII] 回复模板已存在，跳过：" + prefabPath);
@@ -147,7 +153,45 @@ namespace IcarusII.EditorTools
                 && reply.Find("body") != null
                 && reply.Find("blueprint-cards/blueprint-card-template") != null
                 && reply.Find("footer/time") != null
-                && reply.Find("footer/copy") != null;
+                && reply.Find("footer/copy") != null
+                && reply.Find("footer/return") != null
+                && reply.Find("footer/withdraw") != null;
+        }
+
+        /// <summary>
+        /// 只做加法：给旧模板的 footer 补 return/withdraw 两个按钮。
+        /// 重建过一次 footer 后聊天窗就少了「重新生成/撤回」，运行期对缺失是静默容忍的。
+        /// </summary>
+        private static bool EnsureFooterButtons(Transform reply)
+        {
+            var footer = reply.Find("footer");
+            if (footer == null) return false;
+            var changed = false;
+            if (footer.Find("return") == null)
+            {
+                BuildFooterIconButton(footer, "return", "Assets/Resources/UI/Textures/Sprites/Icons/refresh-32-icon.png");
+                changed = true;
+            }
+            if (footer.Find("withdraw") == null)
+            {
+                BuildFooterIconButton(footer, "withdraw", "Assets/Resources/UI/Textures/Sprites/Icons/return_icon.png");
+                changed = true;
+            }
+            return changed;
+        }
+
+        private static void BuildFooterIconButton(Transform footer, string name, string spritePath)
+        {
+            var rt = NewRect(name, footer);
+            AddLayout(rt, minWidth: 16f, preferredWidth: 16f, minHeight: 16f, preferredHeight: 16f);
+            var image = rt.gameObject.AddComponent<Image>();
+            image.sprite = AssetDatabase.LoadAssetAtPath<Sprite>(spritePath);
+            image.color = new Color(1f, 1f, 1f, 0.70f);
+            image.raycastTarget = true;
+            var button = rt.gameObject.AddComponent<Button>();
+            button.targetGraphic = image;
+            button.transition = Selectable.Transition.ColorTint;
+            ConfigureButtonColors(button);
         }
 
         /// <summary>
@@ -709,17 +753,10 @@ namespace IcarusII.EditorTools
             timeText.horizontalOverflow = HorizontalWrapMode.Overflow;
             timeText.verticalOverflow = VerticalWrapMode.Truncate;
 
-            var copy = NewRect("copy", footer);
-            AddLayout(copy, minWidth: 16f, preferredWidth: 16f, minHeight: 16f, preferredHeight: 16f);
-            var copyImage = copy.gameObject.AddComponent<Image>();
-            copyImage.sprite = AssetDatabase.LoadAssetAtPath<Sprite>(
-                "Assets/Resources/UI/Textures/Sprites/Icons/copy.png");
-            copyImage.color = new Color(1f, 1f, 1f, 0.70f);
-            copyImage.raycastTarget = true;
-            var copyButton = copy.gameObject.AddComponent<Button>();
-            copyButton.targetGraphic = copyImage;
-            copyButton.transition = Selectable.Transition.ColorTint;
-            ConfigureButtonColors(copyButton);
+            BuildFooterIconButton(footer, "copy", "Assets/Resources/UI/Textures/Sprites/Icons/copy.png");
+            BuildFooterIconButton(footer, "return",
+                "Assets/Resources/UI/Textures/Sprites/Icons/refresh-32-icon.png");
+            BuildFooterIconButton(footer, "withdraw", "Assets/Resources/UI/Textures/Sprites/Icons/return_icon.png");
         }
 
         private static void ConfigureButtonColors(Button button)

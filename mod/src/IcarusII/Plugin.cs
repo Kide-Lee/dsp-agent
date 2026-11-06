@@ -170,7 +170,7 @@ namespace IcarusII
                 _chat.Submitted += OnUserSubmitted;
                 _chat.ThinkingLevelChanged += OnThinkingLevelChanged;
                 _chat.PermissionLevelChanged += OnPermissionLevelChanged;
-                _chat.TurnDeleted += OnTurnDeleted;
+                _chat.WithdrawRequested += OnReplyWithdrawRequested;
                 _chat.CompactionUndoRequested += OnCompactionUndoRequested;
                 _chat.RegenerateRequested += OnRegenerateRequested;
                 _chat.ConversationCreateRequested += OnConversationCreateRequested;
@@ -635,14 +635,14 @@ namespace IcarusII
                         }
                         _promptById[regenerateId] = regenerateText;
                         _chat.SetStatus(Strings.Get("status.thinking"), AccentColor);
-                        Log.LogInfo($"[刷新] 已删除旧回合，重新发送提问：{regenerateId}");
+                        Log.LogInfo($"[重新生成] 已删除旧回合，重新发送提问：{regenerateId}");
                         break;
                     }
 
                     if (info != null && !info.Ok)
                     {
                         var reason = string.IsNullOrEmpty(info.Error) ? Strings.Get("plugin.error.unknown") : info.Error;
-                        _chat.AppendSystem(Strings.Get("plugin.delete.failed", reason));
+                        _chat.AppendSystem(Strings.Get("plugin.withdraw.failed", reason));
                     }
                     break;
                 }
@@ -1407,32 +1407,25 @@ namespace IcarusII
         }
 
         /// <summary>
-        /// 玩家在聊天窗右下角切换了「思考」档位。
-        ///
-        /// 1. 先落到本地 icarus-ii.cfg（断线/重启也不丢）；
-        /// 2. 连接就绪就发 config.set，让 sidecar 落盘并重建 pi session；
-        /// 3. 连接没就绪就记 dirty，等 ready 后补发。
-        /// </summary>
-        /// <summary>
-        /// 玩家删除了一个问答回合：转给 sidecar 删会话文件（协议 A.7）。
+        /// 玩家撤回了最后一轮问答：转给 sidecar 删会话文件（协议 A.7）。
         /// UI 已经先删掉了；这里失败只提示，不把行加回来（避免闪烁）。
         /// </summary>
-        private void OnTurnDeleted(string text, long timestampMs)
+        private void OnReplyWithdrawRequested(string text, long timestampMs)
         {
             if (string.IsNullOrEmpty(text) || _client == null) return;
             var saveKey = GameRefs.CurrentSaveKey();
             var id = _client.SendHistoryDelete(saveKey, text, timestampMs, _chat.ActiveConversationId);
             if (id == null)
             {
-                _chat.AppendSystem(Strings.Get("plugin.delete.offline"));
+                _chat.AppendSystem(Strings.Get("plugin.withdraw.offline"));
                 return;
             }
-            Log.LogInfo($"[索引] 已请求 sidecar 删除回合：{id}");
+            Log.LogInfo($"[撤回] 已请求 sidecar 删除回合：{id}");
         }
 
         /// <summary>
-        /// 玩家点了压缩记录行的删除：请求 sidecar 真正删掉 compaction entry（A.11）。
-        /// UI 不先删；成功后由 history.compaction_undone 回调移除并恢复灰色区间。
+        /// 玩家撤回了最后一条压缩记录：请求 sidecar 真正删掉 compaction entry（A.11）。
+        /// UI 不先删；成功后由 history.compaction_undone 回调移除记录。
         /// </summary>
         private void OnCompactionUndoRequested(string compactionId)
         {
@@ -1453,7 +1446,7 @@ namespace IcarusII
         }
 
         /// <summary>
-        /// 玩家点了回答 footer 的刷新：先让 sidecar 把旧回合从会话里删掉（A.7），
+        /// 玩家点了回答 footer 的重新生成：先让 sidecar 把旧回合从会话里删掉（A.7），
         /// 成功后再用同一句提问重新发 prompt，这样模型上下文里不会留旧答案。
         /// </summary>
         private void OnRegenerateRequested(string text, long timestampMs)
@@ -1474,9 +1467,16 @@ namespace IcarusII
             }
             _regenerateDeleteId[id] = text;
             _chat.SetStatus(Strings.Get("status.regenerating"), AccentColor);
-            Log.LogInfo($"[刷新] 请求删除旧回合后重新推理：{id}");
+            Log.LogInfo($"[重新生成] 请求删除旧回合后重新推理：{id}");
         }
 
+        /// <summary>
+        /// 玩家在聊天窗右下角切换了「思考」档位。
+        ///
+        /// 1. 先落到本地 icarus-ii.cfg（断线/重启也不丢）；
+        /// 2. 连接就绪就发 config.set，让 sidecar 落盘并重建 pi session；
+        /// 3. 连接没就绪就记 dirty，等 ready 后补发。
+        /// </summary>
         private void OnThinkingLevelChanged(string level)
         {
             if (!PluginConfig.IsValidThinkingLevel(level)) return;
