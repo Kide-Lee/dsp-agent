@@ -79,6 +79,10 @@ namespace IcarusII.UI
         private static readonly Color ConversationPinHoverColor = new Color(0.45f, 0.87f, 1f, 1f);
         /// <summary>左栏记录字体跟随右栏滚动位置时的扫描间隔（帧）。</summary>
         private const int IndexTurnScanIntervalFrames = 5;
+        /// <summary>左栏展开/收起时的高度动画时长（秒）。</summary>
+        private const float IndexExpandDuration = 0.16f;
+        /// <summary>左栏会话换位（置顶、新回复）时的滑动时长（秒）。</summary>
+        private const float IndexReorderDuration = 0.2f;
         /// <summary>标题还没排版完成时用的兜底宽度；等于 prefab 里 title-mask 的实际宽度。</summary>
         private const float ConversationTitleFallbackWidth = 150f;
 
@@ -682,6 +686,21 @@ namespace IcarusII.UI
         private int _indexTurnScanFrame;
         /// <summary>「时间标记都没文本」的排查日志只打一次，避免每次开窗都刷屏。</summary>
         private bool _timeMarkerDiagnosticLogged;
+
+        /// <summary>
+        /// 左栏过渡动画：由 Tick 驱动，不用协程（窗口不是 MonoBehaviour）。
+        /// 同一个 key 的动画互相替换，中途切换会先落到终态，避免留下半开半合的列表。
+        /// </summary>
+        private sealed class IndexTween
+        {
+            public string Key;
+            public float Duration;
+            public float Elapsed;
+            public Action<float> Step;
+            public Action Done;
+        }
+
+        private readonly List<IndexTween> _indexTweens = new List<IndexTween>();
         private bool _awaitingResponse;
         /// <summary>AI 正在回答：为 true 时输入框为空就显示「中断」，有内容则显示「发送」（A.15）。</summary>
         private bool _busy;
@@ -1623,6 +1642,7 @@ namespace IcarusII.UI
         public void SetOpen(bool open)
         {
             if (_root == null) return;
+            if (!open) FinishIndexTweens();
             if (open && !GameRefs.IsInGame)
             {
                 Plugin.Log.LogInfo("[UI] 不在游戏内，拒绝打开聊天窗");
@@ -5267,6 +5287,7 @@ namespace IcarusII.UI
 
         public void ClearConversations()
         {
+            FinishIndexTweens();
             _conversations.Clear();
             _activeConversationId = null;
             _pendingScrollBottomConversationId = null;
@@ -5281,6 +5302,13 @@ namespace IcarusII.UI
         private void RebuildConversationIndex()
         {
             if (_chatIndexContent == null || _conversationTemplate == null) return;
+            FinishIndexTweens();
+            var previousY = new Dictionary<string, float>();
+            foreach (var existing in _conversationViews)
+            {
+                if (existing?.Go == null || string.IsNullOrEmpty(existing.Id)) continue;
+                previousY[existing.Id] = ((RectTransform)existing.Go.transform).anchoredPosition.y;
+            }
             CaptureConversationState();
             ClearConversationGroups();
             if (_conversations.Count == 0)
@@ -5296,6 +5324,7 @@ namespace IcarusII.UI
             LinkTurnsToConversationRows();
             RefreshIndexSelection();
             RefreshConversationTitle();
+            AnimateIndexReorder(previousY);
         }
 
         private void CaptureConversationState()
@@ -5782,6 +5811,208 @@ namespace IcarusII.UI
             ToggleConversation(conversationId);
         }
 
+        // ---------------------------------------------------------------- 左栏过渡动画
+
+        private void StartIndexTween(string key, float duration, Action<float> step, Action done = null)
+        {
+            FinishIndexTween(key);
+            _indexTweens.Add(new IndexTween
+            {
+                Key = key,
+                Duration = Mathf.Max(0.01f, duration),
+                Step = step,
+                Done = done,
+            });
+        }
+
+        /// <summary>把某个 key 的动画直接推到终态（含回调），保证布局/受控属性已经复位。</summary>
+        private void FinishIndexTween(string key)
+        {
+            for (int i = _indexTweens.Count - 1; i >= 0; i--)
+            {
+                if (_indexTweens[i].Key != key) continue;
+                var tween = _indexTweens[i];
+                _indexTweens.RemoveAt(i);
+                tween.Step?.Invoke(1f);
+                tween.Done?.Invoke();
+            }
+        }
+
+        /// <summary>关窗、清空列表、重建索引前调用：所有动画落到终态，避免残影和失控的布局开关。</summary>
+        private void FinishIndexTweens()
+        {
+            if (_indexTweens.Count == 0) return;
+            var pending = _indexTweens.ToArray();
+            _indexTweens.Clear();
+            foreach (var tween in pending)
+            {
+                tween.Step?.Invoke(1f);
+                tween.Done?.Invoke();
+            }
+        }
+
+        private void UpdateIndexTweens(float deltaTime)
+        {
+            for (int i = _indexTweens.Count - 1; i >= 0; i--)
+            {
+                if (i >= _indexTweens.Count) continue;
+                var tween = _indexTweens[i];
+                tween.Elapsed += deltaTime;
+                var progress = Mathf.Clamp01(tween.Elapsed / tween.Duration);
+                // ease-out cubic：起步快、收尾稳，和游戏自己的面板动画观感一致。
+                tween.Step?.Invoke(1f - Mathf.Pow(1f - progress, 3f));
+                if (progress < 1f) continue;
+                _indexTweens.RemoveAt(i);
+                tween.Done?.Invoke();
+            }
+        }
+
+        /// <summary>高度在动画中由 LayoutElement 接管，重建这一条列表让下面的会话跟着移动。</summary>
+        private void MarkIndexLayoutDirty()
+        {
+            if (_chatIndexContent != null) LayoutRebuilder.MarkLayoutForRebuild(_chatIndexContent);
+        }
+
+        /// <summary>
+        /// 展开：records 的高度从 fromHeight 长到内容高度，超出当前高度的部分由 RectMask2D 挡住。
+        /// 动画期间要同时关掉 records 自己的 VerticalLayoutGroup——它也算 ILayoutElement，
+        /// 会把内容高度报给父级，压过 LayoutElement 设的值。
+        /// </summary>
+        private void AnimateRecordsReveal(ConversationView view, float fromHeight = 0f)
+        {
+            if (view?.Records == null) return;
+            var records = view.Records;
+            if (!records.gameObject.activeInHierarchy) return;
+            var layout = records.GetComponent<VerticalLayoutGroup>();
+            var fitter = records.GetComponent<ContentSizeFitter>();
+            var element = records.GetComponent<LayoutElement>();
+            if (layout == null || fitter == null || element == null) return;
+
+            LayoutRebuilder.ForceRebuildLayoutImmediate(records);
+            var target = records.rect.height;
+            if (target <= 0.5f) return;
+
+            var start = Mathf.Clamp(fromHeight, 0f, target);
+            FinishIndexTween(RecordsTweenKey(view.Id));
+            layout.enabled = false;
+            fitter.enabled = false;
+            element.preferredHeight = start;
+            MarkIndexLayoutDirty();
+            StartIndexTween(RecordsTweenKey(view.Id), IndexExpandDuration,
+                progress =>
+                {
+                    if (element == null) return;
+                    element.preferredHeight = Mathf.LerpUnclamped(start, target, progress);
+                    MarkIndexLayoutDirty();
+                },
+                () =>
+                {
+                    if (element == null || fitter == null || layout == null) return;
+                    element.preferredHeight = -1f;
+                    layout.enabled = true;
+                    fitter.enabled = true;
+                    MarkIndexLayoutDirty();
+                });
+        }
+
+        /// <summary>收起：高度收到 0 之后再真正销毁/隐藏记录行（after 里重建）。</summary>
+        private void AnimateRecordsHide(ConversationView view, Action after)
+        {
+            if (view?.Records == null)
+            {
+                after?.Invoke();
+                return;
+            }
+            var records = view.Records;
+            var fitter = records.GetComponent<ContentSizeFitter>();
+            var element = records.GetComponent<LayoutElement>();
+            if (fitter == null || element == null || !records.gameObject.activeInHierarchy)
+            {
+                after?.Invoke();
+                return;
+            }
+
+            LayoutRebuilder.ForceRebuildLayoutImmediate(records);
+            var start = records.rect.height;
+            var layout = records.GetComponent<VerticalLayoutGroup>();
+            FinishIndexTween(RecordsTweenKey(view.Id));
+            if (layout != null) layout.enabled = false;
+            fitter.enabled = false;
+            StartIndexTween(RecordsTweenKey(view.Id), IndexExpandDuration,
+                progress =>
+                {
+                    if (element == null) return;
+                    element.preferredHeight = Mathf.LerpUnclamped(start, 0f, progress);
+                    MarkIndexLayoutDirty();
+                },
+                () =>
+                {
+                    if (element == null || fitter == null) return;
+                    element.preferredHeight = -1f;
+                    fitter.enabled = true;
+                    if (layout != null) layout.enabled = true;
+                    after?.Invoke();
+                    MarkIndexLayoutDirty();
+                });
+        }
+
+        private static string RecordsTweenKey(string conversationId) => "records:" + conversationId;
+
+        /// <summary>
+        /// 会话换位（置顶/取消置顶/新回复后重排）时让标题滑动到新位置。
+        /// 位置本来是 VerticalLayoutGroup 管着的：动画期间先关掉它手动驱动，结束后再交还。
+        /// </summary>
+        private void AnimateIndexReorder(Dictionary<string, float> previousY)
+        {
+            if (!IsOpen || _chatIndexContent == null || previousY == null || previousY.Count == 0) return;
+            if (_conversationViews.Count == 0) return;
+            FinishIndexTweens();
+            LayoutRebuilder.ForceRebuildLayoutImmediate(_chatIndexContent);
+
+            var rows = new List<(RectTransform Rect, float From, float To)>();
+            foreach (var view in _conversationViews)
+            {
+                if (view?.Go == null || string.IsNullOrEmpty(view.Id)) continue;
+                if (!previousY.TryGetValue(view.Id, out var from)) continue;
+                var rect = (RectTransform)view.Go.transform;
+                var to = rect.anchoredPosition.y;
+                if (Mathf.Abs(from - to) < 0.5f) continue;
+                rows.Add((rect, from, to));
+            }
+            if (rows.Count == 0) return;
+
+            // 先冻结滚动内容的当前高度：关掉 layout 后 ContentSizeFitter 会把高度算成 0，
+            // 滚动区会瞬间塌陷。高度冻结、位置由这里手动驱动，结束后再交还。
+            var layout = _chatIndexContent.GetComponent<VerticalLayoutGroup>();
+            var fitter = _chatIndexContent.GetComponent<ContentSizeFitter>();
+            var frozenHeight = _chatIndexContent.rect.height;
+            var frozenWidth = _chatIndexContent.sizeDelta.x;
+            if (fitter != null) fitter.enabled = false;
+            if (layout != null) layout.enabled = false;
+            _chatIndexContent.sizeDelta = new Vector2(frozenWidth, frozenHeight);
+            foreach (var row in rows)
+                row.Rect.anchoredPosition = new Vector2(row.Rect.anchoredPosition.x, row.From);
+
+            StartIndexTween("reorder", IndexReorderDuration,
+                progress =>
+                {
+                    for (int i = 0; i < rows.Count; i++)
+                    {
+                        var row = rows[i];
+                        if (row.Rect == null) continue;
+                        row.Rect.anchoredPosition = new Vector2(
+                            row.Rect.anchoredPosition.x,
+                            Mathf.LerpUnclamped(row.From, row.To, progress));
+                    }
+                },
+                () =>
+                {
+                    if (layout != null) layout.enabled = true;
+                    if (fitter != null) fitter.enabled = true;
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(_chatIndexContent);
+                });
+        }
+
         private void ToggleConversation(string conversationId)
         {
             var view = FindConversationView(conversationId);
@@ -5789,16 +6020,25 @@ namespace IcarusII.UI
             view.Expanded = !view.Expanded;
             _conversationExpanded[view.Id] = view.Expanded;
             if (view.Expanded && view.Visible <= 0) view.Visible = 5;
-            BuildConversationRecords(view);
             UpdateConversationHeader(view);
             LinkTurnsToConversationRows();
             RefreshIndexSelection();
+            if (view.Expanded)
+            {
+                BuildConversationRecords(view);
+                AnimateRecordsReveal(view);
+                return;
+            }
+            // 收起先播高度动画，结束后再重建（重建会把记录行销毁并隐藏 records）。
+            AnimateRecordsHide(view, () => BuildConversationRecords(view));
         }
 
         private void ExpandConversation(string conversationId)
         {
             var view = FindConversationView(conversationId);
             if (view == null) return;
+            var before = view.Records as RectTransform;
+            float beforeHeight = before != null && before.gameObject.activeSelf ? before.rect.height : 0f;
             int count = view.Info != null ? view.Info.Records.Count : 0;
             view.Visible = Mathf.Min(view.Visible + 5, count);
             _conversationVisible[view.Id] = view.Visible;
@@ -5806,6 +6046,7 @@ namespace IcarusII.UI
             UpdateConversationHeader(view);
             LinkTurnsToConversationRows();
             RefreshIndexSelection();
+            AnimateRecordsReveal(view, beforeHeight);
         }
 
         private ConversationView FindConversationView(string id)
@@ -7570,6 +7811,9 @@ namespace IcarusII.UI
 
             // 输入区随内容长高：粘贴长文本要撑开，超过上限交给滚动条。
             if (IsOpen) UpdateInputAreaIfNeeded();
+
+            // 左栏展开/收起与换位动画（窗口关着时不推进，直接由 FinishIndexTweens 收拾）。
+            if (IsOpen) UpdateIndexTweens(Time.unscaledDeltaTime);
 
             // 左栏“当前看到的那一条”跟着右栏滚动位置走。
             if (IsOpen) SyncIndexTurnToScroll();
