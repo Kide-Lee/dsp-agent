@@ -40,6 +40,8 @@ export interface ScriptConfirmRequest {
   risk: 1 | 2;
   /** 脚本所属会话；并行会话下用于焦点门控。 */
   conversationId?: string;
+  /** 回合中断信号：等待焦点/确认时一并取消。 */
+  signal?: AbortSignal;
 }
 
 export interface ScriptConfirmResult {
@@ -59,6 +61,8 @@ export interface LocalWriteConfirmRequest {
   body: string;
   /** 工具所属会话；并行会话下用于焦点门控。 */
   conversationId?: string;
+  /** 回合中断信号：等待焦点/确认时一并取消。 */
+  signal?: AbortSignal;
 }
 
 /** Session 实现它；工具宿主只依赖这个窄接口。 */

@@ -136,9 +136,10 @@ export function lockKeysForTool(
   }
 
   // 存蓝图不改游戏状态，但要读一整片建筑；用星球锁避免复制期间别的会话改配方/库存，
-  // 否则蓝图快照会混入半新半旧的状态。蓝图文件本身由蓝图工作区串行。
+  // 否则蓝图快照会混入半新半旧的状态。没传 planetId 时不知道当前星球，
+  // 保守地拿 global 锁，不能让默认路径变成无锁。
   if (name === 'game_copy_blueprint') {
-    return planetId !== null ? [planetLockKey(planetId)] : [];
+    return planetId !== null ? [planetLockKey(planetId)] : ['global'];
   }
 
   // 脚本内部的写工具会各自加锁；脚本本身不占全局锁。

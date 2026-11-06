@@ -451,7 +451,7 @@ export function createScriptTool(host: GameToolHost): ToolDefinition {
       let lease: WriteLease | null = null;
       if (writes.length > 0) {
         const scriptHash = createHash('sha256').update(code, 'utf8').digest('hex');
-        const approved = await host.confirmScript({ scriptHash, writeNames: writes, maxWrites, risk });
+        const approved = await host.confirmScript({ scriptHash, writeNames: writes, maxWrites, risk, signal });
         if (!approved) return fail('confirmation_denied', '玩家拒绝了脚本中的写操作，脚本未执行');
         lease = {
           token: approved.token,

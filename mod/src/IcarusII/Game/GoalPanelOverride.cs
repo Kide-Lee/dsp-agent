@@ -36,11 +36,23 @@ namespace IcarusII.Game
             }
             catch (Exception ex)
             {
+                // PatchAll 是按类型逐个应用的；中途失败时前面的补丁可能已经生效，
+                // 必须撤销，否则 _harmony 被丢掉后再也无法还原。
+                try { _harmony?.UnpatchSelf(); } catch { /* ignore */ }
                 _harmony = null;
                 FreeExploreEnabled = false;
                 SandboxEnabled = false;
                 Plugin.Log.LogWarning($"目标面板补丁注册失败，自由探索/沙盒下不显示 AI 目标：{ex.Message}");
             }
+        }
+
+        /// <summary>插件卸载：撤掉本补丁，避免离开插件后仍改写 goalLevel。</summary>
+        public static void Unpatch()
+        {
+            try { _harmony?.UnpatchSelf(); } catch { /* ignore */ }
+            _harmony = null;
+            FreeExploreEnabled = false;
+            SandboxEnabled = false;
         }
 
         /// <summary>显示方法进入时调用；只有存在 AI 目标才把等级临时提到 Key。</summary>

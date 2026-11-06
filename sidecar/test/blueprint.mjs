@@ -205,7 +205,7 @@ console.log('\n── 5. header/二进制元数据（卡片用） ──');
 }
 
 console.log('\n── 6. 元数据 ──');
-check('五个蓝图工具', tools.length === 5 && BLUEPRINT_TOOL_NAMES.length === 5);
+check('六个蓝图工具（含 blueprint_compile）', tools.length === 6 && BLUEPRINT_TOOL_NAMES.length === 6 && Boolean(byName['blueprint_compile']));
 check('描述带署名', byName['blueprint_search'].description.includes('CC BY-NC-SA 4.0'));
 
 console.log('\n── 6. Dyson Sphere Blueprints 解析 ──');

@@ -7,7 +7,7 @@
 
 ## 工具清单
 
-共 57 个模型可见工具。
+共 58 个模型可见工具。
 
 | 工具 | label | 能力位 | 风险 | 超时 | 一句话 |
 | --- | --- | --- | --- | --- | --- |
@@ -61,13 +61,14 @@
 | [`kb_search`](kb.md#kb_search) | 知识库搜索 | 本地 | 只读 | — | 在游戏本体知识库里搜索物品、配方、科技、建筑、矿脉，以及提示/教程/里程碑/指引/术语。 |
 | [`wiki_page`](wiki.md#wiki_page) | Wiki 页面 | 本地 | 只读 | — | 读取一个中/英文 DSP Wiki 页面的纯文本正文（自动处理重定向，最长 8000 字）。 |
 | [`wiki_search`](wiki.md#wiki_search) | Wiki 搜索 | 本地 | 只读 | — | 在中/英文戴森球计划 Wiki 里搜索页面，返回标题、摘要与链接。 |
-| [`blueprint_fs`](blueprint.md#blueprint_fs) | 蓝图文件 | 本地 | 只读 | — | 在游戏的蓝图目录里查看和整理文件，类似受限的 ls/cd/pwd/cat/mkdir/rm/rmdir。 |
-| [`blueprint_generate`](blueprint.md#blueprint_generate) | 生成产线蓝图 | 本地 | 只读 | — | 按知识库里的真实配方，从原矿开始生成完整产线蓝图（各阶段机器 + 传送带 + 分拣器 + 连接槽位），保存到游戏蓝图目录。 |
+| [`blueprint_compile`](blueprint.md#blueprint_compile) | 编译蓝图 DSL | 本地 | risk 1 | — | 编译一段蓝图 DSL（JavaScript 子集）并保存为蓝图文件。 |
+| [`blueprint_fs`](blueprint.md#blueprint_fs) | 蓝图文件 | 本地 | risk 1 | — | 在游戏的蓝图目录里查看和整理文件，类似受限的 ls/cd/pwd/cat/mkdir/rm/rmdir。 |
+| [`blueprint_generate`](blueprint.md#blueprint_generate) | 生成产线蓝图 | 本地 | risk 1 | — | 按知识库里的真实配方，从原矿开始生成完整产线蓝图（各阶段机器 + 传送带 + 分拣器 + 连接槽位），保存到游戏蓝图目录。 |
 | [`blueprint_info`](blueprint.md#blueprint_info) | 蓝图详情 | 本地 | 只读 | — | 读取一个蓝图文件并做格式体检（头部/base64+gzip/md5），返回大小与解码后字节数，不解析建筑。 |
-| [`blueprint_save`](blueprint.md#blueprint_save) | 保存蓝图 | 本地 | 只读 | — | 把 blueprint_search 找到的蓝图保存到游戏蓝图目录（Documents/Dyson Sphere Program/Blueprint），支持 GitHub 仓库… |
+| [`blueprint_save`](blueprint.md#blueprint_save) | 保存蓝图 | 本地 | risk 1 | — | 把 blueprint_search 找到的蓝图保存到游戏蓝图目录（Documents/Dyson Sphere Program/Blueprint），支持 GitHub 仓库… |
 | [`blueprint_search`](blueprint.md#blueprint_search) | 蓝图搜索 | 本地 | 只读 | — | 在 DSPBluePrints/FactoryBluePrints 仓库和 Dyson Sphere Blueprints 网站里按关键词搜索蓝图（在线按需，不打包内容）。 |
 | [`ask_user`](interactive.md#ask_user) | 向玩家提问 | 本地 | 只读 | — | 向玩家展示一个或多个带选项的问题，等待玩家在游戏窗口里选择或输入答案。 |
-| [`run_script`](interactive.md#run_script) | 脚本 | 本地 | 只读 | — | 在沙箱里执行一段 JavaScript，用来批量取数、循环、条件判断、聚合，或在确认后批量执行写操作。 |
+| [`run_script`](interactive.md#run_script) | 脚本 | 本地 | risk 1 | — | 在沙箱里执行一段 JavaScript，用来批量取数、循环、条件判断、聚合，或在确认后批量执行写操作。 |
 
 ## 分组
 
@@ -81,7 +82,7 @@
 | [game-assist.md](game-assist.md) | 辅助 · 方位指示、目标与待办 | 8 |
 | [kb.md](kb.md) | 知识库（sidecar 本地） | 4 |
 | [wiki.md](wiki.md) | Wiki（sidecar 本地，联网） | 2 |
-| [blueprint.md](blueprint.md) | 蓝图（本地文件 + 社区站点） | 5 |
+| [blueprint.md](blueprint.md) | 蓝图（本地文件 + 社区站点） | 6 |
 | [interactive.md](interactive.md) | 交互与脚本 | 2 |
 
 ### 参数的“必填”列
@@ -108,7 +109,7 @@ mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告�
 | `game.storage.v1` | 5 | `game_storage_set_filter`、`game_storage_set_limit`、`game_storage_move` |
 | `game.tether.v1` | 3 | `game_tether_add`、`game_tether_clear`、`game_tether_list` |
 | `game.todo.write.v1` | 1 | `game_todo_write` |
-| 本地（始终注册） | 13 | `ask_user`、`run_script`、`kb_search` |
+| 本地（始终注册） | 14 | `ask_user`、`run_script`、`kb_search` |
 
 ### 不在模型工具列表里的工具
 

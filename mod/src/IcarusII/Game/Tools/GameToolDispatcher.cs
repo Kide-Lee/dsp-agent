@@ -149,6 +149,16 @@ namespace IcarusII.Game.Tools
             Register(new UiClickTool());
         }
 
+        /// <summary>
+        /// 会改变读结果的工具：普通写工具 + 轮内待办。待办刻意不消耗确认令牌，
+        /// 但必须让 5 秒读缓存失效，否则 game_todo_list 会读到旧列表、回合末清空
+        /// 也可能命中缓存而根本不执行。
+        /// </summary>
+        private static bool InvalidatesReadCache(string name)
+        {
+            return IsWriteTool(name) || string.Equals(name, Protocol.ToolTodoWrite, StringComparison.Ordinal);
+        }
+
         private static bool IsWriteTool(string name)
         {
             return Protocol.IsWriteTool(name);
@@ -195,7 +205,7 @@ namespace IcarusII.Game.Tools
 
             // 知识库导出是一次性快照：不走 5 秒缓存，避免换语言/换版本后拿到旧数据。
             var useCache = name != "game_export_prototypes" && name != "game_export_text"
-                && !IsWriteTool(name);
+                && !InvalidatesReadCache(name);
             CachedResult cached;
             if (useCache && _cache.TryGetValue(cacheKey, out cached) &&
                 cached.SaveKey == saveKey &&
@@ -306,14 +316,14 @@ namespace IcarusII.Game.Tools
                     call.StartTick, GameMain.gameTick, false);
                 _log?.LogInfo($"[tool] 完成 {call.Name} callId={call.CallId} elapsed={elapsed}ms"
                     + " truncated=" + (result.Truncated ? "true" : "false"));
-                if (IsWriteTool(call.Name))
+                if (InvalidatesReadCache(call.Name))
                 {
-                    // 写操作后读缓存全部失效：否则随后的 game_get_* / tether_list
-                    // 可能在 5 秒内返回写之前的状态。
+                    // 写操作后读缓存全部失效：否则随后的 game_get_* / tether_list /
+                    // game_todo_list 可能在 5 秒内返回写之前的状态。
                     _cache.Clear();
                 }
                 if (call.Name != "game_export_prototypes" && call.Name != "game_export_text"
-                    && !IsWriteTool(call.Name))
+                    && !InvalidatesReadCache(call.Name))
                 {
                     _cache[call.CacheKey] = new CachedResult
                     {

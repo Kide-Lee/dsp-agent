@@ -648,6 +648,10 @@ namespace IcarusII.EditorTools
             AddButton(row, "export-button", "导出", 64f, 26f);
             AddButton(row, "rename-button", "重命名", 76f, 26f);
             AddButton(row, "delete-button", "删除", 64f, 26f);
+            // 运行期 SettingsPageView.Bind 会按路径取它做占位提示；当前行内编辑还没接，
+            // 先保留一个默认隐藏的输入框，避免重建 prefab 后 Bind 报缺节点。
+            var rename = AddInput(row, "rename-input", string.Empty, 160f, 26f);
+            rename.gameObject.SetActive(false);
         }
 
         // ------------------------------------------------------------ 工具
@@ -674,6 +678,9 @@ namespace IcarusII.EditorTools
             AddButton(toolbar, "chip-all", "全部", 56f, 28f);
             AddButton(toolbar, "chip-read", "读取", 64f, 28f);
             AddButton(toolbar, "chip-write", "写入", 64f, 28f);
+            AddButton(toolbar, "chip-kb", "知识库", 64f, 28f);
+            AddButton(toolbar, "chip-bp", "蓝图", 56f, 28f);
+            AddButton(toolbar, "chip-script", "其他", 56f, 28f);
             AddButton(toolbar, "chip-third", "第三方", 76f, 28f);
             var spacer = Node("spacer", toolbar);
             spacer.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
@@ -737,13 +744,26 @@ namespace IcarusII.EditorTools
             name.gameObject.name = "name";
             name.gameObject.AddComponent<LayoutElement>().preferredWidth = 150f;
 
-            var badge = AddLabel(nameRow, "只读", SmallSize, AccentColor, TextAnchor.MiddleLeft);
+            var pill = Node("access-pill", nameRow);
+            var pillLe = pill.gameObject.AddComponent<LayoutElement>();
+            pillLe.preferredWidth = 64f;
+            pillLe.preferredHeight = 18f;
+            var pillImage = AddImage(pill, new Color(0.353f, 0.749f, 1f, 0.12f));
+            var pillButton = pill.gameObject.AddComponent<Button>();
+            pillButton.targetGraphic = pillImage;
+            pillButton.transition = Selectable.Transition.None;
+            var badge = AddLabel(pill, "只读", SmallSize, AccentColor, TextAnchor.MiddleCenter);
             badge.gameObject.name = "access";
-            badge.gameObject.AddComponent<LayoutElement>().preferredWidth = 60f;
+            Stretch(badge.rectTransform);
 
             var id = AddLabel(info, "game_get_overview", SmallSize, SmallColor, TextAnchor.MiddleLeft);
             id.gameObject.name = "id";
             id.gameObject.AddComponent<LayoutElement>().preferredHeight = 18f;
+
+            var desc = AddLabel(info, string.Empty, SmallSize, SmallColor, TextAnchor.MiddleLeft);
+            desc.gameObject.name = "desc";
+            desc.horizontalOverflow = HorizontalWrapMode.Wrap;
+            desc.gameObject.AddComponent<LayoutElement>().preferredHeight = 16f;
 
             var state = AddLabel(row, "开", HintSize, DimColor, TextAnchor.MiddleRight);
             state.gameObject.name = "state";
@@ -756,6 +776,9 @@ namespace IcarusII.EditorTools
             AddImage(toggle, ButtonBg);
             var toggleText = AddLabel(toggle, "开关", SmallSize, LabelColor, TextAnchor.MiddleCenter);
             Stretch(toggleText.rectTransform);
+            var toggleButton = toggle.gameObject.AddComponent<Button>();
+            toggleButton.targetGraphic = toggle.GetComponent<Image>();
+            toggle.gameObject.AddComponent<UISwitch>();
         }
 
         // ------------------------------------------------------------ 关于
@@ -954,7 +977,7 @@ namespace IcarusII.EditorTools
             Stretch(text.rectTransform);
         }
 
-        private static void AddInput(RectTransform parent, string name, string placeholder, float width, float height)
+        private static InputField AddInput(RectTransform parent, string name, string placeholder, float width, float height)
         {
             var rt = Node(name, parent);
             var le = rt.gameObject.AddComponent<LayoutElement>();
@@ -982,6 +1005,7 @@ namespace IcarusII.EditorTools
 
             field.textComponent = text;
             field.placeholder = ph;
+            return field;
         }
 
         private static RectTransform ScrollList(RectTransform parent, string name)

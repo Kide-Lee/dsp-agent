@@ -36,7 +36,7 @@ namespace IcarusII
     {
         public const string Guid = "icarus-ii";
         public const string PluginName = "Icarus II";
-        public const string PluginVersion = "1.1.298";
+        public const string PluginVersion = "1.1.340";
 
         /// <summary>每帧用于处理后台线程回调的时间预算（毫秒）。</summary>
         private const int MainThreadBudgetMs = 4;
@@ -93,8 +93,20 @@ namespace IcarusII
         /// <summary>请求 id → 用户提问原文；final 到达时用来回存该回答的游戏时间。</summary>
         private readonly Dictionary<string, string> _promptById = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        /// <summary>history.delete 请求 id → 重新推理的提问原文（删除成功后重发 prompt）。</summary>
-        private readonly Dictionary<string, string> _regenerateDeleteId = new Dictionary<string, string>(StringComparer.Ordinal);
+        /// <summary>后台会话的最后一轮错误：切回该会话时补一条系统消息，避免失败完全不可见。</summary>
+        private readonly Dictionary<string, string> _conversationErrors =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+
+        /// <summary>一次“重新生成”请求：删除旧回合成功后，要按发起时的会话重发 prompt。</summary>
+        private sealed class PendingRegenerate
+        {
+            public string Text;
+            public string ConversationId;
+        }
+
+        /// <summary>history.delete 请求 id → 重新推理的提问与发起会话（删除成功后重发 prompt）。</summary>
+        private readonly Dictionary<string, PendingRegenerate> _regenerateDeleteId =
+            new Dictionary<string, PendingRegenerate>(StringComparer.Ordinal);
 
         /// <summary>M4m：调试直调请求 id → 请求信息（!tool）。</summary>
         private readonly Dictionary<string, DebugRequest> _debugById = new Dictionary<string, DebugRequest>(StringComparer.Ordinal);
@@ -109,6 +121,7 @@ namespace IcarusII
         private sealed class PendingAsk
         {
             public string CallId;
+            public string ConversationId;
             public float Deadline;
         }
         private PendingAsk _pendingAsk;
@@ -323,6 +336,7 @@ namespace IcarusII
             try { CancelPendingAsk("插件卸载", Protocol.CodeCancelled); } catch { /* ignore */ }
             try { CancelPendingConfirm("插件卸载"); _confirmation.Clear(); GameTether.Clear(); } catch { /* ignore */ }
             try { _advisor?.DismissAll(); } catch { /* ignore */ }
+            try { IcarusII.Game.GoalPanelOverride.Unpatch(); } catch { /* ignore */ }
             try { AgentMenuButton.Reset(); } catch (Exception ex) { Log?.LogWarning($"清理 Game Menu 入口失败：{ex.Message}"); }
             try { _chat?.Destroy(); } catch (Exception ex) { Log?.LogWarning($"清理 UI 失败：{ex.Message}"); }
             try { _tools?.CancelAll("插件卸载"); } catch { /* ignore */ }
@@ -430,6 +444,7 @@ namespace IcarusII
                         CancelPendingAsk("连接退避", Protocol.CodeToolUnavailable);
                         CancelPendingConfirm("连接退避");
                         _regenerateDeleteId.Clear();
+                _conversationErrors.Clear();
                         CancelPendingDebug();
                         _chat.ClearToolCatalog();
                         _agentRunning = false;
@@ -609,8 +624,8 @@ namespace IcarusII
                     var info = HistoryDeletedInfo.Parse(payload);
 
                     // 刷新按钮的「删旧回合 → 重发提问」流程。
-                    string regenerateText;
-                    if (!string.IsNullOrEmpty(replyTo) && _regenerateDeleteId.TryGetValue(replyTo, out regenerateText))
+                    PendingRegenerate regenerate;
+                    if (!string.IsNullOrEmpty(replyTo) && _regenerateDeleteId.TryGetValue(replyTo, out regenerate))
                     {
                         _regenerateDeleteId.Remove(replyTo);
                         if (info == null || !info.Ok)
@@ -624,8 +639,9 @@ namespace IcarusII
                         }
 
                         _streaming = false;
+                        var targetConversation = regenerate.ConversationId ?? _chat.ActiveConversationId;
                         var regenerateId = _client != null
-                            ? _client.SendPrompt(regenerateText, _chat.ActiveConversationId, _chat.GetRequiredTool(regenerateText))
+                            ? _client.SendPrompt(regenerate.Text, targetConversation, _chat.GetRequiredTool(regenerate.Text))
                             : null;
                         if (regenerateId == null)
                         {
@@ -633,9 +649,13 @@ namespace IcarusII
                             _chat.SetStatus(Strings.Get("status.ready"), OkColor);
                             break;
                         }
-                        _promptById[regenerateId] = regenerateText;
-                        _chat.SetStatus(Strings.Get("status.thinking"), AccentColor);
-                        Log.LogInfo($"[重新生成] 已删除旧回合，重新发送提问：{regenerateId}");
+                        _promptById[regenerateId] = regenerate.Text;
+                        if (string.IsNullOrEmpty(targetConversation) ||
+                            targetConversation == _chat.ActiveConversationId)
+                        {
+                            _chat.SetStatus(Strings.Get("status.thinking"), AccentColor);
+                        }
+                        Log.LogInfo($"[重新生成] 已删除旧回合，重新发送提问：{regenerateId}（会话 {targetConversation ?? "当前"}）");
                         break;
                     }
 
@@ -649,8 +669,19 @@ namespace IcarusII
 
                 case Protocol.ContextCompacted:
                 {
-                    if (!IsFocusedPayload(payload)) break;
                     var info = ContextCompactedInfo.Parse(payload);
+                    if (!IsFocusedPayload(payload))
+                    {
+                        if (info != null)
+                        {
+                            _client?.SendContextCompactedTime(
+                                info.CompactionId,
+                                info.ConversationId ?? _chat?.ActiveConversationId,
+                                ChatWindow.CurrentGameClock(),
+                                ChatWindow.CurrentGameTick());
+                        }
+                        break;
+                    }
                     if (info != null)
                     {
                         // 压缩可能发生在流式回答中途：AppendCompaction 会收尾半截正文，
@@ -826,6 +857,18 @@ namespace IcarusII
 
                 case Protocol.Error:
                 {
+                    var errorConversationId = payload?["conversationId"].AsString(null);
+                    if (!string.IsNullOrEmpty(errorConversationId) &&
+                        !string.IsNullOrEmpty(_chat?.ActiveConversationId) &&
+                        errorConversationId != _chat.ActiveConversationId)
+                    {
+                        if (!string.IsNullOrEmpty(replyTo)) _promptById.Remove(replyTo);
+                        var codeText = payload["code"].AsString("unknown");
+                        var messageText = payload["message"].AsString("");
+                        _conversationErrors[errorConversationId] =
+                            Strings.Get("plugin.error", codeText, messageText);
+                        break;
+                    }
                     if (!IsFocusedPayload(payload)) break;
                     if (!string.IsNullOrEmpty(replyTo)) _promptById.Remove(replyTo);
                     var code = payload["code"].AsString("unknown");
@@ -966,6 +1009,7 @@ namespace IcarusII
                 _pendingAsk = new PendingAsk
                 {
                     CallId = call.CallId,
+                    ConversationId = call.ConversationId,
                     Deadline = Time.realtimeSinceStartup + call.TimeoutMs / 1000f,
                 };
                 _advisor.NotifyAsk(questions);
@@ -983,6 +1027,7 @@ namespace IcarusII
             _pendingAsk = new PendingAsk
             {
                 CallId = call.CallId,
+                ConversationId = call.ConversationId,
                 Deadline = Time.realtimeSinceStartup + call.TimeoutMs / 1000f,
             };
             _chat.SetStatus(Strings.Get("ask.waiting"), AccentColor);
@@ -1231,11 +1276,11 @@ namespace IcarusII
             if (outcome == null) return;
             SendToolOutcome(outcome);
 
-            // 内部调用（知识库导出）只回结果，不碰聊天窗。
-            if (_internalCalls.Remove(outcome.CallId)) return;
-
             _toolConversations.TryGetValue(outcome.CallId, out var conversationId);
             _toolConversations.Remove(outcome.CallId);
+
+            // 内部调用（知识库导出、回合末清待办）只回结果，不碰聊天窗。
+            if (_internalCalls.Remove(outcome.CallId)) return;
             var focused = string.IsNullOrEmpty(conversationId) || _chat == null ||
                           string.IsNullOrEmpty(_chat.ActiveConversationId) ||
                           conversationId == _chat.ActiveConversationId;
@@ -1465,7 +1510,11 @@ namespace IcarusII
                 _chat.AppendSystem(Strings.Get("plugin.regenerate.changed"));
                 return;
             }
-            _regenerateDeleteId[id] = text;
+            _regenerateDeleteId[id] = new PendingRegenerate
+            {
+                Text = text,
+                ConversationId = _chat.ActiveConversationId,
+            };
             _chat.SetStatus(Strings.Get("status.regenerating"), AccentColor);
             Log.LogInfo($"[重新生成] 请求删除旧回合后重新推理：{id}");
         }
@@ -2020,6 +2069,28 @@ namespace IcarusII
             });
         }
 
+        /// <summary>
+        /// 切走会话时取消属于旧会话的确认/作答：全局只允许一个面板，
+        /// 不取消会把旧会话的面板留在新会话上，并让新会话的请求直接 busy 失败。
+        /// </summary>
+        private void CancelStalePendingInteractions(string activeConversationId)
+        {
+            if (_pendingAsk != null &&
+                !string.IsNullOrEmpty(_pendingAsk.ConversationId) &&
+                _pendingAsk.ConversationId != activeConversationId)
+            {
+                CancelPendingAsk("会话已切换", Protocol.CodeNotFocused);
+            }
+
+            var current = _confirmation.Current;
+            if (current != null &&
+                !string.IsNullOrEmpty(current.ConversationId) &&
+                current.ConversationId != activeConversationId)
+            {
+                CancelPendingConfirm("会话已切换");
+            }
+        }
+
         private void OnConversationSwitched(ConversationEventInfo info)
         {
             if (info == null || info.Conversation == null) return;
@@ -2033,6 +2104,7 @@ namespace IcarusII
                     _chat.SetStatus(Strings.Get("status.ready"), OkColor);
                     return;
                 }
+                CancelStalePendingInteractions(info.Conversation.Id);
                 _chat.ClearTranscript();
                 _streaming = false;
                 _agentRunning = info.Running;
@@ -2042,6 +2114,12 @@ namespace IcarusII
                 // 否则它会留在列表里，点回去只会得到 conversation_not_found。
                 _chat.RemoveConversation(info.DiscardedConversationId);
                 ReplayHistory(info.History);
+                if (_conversationErrors.TryGetValue(info.Conversation.Id, out var conversationError))
+                {
+                    _conversationErrors.Remove(info.Conversation.Id);
+                    _chat.AppendSystem(conversationError);
+                    _chat.SetConversationActivity(info.Conversation.Id, "idle");
+                }
                 _historyReplayedFor = ReplayKey(info.SaveKey ?? _saveKey, info.Conversation.Id);
                 if (info.Running)
                 {
@@ -2566,6 +2644,8 @@ namespace IcarusII
         private void OnUserSubmitted(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return;
+            if (_chat != null && !string.IsNullOrEmpty(_chat.ActiveConversationId))
+                _conversationErrors.Remove(_chat.ActiveConversationId);
 
             // M4m：调试命令在 AppendUser 之前拦截，不进入 AI/会话历史。
             if (_config != null && _config.DebugToolConsole && TryHandleDebugCommand(text)) return;

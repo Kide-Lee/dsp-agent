@@ -288,6 +288,8 @@ namespace IcarusII.Common.Protocol
         public const string ToolTodoList = "game_todo_list";
         public const string ToolTodoAdd = "game_todo_add";
         public const string ToolTodoRemove = "game_todo_remove";
+        /// <summary>轮内待办：只改原生目标面板的临时组，不写存档，也不消耗确认令牌。</summary>
+        public const string ToolTodoWrite = "game_todo_write";
         public const string ToolTakeOutput = "game_take_output";
         public const string ToolCopyBlueprint = "game_copy_blueprint";
 

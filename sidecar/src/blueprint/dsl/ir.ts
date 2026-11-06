@@ -53,6 +53,9 @@ export class DslError extends Error {
   }
 }
 
+/** 单张蓝图的目标产量上限：超过这个量级应先拆产线，不能把 sidecar 拖死。 */
+export const MAX_TARGET_RATE = 1_000_000;
+
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -63,7 +66,10 @@ export function normalizeIr(value: unknown): DslIr {
   for (const row of Array.isArray(value.target) ? value.target : []) {
     if (!isObject(row) || typeof row.item !== 'string') throw new DslError('E002', 'target(item, rate) 参数不合法');
     const rate = Number(row.rate);
-    if (!(rate > 0)) throw new DslError('E003', `target(${row.item}) 的产量必须大于 0`);
+    if (!Number.isFinite(rate) || !(rate > 0)) throw new DslError('E003', `target(${row.item}) 的产量必须是有限正数`);
+    if (rate > MAX_TARGET_RATE) {
+      throw new DslError('E011', `target(${row.item}) 的产量 ${rate} 超过单张蓝图上限 ${MAX_TARGET_RATE}`);
+    }
     targets.push({ item: row.item, rate });
   }
   if (targets.length === 0) throw new DslError('E004', '没有 target：至少要写一个 target(物品, 每分钟)');

@@ -45,6 +45,9 @@ check('读工具不加锁', JSON.stringify(lockKeysForTool('game_get_overview', 
 check('存蓝图锁星球快照', JSON.stringify(lockKeysForTool('game_copy_blueprint', {
   planetId: 1, entityIds: [7, 8],
 })) === '["planet:1"]');
+check('存蓝图未传星球时保守全局锁', JSON.stringify(lockKeysForTool('game_copy_blueprint', {
+  entityIds: [7, 8],
+})) === '["global"]');
 check('未知写工具兜底全局', JSON.stringify(lockKeysForTool('mystery_write', {}, 2)) === '["global"]');
 
 console.log('\n── 3. 锁管理器 ──');

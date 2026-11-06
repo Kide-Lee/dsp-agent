@@ -491,7 +491,7 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         '每次调用替换上一次的列表（空数组清空）；状态 pending / in_progress / completed，' +
         '完成项在面板里打勾并划线，玩家也可以随时跳过某一条。' +
         '本轮结束时 sidecar 会自动把清单从面板撤掉，下一轮要显示就重新写。' +
-        '按只读权限登记：不改变游戏状态，也不会请求玩家确认。',
+        '按只读权限登记：只写原生目标面板的临时组，不写存档、不消耗确认令牌；回合结束自动清空。',
       promptGuidelines: [
         '开始一项需要多步完成的工作前先写待办；一步就能做完的琐事不要用。',
         '每次更新都提交完整列表，不要只发变化项；做完一步就把它改成 completed。',

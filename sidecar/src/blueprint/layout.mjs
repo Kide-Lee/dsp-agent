@@ -4,7 +4,7 @@ import buildingData from '../../vendor/dsp-calc/data/Buildings.mjs';
 import vanilla from '../../vendor/dsp-calc/data/Vanilla.mjs';
 import { COLLIDERS } from './colliders.mjs';
 import { SLOTS } from './slots.mjs';
-import { PORT_OFFSETS, rotateOffset } from './ports.mjs';
+import { PORT_OFFSETS, rotateOffset, STATION_PORT_RING } from './ports.mjs';
 import { BlueprintBuilder } from './emit.mjs';
 
 const BUILDINGS = buildingData.buildings;
@@ -143,13 +143,7 @@ export function busSpecFromPlan(plan) {
 }
 
 const BELT_CAPACITY_PER_MIN = { 2001: 360, 2002: 720, 2003: 1800 };
-// 物流站 12 个端口在半径 2 的环上（来自游戏保存的真实站蓝图，见 docs/plans）。
-const STATION_PORT_RING = [
-  [1, 2], [0, 2], [-1, 2],
-  [-2, 1], [-2, 0], [-2, -1],
-  [-1, -2], [0, -2], [1, -2],
-  [2, -1], [2, 0], [2, 1],
-];
+
 const STATION_PARAM_DEFAULTS = {
   workEnergyPerTick: 12,
   tripRangeOfDrones: 180,
@@ -188,6 +182,10 @@ export function layoutBus(spec) {
   if (stationSupply) rowGap = Math.max(rowGap, 10);
   const spacingOf = (stage) => machineSpacing(stage.buildingId);
 
+  const totalMachines = stages.reduce((sum, stage) => sum + stage.count, 0);
+  if (totalMachines > 2000) {
+    throw new Error(`总线布局机器总数 ${totalMachines} 超过上限 2000；请降低产量或拆成多条产线`);
+  }
   let totalCells = 0;
   for (const stage of stages) totalCells += stage.count * (spacingOf(stage) + 1);
   const raws = [...new Set(stages.flatMap((stage) => stage.inputs.filter((id) => !stages.some((s) => s.output === id))))];
@@ -346,6 +344,13 @@ export function layoutBus(spec) {
       }
       const cell = path[cursor];
       const mode = stage.mode;
+      const stageOutputs = stage.outputs ?? [{ itemId: stage.output, rate: stage.outputRate ?? 0 }];
+      if (stageOutputs.length > 1) {
+        throw new Error(
+          `总线布局暂不支持多产物配方（建筑 ${stage.buildingId}，产物 ${stageOutputs.length} 个）；` +
+            '副产物需要单独的出料分拣器/带子，当前会拒绝出图而不是生成停摆的产线',
+        );
+      }
       const machine = builder.add(stage.buildingId, cell.x, cell.y - mode.yOffset, 0, { recipeId: stage.recipeId, yaw: mode.yaw });
       let inputIndex;
       let outputIndex;

@@ -18,7 +18,7 @@
 
 **关键决策**（详见 §3）：
 
-1. **不自研 agent loop**，直接复用 `@earendil-works/pi-coding-agent` 的 SDK（2026-10-23 升级到 v1.4.0）。它一次性提供 Provider 抽象（OpenAI 兼容 + Anthropic Messages）、工具调用循环、流式事件、会话持久化、压缩/重试/中止，以及**可阻塞的工具调用钩子 + 用户确认 UI**——正好覆盖本项目全部需求。
+1. **不自研 agent loop**，直接复用 `@earendil-works/pi-coding-agent` 的 SDK（2026-11-06 升级到 v1.5.0）。它一次性提供 Provider 抽象（OpenAI 兼容 + Anthropic Messages）、工具调用循环、流式事件、会话持久化、压缩/重试/中止，以及**可阻塞的工具调用钩子 + 用户确认 UI**——正好覆盖本项目全部需求。
 2. **禁用全部内置工具**（`bash`/`read`/`write`/`edit`）。游戏内聊天窗口绝不能获得 shell 与文件系统权限。只注册我们自己的工具。
 3. **信息按需获取**：不预先把存档状态塞进上下文；所有游戏数据、LDB 知识、Wiki 都由 AI 主动调用工具拉取。
 4. **写操作双重门禁**：sidecar 侧的确认钩子 + mod 侧的一次性确认令牌，缺一不可。
@@ -73,7 +73,7 @@
 | 运行平台 | Linux + Proton | `steamapps/compatdata/1366540/pfx` 存在；`config_info` = `Proton Experimental` / `11.0-100` |
 | Wine 前缀 | `steamapps/compatdata/1366540/pfx` | 上文 |
 | Node.js | `v24.18.0`（`/home/kidelee/.local/bin/node`） | `node --version` |
-| 已装可复用件 | `pi`（全局 CLI v0.82.1；sidecar 依赖 v1.4.0）、`dsh` v0.2.0-rc.2、`bwiki-mcp` v0.3.0 | 全局 `node_modules` + sidecar 本地依赖 |
+| 已装可复用件 | `pi`（全局 CLI v0.82.1；sidecar 依赖 v1.5.0）、`dsh` v0.2.0-rc.2、`bwiki-mcp` v0.3.0 | 全局 `node_modules` + sidecar 本地依赖 |
 
 ### 2.1 由环境推导出的硬约束
 
@@ -873,7 +873,7 @@ import {
 5. **确认门禁**：`pi.on("tool_call", async (e, ctx) => {...})`，对 L2 工具 `await ctx.ui.confirm(...)`；确认请求经桥接转发到 mod 的确认卡片。
 6. **中止**：`session.abort()`；对应 mod 的"中止"按钮。
 7. **会话**：`SessionManager.create(<dataDir>/sessions)` 持久化；每局存档一个会话（以 `gameName + saveId` 命名），便于"接着上次聊"。
-8. **版本锁定**：`package.json` 固定 `"@earendil-works/pi-coding-agent": "1.4.0"`，避免 SDK 漂移导致行为变化（其事件与 API 仍在演进）。
+8. **版本锁定**：`package.json` 固定 `"@earendil-works/pi-coding-agent": "1.5.0"`，避免 SDK 漂移导致行为变化（其事件与 API 仍在演进）。
 
 ### 7.3 工具注册表
 
@@ -1350,7 +1350,7 @@ host/port/dataDir/token 由启动参数与 runtime.json 管理，不再写进 co
 | R1 | **`R` 与"旋转建筑"键位重叠** | 中 | **已确认冲突并已设计避让**（§6.2.2：`actionBuild.activeTool` 门控 + 可选 `Ctrl+R`）；M0 实测确认旋转的实际绑键与是否还有第三个动作占用裸 `R` |
 | R2 | **Proton 下 sidecar 自动启动** | 中 | **已解决**：随包分发 Windows 自包含 exe（PE），Wine 内 `Process.Start` 直接可拉起（§7.1.2）；`connectOnly` + systemd 作为备选。Windows 产物的 Wine 冒烟测试留 M0 |
 | R3 | **游戏更新导致 API 失效** | 高 | 只依赖已核实的公开类型/成员；Harmony 补丁限定在 `UIGoalPanel` 三处显示方法、注册失败即注销；版本不匹配时降级为只读并提示 |
-| R4 | **pi SDK 版本演进** | 中 | 锁定 `1.4.0`；`AgentRuntime` 抽象隔离，必要时可切 dsh ACP |
+| R4 | **pi SDK 版本演进** | 中 | 锁定 `1.5.0`；`AgentRuntime` 抽象隔离，必要时可切 dsh ACP |
 | R5 | **大存档状态采集体积** | 中 | 强制聚合 + 分页 + 结果上限；sidecar 统一裁剪；FTS/缓存 |
 | R6 | **LDB 导出体积与时间** | 低 | **已实现**：只导出必要字段、分帧/分块、按 `gameVersion+locale` 缓存；全量 ~750KB，实测离线生成/索引通过 |
 | R7 | **L2 写操作的真实撤销能力** | 高 | **因关闭了写前自动存档，此风险上升**：逐个工具确认撤销语义，无法撤销的工具一律不实现；每个 L2 确认卡必须显式标注"可撤销/不可撤销" |
@@ -1428,7 +1428,7 @@ DSP `0.10.30.3100` + Proton 的 `LogOutput.log`。
 
 **harness（本机已装，已读文档核实）**
 
-- `@earendil-works/pi-coding-agent` v1.4.0：`createAgentSession()`、`defineTool()`、`session.subscribe()`、`ModelRuntime`、`SessionManager`、`SettingsManager`、`DefaultResourceLoader`、`runRpcMode`。
+- `@earendil-works/pi-coding-agent` v1.5.0：`createAgentSession()`、`defineTool()`、`session.subscribe()`、`ModelRuntime`、`SessionManager`、`SettingsManager`、`DefaultResourceLoader`、`runRpcMode`。
 - `docs/models.md` 明确支持 `{"api": "openai-completions", "baseUrl": ...}` 接入 Ollama / LM Studio / vLLM 等；`docs/providers.md` 支持 Anthropic 原生与 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `auth.json`。
 - `docs/extensions.md`：`pi.on("tool_call", …)` **可阻塞**，`return { block: true, reason }`；`ctx.ui.confirm/select/input/notify`；`noTools: "builtin"` 保留自定义工具并关闭内置工具。
 - `docs/usage.md` 明确：**pi CLI 1.4 内置 MCP**，但 SDK 默认不加载 codemode/MCP/tool_search；本项目不需要，继续保持不加载。子代理、权限弹窗、plan mode 仍需自行扩展或改用 dsh。
@@ -1437,7 +1437,7 @@ DSP `0.10.30.3100` + Proton 的 `LogOutput.log`。
 
 **打包可行性（本机实测，非推测）**
 
-- `esbuild --bundle --platform=node --format=cjs --target=node22 --minify` 打包 `@earendil-works/pi-coding-agent` 的 SDK 入口：成功，**8.5MB 单文件**（升级到 1.4.0 后实测；0.82.1 时为 7.1MB）。
+- `esbuild --bundle --platform=node --format=cjs --target=node22 --minify` 打包 `@earendil-works/pi-coding-agent` 的 SDK 入口：成功，**8.5MB 单文件**（升级到 1.5.0 后实测；0.82.1 时为 7.1MB）。
 - 在**空目录**（无 `node_modules`、无任何外部文件）中运行该 bundle：成功加载 pi SDK（`createAgentSession` / `defineTool` / `ModelRuntime` 均为 function）。
 - bundle 内**无原生 `.node` 依赖**：`pi-tui` 的 `win32-console-mode.node` / `darwin-modifiers.node` 均为平台守卫 + `cjsRequire` + `try/catch`（源码注释明确说明"Dynamic require so non-Windows and bundled/browser paths never load the native helper"）；`utils/clipboard-native.js` 用 `createRequire` + `try/catch`，且在 Linux 无 `DISPLAY`/`WAYLAND_DISPLAY` 时直接跳过。唯一外部项 `@mariozechner/clipboard` 为可选（失败返回 `null`）。
 - `TextIconMapping` 依赖的 `@silvia-odwyer/photon-node` 是 WASM，已 base64 内嵌进 bundle。

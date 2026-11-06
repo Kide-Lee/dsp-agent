@@ -207,6 +207,31 @@ export function validateParsed(bp, options = {}) {
     else grid.set(key, [i]);
   }
 
+  // 分拣器端点必须落在真实建筑/带子上，且槽位号与目标类型一致。
+  // 之前的校验只查长度，悬空分拣器/错槽位/不存在的站口都能通过。
+  for (const building of buildings) {
+    if (!isSorter(building)) continue;
+    const checks = [
+      { targetIndex: building.inputObjIdx, slot: building.inputFromSlot, label: 'inputFromSlot' },
+      { targetIndex: building.outputObjIdx, slot: building.outputToSlot, label: 'outputToSlot' },
+    ];
+    for (const check of checks) {
+      if (check.targetIndex < 0) continue;
+      const target = buildings[check.targetIndex];
+      if (!target) {
+        errors.push(`分拣器 #${building.index} 的 ${check.label} 指向不存在的建筑 ${check.targetIndex}`);
+        continue;
+      }
+      if (isBelt(target)) {
+        if (check.slot !== -1 && check.slot !== 0 && check.slot !== 1) {
+          errors.push(`分拣器 #${building.index} 连到带子时 ${check.label}=${check.slot}，应为 -1`);
+        }
+      } else if (!Number.isInteger(check.slot) || check.slot < 0 || check.slot > 15) {
+        errors.push(`分拣器 #${building.index} 连到建筑 #${target.index} 时 ${check.label}=${check.slot}，槽位号无效`);
+      }
+    }
+  }
+
   return {
     ok: errors.length === 0,
     errors,

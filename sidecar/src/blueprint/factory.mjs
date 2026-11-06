@@ -4,6 +4,20 @@ import { BlueprintBuilder } from './emit.mjs';
 import { COLLIDERS } from './colliders.mjs';
 
 const STATION_ID = 2103;
+// 只有标准 2×2/1.5×1.5 机器用固定上下槽位；带小数端口/多排槽位的建筑
+// 必须走总线布局的 addPortSorter，不能在这里硬套 SIDE_SLOT。
+const FACTORY_STANDARD_BUILDINGS = new Set([2302, 2303, 2304, 2305, 2315, 2318, 2319]);
+const MAX_FACTORY_MACHINES = 2000;
+
+class FactoryUnsupportedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'FactoryUnsupportedError';
+    this.code = 'factory-unsupported';
+  }
+}
+
+export { FactoryUnsupportedError };
 const INPUT_PORTS = [6, 7, 8];
 const OUTPUT_PORT = 4;
 
@@ -31,7 +45,9 @@ const reachX = (itemId) => {
 const storageOf = (items, role) => Array.from({ length: 4 }, (_, i) => ({
   itemId: items[i] ?? 0,
   localRole: items[i] ? role : 0,
-  remoteRole: 0,
+  // 物流站之间要真正送货，远端角色必须和本地角色一致；
+  // remoteRole=0 会让站只做本地仓储，模块之间没有无人机/运输船。
+  remoteRole: items[i] ? role : 0,
   max: items[i] ? 5000 : 0,
   lockAmount: 0,
 }));
@@ -48,6 +64,17 @@ function stationParameters(storageItems, role, portDirs) {
 function placeModule(builder, stage, x0, yTop, ids) {
   const outputs = stage.outputs ?? [{ itemId: stage.output }];
   const inputs = stage.inputs ?? [];
+  if (!FACTORY_STANDARD_BUILDINGS.has(stage.buildingId)) {
+    throw new FactoryUnsupportedError(
+      `工厂布局暂不支持建筑 ${stage.buildingId} 的端口几何，请改用总线布局（layout=bus）`,
+    );
+  }
+  if (outputs.length > 1) {
+    throw new FactoryUnsupportedError(
+      `工厂布局暂不支持多产物配方（建筑 ${stage.buildingId}，产物 ${outputs.length} 个）；` +
+        '副产物需要单独的出料分拣器/带子，当前会拒绝出图而不是生成停摆的产线',
+    );
+  }
   if (inputs.length > INPUT_PORTS.length) {
     throw new Error(`工厂布局暂不支持 ${inputs.length} 种输入的配方（建筑 ${stage.buildingId}）`);
   }
@@ -57,6 +84,9 @@ function placeModule(builder, stage, x0, yTop, ids) {
   let x = x0 + 3;
   const last = { x, half: reachX(stage.buildingId) };
   const machines = [];
+  if (stage.count > MAX_FACTORY_MACHINES) {
+    throw new FactoryUnsupportedError(`单个模块机器数 ${stage.count} 超过工厂布局上限 ${MAX_FACTORY_MACHINES}`);
+  }
   for (let i = 0; i < stage.count; i += 1) {
     if (i > 0) {
       const need = Math.max(3, Math.ceil(last.half + reachX(stage.buildingId)));
@@ -138,10 +168,18 @@ export function layoutFactory(spec) {
     rowHeight = Math.max(rowHeight, 17);
   }
 
-  const minX = Math.min(...builder.buildings.map((b) => b.localOffset[0].x));
-  const maxX = Math.max(...builder.buildings.map((b) => b.localOffset[0].x));
-  const minY = Math.min(...builder.buildings.map((b) => b.localOffset[0].y));
-  const maxY = Math.max(...builder.buildings.map((b) => b.localOffset[0].y));
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const building of builder.buildings) {
+    const point = building.localOffset[0];
+    if (point.x < minX) minX = point.x;
+    if (point.x > maxX) maxX = point.x;
+    if (point.y < minY) minY = point.y;
+    if (point.y > maxY) maxY = point.y;
+  }
+  if (!Number.isFinite(minX)) throw new Error('工厂布局没有放置任何建筑');
   const width = Math.ceil(maxX - minX + 8);
   const height = Math.ceil(maxY - minY + 8);
   const dx = 1 - minX;

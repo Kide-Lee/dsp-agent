@@ -2814,6 +2814,46 @@ export class PiAgent implements AgentRunner {
     }
   }
 
+  /**
+   * 撤销压缩后删掉对应的时间记录。否则 LIFO 兜底会把这条时间回填到
+   * 下一次压缩上，历史里出现错位的时间。
+   */
+  private removeCompactionTimes(
+    saveKey: string | null,
+    compactionId: string | null,
+    conversationId: string | null,
+  ): void {
+    const path = this.compactionTimeLogPath(saveKey);
+    if (!path || !existsSync(path)) return;
+    let records: CompactionTimeRecord[];
+    try {
+      records = this.readCompactionTimes(saveKey);
+    } catch {
+      return;
+    }
+    const kept = records.filter((record) => {
+      if (conversationId && record.conversationId && record.conversationId !== conversationId) return true;
+      if (compactionId) return record.compactionId !== compactionId;
+      // 没有 id 时 removeCompactionFromEntries 删的是最近一次；时间记录也按 LIFO 删最后一条。
+      return true;
+    });
+    if (!compactionId && kept.length === records.length && records.length > 0) {
+      kept.pop();
+    }
+    if (kept.length === records.length) return;
+    const tmp = `${path}.tmp-${process.pid}`;
+    try {
+      writeFileSync(tmp, kept.map((record) => `${JSON.stringify(record)}\n`).join(''), {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+      renameSync(tmp, path);
+    } catch (err) {
+      try { rmSync(tmp, { force: true }); } catch { /* ignore */ }
+      this.logger.warn('清理压缩记录游戏时间失败', { saveKey, ...errorFields(err) });
+    }
+  }
+
   private readCompactionTimes(saveKey: string | null): CompactionTimeRecord[] {
     const path = this.compactionTimeLogPath(saveKey);
     if (!path || !existsSync(path)) return [];
@@ -3041,6 +3081,7 @@ export class PiAgent implements AgentRunner {
       return { ok: false, removed: 0, error: 'io_error' };
     }
 
+    this.removeCompactionTimes(saveKey, outcome.compactionId ?? null, conversationId ?? null);
     const targetId = conversationId ?? this.activeConversationId;
     if (this.saveKey === saveKey && targetId) this.disposeSlot(targetId);
     this.logger.info('已撤销上下文压缩', {
@@ -3158,11 +3199,12 @@ export class PiAgent implements AgentRunner {
       this.activeConversationDraftTitle = null;
     }
 
+    const submittedSaveKey = this.saveKey;
     const task = async (): Promise<void> => {
       this.startingRuns.add(target);
       await this.acquireRunSlot();
       try {
-        await this.runOnce(target, text, promptId, emit, requiredTool);
+        await this.runOnce(target, text, promptId, emit, requiredTool, submittedSaveKey);
       } finally {
         this.startingRuns.delete(target);
         this.pendingAborts.delete(target);
@@ -3240,8 +3282,19 @@ export class PiAgent implements AgentRunner {
     promptId: string | null,
     emit: AgentEmitter,
     requiredTool: string | null,
+    submittedSaveKey: string | null,
   ): Promise<void> {
     const data = this.store.get();
+
+    // 排队期间换了存档：这一问属于旧存档，不能按新存档目录去建会话/写文件。
+    if (submittedSaveKey !== this.saveKey) {
+      this.logger.info('排队回合跨存档，已丢弃', { conversationId, promptId, submittedSaveKey, saveKey: this.saveKey });
+      if (emit.isActive()) {
+        emit.message('', promptId, true, { interrupted: true });
+        emit.status('idle');
+      }
+      return;
+    }
 
     if (!data.apiKey) {
       // 未配置：不建会话、不联网（协议附录 A.3 的 config_required）。
@@ -3254,7 +3307,7 @@ export class PiAgent implements AgentRunner {
     const run: RunState = {
       emit,
       promptId,
-      saveKey: this.saveKey,
+      saveKey: submittedSaveKey,
       userText: text,
       conversationId,
       text: '',
@@ -3304,11 +3357,17 @@ export class PiAgent implements AgentRunner {
     slot.abortRequested = false;
     if (this.activeConversationId === conversationId) this.activeConversationDraft = false;
     if (this.pendingAborts.delete(conversationId)) {
+      // 中断发生在会话创建/排队阶段：此时 pi 还没有 activeRun，session.abort() 是空操作。
+      // 必须直接结束这一回合，否则 LLM 仍会跑完整轮、落盘，最后再以 interrupted 收尾。
       slot.abortRequested = true;
       run.stopReason = 'aborted';
-      void session.abort().catch((err: unknown) => {
-        this.logger.debug('启动阶段的中断失败', { conversationId, ...errorFields(err) });
-      });
+      slot.run = null;
+      if (emit.isActive()) {
+        emit.message('', promptId, true, { interrupted: true });
+        emit.status('idle');
+      }
+      this.logger.info('回合在启动阶段被中断，未调用模型', { conversationId, promptId });
+      return;
     }
 
     // 强制工具（M4l）：显式 requiredTool 优先；老 mod 只传 /<工具名> 时从原文兜底解析。

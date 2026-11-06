@@ -24,6 +24,7 @@ import { createKbTools } from '../src/kb/tools.js';
 import { createWikiTools } from '../src/wiki/tools.js';
 import { createBlueprintTools } from '../src/blueprint/tools.js';
 import { isWriteToolName, writeToolRisk } from '../src/tools/write.js';
+import { toolRiskOf } from '../src/tools/registry.js';
 import { TOOL_FIELD_NOTES, type FieldNote } from './tool-field-notes.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
@@ -127,8 +128,8 @@ const GROUPS: DocGroup[] = [
     file: 'blueprint.md',
     title: '蓝图（本地文件 + 社区站点）',
     intro:
-      '蓝图只操作游戏蓝图根目录内的受限路径；`blueprint_save` 与 `blueprint_generate` ' +
-      '写入的是 `.txt` 蓝图文本，不改变游戏状态。',
+      '蓝图只操作游戏蓝图根目录内的受限路径；`blueprint_save`、`blueprint_generate` 与 ' +
+      '`blueprint_compile` 写入的是 `.txt` 蓝图文本，不改变游戏状态，但写文件前仍按权限档位确认。',
     capabilities: [],
     names: [
       'blueprint_fs',
@@ -136,6 +137,7 @@ const GROUPS: DocGroup[] = [
       'blueprint_info',
       'blueprint_save',
       'blueprint_generate',
+      'blueprint_compile',
     ],
   },
   {
@@ -311,7 +313,7 @@ function buildTools(): DocTool[] {
     return {
       ...tool,
       capability,
-      risk: write ? (writeToolRisk(tool.name) as 1 | 2) : 0,
+      risk: toolRiskOf(tool.name),
       // 写工具继承 WriteToolBase，基类 TimeoutMs => 8000，子类通常不再声明。
       timeoutMs: csInfo.timeoutMs ?? (write ? 8000 : null),
       group: groupOf(tool.name),

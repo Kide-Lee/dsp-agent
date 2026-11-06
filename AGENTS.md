@@ -54,13 +54,17 @@ IcarusII 是《戴森球计划》的 Agent。它包括：
 - sidecar 只监听 `127.0.0.1`，不要改成 `0.0.0.0`。
 
 ### 补丁
-当前插件刻意不注册 Harmony 补丁，功能优先通过游戏公开类型和成员实现。确实需要 patch 时，先说明必要性、替代方案和风险，不得静默加入。
+插件默认不注册 Harmony 补丁，功能优先通过游戏公开类型和成员实现。
+唯一已批准的例外是 `Game/GoalPanelOverride.cs`：原生 `UIGoalPanel` 把 `goalLevel == Off` 写死在三处显示方法里，
+外部无法在“自由探索”下展开目标面板；替代方案（另建面板/改玩家设置）都已评估为不可行。
+补丁只在存在 AI 目标时临时把等级视为 `Key` 并在同一帧恢复，注册失败或插件卸载都会 `UnpatchSelf`。
+新增任何补丁仍必须先说明必要性、替代方案和风险，不得静默加入。
 
 ### 部署与提交
 工作流：
 1. 根据改动范围运行相关测试（skill：`verify-changes`）。
 2. 按改动类型构建 mod DLL、sidecar 和/或 UI bundle；prefab/UI 改动用 skill `rebuild-ui-bundle`。
-3. 运行 scripts/package.sh 打包（skill：`package-release`）。
+3. 通过 skill `package-release` 打包（它调用 `scripts/package-release.sh`，并强制执行依赖版本检查；不要直接跑 `scripts/package.sh`）。
 4. 运行 .dsh/skills/update-steam-mod/scripts/update-steam-mod.sh 部署到 r2modman 配置档（默认；手动安装用 `--game-dir`），并确认 SHA-256 校验通过（skill：`update-steam-mod`）。
 5. 检查提交差异，执行 git add 和 git commit；提交后确认 git status --short 为空。
 提交信息约定：

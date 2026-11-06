@@ -36,6 +36,7 @@ namespace IcarusII.UI
         private int _askedId;
         private float _askedAt;
         private int _shownId;
+        private float _retryAt;
         private bool _levelSaved;
         private bool _savedLevel;
 
@@ -150,16 +151,23 @@ namespace IcarusII.UI
 
             // 游戏的顾问字幕正在播：等它收掉，别把玩家的剧情提示顶掉。
             if (_pending.Count == 0 || tip.active) return;
+            if (Time.realtimeSinceStartup < _retryAt) return;
 
             var notice = _pending[0];
             _pending.RemoveAt(0);
-            Show(tip, notice);
+            if (!Show(tip, notice))
+            {
+                // 原型注入/播放失败（LDB 未就绪、面板被占用）：放回队首稍后重试，
+                // 不能把通知静默丢掉——玩家会以为没有待确认的事。
+                _pending.Insert(0, notice);
+                _retryAt = Time.realtimeSinceStartup + 1f;
+            }
         }
 
-        private void Show(UIAdvisorTip tip, Notice notice)
+        private bool Show(UIAdvisorTip tip, Notice notice)
         {
             var proto = EnsureProto(notice.Id);
-            if (proto == null) return;
+            if (proto == null) return false;
 
             proto.Script = notice.Text;
             proto.Preload();
@@ -177,13 +185,18 @@ namespace IcarusII.UI
             catch (Exception ex)
             {
                 Plugin.Log.LogWarning($"[顾问] 提示显示失败：{ex.Message}");
+                _askedId = 0;
+                RestoreLevel();
+                return false;
             }
 
             if (!tip.active)
             {
                 _askedId = 0;
                 RestoreLevel();
+                return false;
             }
+            return true;
         }
 
         private string HotkeyMarkup()

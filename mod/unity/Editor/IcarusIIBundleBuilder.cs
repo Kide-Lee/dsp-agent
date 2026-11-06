@@ -148,6 +148,12 @@ namespace IcarusII.EditorTools
                 return Fail("聊天窗布局固化失败：" + PrefabPath);
             }
 
+            string explainMessage;
+            if (!IcarusIIExplainArea.InstallAt(PrefabPath, out explainMessage))
+            {
+                return Fail("作答/确认说明区构建失败：" + explainMessage);
+            }
+
             if (!IcarusIIReplyBuilder.Ensure(PrefabPath))
             {
                 return Fail("回复模板构建失败：" + PrefabPath);
@@ -240,6 +246,7 @@ namespace IcarusII.EditorTools
                     "window-border-1",
                     "window-glass-1",
                     "sci-fi-deco-1",
+                    "loading-20",
                     "checkbox-on-2",
                     "checkbox-on",
                     "checkbox-off",
@@ -264,6 +271,12 @@ namespace IcarusII.EditorTools
                 },
             };
 
+            if (build.assetNames.Length != build.addressableNames.Length)
+            {
+                return Fail($"AssetBundle 名称表长度不一致：assetNames={build.assetNames.Length}，" +
+                            $"addressableNames={build.addressableNames.Length}；按名加载会整体错位");
+            }
+
             var manifest = BuildPipeline.BuildAssetBundles(
                 OutputDir,
                 new[] { build },
@@ -286,7 +299,10 @@ namespace IcarusII.EditorTools
             var size = new FileInfo(path).Length;
             Debug.Log($"[IcarusII] AssetBundle 已生成：{path}（{size / 1024} KB, StandaloneWindows64）");
             Debug.Log($"[IcarusII] 包内 bundle：{string.Join(", ", manifest.GetAllAssetBundles())}");
-            ValidateMasks();
+            if (!ValidateMasks())
+            {
+                return Fail("遮罩自检失败：见 Console 里的节点列表；这版 bundle 会让遮罩子树在游戏里消失");
+            }
             SyncPrefabSnapshots();
             return true;
         }
@@ -295,7 +311,7 @@ namespace IcarusII.EditorTools
         /// 遮罩自检：隐藏绘制的遮罩图形如果又被 CanvasRenderer 剔掉，模板就不写，
         /// 那一整片子节点在游戏里会直接消失（设置页整页空白、会话记录消失都踩过）。
         /// </summary>
-        private static void ValidateMasks()
+        private static bool ValidateMasks()
         {
             var broken = new System.Text.StringBuilder();
             foreach (var prefab in new[]
@@ -310,9 +326,12 @@ namespace IcarusII.EditorTools
             }
 
             if (broken.Length > 0)
+            {
                 Debug.LogError("[IcarusII] 遮罩自检失败，这些遮罩的子节点会在游戏里消失：\n" + broken);
-            else
-                Debug.Log("[IcarusII] 遮罩自检通过");
+                return false;
+            }
+            Debug.Log("[IcarusII] 遮罩自检通过");
+            return true;
         }
 
         /// <summary>
@@ -343,16 +362,27 @@ namespace IcarusII.EditorTools
                 "Assets/IcarusII/Resources/console.png.meta",
                 "Assets/IcarusII/Resources/new-conversation.png",
                 "Assets/IcarusII/Resources/new-conversation.png.meta",
-                "Assets/IcarusII/Resources/icons/regenerate.png",
-                "Assets/IcarusII/Resources/icons/regenerate.png.meta",
-                "Assets/IcarusII/Resources/icons/withdraw.png",
-                "Assets/IcarusII/Resources/icons/withdraw.png.meta",
             };
             foreach (var relative in files)
             {
                 var source = Path.Combine(projectRoot, relative);
                 if (!File.Exists(source)) continue;
                 File.Copy(source, Path.Combine(snapshotDir, Path.GetFileName(relative)), true);
+            }
+
+            // 图标快照连同 .meta 放到 Resources/icons，和 Unity 工程里的目录结构一致。
+            // 以前把它们平铺到 Prefab/ 根下，同一份贴图会出现两份不同 GUID 的副本。
+            var iconSnapshotDir = Path.Combine(repoRoot, "mod", "unity", "Resources", "icons");
+            Directory.CreateDirectory(iconSnapshotDir);
+            foreach (var icon in new[] { "regenerate", "withdraw" })
+            {
+                foreach (var suffix in new[] { ".png", ".png.meta" })
+                {
+                    var relative = $"Assets/IcarusII/Resources/icons/{icon}{suffix}";
+                    var source = Path.Combine(projectRoot, relative);
+                    if (!File.Exists(source)) continue;
+                    File.Copy(source, Path.Combine(iconSnapshotDir, $"{icon}{suffix}"), true);
+                }
             }
             Debug.Log($"[IcarusII] prefab 快照已刷新：{snapshotDir}");
         }

@@ -887,6 +887,7 @@ const LOCAL_WRITE_TOOLS: readonly string[] = [
   'blueprint_fs',
   'blueprint_save',
   'blueprint_generate',
+  'blueprint_compile',
   SCRIPT_TOOL_NAME,
 ];
 

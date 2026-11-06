@@ -1980,8 +1980,11 @@ export class Session {
 
     // 后台会话不抢玩家的确认页/提问面板/界面；等玩家切到该会话再发。
     // limited 下 risk 1 会被 mod 自动放行，不需要 focus；risk 2 仍要等。
+    // 已带一次性令牌的调用（脚本内层写）已经由玩家确认过，不能再等焦点，
+    // 否则脚本运行中切走会话会把每个写调用卡到超时。
+    const hasConfirmToken = typeof options.confirmToken === 'string' && options.confirmToken.length > 0;
     const needsAttention =
-      isAsk || (risk > 0 && !autoApprovesWrite(permission, risk));
+      isAsk || (risk > 0 && !hasConfirmToken && !autoApprovesWrite(permission, risk));
     const needsFocus = needsAttention || FOREGROUND_ONLY_TOOLS.has(name);
     if (conversationId && needsAttention) {
       // 确认页/提问面板展示期间保持 warning；玩家作答后再回到 loading。
@@ -2111,7 +2114,7 @@ export class Session {
     if (conversationId) {
       this.setConversationActivity(conversationId, 'attention', 'confirm');
       if (!this.isFocused(conversationId)) {
-        const focused = await this.waitForFocus(conversationId);
+        const focused = await this.waitForFocus(conversationId, request.signal);
         if (!focused) {
           this.setConversationActivity(conversationId, 'running');
           return null;
@@ -2125,7 +2128,7 @@ export class Session {
       'run_script',
       {},
       request.risk,
-      undefined,
+      request.signal,
       {
         argsHash: request.scriptHash,
         title: '脚本包含写操作？',
@@ -2151,7 +2154,7 @@ export class Session {
     if (conversationId) {
       this.setConversationActivity(conversationId, 'attention', 'confirm');
       if (!this.isFocused(conversationId)) {
-        const focused = await this.waitForFocus(conversationId);
+        const focused = await this.waitForFocus(conversationId, request.signal);
         if (!focused) {
           this.setConversationActivity(conversationId, 'running');
           return false;
@@ -2163,7 +2166,7 @@ export class Session {
       request.tool,
       request.args,
       request.risk,
-      undefined,
+      request.signal,
       { title: request.title, body: request.body },
       conversationId,
     );
@@ -2222,14 +2225,23 @@ export class Session {
       const timer = setTimeout(() => finish(null), 60000);
       timer.unref?.();
       if (signal) {
-        const onAbort = (): void => finish(null);
+        const deny = (): void => {
+          finish(null);
+          // 中断时也要给 mod 一个 deny，否则确认页会一直挂到 60s 超时。
+          this.sendEnvelope(
+            buildEnvelope({
+              type: MessageType.ConfirmResult,
+              payload: { requestId, decision: 'deny', token },
+            }),
+          );
+        };
         if (signal.aborted) {
           clearTimeout(timer);
-          resolve(null);
+          deny();
           return;
         }
-        signal.addEventListener('abort', onAbort, { once: true });
-        cleanup = () => signal.removeEventListener('abort', onAbort);
+        signal.addEventListener('abort', deny, { once: true });
+        cleanup = () => signal.removeEventListener('abort', deny);
       }
 
       this.pendingConfirms.set(requestId, {
@@ -2433,9 +2445,21 @@ export class Session {
       },
 
       error(code, message, replyTo) {
-        if (conversationId) session.setConversationActivity(conversationId, 'idle');
-        if (!focused()) return;
-        session.sendError(code, message, replyTo);
+        if (conversationId) {
+          // 后台会话失败不能静默：保留 warning 图标，并把错误正文带到 mod，
+          // 玩家切回去时能看到这一轮为什么没有回答。
+          session.setConversationActivity(
+            conversationId,
+            focused() ? 'idle' : 'attention',
+            focused() ? undefined : 'error',
+          );
+        }
+        session.sendError(
+          code,
+          message,
+          replyTo,
+          conversationId && !focused() ? { conversationId } : {},
+        );
       },
 
       configState(view) {
@@ -2503,7 +2527,7 @@ export class Session {
       },
 
       compacted(payload: ContextCompactedPayload) {
-        if (!focused()) return;
+        // 后台会话的压缩也要送到 mod：mod 不显示记录，但要用它回存游戏时间。
         session.sendEnvelope(
           buildEnvelope({
             type: MessageType.ContextCompacted,
@@ -2530,7 +2554,7 @@ export class Session {
   private setConversationActivity(
     conversationId: string | null | undefined,
     state: ConversationActivityState,
-    reason?: 'confirm' | 'ask',
+    reason?: 'confirm' | 'ask' | 'error',
   ): void {
     if (!conversationId) return;
     const previous = this.conversationActivity.get(conversationId);

@@ -159,20 +159,8 @@ namespace IcarusII.Game
                     if (g.goalId > 0 && g.templateId > 0) set.goals.Add(g);
                 }
 
-                var todos = root["todos"];
-                for (int i = 0; i < todos.Count; i++)
-                {
-                    var item = todos[i];
-                    var t = new StoredTodo
-                    {
-                        id = item["id"].AsInt(0),
-                        text = item["text"].AsString(string.Empty),
-                        status = GoalStore.NormalizeTodoStatus(item["status"].AsString(GoalStore.TodoStatusPending)),
-                    };
-                    if (t.id >= GoalStore.TodoItemIdStart && t.id < GoalStore.TodoItemIdStart + GoalStore.TodoItemLimit &&
-                        !string.IsNullOrEmpty(t.text))
-                        set.todos.Add(t);
-                }
+                // 轮内待办只活在当前回合/当前进程：旧版本写进存档的 todos 在这里忽略，
+                // 下一次 ToContent 也不会再写回去。这样 game_todo_write 不修改存档。
                 return set;
             }
             catch { return new GoalStoreState(); }
@@ -199,18 +187,8 @@ namespace IcarusII.Game
             }
             root.Set("goals", arr);
 
-            var todoArr = JsonValue.NewArray();
-            for (int i = 0; i < todos.Count; i++)
-            {
-                var t = todos[i];
-                if (t == null || string.IsNullOrEmpty(t.text)) continue;
-                var row = JsonValue.NewObject();
-                row.Set("id", t.id);
-                row.Set("text", t.text);
-                row.Set("status", t.status ?? GoalStore.TodoStatusPending);
-                todoArr.Add(row);
-            }
-            root.Set("todos", todoArr);
+            // 不序列化轮内待办：它是一轮内的临时 UI 状态，不属于存档。
+            root.Set("todos", JsonValue.NewArray());
 
             return GoalStore.Prefix + root.ToJson();
         }

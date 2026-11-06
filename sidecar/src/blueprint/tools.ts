@@ -25,7 +25,7 @@ import { createDslTool } from './dsl/tool.js';
 // @ts-ignore vendored JS planner (no types)
 import { planBlueprint } from './planner.mjs';
 
-export const BLUEPRINT_TOOL_NAMES = ['blueprint_fs', 'blueprint_search', 'blueprint_info', 'blueprint_save', 'blueprint_generate'] as const;
+export const BLUEPRINT_TOOL_NAMES = ['blueprint_fs', 'blueprint_search', 'blueprint_info', 'blueprint_save', 'blueprint_generate', 'blueprint_compile'] as const;
 
 const REPO = 'DSPBluePrints/FactoryBluePrints';
 const LICENSE = 'CC BY-NC-SA 4.0';
@@ -383,13 +383,19 @@ export function createBlueprintTools(
   const ws = workspace ?? new BlueprintWorkspace();
   const site = siteClient ?? new DysonSphereBlueprintsClient();
   // 本地蓝图写操作不消耗 mod 令牌，但权限档位要求确认时仍要问玩家。
-  const confirmFileWrite = async (tool: string, args: Record<string, unknown>, body: string): Promise<boolean> => {
+  const confirmFileWrite = async (
+    tool: string,
+    args: Record<string, unknown>,
+    body: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> => {
     if (!confirmWrite) return true;
-    return confirmWrite({ tool, args: args as never, risk: 1, title: '写入蓝图文件？', body });
+    return confirmWrite({ tool, args: args as never, risk: 1, title: '写入蓝图文件？', body, signal });
   };
   const tools: ToolDefinition[] = [];
-  const dslKb = store?.snapshot;
-  if (dslKb) tools.push(createDslTool(dslKb, ws));
+  // 没有知识库时也注册 DSL 工具：执行时会明确报 kb_unavailable，设置页/文档才能看到它。
+  const dslKb = store?.snapshot ?? ({} as KnowledgeBase);
+  tools.push(createDslTool(dslKb, ws, confirmFileWrite));
   return [
     ...tools,
     {
@@ -927,7 +933,7 @@ export function createBlueprintTools(
       ],
       parameters: Type.Object({
         item: Type.String({ description: '物品名或物品 id' }),
-        rate: Type.Number({ description: '目标每分钟产量' }),
+        rate: Type.Number({ minimum: 1, maximum: 1_000_000, description: '目标每分钟产量（1..1000000）' }),
         buildingTier: Type.Optional(
           Type.Union([Type.Literal('base'), Type.Literal('mk2'), Type.Literal('mk3')], {
             description: '机器档位，默认 base（知识库里的最低速机器）',
@@ -960,6 +966,9 @@ export function createBlueprintTools(
         const rawItem = typeof args['item'] === 'string' ? args['item'].trim() : '';
         const rate = typeof args['rate'] === 'number' ? args['rate'] : 0;
         if (!rawItem || !(rate > 0)) return reply({ error: 'item 与 rate 必填' }, false, 'bad_request');
+        if (!Number.isFinite(rate) || rate > 1_000_000) {
+          return reply({ error: 'rate 必须是 1..1000000 的有限数，产量过大请拆成多条产线' }, false, 'bad_request');
+        }
 
         const kb = store?.snapshot;
         if (!kb) {
@@ -1132,6 +1141,10 @@ export function createBlueprintTools(
           try {
             ws.write(unique.virtual.virtual, tile.text);
           } catch (err) {
+            // 分张不是单文件事务：前面已经落盘的文件要回滚，不能留下半套产线。
+            for (const written of tiles) {
+              try { ws.remove(written.relPath); } catch { /* 回滚尽力而为 */ }
+            }
             return reply(
               { error: err instanceof Error ? err.message : String(err), dir: targetDir.real },
               false,

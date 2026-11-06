@@ -152,8 +152,10 @@ namespace IcarusII.Game.Tools
                 pos = pos.normalized * (ground + 0.2f);
             }
 
+            var warningSystem = GameMain.data?.warningSystem;
+            var firstCandidate = warningSystem != null ? warningSystem.warningCursor : 1;
             uiGame.globemap.SetLocationTracking(planet.id, pos, WarningData.LOCATION_SIGNALID);
-            var warningId = FindLocationWarningId();
+            var warningId = FindLocationWarningId(firstCandidate);
             if (warningId <= 0) throw Fail("放置定位标记失败");
 
             WriteActionStack.Push("移除刚放置的定位标记", () =>
@@ -165,11 +167,16 @@ namespace IcarusII.Game.Tools
             return Ok($"已在 {planet.displayName} 放置定位标记（抵达附近或离开行星后消失）");
         }
 
-        private static int FindLocationWarningId()
+        /// <summary>
+        /// 只认放置前后新增的那一条定位标记。按 signal 全表扫描会返回玩家早先
+        /// 手动放的标记，撤销时删错目标；从调用前的 warningCursor 开始找就不会。
+        /// </summary>
+        private static int FindLocationWarningId(int fromId)
         {
             var warningSystem = GameMain.data?.warningSystem;
             if (warningSystem == null) return 0;
-            for (int i = 1; i < warningSystem.warningCursor; i++)
+            int start = Math.Max(1, fromId);
+            for (int i = start; i < warningSystem.warningCursor; i++)
             {
                 var warning = warningSystem.warningPool[i];
                 if (warning.id == i && warning.signalId == WarningData.LOCATION_SIGNALID && warning.state > 0)

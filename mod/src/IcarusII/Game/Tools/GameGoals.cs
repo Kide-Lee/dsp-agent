@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using IcarusII.Common.Json;
+using IcarusII.I18n;
 using UnityEngine;
 using static IcarusII.Game.GoalStore;
 
@@ -269,7 +270,7 @@ namespace IcarusII.Game.Tools
         {
             var goalsArg = args["goals"];
             if (goalsArg == null || goalsArg.Count == 0) throw new InvalidOperationException("goals 不能为空");
-            var groupTitle = args["group"].AsString("游戏目标") ?? "游戏目标";
+            var groupTitle = args["group"].AsString(Strings.Get("goal.default.group")) ?? Strings.Get("goal.default.group");
             var added = JsonValue.NewArray();
             if (_store == null) _store = new GoalStoreState();
 
@@ -399,7 +400,7 @@ namespace IcarusII.Game.Tools
                 {
                     var g = active[i];
                     if (g == null) continue;
-                    if (!groups.ContainsKey(g.groupId)) groups[g.groupId] = g.group ?? "游戏目标";
+                    if (!groups.ContainsKey(g.groupId)) groups[g.groupId] = g.group ?? Strings.Get("goal.default.group");
                 }
 
                 foreach (var pair in groups)
@@ -717,7 +718,7 @@ namespace IcarusII.Game.Tools
 
             _store.todos = next;
             EnsureTodoGroup();
-            SaveStore();
+            // 待办只写原生面板，不写存档：回合结束/换档/退出即消失。
             _needsApply = false;
             _applied = true;
             return TodoResult();
@@ -878,11 +879,7 @@ namespace IcarusII.Game.Tools
             p.Childs = new int[0];
         }
 
-        private static string TodoGroupTitle()
-        {
-            try { return Localization.isZHCN ? "AI 待办" : "AI Todo"; }
-            catch { return "AI 待办"; }
-        }
+        private static string TodoGroupTitle() => Strings.Get("goal.todo.group");
 
         private static void RemoveGroupFromQueue(int id)
         {

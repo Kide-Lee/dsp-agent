@@ -265,6 +265,9 @@
   "payload": { "code": "agent_unavailable", "message": "…", "retryable": true } }
 ```
 
+`payload.conversationId` 可选：后台会话失败时带上，mod 把它存到该会话，
+玩家切回去时补一条系统消息；老 mod 忽略该字段。
+
 | code | 含义 |
 | --- | --- |
 | `protocol_mismatch` | 协议版本不受支持 |
@@ -979,7 +982,8 @@ pi 的自动压缩完成后，sidecar 把摘要作为一条**只给 UI** 的记�
 ```
 
 - `summary`：pi 生成的压缩摘要；mod 作为一条 assistant 记录渲染。
-- `conversationId`（可选）：压缩所属会话；后台会话的压缩不实时显示，切回后从历史回放。
+- `conversationId`（可选）：压缩所属会话；后台会话的压缩也会发送到 mod（带 conversationId），
+  mod 不插入记录，只回存时间；切回后从历史回放并显示脚注。
 - `compactionId`：pi compaction entry id；事件刚发生时可能缺省，撤销时可省略。
 - `timestamp`：压缩完成时间（毫秒，真实时间）；**不用于显示**，只做对齐参考。
   记录里的时间是游戏时钟，见下面的 `context.compacted.time`。
@@ -1474,7 +1478,8 @@ sidecar → mod，可选。只用于会话列表的图标，不进入模型上�
   sidecar 只发通知，不会强制切换会话；玩家可以继续看当前会话，切过去后再弹确认/作答。
 - `completed`：后台会话完成了一轮回答；mod 显示 new。切到该会话后清除。
 - `idle`：清除运行/等待/完成状态，恢复普通 chevron。
-- `reason` 目前只用于 `attention`，取值为 `confirm` 或 `ask`；未来可以扩展图标。
+- `reason` 目前用于 `attention`，取值为 `confirm`、`ask` 或 `error`。
+  `error` 表示后台会话失败：mod 显示 warning，并在切回时补一条错误消息。
 - mod 应容忍未知 `state`（忽略）和未知 `reason`（不改图标）。
 - 点击状态图标只展开/收起该会话的记录列表；要切换会话仍点会话标题。
 
