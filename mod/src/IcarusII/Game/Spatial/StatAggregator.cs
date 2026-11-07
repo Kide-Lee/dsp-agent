@@ -213,7 +213,18 @@ namespace IcarusII.Game.Spatial
             }
         }
 
-        /// <summary>电力：把选中建筑的 consumer/gen/acc 累加，与 game_get_power 同口径。</summary>
+        /// <summary>
+        /// 电力：把选中建筑的 consumer/gen/acc 累加。
+        ///
+        /// 四个量对应 xlsx 的「发电性能、耗电需求、实际发电、蓄电量」：
+        /// - capacityKw = genEnergyPerTick 之和（装机发电性能）
+        /// - demandKw   = requiredEnergy 之和（耗电需求）
+        /// - servedKw   = 电网实际供给按该区域需求占比折算
+        /// - storedKwh  = accPool 的 curEnergy 之和
+        ///
+        /// 单栋建筑没有"已供能"字段，供给是电网级的；
+        /// 直接拿 workEnergyPerTick 当供给会把"满载能耗"误报成"实际发电"。
+        /// </summary>
         public static JsonValue Power(PlanetFactory factory, IReadOnlyCollection<int> entityIds)
         {
             var obj = JsonValue.NewObject();
@@ -231,6 +242,7 @@ namespace IcarusII.Game.Spatial
             }
 
             var system = factory.powerSystem;
+            var networks = new HashSet<int>();
             foreach (var id in entityIds)
             {
                 if (id <= 0 || id >= factory.entityCursor || id >= factory.entityPool.Length) continue;
@@ -241,9 +253,7 @@ namespace IcarusII.Game.Spatial
                 {
                     var consumer = system.consumerPool[entity.powerConId];
                     required += Math.Max(0, consumer.requiredEnergy);
-                    // 单栋建筑没有"已供能"字段：供电满足度是电网级的，
-                    // 这里用工作能耗作为实际取用，缺口由 satisfactionPct 表达。
-                    served += Math.Max(0, consumer.workEnergyPerTick);
+                    if (consumer.networkId > 0) networks.Add(consumer.networkId);
                     consumers++;
                 }
                 if (entity.powerGenId > 0 && system.genPool != null &&
@@ -251,6 +261,7 @@ namespace IcarusII.Game.Spatial
                 {
                     var gen = system.genPool[entity.powerGenId];
                     capacity += Math.Max(0, gen.genEnergyPerTick);
+                    if (gen.networkId > 0) networks.Add(gen.networkId);
                     generators++;
                 }
                 if (entity.powerAccId > 0 && system.accPool != null &&
@@ -260,6 +271,25 @@ namespace IcarusII.Game.Spatial
                     stored += Math.Max(0, acc.curEnergy);
                 }
             }
+
+            // 实际供给按所在电网的满足率折算到本区域的需求份额：
+            // 区域是电网的子集时，只能这样给出"这块区域实际用上了多少"。
+            var satisfaction = 0.0;
+            if (networks.Count > 0 && system.netPool != null)
+            {
+                long netRequired = 0;
+                long netServed = 0;
+                foreach (var networkId in networks)
+                {
+                    if (networkId <= 0 || networkId >= system.netCursor ||
+                        networkId >= system.netPool.Length) continue;
+                    var net = system.netPool[networkId];
+                    netRequired += Math.Max(0, net.energyRequired);
+                    netServed += Math.Max(0, net.energyServed);
+                }
+                if (netRequired > 0) satisfaction = netServed * 100.0 / netRequired;
+            }
+            served = satisfaction > 0 ? (long)(required * satisfaction / 100.0) : 0;
 
             obj.Set("factoryLoaded", true);
             obj.Set("demandKw", GameToolFormat.Round(GameToolFormat.Kw(required), 2));
