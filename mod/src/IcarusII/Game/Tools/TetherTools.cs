@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using IcarusII.Common.Json;
+using IcarusII.Common.Spatial;
+using IcarusII.Game.Spatial;
 using UnityEngine;
 
 namespace IcarusII.Game.Tools
@@ -654,6 +656,14 @@ namespace IcarusII.Game.Tools
         protected override GameToolJobResult Execute(JsonValue args)
         {
             if (!GameRefs.IsInGame || GameMain.mainPlayer == null) throw Fail("当前不在游戏内");
+
+            // space：把区域/定点描述折算成本工具已支持的目标。
+            // 只有能被「行星 + 行星上一点」表达的目标才接受；跨星系的几何区域与会动的目标
+            // 无法用静态箭头表示，直接报错而不是挑一个近似点。
+            var space = args["space"];
+            if (space != null && !space.IsNull)
+                return AddFromSpace(space);
+
             var kind = (args["kind"].AsString("") ?? string.Empty).Trim().ToLowerInvariant();
             if (kind != "planet" && kind != "building" && kind != "vein")
                 throw Fail("kind 只能是 planet、building 或 vein");
@@ -710,6 +720,129 @@ namespace IcarusII.Game.Tools
             data2.Set("iconLabel", built != null ? built.IconLabel : "#" + buildingId.ToString(CultureInfo.InvariantCulture));
             WriteActionStack.MarkNonUndoable("建立到建筑 #" + buildingId.ToString(CultureInfo.InvariantCulture) + " 的方位指示");
             return Ok("已建立机甲到建筑 #" + buildingId.ToString(CultureInfo.InvariantCulture) + " 的方位指示", data2);
+        }
+
+        /// <summary>space_region / space_point 的 target 直接转成方位指示。</summary>
+        private static GameToolJobResult AddFromSpace(JsonValue space)
+        {
+            var kindText = (space["kind"].AsString(null) ?? string.Empty).Trim().ToLowerInvariant();
+            var request = SpatialRequest.Parse(space, SpatialMethod.Navigation);
+
+            if (kindText == "motion" || SpatialTypes.IsMotion(request.Type ?? string.Empty))
+                throw Fail("动点会移动，方位指示是静态箭头，无法指向它；"
+                    + "需要位置请调 space_motion op=location");
+
+            if (kindText == "point" || SpatialTypes.IsPoint(request.Type ?? string.Empty))
+                return AddPoint(request, space);
+
+            return AddRegion(request, space);
+        }
+
+        private static GameToolJobResult AddPoint(SpatialRequest request, JsonValue space)
+        {
+            if (request.Type is null) request.Type = PointCatalog.InferType();
+            var point = PointCatalog.Resolve(request);
+
+            switch (point.Type)
+            {
+                case SpatialTypes.Building:
+                    return AddBuildingOn(point.Planet, point.EntityId);
+                case SpatialTypes.Vein:
+                    return AddVeinOn(point.Planet, point.VeinId);
+                case SpatialTypes.Vegetation:
+                case SpatialTypes.DfGroundBuilding:
+                case SpatialTypes.PlanetPosition:
+                    return AddPlanetOn(point.Planet);
+                default:
+                    throw Fail($"{point.Type} 没有可指向的行星位置；"
+                        + "先把它换算成所属行星或建筑再建方位指示");
+            }
+        }
+
+        private static GameToolJobResult AddRegion(SpatialRequest request, JsonValue space)
+        {
+            if (request.Type is null) request.Type = RegionResolver.InferType();
+            var region = RegionResolver.Resolve(request);
+
+            switch (region.Type)
+            {
+                case SpatialTypes.Planet:
+                case SpatialTypes.DfBase:
+                case SpatialTypes.DfHive:
+                case SpatialTypes.PlanetPatch:
+                    return AddPlanetOn(region.Planet);
+                case SpatialTypes.StarSystem:
+                case SpatialTypes.Star:
+                case SpatialTypes.DysonSphere:
+                {
+                    // 恒星级目标只能指到"该星系里的某颗行星"，没有行星就没有落点
+                    var star = region.Star;
+                    var planet = star != null && star.planets != null && star.planets.Length > 0
+                        ? star.planets[0] : null;
+                    if (planet == null) throw Fail("该恒星系没有行星，无法建立方位指示");
+                    return AddPlanetOn(planet);
+                }
+                case SpatialTypes.PowerGrid:
+                case SpatialTypes.Factory:
+                {
+                    var members = RegionCatalog.Members(region, "building", out _, out _);
+                    if (members.Count == 0) throw Fail("该区域没有建筑，无法建立方位指示");
+                    return AddBuildingOn(region.Planet, members[0].Id);
+                }
+                default:
+                    throw Fail($"{region.Type} 无法用方位指示表示：它没有「行星 + 一点」的落点。"
+                        + "需要坐标请调 space_region op=location");
+            }
+        }
+
+        private static GameToolJobResult AddBuildingOn(PlanetData planet, int entityId)
+        {
+            if (planet?.factory == null) throw Fail("该行星的工厂尚未加载");
+            if (!GameTether.AddBuilding(planet.factory, planet, entityId, out var error)) throw Fail(error);
+            var target = GameTether.LastAdded;
+            var data = JsonValue.NewObject();
+            data.Set("kind", "building");
+            data.Set("planetId", planet.id);
+            data.Set("buildingId", entityId);
+            data.Set("name", target != null ? target.Name : string.Empty);
+            data.Set("subtitle", target != null ? target.Subtitle : planet.displayName);
+            data.Set("description", target != null ? target.Description : string.Empty);
+            data.Set("iconLabel", target != null ? target.IconLabel : "#" + entityId.ToString(CultureInfo.InvariantCulture));
+            WriteActionStack.MarkNonUndoable("建立到建筑 #" + entityId.ToString(CultureInfo.InvariantCulture) + " 的方位指示");
+            return Ok("已建立机甲到建筑 #" + entityId.ToString(CultureInfo.InvariantCulture) + " 的方位指示", data);
+        }
+
+        private static GameToolJobResult AddVeinOn(PlanetData planet, int veinId)
+        {
+            if (planet?.factory == null) throw Fail("该行星的工厂尚未加载");
+            if (!GameTether.AddVein(planet, veinId, out var error)) throw Fail(error);
+            var target = GameTether.LastAdded;
+            var data = JsonValue.NewObject();
+            data.Set("kind", "vein");
+            data.Set("planetId", planet.id);
+            data.Set("veinId", veinId);
+            data.Set("name", target != null ? target.Name : string.Empty);
+            data.Set("subtitle", target != null ? target.Subtitle : string.Empty);
+            data.Set("description", target != null ? target.Description : string.Empty);
+            data.Set("iconLabel", target != null ? target.IconLabel : string.Empty);
+            WriteActionStack.MarkNonUndoable("建立到矿脉 #" + veinId.ToString(CultureInfo.InvariantCulture) + " 的方位指示");
+            return Ok("已建立机甲到矿脉 #" + veinId.ToString(CultureInfo.InvariantCulture) + " 的方位指示", data);
+        }
+
+        private static GameToolJobResult AddPlanetOn(PlanetData planet)
+        {
+            if (planet == null) throw Fail("找不到可指向的行星");
+            if (!GameTether.AddPlanet(planet, out var error)) throw Fail(error);
+            var target = GameTether.LastAdded;
+            var data = JsonValue.NewObject();
+            data.Set("kind", "planet");
+            data.Set("planetId", planet.id);
+            data.Set("name", target != null ? target.Name : planet.displayName);
+            data.Set("subtitle", target != null ? target.Subtitle : string.Empty);
+            data.Set("description", target != null ? target.Description : string.Empty);
+            data.Set("iconLabel", target != null ? target.IconLabel : string.Empty);
+            WriteActionStack.MarkNonUndoable("建立到行星「" + planet.displayName + "」的方位指示");
+            return Ok("已建立机甲到行星「" + planet.displayName + "」的方位指示", data);
         }
     }
 

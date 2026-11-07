@@ -75,6 +75,8 @@
 - `game.storage.v1`：mod 支持存储建筑写操作：`game_storage_set_filter`、`game_storage_set_limit`、
   `game_storage_move`（存储间转移）、`game_storage_deposit`（背包→存储）、`game_storage_withdraw`（存储→背包）。
 - `game.tether.v1`：mod 支持方位指示：`game_tether_add` / `game_tether_list` / `game_tether_clear`。
+  `game_tether_add` 的 `space` 参数接受 `space_region` / `space_point` 的 `kind`+`type`+`target`，
+  把区域折到落点行星或首座建筑、把定点折到建筑/矿脉/行星；动点会被拒绝。
   可同时建立多个（最多 20 个）：本星球每个建筑一条 `LineGizmo`；跨行星用原生
   `navigation.indicatorAstroId` 指向其中一个目标行星（游戏一次只支持一个朝向），落地后该行星上的建筑切换为自绘线。
 - `game.todo.v1`：mod 支持原生 GoalProto 目标注入与读取：`game_todo_templates` /
@@ -1782,6 +1784,11 @@ sidecar 本地工具**（`kb_*`、`wiki_*`、`blueprint_*`、`run_script`，它�
 `input` / `output` 是物流进出（`TrafficStatistics`）口径，
 `production` / `consumption` 是生产消耗（`ProductionStatistics`）口径，同一物品可能同时出现在两边，两者不可相加。
 
+`op=navigation` 不在只读工具里执行：它会写玩家的导航状态，必须走确认链路。
+调用会返回 `invalid_args` 并把调用引到 `game_tether_add`，把 `kind` / `type` / `target`
+原样放进它的 `space` 参数即可（区域折到落点行星或首座建筑，定点折到建筑/矿脉/行星）。
+动点会移动，无法用静态箭头表示，会直接拒绝。
+
 **`game.analyze.v1`（M4c）**
 
 | 协议/模型名 | 说明 |
@@ -1964,7 +1971,7 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | `game_storage_deposit` | 2 | `buildingId`, `itemId`, `count` | 背包→存储；满时退剩余；可撤销 |
 | `game_storage_withdraw` | 2 | `buildingId`, `itemId`, `count` | 存储→背包；背包满时留剩余；可撤销 |
 | `game_feed_input` | 2 | `buildingId`, `itemId`, `count`（≤500） | 背包原料直接进生产建筑输入缓冲；不经过分拣器/传送带；可撤销 |
-| `game_tether_add` | 1 | `kind`（planet/building/vein）, `planetId?`, `buildingId?`, `veinId?` | 建立机甲到行星/建筑/矿脉的方位指示；本星球用原生定位标记，跨行星先用导航线 |
+| `game_tether_add` | 1 | `kind?`（planet/building/vein）, `planetId?`, `buildingId?`, `veinId?`, `space?` | 建立机甲到行星/建筑/矿脉的方位指示；本星球用原生定位标记，跨行星先用导航线。`space` 可直接接 `space_*` 的 `kind`/`type`/`target` |
 | `game_tether_clear` | 1 | 无 | 清除本 mod 建立的所有方位指示 |
 | `game_tether_list` | 0 | 无 | 列出当前方位指示 |
 | `game_todo_templates` | 0 | 无 | 列出原生 GoalProto 模板与判断器 |

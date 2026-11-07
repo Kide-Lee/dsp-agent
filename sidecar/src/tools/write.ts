@@ -408,12 +408,28 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         'kind=planet 时用 planetId（缺省当前星球）；kind=building 时用 buildingId，可选 planetId；kind=vein 时用 veinId，可选 planetId。',
         '本星球建筑/矿脉可同时显示多个定位标记；跨行星原生导航一次只指一个目标行星，不要声称所有跨行星目标都同时可见。',
         '标记在抵达附近后消失、卡片按钮恢复为未定位，这是正常行为。',
+        'space_* 的 op=navigation 会报错并把调用引到这里：把它的 target 原样放进 space 参数即可，不要自己换算成 planetId/buildingId。',
+        '动点（玩家/无人机/运输船/战舰等）会移动，方位指示是静态箭头，会直接拒绝；需要位置请调 space_motion op=location。',
       ],
       parameters: Type.Object({
-        kind: Type.String({ enum: ['planet', 'building', 'vein'], description: 'planet / building / vein' }),
+        kind: Type.Optional(Type.String({
+          enum: ['planet', 'building', 'vein'],
+          description: 'planet / building / vein；用 space 时可省略',
+        })),
         planetId: Type.Optional(Type.Integer({ description: '行星 id，缺省当前星球' })),
         buildingId: Type.Optional(Type.Integer({ description: 'kind=building 时必填' })),
         veinId: Type.Optional(Type.Integer({ description: 'kind=vein 时必填' })),
+        space: Type.Optional(Type.Object({
+          kind: Type.Optional(Type.String({ description: 'region / point / motion' })),
+          type: Type.Optional(Type.String({ description: '空间变量类型，同 space_region / space_point 的 type' })),
+          target: Type.Optional(Type.Union([Type.String(), Type.Object({})], {
+            description: '与 space_* 的 target 相同',
+          })),
+        }, {
+          description:
+            '用空间变量直接建方位指示：把 space_region / space_point 的 kind+type+target 原样放进来。' +
+            '区域会折到它的落点行星或首座建筑，定点会折到建筑/矿脉/行星。',
+        })),
       }),
       timeoutMs: 8000,
       risk: 1,

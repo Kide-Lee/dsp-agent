@@ -87,15 +87,18 @@ tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”�
 - kind=planet 时用 planetId（缺省当前星球）；kind=building 时用 buildingId，可选 planetId；kind=vein 时用 veinId，可选 planetId。
 - 本星球建筑/矿脉可同时显示多个定位标记；跨行星原生导航一次只指一个目标行星，不要声称所有跨行星目标都同时可见。
 - 标记在抵达附近后消失、卡片按钮恢复为未定位，这是正常行为。
+- space_* 的 op=navigation 会报错并把调用引到这里：把它的 target 原样放进 space 参数即可，不要自己换算成 planetId/buildingId。
+- 动点（玩家/无人机/运输船/战舰等）会移动，方位指示是静态箭头，会直接拒绝；需要位置请调 space_motion op=location。
 
 #### 参数
 
 | 参数 | 类型 | 必填 | 约束 | 说明 |
 | --- | --- | --- | --- | --- |
-| `kind` | `string` | 是 | enum: planet / building / vein | planet / building / vein |
+| `kind` | `string` | 否 | enum: planet / building / vein | planet / building / vein；用 space 时可省略 |
 | `planetId` | `integer` | 否 | — | 行星 id，缺省当前星球 |
 | `buildingId` | `integer` | 否 | — | kind=building 时必填 |
 | `veinId` | `integer` | 否 | — | kind=vein 时必填 |
+| `space` | `object` | 否 | — | 用空间变量直接建方位指示：把 space_region / space_point 的 kind+type+target 原样放进来。区域会折到它的落点行星或首座建筑，定点会折到建筑/矿脉/行星。 |
 
 #### 返回
 

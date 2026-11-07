@@ -868,11 +868,17 @@ namespace IcarusII.Game.Tools
             return Result(data, string.IsNullOrEmpty(text) ? "暂无备忘录" : "备忘录 1 条");
         }
 
-        private static GameToolJobResult NavigationUnsupported(JsonValue data, SpatialRequest request, RegionTarget target)
+        /// <summary>
+        /// 导航不接受在只读工具里执行：它会写玩家的导航状态，必须走确认链路。
+        /// 这里只把调用引到能承接它的写工具，并说明怎么传。
+        /// </summary>
+        private static GameToolJobResult NavigationUnsupported(JsonValue data, SpatialRequest request,
+            RegionTarget target)
         {
             throw new SpatialException(
-                $"导航是写操作，请用 game_tether_add（kind=planet/building/vein）或 game_trace_line；"
-                + $"本次 target 为 {target.Describe()}");
+                "导航是写操作，请改用 game_tether_add：把本次的 kind/type/target 原样放进 space 参数，"
+                + $"例如 space={{\"kind\":\"region\",\"type\":\"{target.Type}\",\"target\":\"...\"}}；"
+                + $"本次目标是 {target.Describe()}");
         }
 
         // ------------------------------------------------------------ 蓝图
@@ -1682,10 +1688,12 @@ namespace IcarusII.Game.Tools
             return factory.ReadMarkerWord(entity.markerId);
         }
 
-        private static GameToolJobResult NavigationUnsupported(JsonValue data, SpatialRequest request, PointTarget target)
+        private static GameToolJobResult NavigationUnsupported(JsonValue data, SpatialRequest request,
+            PointTarget target)
         {
             throw new SpatialException(
-                $"导航是写操作，请用 game_tether_add；本次 target 为 {target.Describe()}");
+                "导航是写操作，请改用 game_tether_add：把本次的 kind/type/target 原样放进 space 参数；"
+                + $"本次目标是 {target.Describe()}");
         }
     }
 
@@ -1722,8 +1730,8 @@ namespace IcarusII.Game.Tools
                     return Information(data, request, target);
                 case SpatialMethod.Navigation:
                     throw new SpatialException(
-                        "导航是写操作，请用 game_tether_add；动点无法用 tether 追踪，"
-                        + "需要位置时重新调用 space_motion op=location");
+                        "动点会移动，方位指示是静态箭头，无法指向它；"
+                        + "需要位置请重新调用 space_motion op=location");
                 default:
                     throw new SpatialException(
                         $"类型 {request.Type} 不支持 {SpatialTypes.NameOf(request.Method)}");
