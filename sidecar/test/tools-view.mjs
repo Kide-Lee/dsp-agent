@@ -89,16 +89,17 @@ function testToolGating() {
   check('没有能力时只有 kb/wiki/blueprint/脚本', none.every((n) => n.startsWith('kb_') || n.startsWith('wiki_') || n.startsWith('blueprint_') || n === 'run_script'));
 
   const read = toolNamesForCapabilities(['game.read.v1']);
-  check('game.read.v1 ⇒ 6 个旧工具', read.filter((n) => n.startsWith('game_')).length === 6);
+  check('game.read.v1 ⇒ 3 个旧工具', read.filter((n) => n.startsWith('game_')).length === 3);
   check('game.read.v1 不含 entity 工具', !read.includes('game_get_entity'));
 
   const entity = toolNamesForCapabilities(['game.entity.v1']);
-  check('game.entity.v1 ⇒ 两个建筑工具', entity.includes('game_get_entity') && entity.includes('game_get_entities'));
+  check('game.entity.v1 ⇒ 建筑详情 + 布局/蓝图/拓扑', entity.includes('game_get_entity')
+    && entity.includes('game_render_layout') && entity.includes('game_copy_blueprint'));
   check('game.entity.v1 不含截图', !entity.includes('game_capture_view'));
 
   const view = toolNamesForCapabilities(['game.view.v1']);
   check('game.view.v1 ⇒ 截图', view.includes('game_capture_view'));
-  check('game.view.v1 不含 game.read 工具', !view.includes('game_get_power'));
+  check('game.view.v1 不含 game.read 工具', !view.includes('space_region'));
 
   const write = toolNamesForCapabilities(['game.write.v1']);
   check('game.write.v1 ⇒ 标记工具', write.includes('game_place_marker'));
@@ -134,10 +135,6 @@ function testToolGating() {
   const progress = toolNamesForCapabilities(['game.progress.v1']);
   check('game.progress.v1 ⇒ 进度', progress.includes('game_get_progress'));
 
-  const analyze = toolNamesForCapabilities(['game.analyze.v1']);
-  check('game.analyze.v1 ⇒ 区域分析', analyze.includes('game_analyze_area'));
-  check('game.analyze.v1 不含截图', !analyze.includes('game_capture_view'));
-
   const all = toolNamesForCapabilities([
     'game.read.v1',
     'game.entity.v1',
@@ -145,7 +142,7 @@ function testToolGating() {
     'game.view.v1',
     'game.analyze.v1',
   ]);
-  check('全能力 ⇒ 16 个 game 工具', all.filter((n) => n.startsWith('game_')).length === 16);
+  check('全能力 ⇒ 11 个 game 工具', all.filter((n) => n.startsWith('game_')).length === 11);
   check('全能力仍带 kb_*', all.some((n) => n.startsWith('kb_')));
   check('全能力仍带 run_script', all.includes('run_script'));
   check('全能力包含布局图', all.includes('game_render_layout'));

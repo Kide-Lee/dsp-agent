@@ -157,7 +157,7 @@
   "payload": {
     "text": "怎么提高产量？",
     "conversationId": "sess_…",
-    "requiredTool": "game_get_production",   // 可选（M4l）
+    "requiredTool": "game_get_research",   // 可选（M4l）
     "mode": "steer"                          // 可选（A.15）：插话
   } }
 ```
@@ -183,13 +183,13 @@
 ```jsonc
 // mod → sidecar
 { "v":1, "id":"d-1", "type":"tool_debug",
-  "payload": { "name": "game_get_power", "args": { "planetId": 1 } } }
+  "payload": { "name": "game_get_planet", "args": { "planetId": 1 } } }
 
 // sidecar → mod
 { "v":1, "id":"s-9", "type":"tool_debug_result", "replyTo":"d-1",
   "payload": {
     "ok": true,
-    "tool": "game_get_power",
+    "tool": "game_get_planet",
     "source": "game",                 // game | local | unknown
     "durationMs": 42,
     "content": "……模型可见的格式化文本……",
@@ -682,7 +682,7 @@ mod                                   sidecar
                  { "role": "assistant", "text": "上次的回答",
                    "steps": [
                      { "kind": "thinking", "text": "先看整体产量…" },
-                     { "kind": "tool", "name": "game_get_production",
+                     { "kind": "tool", "name": "space_region",
                        "args": "{\"item\":\"iron\"}", "ok": true,
                        "summary": "铁矿 30/min", "detail": "…" }
                    ] }
@@ -1735,11 +1735,17 @@ sidecar 本地工具**（`kb_*`、`wiki_*`、`blueprint_*`、`run_script`，它�
 | 协议/模型名 | 说明 |
 | --- | --- |
 | `game_get_overview` | 存档、时间、当前星球/星系、玩家经纬度 |
-| `game_get_player` | 机甲能量/护盾、背包 |
 | `game_get_planet` | 行星矿脉汇总、可选矿脉群/逐矿脉节点（分页 + 经纬度）、建筑计数 |
-| `game_get_power` | 电网需求/供给/容量/储能 |
+
+> 机甲能量/护盾与背包已并入 `space.read.v1`（`space_motion op=information` 与 `op=storage`）；
+> 电网供需与按物品聚合的产量/消耗同样已并入：
+> 用 `space_region op=power` 与 `space_region op=production|consumption`
+> （支持 `window` / `unit` / `basis`，并可按区域取子集）。
 | `game_get_research` | 当前研究、进度、队列 |
-| `game_get_production` | 按物品聚合的产量/消耗/库存 |
+
+> 行星内建筑分页列表已并入 `space.read.v1` 的 `space_region op=list`：
+> 每行带 `id` / 名称 / `category` / `recipeId` / `yaw` 与经纬度，
+> 可再用 `kind` / `filter` 过滤，脚本里按配方或位置二次筛选。
 
 **`game.entity.v1`（M4a）**
 
@@ -1750,7 +1756,6 @@ sidecar 本地工具**（`kb_*`、`wiki_*`、`blueprint_*`、`run_script`，它�
 | `game_get_planets` | 银河行星一览；矿脉按宇宙探索等级披露 |
 | `game_get_logistics` | 跨行星物流塔供给/需求汇总 |
 | `game_trace_line` | 沿传送带/分拣器追踪产线拓扑；节点用星系/行星/经纬度 |
-| `game_get_entities` | 行星内建筑分页列表；可按 `protoId` / `protoName` / `recipeId` / 区域过滤；每行带 location |
 
 **`space.read.v1`（P0）**
 
@@ -1791,9 +1796,14 @@ sidecar 本地工具**（`kb_*`、`wiki_*`、`blueprint_*`、`run_script`，它�
 
 **`game.analyze.v1`（M4c）**
 
+> 范围聚合已并入 `space.read.v1`：`space_region op=list` 给成员（含类别、配方、朝向、经纬度），
+> 配合 `op=production` / `op=power` 可覆盖原来的装机产能与耗电聚合，
+> 且范围用经纬度矩形或世界 AABB 表达，不再有"极点附近按 XZ 平面切分"的偏差。
+
+
+
 | 协议/模型名 | 说明 |
 | --- | --- |
-| `game_analyze_area` | 按空间范围聚合产线：建筑/配方计数、装机产能、耗电、物流设施、涉及电网；center 用经纬度 |
 
 **`game.progress.v1`（M4a）**
 
@@ -2174,7 +2184,7 @@ manifest 格式：
   "v": 1, "id": "s-31", "type": "tool_call",
   "payload": {
     "callId": "call_7",
-    "name": "game_get_power",
+    "name": "game_get_planet",
     "args": { "planetId": 3 },
     "risk": 0,
     "timeoutMs": 8000,
@@ -2210,7 +2220,7 @@ manifest 格式：
     "image": null,
     "error": null,
     "meta": {
-      "tool": "game_get_power",
+      "tool": "game_get_planet",
       "gameTick": 123456,
       "saveKey": "3f2a91c4d8e05b17",
       "tickAtStart": 123450,

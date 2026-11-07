@@ -2,7 +2,7 @@
 
 从“这片区域有什么”到“这条线断在哪”。实体 id 是这一组工具的共同货币：先用列表类工具拿 id，再用详情类工具下钻。
 
-共 7 个工具。提示词如何进入模型上下文见 [prompt-shape.md](prompt-shape.md)。
+共 6 个工具。提示词如何进入模型上下文见 [prompt-shape.md](prompt-shape.md)。
 
 ---
 
@@ -13,7 +13,7 @@
 #### 模型可见 · 工具描述（tools 数组）
 
 ```text
-按 entityId 读取单个建筑（或用 entityIds 批量读取）的实际情况，尽量对齐游戏面板：原型、配方、输入/输出槽（数量/需求/增产）、功率与供电满足率、工作状态（缺料/没电/运行/待机）、分拣器目标、传送带线路容量/节点/货物数与区间、仓储容量、物流塔槽位（当前/在途/上限/供需模式）、无人机/运输船/翘曲器与充电状态。fields 可裁剪返回段（assembler/miner/inserter/belt/storage/station/components；默认全量）；批量 entityIds 默认只返回 core，最多 10 个。id 来自 game_get_entities 或截图标注；id 会被回收，返回里的 stale=true 表示该 id 已被别的建筑占用。
+按 entityId 读取单个建筑（或用 entityIds 批量读取）的实际情况，尽量对齐游戏面板：原型、配方、输入/输出槽（数量/需求/增产）、功率与供电满足率、工作状态（缺料/没电/运行/待机）、分拣器目标、传送带线路容量/节点/货物数与区间、仓储容量、物流塔槽位（当前/在途/上限/供需模式）、无人机/运输船/翘曲器与充电状态。fields 可裁剪返回段（assembler/miner/inserter/belt/storage/station/components；默认全量）；批量 entityIds 默认只返回 core，最多 10 个。id 来自 space_region op=list 或截图标注；id 会被回收，返回里的 stale=true 表示该 id 已被别的建筑占用。
 ```
 
 #### 模型可见 · 使用规则（system prompt）
@@ -21,7 +21,7 @@
 - 玩家问某一栋建筑为什么不动、配方是什么、插了什么、有没有电时使用。
 - 先只取需要的段：例如只关心缺料时传 fields=["assembler"]；要逐字段调试才传 components。
 - 检查多栋建筑时用 entityIds（最多 10 个）并配合 fields，避免一次返回完整详情。
-- 如果返回 stale=true，不要使用这条数据：id 已被回收，重新用 game_get_entities 定位。
+- 如果返回 stale=true，不要使用这条数据：id 已被回收，重新用 space_region op=list 定位。
 
 #### 参数
 
@@ -67,50 +67,6 @@
 
 ---
 
-### `game_get_entities`
-
-**label** 建筑列表 · **能力位** `game.entity.v1` · **风险** 0（只读） · **超时** 10000 ms
-
-#### 模型可见 · 工具描述（tools 数组）
-
-```text
-分页列出指定行星（省略则为当前行星）的建筑：id、原型、配方、星系/行星/经纬度、朝向。可按原型 id/名称、配方 id 过滤；配合 game_get_entity 查看单体细节。大星球请用 offset/limit 分页，不要一次拉全量。
-```
-
-#### 模型可见 · 使用规则（system prompt）
-
-- 需要“这片区域有哪些建筑”“某个配方有多少台机器”时使用。
-
-#### 参数
-
-| 参数 | 类型 | 必填 | 约束 | 说明 |
-| --- | --- | --- | --- | --- |
-| `planetId` | `integer` | 否 | — | 行星 id；省略时使用当前所在行星 |
-| `protoId` | `integer` | 否 | — | 按建筑原型 id 过滤 |
-| `protoName` | `string` | 否 | — | 按建筑原型名称子串过滤，例如“组装机” |
-| `recipeId` | `integer` | 否 | — | 按配方 id 过滤 |
-| `offset` | `integer` | 否 | — | 分页偏移，默认 0 |
-| `limit` | `integer` | 否 | — | 返回条数上限，默认 25 |
-
-#### 返回
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `planetId` | `integer` | 同参数 `planetId` |
-| `available` | `boolean` | 工厂是否已加载 |
-| `rows` | `array` | 建筑行：`id` / 原型 / 配方 / 星系 / 行星 / 经纬度 / 朝向（按 offset/limit 分页） |
-| `total` | `integer` | 匹配的建筑总数（分页前） |
-| `offset` | `integer` | 同参数 `offset` |
-| `limit` | `integer` | 同参数 `limit` |
-| `hasMore` | `boolean` | 是否还有下一页 |
-| `display` | `string` | 一行摘要：匹配数与本页条数 |
-
-嵌套对象内部字段（未逐个展开）：`protoId`、`protoName`、`iconTag`、`category`、`yaw`、`recipeId`、`recipeName`
-
-> 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
-
----
-
 ### `game_render_layout`
 
 **label** 布局图 · **能力位** `game.entity.v1` · **风险** 0（只读） · **超时** 10000 ms
@@ -124,7 +80,7 @@
 #### 模型可见 · 使用规则（system prompt）
 
 - 玩家问布局、走线、是否堵死，或截图看不清时使用。
-- 字符只表达类别与占位；朝向、配方、输入输出要再用 game_get_entities / game_analyze_area。
+- 字符只表达类别与占位；朝向、配方、输入输出要再用 space_region op=list / op=production。
 
 #### 参数
 
@@ -170,7 +126,7 @@
 
 - 玩家问“哪个星球有 X 矿/哪颗星在产什么/银河整体情况”时使用。
 - observed=false 或 veinsHidden=true 表示玩家还没探索到，不要编造矿脉；如实说明需要提升宇宙探索等级。
-- hasFactory=true 的行星可继续用 game_analyze_area / game_get_entities / game_get_power 分析。
+- hasFactory=true 的行星可继续用 space_region（op=list / op=power / op=production）分析。
 
 #### 参数
 
@@ -218,7 +174,7 @@
 | 参数 | 类型 | 必填 | 约束 | 说明 |
 | --- | --- | --- | --- | --- |
 | `planetId` | `integer` | 否 | — | 行星 id；省略时使用当前所在行星 |
-| `entityId` | `integer` | 是 | — | 起点建筑 id（来自 game_get_entities / 截图） |
+| `entityId` | `integer` | 是 | — | 起点建筑 id（来自 space_region op=list / 截图） |
 | `depth` | `integer` | 否 | minimum=1，maximum=60 | 最大跳数，默认 20 |
 | `maxNodes` | `integer` | 否 | minimum=2，maximum=300 | 最大节点数，默认 200 |
 
@@ -257,7 +213,7 @@
 
 - 玩家问“某个原料从哪来/哪颗星在供应/为什么跨星运不过来”时使用。
 - supply/demand 来自物流塔槽位的远程供应/需求设置；具体航线与在途量用 game_get_entity 看站点详情。
-- 先在这里定位物品与星球，再用 game_analyze_area / game_get_planet 下钻。
+- 先在这里定位物品与星球，再用 space_region / game_get_planet 下钻。
 
 #### 参数
 
@@ -300,7 +256,7 @@
 
 #### 模型可见 · 使用规则（system prompt）
 
-- 玩家说“把这片产线存成蓝图”时使用；id 来自 game_analyze_area / game_get_entities。
+- 玩家说“把这片产线存成蓝图”时使用；id 来自 space_region op=list。
 - 一次最多 500 个；工具只保存文件，不建造、不粘贴；权限档位会决定是否弹确认。
 - 保存后告诉玩家文件名与位置；重名会自动加 (2)/(3)。
 

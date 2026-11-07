@@ -7,7 +7,7 @@
 
 ## 工具清单
 
-共 60 个模型可见工具。
+共 55 个模型可见工具。
 
 | 工具 | label | 能力位 | 风险 | 超时 | 一句话 |
 | --- | --- | --- | --- | --- | --- |
@@ -19,18 +19,13 @@
 | [`ui_snapshot`](index.md#ui_snapshot) | 界面控件 | `ui.tree.v1` | 只读 | — | 列出当前可见的 uGUI 可交互控件：层级路径、类型、显示文字、是否可用、Toggle/InputField 的值。 |
 | [`game_get_overview`](game-read.md#game_get_overview) | 存档概览 | `game.read.v1` | 只读 | 5000ms | 读取当前存档概览：存档名、游戏时刻、当前行星/星系、玩家经纬度、是否暂停。 |
 | [`game_get_planet`](game-read.md#game_get_planet) | 行星状态 | `game.read.v1` | 只读 | 12000ms | 读取指定行星（省略则为当前行星）的类型、半径、矿脉按资源汇总、建筑按原型计数。 |
-| [`game_get_player`](game-read.md#game_get_player) | 玩家状态 | `game.read.v1` | 只读 | 6000ms | 读取伊卡洛斯的能量、护盾、反应堆能量与背包物品（id、名称、数量）。 |
-| [`game_get_power`](game-read.md#game_get_power) | 电力状态 | `game.read.v1` | 只读 | 6000ms | 读取指定行星（省略则为当前行星）的电网：需求、已供、容量、储能、满足率与充放电。 |
-| [`game_get_production`](game-read.md#game_get_production) | 实际产出 | `game.read.v1` | 只读 | 12000ms | 读取指定行星（省略则为当前行星）按物品聚合的产量/消耗/库存（每分钟口径），按净产出从低到高排序，并给出库存还能撑几分钟。 |
 | [`game_get_research`](game-read.md#game_get_research) | 研究状态 | `game.read.v1` | 只读 | 5000ms | 读取当前研究科技、进度、队列、研究速度与已解锁科技数量。 |
 | [`game_copy_blueprint`](game-entity.md#game_copy_blueprint) | 存为蓝图 | `game.entity.v1` | risk 1 | 20000ms | 把指定的一批建筑（entityIds）存成游戏蓝图文件，复用游戏自己的复制逻辑，产物与游戏内复制同源。 |
-| [`game_get_entities`](game-entity.md#game_get_entities) | 建筑列表 | `game.entity.v1` | 只读 | 10000ms | 分页列出指定行星（省略则为当前行星）的建筑：id、原型、配方、星系/行星/经纬度、朝向。 |
 | [`game_get_entity`](game-entity.md#game_get_entity) | 建筑详情 | `game.entity.v1` | 只读 | 6000ms | 按 entityId 读取单个建筑（或用 entityIds 批量读取）的实际情况，尽量对齐游戏面板：原型、配方、输入/输出槽（数量/需求/增产）、功率与供电满足率、工作状态（… |
 | [`game_get_logistics`](game-entity.md#game_get_logistics) | 星际物流 | `game.entity.v1` | 只读 | 20000ms | 汇总所有已加载工厂的物流塔：哪些星球/站点在供给或需求某物品、星际塔与轨道采集器、运输船/无人机与翘曲器数量。 |
 | [`game_get_planets`](game-entity.md#game_get_planets) | 星球一览 | `game.entity.v1` | 只读 | 20000ms | 列出银河里所有行星：轨道/类型/半径、是否有工厂与建筑数、电力汇总，以及按宇宙探索等级披露的矿脉。 |
 | [`game_render_layout`](game-entity.md#game_render_layout) | 布局图 | `game.entity.v1` | 只读 | 10000ms | 把一片区域的建筑排布画成字符网格（上=+Z，左=-X）：物流站 S、生产设备 M、仓储 B、发电 P、采矿 V、分拣器 >、传送带 =。 |
 | [`game_trace_line`](game-entity.md#game_trace_line) | 产线拓扑 | `game.entity.v1` | 只读 | 15000ms | 从一栋建筑出发，沿传送带与分拣器把相连设备串成图：节点（id/名称/类别/星系/行星/经纬度/深度）与有向边。 |
-| [`game_analyze_area`](game-progress.md#game_analyze_area) | 产线分析 | `game.analyze.v1` | 只读 | 15000ms | 按空间范围聚合产线：各类建筑数量、各配方的机器数与装机产能、耗电、传送带/分拣器/物流塔数量、涉及电网的供需。 |
 | [`game_capture_view`](game-progress.md#game_capture_view) | 截图 | `game.view.v1` | 只读 | 15000ms | 截取当前游戏画面（不含 UI），以 JPEG 返回图片本身，并附带可见建筑的屏幕坐标。 |
 | [`game_get_progress`](game-progress.md#game_get_progress) | 进度阶段 | `game.progress.v1` | 只读 | 6000ms | 读取玩家进度：派生阶段（电磁/炼油/钛/星际物流/翘曲/戴森球…）及判定依据、已解锁科技数、里程碑、教程、当前研究与队列。 |
 | [`space_motion`](game-space.md#space_motion) | 动点查询 | `space.read.v1` | 只读 | — | 按动点读位置与状态：玩家 / 建设无人机 / 配送运输机 / 物流运输机 / 星际物流运输船 / 小型运载火箭 / 战斗无人机 / 战舰 / 太空黑雾单位 / 地面黑雾单位 /… |
@@ -76,9 +71,9 @@
 
 | 文件 | 内容 | 数量 |
 | --- | --- | --- |
-| [game-read.md](game-read.md) | 只读 · 存档与产线概览 | 6 |
-| [game-entity.md](game-entity.md) | 只读 · 建筑、星球与拓扑 | 7 |
-| [game-progress.md](game-progress.md) | 只读 · 进度、截图与区域分析 | 3 |
+| [game-read.md](game-read.md) | 只读 · 存档与产线概览 | 3 |
+| [game-entity.md](game-entity.md) | 只读 · 建筑、星球与拓扑 | 6 |
+| [game-progress.md](game-progress.md) | 只读 · 进度、截图与区域分析 | 2 |
 | [game-space.md](game-space.md) | 只读 · 空间变量（区域 / 定点 / 动点） | 3 |
 | [game-write-basic.md](game-write-basic.md) | 写操作 · 标记、面板、研究与丢弃 | 5 |
 | [game-write-build.md](game-write-build.md) | 写操作 · 配方、投料与仓储 | 9 |
@@ -98,12 +93,11 @@ mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告�
 
 | 能力位 | 工具数 | 代表工具 |
 | --- | --- | --- |
-| `game.read.v1` | 6 | `game_get_overview`、`game_get_player`、`game_get_planet` |
-| `game.entity.v1` | 7 | `game_get_entity`、`game_get_entities`、`game_render_layout` |
+| `game.read.v1` | 3 | `game_get_overview`、`game_get_planet`、`game_get_research` |
+| `game.entity.v1` | 6 | `game_get_entity`、`game_render_layout`、`game_get_planets` |
 | `game.progress.v1` | 1 | `game_get_progress` |
 | `game.view.v1` | 1 | `game_capture_view` |
 | `space.read.v1` | 3 | `space_region`、`space_point`、`space_motion` |
-| `game.analyze.v1` | 1 | `game_analyze_area` |
 | `game.todo.v1` | 4 | `game_todo_templates`、`game_todo_list`、`game_todo_add` |
 | `mod.bridge.v1` | 4 | `mods_api_list`、`mods_adapter_create`、`mods_adapter_delete` |
 | `ui.tree.v1` | 2 | `ui_snapshot`、`ui_click` |

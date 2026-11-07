@@ -62,7 +62,7 @@
 
 | 参数 | 类型 | 必填 | 约束 | 说明 |
 | --- | --- | --- | --- | --- |
-| `code` | `string` | 是 | — | 脚本正文。示例：const r = JSON.parse(dsp.call("game_get_power", {})); return {kw: r.data.demandKw}; |
+| `code` | `string` | 是 | — | 脚本正文。示例：const r = JSON.parse(dsp.call("space_region", {op: "power", type: "planet"})); return {kw: r.data.power.demandKw}; |
 | `timeoutMs` | `integer` | 否 | minimum=100，maximum=120000 | 运行上限，默认 30000ms，最大 120000ms |
 | `maxCalls` | `integer` | 否 | minimum=1，maximum=10000 | 工具调用次数上限，默认 100，最大 10000 |
 

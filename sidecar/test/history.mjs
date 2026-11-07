@@ -206,7 +206,7 @@ const withSteps = extractHistoryMessages([
       role: 'assistant',
       content: [
         { type: 'thinking', thinking: '再核对' },
-        { type: 'toolCall', id: 't3', name: 'game_get_production', arguments: { item: 'iron' } },
+        { type: 'toolCall', id: 't3', name: 'space_region', arguments: { item: 'iron' } },
       ],
       timestamp: 3,
     },
@@ -214,7 +214,7 @@ const withSteps = extractHistoryMessages([
   {
     type: 'message',
     message: {
-      role: 'toolResult', toolCallId: 't3', toolName: 'game_get_production', isError: false,
+      role: 'toolResult', toolCallId: 't3', toolName: 'space_region', isError: false,
       content: [{ type: 'text', text: '产量 30' }],
     },
   },

@@ -39,7 +39,7 @@ function fixture() {
     },
     {
       type: 'message', id: 't1', parentId: 'a1', timestamp: '2026-01-01T00:00:02.000Z',
-      message: { role: 'toolResult', toolName: 'game_get_power', content: '{}' },
+      message: { role: 'toolResult', toolName: 'space_region', content: '{}' },
     },
     {
       type: 'message', id: 'u2', parentId: 't1', timestamp: '2026-01-01T00:01:00.000Z',

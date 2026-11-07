@@ -49,7 +49,7 @@
 
 #### 模型可见 · 使用规则（system prompt）
 
-- 玩家要求“这几台/这一排都改成同一个配方”时使用；先用 game_get_entities 拿到 id。
+- 玩家要求“这几台/这一排都改成同一个配方”时使用；先用 space_region op=list 拿到 id。
 - 一次最多 20 台；超过时分批，不要一次塞太多。
 - 返回 changed/skipped/items；如果某台不匹配，整批会失败并说明原因。
 

@@ -33,7 +33,6 @@ export const CAPABILITY_GAME_READ = 'game.read.v1';
 export const CAPABILITY_GAME_ENTITY = 'game.entity.v1';
 export const CAPABILITY_GAME_PROGRESS = 'game.progress.v1';
 export const CAPABILITY_GAME_VIEW = 'game.view.v1';
-export const CAPABILITY_GAME_ANALYZE = 'game.analyze.v1';
 /** 第三方 mod 桥（P0）：插件列表与配置读写。 */
 export const CAPABILITY_MOD_BRIDGE = 'mod.bridge.v1';
 /** uGUI 控件树（P3）：快照与合成点击。 */
@@ -54,14 +53,11 @@ export const BRIDGE_TOOL_NAMES = [
 
 export const GAME_TOOL_NAMES = [
   'game_get_overview',
-  'game_get_player',
   'game_get_planet',
-  'game_get_power',
   'game_get_research',
-  'game_get_production',
 ] as const;
 
-export const ENTITY_TOOL_NAMES = ['game_get_entity', 'game_get_entities'] as const;
+export const ENTITY_TOOL_NAMES = ['game_get_entity'] as const;
 export const PROGRESS_TOOL_NAMES = ['game_get_progress'] as const;
 export const VIEW_TOOL_NAMES = ['game_capture_view'] as const;
 export const SPATIAL_TOOL_NAMES = ['space_region', 'space_point', 'space_motion'] as const;
@@ -69,16 +65,11 @@ export const SPATIAL_TOOL_NAMES = ['space_region', 'space_point', 'space_motion'
 /** 工具名 → 所需能力。新增工具必须在这里登记，否则不会被广告。 */
 const TOOL_CAPABILITY: Record<string, string> = {
   game_get_overview: CAPABILITY_GAME_READ,
-  game_get_player: CAPABILITY_GAME_READ,
   game_get_planet: CAPABILITY_GAME_READ,
-  game_get_power: CAPABILITY_GAME_READ,
   game_get_research: CAPABILITY_GAME_READ,
-  game_get_production: CAPABILITY_GAME_READ,
   game_get_entity: CAPABILITY_GAME_ENTITY,
-  game_get_entities: CAPABILITY_GAME_ENTITY,
   game_get_progress: CAPABILITY_GAME_PROGRESS,
   game_capture_view: CAPABILITY_GAME_VIEW,
-  game_analyze_area: CAPABILITY_GAME_ANALYZE,
   game_render_layout: CAPABILITY_GAME_ENTITY,
   game_copy_blueprint: CAPABILITY_GAME_ENTITY,
   game_get_planets: CAPABILITY_GAME_ENTITY,
@@ -230,21 +221,6 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       timeoutMs: 5000,
     }),
     gameTool(host, {
-      name: 'game_get_player',
-      label: '玩家状态',
-      description:
-        '读取伊卡洛斯的能量、护盾、反应堆能量与背包物品（id、名称、数量）。' +
-        '玩家问“我还有多少能量”“背包里有什么”时调用。',
-      promptGuidelines: [
-        '玩家询问自己的能量、护盾或背包物品时使用。',
-      ],
-      parameters: Type.Object({
-        offset: offsetArg,
-        limit: limitArg,
-      }),
-      timeoutMs: 6000,
-    }),
-    gameTool(host, {
       name: 'game_get_planet',
       label: '行星状态',
       description:
@@ -271,20 +247,6 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       timeoutMs: 12000,
     }),
     gameTool(host, {
-      name: 'game_get_power',
-      label: '电力状态',
-      description:
-        '读取指定行星（省略则为当前行星）的电网：需求、已供、容量、储能、满足率与充放电。' +
-        '所有功率单位为 kW，储能为 kWh；玩家问“电够不够”时调用。',
-      promptGuidelines: [
-        '玩家询问电力是否足够、为什么停电或电网负载时使用。',
-      ],
-      parameters: Type.Object({
-        planetId: planetArg,
-      }),
-      timeoutMs: 6000,
-    }),
-    gameTool(host, {
       name: 'game_get_research',
       label: '研究状态',
       description:
@@ -297,28 +259,6 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       timeoutMs: 5000,
     }),
     gameTool(host, {
-      name: 'game_get_production',
-      label: '实际产出',
-      description:
-        '读取指定行星（省略则为当前行星）按物品聚合的产量/消耗/库存（每分钟口径），' +
-        '按净产出从低到高排序，并给出库存还能撑几分钟。玩家问“我缺什么”时调用它，' +
-        '再结合 game_get_power 判断瓶颈。',
-      promptGuidelines: [
-        '玩家问“我缺什么”、某条产线为什么停、库存还能撑多久时使用。',
-        'basis=stats 是实际统计；basis=installed 表示 1 分钟桶为空，items 是按装配机算的装机产能（statsEmpty=true）。',
-        'statsEmpty=true 时不要下“没有产线”的结论；设备在别处或需要空间明细时改调 game_analyze_area。',
-      ],
-      parameters: Type.Object({
-        planetId: planetArg,
-        itemFilter: Type.Optional(
-          Type.String({ description: '按物品名或 id 过滤，例如“铁块”或“1001”' }),
-        ),
-        offset: offsetArg,
-        limit: limitArg,
-      }),
-      timeoutMs: 12000,
-    }),
-    gameTool(host, {
       name: 'game_get_entity',
       label: '建筑详情',
       description:
@@ -327,12 +267,12 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '仓储容量、物流塔槽位（当前/在途/上限/供需模式）、无人机/运输船/翘曲器与充电状态。' +
         'fields 可裁剪返回段（assembler/miner/inserter/belt/storage/station/components；默认全量）；' +
         '批量 entityIds 默认只返回 core，最多 10 个。' +
-        'id 来自 game_get_entities 或截图标注；id 会被回收，返回里的 stale=true 表示该 id 已被别的建筑占用。',
+        'id 来自 space_region op=list 或截图标注；id 会被回收，返回里的 stale=true 表示该 id 已被别的建筑占用。',
       promptGuidelines: [
         '玩家问某一栋建筑为什么不动、配方是什么、插了什么、有没有电时使用。',
         '先只取需要的段：例如只关心缺料时传 fields=["assembler"]；要逐字段调试才传 components。',
         '检查多栋建筑时用 entityIds（最多 10 个）并配合 fields，避免一次返回完整详情。',
-        '如果返回 stale=true，不要使用这条数据：id 已被回收，重新用 game_get_entities 定位。',
+        '如果返回 stale=true，不要使用这条数据：id 已被回收，重新用 space_region op=list 定位。',
       ],
       parameters: Type.Object({
         planetId: planetArg,
@@ -350,28 +290,6 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         ),
       }),
       timeoutMs: 6000,
-    }),
-    gameTool(host, {
-      name: 'game_get_entities',
-      label: '建筑列表',
-      description:
-        '分页列出指定行星（省略则为当前行星）的建筑：id、原型、配方、星系/行星/经纬度、朝向。' +
-        '可按原型 id/名称、配方 id 过滤；配合 game_get_entity 查看单体细节。' +
-        '大星球请用 offset/limit 分页，不要一次拉全量。',
-      promptGuidelines: [
-        '需要“这片区域有哪些建筑”“某个配方有多少台机器”时使用。',
-      ],
-      parameters: Type.Object({
-        planetId: planetArg,
-        protoId: Type.Optional(Type.Integer({ description: '按建筑原型 id 过滤' })),
-        protoName: Type.Optional(
-          Type.String({ description: '按建筑原型名称子串过滤，例如“组装机”' }),
-        ),
-        recipeId: Type.Optional(Type.Integer({ description: '按配方 id 过滤' })),
-        offset: offsetArg,
-        limit: limitArg,
-      }),
-      timeoutMs: 10000,
     }),
     gameTool(host, {
       name: 'game_get_progress',
@@ -399,7 +317,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '需要平面布局时用 view=topdown，并用 entityId/center 指定中心、cameraHeight 指定高度（10–150m）。',
         '需要换角度时用 view=orbit，配合 entityId/center、distance、pitch、yaw；一次调用只拍一个角度，想看多个方向就分多次调用并改 yaw/pitch/distance。',
         '俯视图只覆盖玩家附近已加载的区块；画面缺一块时说明是流送限制，不要当成空地。',
-        '图上的编号框与 legend 的 index 一一对应；先按编号定位，再结合 game_get_entity / game_get_entities 的数值下结论，不要只凭像素猜配方。',
+        '图上的编号框与 legend 的 index 一一对应；先按编号定位，再结合 space_region op=list / game_get_entity 的数值下结论，不要只凭像素猜配方。',
         'annotate=false 可关掉标注（例如只想看纯净画面）。',
       ],
       parameters: Type.Object({
@@ -449,7 +367,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '采矿 V、分拣器 >、传送带 =。用来判断“布局对不对/有没有断路/密度如何”，比截图更省 token。',
       promptGuidelines: [
         '玩家问布局、走线、是否堵死，或截图看不清时使用。',
-        '字符只表达类别与占位；朝向、配方、输入输出要再用 game_get_entities / game_analyze_area。',
+        '字符只表达类别与占位；朝向、配方、输入输出要再用 space_region op=list / op=production。',
       ],
       parameters: Type.Object({
         planetId: planetArg,
@@ -468,7 +386,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       promptGuidelines: [
         '玩家问“哪个星球有 X 矿/哪颗星在产什么/银河整体情况”时使用。',
         'observed=false 或 veinsHidden=true 表示玩家还没探索到，不要编造矿脉；如实说明需要提升宇宙探索等级。',
-        'hasFactory=true 的行星可继续用 game_analyze_area / game_get_entities / game_get_power 分析。',
+        'hasFactory=true 的行星可继续用 space_region（op=list / op=power / op=production）分析。',
       ],
       parameters: Type.Object({
         includeVeins: Type.Optional(Type.Boolean({ description: '是否返回已观察星球的矿脉，默认 true' })),
@@ -488,7 +406,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       ],
       parameters: Type.Object({
         planetId: planetArg,
-        entityId: Type.Integer({ description: '起点建筑 id（来自 game_get_entities / 截图）' }),
+        entityId: Type.Integer({ description: '起点建筑 id（来自 space_region op=list / 截图）' }),
         depth: Type.Optional(Type.Integer({ minimum: 1, maximum: 60, description: '最大跳数，默认 20' })),
         maxNodes: Type.Optional(Type.Integer({ minimum: 2, maximum: 300, description: '最大节点数，默认 200' })),
       }),
@@ -691,7 +609,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       promptGuidelines: [
         '玩家问“某个原料从哪来/哪颗星在供应/为什么跨星运不过来”时使用。',
         'supply/demand 来自物流塔槽位的远程供应/需求设置；具体航线与在途量用 game_get_entity 看站点详情。',
-        '先在这里定位物品与星球，再用 game_analyze_area / game_get_planet 下钻。',
+        '先在这里定位物品与星球，再用 space_region / game_get_planet 下钻。',
       ],
       parameters: Type.Object({
         itemFilter: Type.Optional(Type.String({ description: '物品名或 id，例如“钛块”' })),
@@ -708,7 +626,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '把指定的一批建筑（entityIds）存成游戏蓝图文件，复用游戏自己的复制逻辑，产物与游戏内复制同源。' +
         '保存到游戏蓝图目录（默认 IcarusII/，可传 dir），打开蓝图界面即可看到；只写蓝图文件，不改游戏状态。',
       promptGuidelines: [
-        '玩家说“把这片产线存成蓝图”时使用；id 来自 game_analyze_area / game_get_entities。',
+        '玩家说“把这片产线存成蓝图”时使用；id 来自 space_region op=list。',
         '一次最多 500 个；工具只保存文件，不建造、不粘贴；权限档位会决定是否弹确认。',
         '保存后告诉玩家文件名与位置；重名会自动加 (2)/(3)。',
       ],
@@ -723,42 +641,6 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       timeoutMs: 20000,
       // 只写蓝图文件、不改游戏状态；risk 1：只读权限下仍需确认。
       risk: 1,
-    }),
-    gameTool(host, {
-      name: 'game_analyze_area',
-      label: '产线分析',
-      description:
-        '按空间范围聚合产线：各类建筑数量、各配方的机器数与装机产能、耗电、传送带/分拣器/物流塔数量、' +
-        '涉及电网的供需。用于回答“这片区域是什么产线、规模多大、吃多少电”。' +
-        '只给装机口径；实际产出请再用 game_get_production。',
-      promptGuidelines: [
-        '玩家问“这片产线是干什么的/多大/耗多少电”时使用。',
-        'game_get_production 返回 statsEmpty=true 或 items 为空时，用它看装机产能（可 all=true 扫整颗星球）。',
-        '结果里 byRecipe 是“机器数 × 配方速度”，不要把它说成实际产出。',
-        '结果是装机产能，不是实际产出；回答实际产量要结合 game_get_production。',
-        '范围默认以玩家为中心 60m；可用 entityId 指定中心，或用 all 分析整星球。',
-      ],
-      parameters: Type.Object({
-        planetId: planetArg,
-        entityId: Type.Optional(Type.Integer({ description: '以该建筑为圆心' })),
-        radius: Type.Optional(Type.Number({ description: '半径（米），默认 60，范围 5–500' })),
-        center: Type.Optional(
-          Type.Object({
-            latitude: Type.Optional(Type.Number()),
-            longitude: Type.Optional(Type.Number()),
-            altitude: Type.Optional(Type.Number()),
-            x: Type.Optional(Type.Number()),
-            y: Type.Optional(Type.Number()),
-            z: Type.Optional(Type.Number()),
-          }, {
-            description: '中心：latitude+longitude；x/y/z 仅兼容旧调用',
-          }),
-        ),
-        all: Type.Optional(Type.Boolean({ description: '分析整颗星球，忽略 radius/center' })),
-        includeEntities: Type.Optional(Type.Boolean({ description: '是否列出范围内建筑，默认 false' })),
-        limit: Type.Optional(Type.Integer({ description: '列出的建筑上限，默认 40，最大 100' })),
-      }),
-      timeoutMs: 15000,
     }),
     gameTool(host, {
       name: 'game_todo_templates',

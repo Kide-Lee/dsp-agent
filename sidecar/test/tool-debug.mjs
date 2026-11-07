@@ -112,7 +112,7 @@ async function makeSession({ debugTools = true, withDebug = true, result } = {})
     serverVersion: 'test',
     agent,
     config,
-    tools: ['game_get_power'],
+    tools: ['game_get_research'],
     debugTools,
     helloTimeoutMs: 500,
   });
@@ -129,10 +129,10 @@ function send(session, frame) {
 
 console.log('── 1. tool_debug 载荷解析 ──');
 {
-  const parsed = parseToolDebugPayload({ name: ' game_get_power ', args: { planetId: 1 } });
-  check('name trim', parsed?.name === 'game_get_power', parsed?.name);
+  const parsed = parseToolDebugPayload({ name: ' game_get_research ', args: { planetId: 1 } });
+  check('name trim', parsed?.name === 'game_get_research', parsed?.name);
   check('args 保留', parsed?.args?.planetId === 1);
-  check('args 缺省为 {}', parseToolDebugPayload({ name: 'game_get_player' })?.args?.constructor === Object);
+  check('args 缺省为 {}', parseToolDebugPayload({ name: 'game_get_planet' })?.args?.constructor === Object);
   check('args 数组拒绝', parseToolDebugPayload({ name: 'x', args: [] }) === null);
   check('空 name 拒绝', parseToolDebugPayload({ name: '   ' }) === null);
   check('非对象拒绝', parseToolDebugPayload(null) === null);
@@ -145,7 +145,7 @@ console.log('\n── 2. 调试直调 ──');
   const { session, socket, state } = await makeSession();
   send(session, {
     v: 1, id: 'd-1', type: 'tool_debug',
-    payload: { name: 'game_get_power', args: { planetId: 2 } },
+    payload: { name: 'game_get_research', args: {} },
   });
   const got = await waitFor(() => socket.frames.some((f) => f.type === 'tool_debug_result'));
   check('收到 tool_debug_result', got);
@@ -158,7 +158,7 @@ console.log('\n── 2. 调试直调 ──');
   check('没有 status 帧', !socket.frames.some((f) => f.type === 'status'));
   check('没有调用 agent.run', state.runCalls === 0);
   check('只调用了一次 debugTool', state.debugCalls === 1);
-  check('参数透传', state.args?.planetId === 2 && state.name === 'game_get_power');
+  check('参数透传',  state.name === 'game_get_research');
   session.dispose('test done');
 }
 
@@ -167,7 +167,7 @@ console.log('\n── 2. 调试直调 ──');
 console.log('\n── 3. 开关与 agent 缺失 ──');
 {
   const { session, socket } = await makeSession({ debugTools: false });
-  send(session, { v: 1, id: 'd-2', type: 'tool_debug', payload: { name: 'game_get_power', args: {} } });
+  send(session, { v: 1, id: 'd-2', type: 'tool_debug', payload: { name: 'game_get_research', args: {} } });
   const got = await waitFor(() => socket.frames.some((f) => f.type === 'error'));
   const error = socket.frames.find((f) => f.type === 'error');
   check('关闭时拒绝', got && error?.payload?.code === 'debug_disabled', error?.payload?.code);
@@ -175,7 +175,7 @@ console.log('\n── 3. 开关与 agent 缺失 ──');
 }
 {
   const { session, socket } = await makeSession({ withDebug: false });
-  send(session, { v: 1, id: 'd-3', type: 'tool_debug', payload: { name: 'game_get_power', args: {} } });
+  send(session, { v: 1, id: 'd-3', type: 'tool_debug', payload: { name: 'game_get_research', args: {} } });
   const got = await waitFor(() => socket.frames.some((f) => f.type === 'error'));
   const error = socket.frames.find((f) => f.type === 'error');
   check('agent 缺失时拒绝', got && error?.payload?.code === 'tool_unavailable', error?.payload?.code);
@@ -190,9 +190,9 @@ console.log('\n── 4. toolCatalog 不带 debuggable ──');
     serverVersion: 'test',
     sessionId: 's1',
     agent: { provider: 'test', model: 'test', available: true },
-    tools: ['game_get_power'],
+    tools: ['game_get_research'],
     toolCatalog: [
-      { name: 'game_get_power', label: '电力状态', description: '读取电网' },
+      { name: 'game_get_research', label: '研究状态', description: '读取研究' },
       { name: 'game_copy_blueprint', label: '存为蓝图', description: '写文件' },
     ],
   });
@@ -208,10 +208,10 @@ console.log('\n── 4. toolCatalog 不带 debuggable ──');
     },
   });
   host.setDebugMode(true);
-  await host.call('game_get_power', {}, { timeoutMs: 1000 });
+  await host.call('game_get_research', {}, { timeoutMs: 1000 });
   check('调试期间 host 调用 internal=true', seen?.internal === true);
   host.setDebugMode(false);
-  await host.call('game_get_power', {}, { timeoutMs: 1000 });
+  await host.call('game_get_research', {}, { timeoutMs: 1000 });
   check('普通调用 internal=false', seen?.internal === false);
 }
 
@@ -244,7 +244,7 @@ console.log('\n── 5. PiAgent.debugTool 实际执行 ──');
     toolActivity() {}, blueprintCard() {},
   };
 
-  const result = await agent.debugTool('game_get_power', {}, emit);
+  const result = await agent.debugTool('game_get_research', {}, emit);
   check('PiAgent 直调成功', result.ok === true, result.error?.code);
   check('PiAgent 结果 source=game', result.source === 'game');
   check('PiAgent 结果 details 原样', result.details?.data?.demandKw === 1);

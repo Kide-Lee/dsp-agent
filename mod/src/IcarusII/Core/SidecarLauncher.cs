@@ -237,7 +237,6 @@ namespace IcarusII.Core
             IcarusII.Common.Protocol.Protocol.CapabilityGameEntity,
             IcarusII.Common.Protocol.Protocol.CapabilityGameProgress,
             IcarusII.Common.Protocol.Protocol.CapabilityGameView,
-            IcarusII.Common.Protocol.Protocol.CapabilityGameAnalyze,
             IcarusII.Common.Protocol.Protocol.CapabilityUiAsk,
             IcarusII.Common.Protocol.Protocol.CapabilityGameWrite,
             IcarusII.Common.Protocol.Protocol.CapabilityGameSandbox,

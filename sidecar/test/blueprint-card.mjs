@@ -99,7 +99,7 @@ console.log('\n── 3. 失败/无关结果 ──');
   check('失败标记不发卡', extractBlueprintCard('blueprint_generate', generated, true) === null);
   const failed = { details: { ok: false, data: { saved: false, error: 'x' } } };
   check('saved=false 不发卡', extractBlueprintCard('blueprint_generate', failed) === null);
-  check('非蓝图工具不发卡', extractBlueprintCard('game_get_power', generated) === null);
+  check('非蓝图工具不发卡', extractBlueprintCard('space_region', generated) === null);
   check('没有 fileName 不发卡',
     extractBlueprintCard('blueprint_generate', { details: { saved: true } }) === null);
   check('空结果不发卡', extractBlueprintCard('blueprint_generate', null) === null);

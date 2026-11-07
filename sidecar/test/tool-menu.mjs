@@ -16,9 +16,9 @@ const check = (name, cond, detail) => (cond ? ok(name) : fail(name, detail));
 
 console.log('── prompt.requiredTool ──');
 {
-  const parsed = parsePromptPayload({ text: '/game_get_power 电够吗', requiredTool: 'game_get_power' });
-  check('requiredTool 保留', parsed?.requiredTool === 'game_get_power', parsed?.requiredTool);
-  check('text 原样保留', parsed?.text === '/game_get_power 电够吗', parsed?.text);
+  const parsed = parsePromptPayload({ text: '/space_region 电够吗', requiredTool: 'space_region' });
+  check('requiredTool 保留', parsed?.requiredTool === 'space_region', parsed?.requiredTool);
+  check('text 原样保留', parsed?.text === '/space_region 电够吗', parsed?.text);
 
   const noTool = parsePromptPayload({ text: '你好' });
   check('缺省 requiredTool 为 null', noTool?.requiredTool === null);
@@ -32,12 +32,12 @@ console.log('── prompt.requiredTool ──');
 
 console.log('── 从 /命令 解析工具名 ──');
 {
-  const tools = new Set(['game_get_power', 'kb_search']);
-  check('精确匹配', extractSlashTool('/game_get_power 电够吗', tools) === 'game_get_power');
+  const tools = new Set(['space_region', 'kb_search']);
+  check('精确匹配', extractSlashTool('/space_region 电够吗', tools) === 'space_region');
   check('行首空白容忍', extractSlashTool('  /kb_search 量子芯片', tools) === 'kb_search');
   check('未知名不强制', extractSlashTool('/nope 你好', tools) === null);
-  check('非行首 / 不解析', extractSlashTool('你好 /game_get_power', tools) === null);
-  check('无空格分隔不解析', extractSlashTool('/game_get_powerX', tools) === null);
+  check('非行首 / 不解析', extractSlashTool('你好 /space_region', tools) === null);
+  check('无空格分隔不解析', extractSlashTool('/space_regionX', tools) === null);
 }
 
 console.log('── toolCall 检测 ──');
@@ -48,12 +48,12 @@ console.log('── toolCall 检测 ──');
       role: 'assistant',
       content: [
         { type: 'text', text: '我先查一下' },
-        { type: 'toolCall', name: 'game_get_power', arguments: {} },
+        { type: 'toolCall', name: 'space_region', arguments: {} },
       ],
     },
   ];
-  check('从 assistant content 找到 toolCall', hasToolCallSince(messages, 0, 'game_get_power'));
-  check('指定起点之前的不算', !hasToolCallSince(messages, 2, 'game_get_power'));
+  check('从 assistant content 找到 toolCall', hasToolCallSince(messages, 0, 'space_region'));
+  check('指定起点之前的不算', !hasToolCallSince(messages, 2, 'space_region'));
   check('别的工具不算', !hasToolCallSince(messages, 0, 'kb_search'));
 }
 
@@ -63,9 +63,9 @@ console.log('── ready.payload.toolCatalog ──');
     serverVersion: 'test',
     sessionId: 's1',
     agent: { provider: 'test', model: 'test', available: true },
-    tools: ['game_get_power'],
+    tools: ['space_region'],
     toolCatalog: [
-      { name: 'game_get_power', label: '电力状态', description: '读取电网' },
+      { name: 'space_region', label: '电力状态', description: '读取电网' },
     ],
   });
   check('toolCatalog 写入', Array.isArray(payload.toolCatalog) && payload.toolCatalog.length === 1);
@@ -75,15 +75,15 @@ console.log('── ready.payload.toolCatalog ──');
     serverVersion: 'test',
     sessionId: 's1',
     agent: { provider: 'test', model: 'test', available: true },
-    tools: ['game_get_power'],
+    tools: ['space_region'],
   });
   check('无目录时不写 toolCatalog', without.toolCatalog === undefined);
 }
 
 console.log('── 强制工具 system prompt ──');
 {
-  const text = forcedToolInstruction('game_get_power');
-  check('包含工具名', text.includes('game_get_power'));
+  const text = forcedToolInstruction('space_region');
+  check('包含工具名', text.includes('space_region'));
   check('包含必须调用', text.includes('必须调用') || text.includes('至少调用一次'));
 }
 

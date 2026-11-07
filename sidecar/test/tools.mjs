@@ -139,8 +139,7 @@ async function run() {
     const ready = socket.frames.find((f) => f.type === 'ready');
     check('收到 ready', !!ready);
     const tools = ready?.payload?.tools ?? [];
-    check('六个只读 + 四个 kb + 两个 wiki + 五个蓝图 + 脚本', tools.length === 18, JSON.stringify(tools));
-    check('包含 game_get_production', tools.includes('game_get_production'));
+    check('三个只读 + 四个 kb + 两个 wiki + 五个蓝图 + 脚本', tools.length === 15, JSON.stringify(tools));
     check('包含 kb_search / kb_get / kb_recipe_tree / kb_plan', ['kb_search', 'kb_get', 'kb_recipe_tree', 'kb_plan'].every((name) => tools.includes(name)));
     const catalog = ready?.payload?.toolCatalog ?? [];
     check('ready.toolCatalog 由 agent 提供', catalog.length === 1 && catalog[0].label === '存档概览', JSON.stringify(catalog));

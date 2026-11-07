@@ -38,16 +38,11 @@ namespace IcarusII.UI
             switch (name)
             {
                 case "game_get_overview": return Strings.Get("tool.name.game_get_overview");
-                case "game_get_player": return Strings.Get("tool.name.game_get_player");
                 case "game_get_planet": return Strings.Get("tool.name.game_get_planet");
-                case "game_get_power": return Strings.Get("tool.name.game_get_power");
                 case "game_get_research": return Strings.Get("tool.name.game_get_research");
-                case "game_get_production": return Strings.Get("tool.name.game_get_production");
                 case "game_get_entity": return Strings.Get("tool.name.game_get_entity");
-                case "game_get_entities": return Strings.Get("tool.name.game_get_entities");
                 case "game_get_progress": return Strings.Get("tool.name.game_get_progress");
                 case "game_capture_view": return Strings.Get("tool.name.game_capture_view");
-                case "game_analyze_area": return Strings.Get("tool.name.game_analyze_area");
                 case "game_render_layout": return Strings.Get("tool.name.game_render_layout");
                 case "game_copy_blueprint": return Strings.Get("tool.name.game_copy_blueprint");
                 case "game_generate_blueprint": return Strings.Get("tool.name.game_generate_blueprint");

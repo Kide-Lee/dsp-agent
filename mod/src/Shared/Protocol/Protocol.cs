@@ -221,7 +221,6 @@ namespace IcarusII.Common.Protocol
         public const string CapabilityGameView = "game.view.v1";
 
         /// <summary>mod 声明的区域分析能力（game_analyze_area）。</summary>
-        public const string CapabilityGameAnalyze = "game.analyze.v1";
 
         /// <summary>mod 支持游戏内结构化提问（ask_user，附录 B.1.4）。</summary>
         public const string CapabilityUiAsk = "ui.ask.v1";

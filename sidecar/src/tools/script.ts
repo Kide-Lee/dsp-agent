@@ -412,7 +412,7 @@ export function createScriptTool(host: GameToolHost): ToolDefinition {
     parameters: Type.Object({
       code: Type.String({
         description:
-          '脚本正文。示例：const r = JSON.parse(dsp.call("game_get_power", {})); return {kw: r.data.demandKw};',
+          '脚本正文。示例：const r = JSON.parse(dsp.call("space_region", {op: "power", type: "planet"})); return {kw: r.data.power.demandKw};',
       }),
       timeoutMs: Type.Optional(
         Type.Integer({ minimum: 100, maximum: MAX_TIMEOUT_MS, description: '运行上限，默认 30000ms，最大 120000ms' }),

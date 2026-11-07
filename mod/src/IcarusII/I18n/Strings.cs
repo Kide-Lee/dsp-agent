@@ -297,16 +297,11 @@ namespace IcarusII.I18n
 
             // 工具名 → 聊天窗短名（ToolNames）
             ["tool.name.game_get_overview"] = "存档概览",
-            ["tool.name.game_get_player"] = "玩家状态",
             ["tool.name.game_get_planet"] = "行星状态",
-            ["tool.name.game_get_power"] = "电力状态",
             ["tool.name.game_get_research"] = "研究状态",
-            ["tool.name.game_get_production"] = "实际产出",
             ["tool.name.game_get_entity"] = "建筑详情",
-            ["tool.name.game_get_entities"] = "建筑列表",
             ["tool.name.game_get_progress"] = "进度阶段",
             ["tool.name.game_capture_view"] = "截图",
-            ["tool.name.game_analyze_area"] = "产线分析",
             ["tool.name.game_render_layout"] = "布局图",
             ["tool.name.game_copy_blueprint"] = "存为蓝图",
             ["tool.name.game_generate_blueprint"] = "生成蓝图",
@@ -383,7 +378,7 @@ namespace IcarusII.I18n
             ["plugin.send.changed"] = "发送失败（连接状态已变化）。",
             // 调试命令（!tool / !tools）在聊天窗里显示的结果
             ["plugin.debug.usage"] =
-                "[调试] 用法：\n  !tools\n  !tool <工具名> <JSON 参数>\n例如：!tool game_get_power {}",
+                "[调试] 用法：\n  !tools\n  !tool <工具名> <JSON 参数>\n例如：!tool space_region {\"op\":\"power\"}",
             ["plugin.debug.name_required"] = "[调试] 工具名不能为空，且不能超过 128 个字符。",
             ["plugin.debug.args_invalid"] = "[调试] 参数必须是 JSON 对象：\n{0}",
             ["plugin.debug.offline"] = "[调试] 尚未连接到 sidecar，请求未发送。",

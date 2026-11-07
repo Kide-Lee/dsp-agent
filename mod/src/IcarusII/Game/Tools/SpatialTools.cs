@@ -103,7 +103,16 @@ namespace IcarusII.Game.Tools
                 obj.Set("name", item.Name);
                 obj.Set("iconTag", GameToolFormat.ItemIconTag(item.ItemId));
                 obj.Set("amount", GameToolFormat.Round(item.Amount, 2));
-                if (item.HasNet) obj.Set("net", GameToolFormat.Round(item.Net, 2));
+                if (item.HasNet)
+                {
+                    obj.Set("net", GameToolFormat.Round(item.Net, 2));
+                    // 双侧都给：只给金额的话，模型无法区分「这就是产出」还是「这是净额」
+                    var producing = IsProducing(request);
+                    obj.Set(producing ? "producedPerMin" : "consumedPerMin",
+                        GameToolFormat.Round(item.Amount, 2));
+                    obj.Set(producing ? "consumedPerMin" : "producedPerMin",
+                        GameToolFormat.Round(item.Counterpart, 2));
+                }
                 if (item.Stored > 0)
                 {
                     obj.Set("stored", item.Stored);
@@ -257,6 +266,21 @@ namespace IcarusII.Game.Tools
                 obj.Set("id", member.Id);
                 obj.Set("name", member.Name);
                 if (member.PlanetId > 0) obj.Set("planetId", member.PlanetId);
+                if (member.Category != null)
+                {
+                    obj.Set("category", member.Category);
+                    obj.Set("yaw", GameToolFormat.Round(member.Yaw, 1));
+                }
+                if (member.RecipeId > 0)
+                {
+                    obj.Set("recipeId", member.RecipeId);
+                    obj.Set("recipeName", EntityToolUtil.RecipeName(member.RecipeId));
+                    // 技能速度倍率与配方耗时是脚本复算装机产能的最小信息集
+                    if (member.Speed > 0)
+                        obj.Set("speedMultiplier", GameToolFormat.Round(member.Speed / 10000.0, 3));
+                    obj.Set("recipeSeconds", GameToolFormat.Round(
+                        EntityToolUtil.RecipeSeconds(member.RecipeId), 3));
+                }
                 if (member.WorldFrame)
                 {
                     var position = JsonValue.NewObject();
@@ -264,6 +288,16 @@ namespace IcarusII.Game.Tools
                     position.Set("y", GameToolFormat.Round(member.World.y, 1));
                     position.Set("z", GameToolFormat.Round(member.World.z, 1));
                     obj.Set("world", position);
+                }
+                else if (member.PlanetId > 0)
+                {
+                    // 行星表面成员给经纬度：脚本要按位置再筛时不必逐个 space_point 回查
+                    var (lat, lon) = GeoMath.ToLatLon(
+                        new Vec3d(member.Local.x, member.Local.y, member.Local.z));
+                    var where = JsonValue.NewObject();
+                    where.Set("latitude", GameToolFormat.Round(lat, request.Precision));
+                    where.Set("longitude", GameToolFormat.Round(lon, request.Precision));
+                    obj.Set("location", where);
                 }
                 array.Add(obj);
             }
@@ -1840,9 +1874,25 @@ namespace IcarusII.Game.Tools
                 var system = GameMain.data.trashSystem;
                 if (system?.container?.trashDataPool == null)
                     throw new SpatialException("垃圾系统尚未加载");
-                var trash = system.container.trashDataPool[target.TrashId];
-                var proto = LDB.items != null ? LDB.items.Select(0) : null;
-                items.Add(new ItemAmount { ItemId = 0, Name = "垃圾块", Amount = 1, Stored = trash.life });
+                var container = system.container;
+                var trash = container.trashDataPool[target.TrashId];
+                // 物品种类在 TrashObject 上，与 trashDataPool 同下标；
+                // TrashData 只有运动状态与寿命。
+                if (container.trashObjPool != null &&
+                    target.TrashId < container.trashObjPool.Length)
+                {
+                    var obj = container.trashObjPool[target.TrashId];
+                    if (obj.item > 0 && obj.count > 0)
+                        items.Add(new ItemAmount
+                        {
+                            ItemId = obj.item,
+                            Name = GameToolFormat.ItemName(obj.item),
+                            Amount = obj.count,
+                            Stored = obj.count,
+                        });
+                }
+                if (items.Count == 0)
+                    items.Add(new ItemAmount { ItemId = 0, Name = "垃圾块", Amount = 1, Stored = trash.life });
             }
             else
             {
@@ -2001,8 +2051,16 @@ namespace IcarusII.Game.Tools
                     var mecha = player.mecha;
                     if (mecha != null)
                     {
-                        info.Set("coreEnergy", GameToolFormat.Round(mecha.coreEnergy, 1));
-                        info.Set("coreEnergyCap", GameToolFormat.Round(mecha.coreEnergyCap, 1));
+                        info.Set("coreEnergy", GameToolFormat.Round(mecha.coreEnergy, 0));
+                        info.Set("coreEnergyCap", GameToolFormat.Round(mecha.coreEnergyCap, 0));
+                        info.Set("coreEnergyPct", mecha.coreEnergyCap > 0
+                            ? GameToolFormat.Round(mecha.coreEnergy * 100.0 / mecha.coreEnergyCap, 1) : 0);
+                        info.Set("reactorEnergy", GameToolFormat.Round(mecha.reactorEnergy, 0));
+                        info.Set("shieldEnergy", mecha.energyShieldEnergy);
+                        info.Set("shieldCapacity", mecha.energyShieldCapacity);
+                        info.Set("shieldPct", mecha.energyShieldCapacity > 0
+                            ? GameToolFormat.Round(mecha.energyShieldEnergy * 100.0 / mecha.energyShieldCapacity, 1)
+                            : 0);
                     }
                     break;
                 }

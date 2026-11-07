@@ -248,28 +248,28 @@ namespace IcarusII.Tests
             Check("无 replyTo 时不写该字段", !env.Has("replyTo"));
             Check("无 requiredTool 时不写该字段", !env["payload"].Has("requiredTool"));
 
-            var forced = Protocol.BuildPrompt("/game_get_power 电够吗", null, "game_get_power");
-            Eq("requiredTool 写入", "game_get_power", forced["requiredTool"].AsString());
-            Eq("requiredTool 不改变原文", "/game_get_power 电够吗", forced["text"].AsString());
+            var forced = Protocol.BuildPrompt("/space_region 电够吗", null, "space_region");
+            Eq("requiredTool 写入", "space_region", forced["requiredTool"].AsString());
+            Eq("requiredTool 不改变原文", "/space_region 电够吗", forced["text"].AsString());
 
             // ---- M4m：调试直调 ----
             Eq("tool_debug 类型名", "tool_debug", Protocol.ToolDebug);
             Eq("tool_debug_result 类型名", "tool_debug_result", Protocol.ToolDebugResult);
             var debugPayload = Protocol.BuildToolDebug(
-                "game_get_power", JsonValue.Parse(@"{""planetId"": 1}"));
-            Eq("tool_debug name", "game_get_power", debugPayload["name"].AsString());
+                "space_region", JsonValue.Parse(@"{""planetId"": 1}"));
+            Eq("tool_debug name", "space_region", debugPayload["name"].AsString());
             Eq("tool_debug args.planetId", 1L, debugPayload["args"]["planetId"].AsLong());
             var huge = JsonValue.NewObject();
             huge.Set("blob", new string('x', Protocol.ToolDebugArgsMaxBytes + 1));
             var rejected = false;
-            try { Protocol.BuildToolDebug("game_get_power", huge); }
+            try { Protocol.BuildToolDebug("space_region", huge); }
             catch (ArgumentException) { rejected = true; }
             Check("tool_debug 超过 64KiB 被拒绝", rejected);
 
             var debugInfo = ToolDebugResultInfo.Parse(JsonValue.Parse(
                 @"{
                     ""ok"": true,
-                    ""tool"": ""game_get_power"",
+                    ""tool"": ""space_region"",
                     ""source"": ""game"",
                     ""durationMs"": 42,
                     ""content"": ""model text"",
@@ -279,7 +279,7 @@ namespace IcarusII.Tests
                     ""image"": { ""mimeType"": ""image/jpeg"", ""width"": 1280, ""height"": 720, ""bytes"": 3456 }
                 }"));
             Check("tool_debug_result ok", debugInfo.Ok);
-            Eq("tool_debug_result tool", "game_get_power", debugInfo.Tool);
+            Eq("tool_debug_result tool", "space_region", debugInfo.Tool);
             Eq("tool_debug_result source", "game", debugInfo.Source);
             Eq("tool_debug_result duration", 42L, debugInfo.DurationMs);
             Eq("tool_debug_result content", "model text", debugInfo.Content);
@@ -1083,16 +1083,16 @@ namespace IcarusII.Tests
             Eq("只读能力名", "game.read.v1", Protocol.CapabilityGameRead);
 
             var callPayload = JsonValue.Parse(
-                "{\"callId\":\"call_1\",\"name\":\"game_get_power\"," +
+                "{\"callId\":\"call_1\",\"name\":\"space_region\"," +
                 "\"args\":{\"planetId\":3},\"risk\":0,\"timeoutMs\":8000}");
             var call = ToolCallInfo.Parse(callPayload, null);
             Check("tool_call 可解析", call != null);
             Eq("tool_call callId", "call_1", call.CallId);
-            Eq("tool_call name", "game_get_power", call.Name);
+            Eq("tool_call name", "space_region", call.Name);
             Eq("tool_call args.planetId", 3L, call.Args["planetId"].AsLong());
             Eq("tool_call timeout", 8000, call.TimeoutMs);
             var scopedCall = ToolCallInfo.Parse(JsonValue.Parse(
-                "{\"callId\":\"c\",\"name\":\"game_get_power\",\"conversationId\":\"conv-a\"}"), null);
+                "{\"callId\":\"c\",\"name\":\"space_region\",\"conversationId\":\"conv-a\"}"), null);
             Eq("tool_call conversationId", "conv-a", scopedCall.ConversationId);
 
             var fallback = ToolCallInfo.Parse(

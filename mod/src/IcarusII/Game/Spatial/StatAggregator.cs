@@ -19,6 +19,8 @@ namespace IcarusII.Game.Spatial
         /// <summary>产出减消耗；只有同时取了两侧才有意义，单侧查询保持 0。</summary>
         public double Net;
         public bool HasNet;
+        /// <summary>另一侧的绝对值，用于同时回答"产了多少、耗了多少"。</summary>
+        public double Counterpart;
     }
 
     /// <summary>
@@ -159,6 +161,7 @@ namespace IcarusII.Game.Spatial
                     Stored = stat.storageCount,
                     Net = produce ? amount - otherAmount : otherAmount - amount,
                     HasNet = true,
+                    Counterpart = otherAmount,
                 };
             }
 

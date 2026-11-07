@@ -2,7 +2,7 @@
 
 回答“我现在到哪一步”“画面上是什么”“这片产线多大”。截图会以图片内容块返回，其余是文本。
 
-共 3 个工具。提示词如何进入模型上下文见 [prompt-shape.md](prompt-shape.md)。
+共 2 个工具。提示词如何进入模型上下文见 [prompt-shape.md](prompt-shape.md)。
 
 ---
 
@@ -64,7 +64,7 @@
 - 需要平面布局时用 view=topdown，并用 entityId/center 指定中心、cameraHeight 指定高度（10–150m）。
 - 需要换角度时用 view=orbit，配合 entityId/center、distance、pitch、yaw；一次调用只拍一个角度，想看多个方向就分多次调用并改 yaw/pitch/distance。
 - 俯视图只覆盖玩家附近已加载的区块；画面缺一块时说明是流送限制，不要当成空地。
-- 图上的编号框与 legend 的 index 一一对应；先按编号定位，再结合 game_get_entity / game_get_entities 的数值下结论，不要只凭像素猜配方。
+- 图上的编号框与 legend 的 index 一一对应；先按编号定位，再结合 space_region op=list / game_get_entity 的数值下结论，不要只凭像素猜配方。
 - annotate=false 可关掉标注（例如只想看纯净画面）。
 
 #### 参数
@@ -101,57 +101,6 @@
 | `display` | `string` | 一行摘要 |
 
 嵌套对象内部字段（未逐个展开）：`mimeType`、`data`、`center`、`centerSource`、`fov`、`yaw`、`distance`、`pitch`、`location`、`forward`、`id`、`protoId` 等 17 个
-
-> 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
-
----
-
-### `game_analyze_area`
-
-**label** 产线分析 · **能力位** `game.analyze.v1` · **风险** 0（只读） · **超时** 15000 ms
-
-#### 模型可见 · 工具描述（tools 数组）
-
-```text
-按空间范围聚合产线：各类建筑数量、各配方的机器数与装机产能、耗电、传送带/分拣器/物流塔数量、涉及电网的供需。用于回答“这片区域是什么产线、规模多大、吃多少电”。只给装机口径；实际产出请再用 game_get_production。
-```
-
-#### 模型可见 · 使用规则（system prompt）
-
-- 玩家问“这片产线是干什么的/多大/耗多少电”时使用。
-- game_get_production 返回 statsEmpty=true 或 items 为空时，用它看装机产能（可 all=true 扫整颗星球）。
-- 结果里 byRecipe 是“机器数 × 配方速度”，不要把它说成实际产出。
-- 结果是装机产能，不是实际产出；回答实际产量要结合 game_get_production。
-- 范围默认以玩家为中心 60m；可用 entityId 指定中心，或用 all 分析整星球。
-
-#### 参数
-
-| 参数 | 类型 | 必填 | 约束 | 说明 |
-| --- | --- | --- | --- | --- |
-| `planetId` | `integer` | 否 | — | 行星 id；省略时使用当前所在行星 |
-| `entityId` | `integer` | 否 | — | 以该建筑为圆心 |
-| `radius` | `number` | 否 | — | 半径（米），默认 60，范围 5–500 |
-| `center` | `object` | 否 | — | 中心：latitude+longitude；x/y/z 仅兼容旧调用 |
-| `all` | `boolean` | 否 | — | 分析整颗星球，忽略 radius/center |
-| `includeEntities` | `boolean` | 否 | — | 是否列出范围内建筑，默认 false |
-| `limit` | `integer` | 否 | — | 列出的建筑上限，默认 40，最大 100 |
-
-#### 返回
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `planetId` | `integer` | 同参数 `planetId` |
-| `available` | `boolean` | 工厂是否已加载 |
-| `area` | `object` | 分析范围：中心 `location` / 半径 / 是否整星 |
-| `byRecipe` | `array` | 按配方聚合：配方 id/名 / 机器数 / 装机产能 / 耗电 |
-| `categories` | `object` | 按建筑类别计数：类别 → 数量 |
-| `totals` | `object` | 汇总：建筑数 / 耗电 / 传送带 / 分拣器 / 物流塔 |
-| `powerNetworks` | `array` | 涉及的电网供需 |
-| `entities` | `array` | 范围内的建筑 id 列表（可继续用 game_get_entity 下钻） |
-| `assumptions` | `array` | 口径假设（装机产能 ≠ 实际产出等） |
-| `display` | `string` | 一行摘要 |
-
-嵌套对象内部字段（未逐个展开）：`mode`、`center`、`centerSource`、`radius`、`id`、`protoId`、`protoName`、`category`、`recipeId`、`recipeName`、`buildings`、`installedCraftsPerMin` 等 23 个
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 

@@ -238,7 +238,7 @@ async function main() {
     },
   });
   const ready = await client.waitForType('ready');
-  check('ready.tools 含 19 个工具（6 game read + drop + 4 kb + 2 wiki + 5 蓝图 + 脚本）', (ready.payload?.tools ?? []).length === 19);
+  check('ready.tools 含 16 个工具（3 game read + drop + 4 kb + 2 wiki + 5 蓝图 + 脚本）', (ready.payload?.tools ?? []).length === 16);
 
   // 配置假上游。
   client.send({
@@ -318,7 +318,7 @@ async function main() {
   const firstBody = mainRequests()[0]?.body ?? {};
   const toolNames = (firstBody.tools ?? []).map((t) => t?.function?.name);
   check('上游请求里包含 game_get_overview', toolNames.includes('game_get_overview'), JSON.stringify(toolNames));
-  check('上游请求里包含 game_get_production', toolNames.includes('game_get_production'));
+  check('上游请求里包含 game_get_research', toolNames.includes('game_get_research'));
   for (const builtin of ['bash', 'read', 'write', 'edit']) {
     check(`pi 内置工具 ${builtin} 未注册`, !toolNames.includes(builtin), JSON.stringify(toolNames));
   }

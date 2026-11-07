@@ -1054,7 +1054,7 @@ function gameTool<T>(spec: {
 | `game_get_entities` | `game.entity.v1` | `planetId?`, `protoId?`, `protoName?`, `recipeId?`, `offset/limit` | 建筑分页列表 | 同上 |
 | `game_get_progress` | `game.progress.v1` | — | 派生阶段 + 判定信号、已解锁科技、里程碑、教程、研究队列 | `GameHistoryData`、`GameMain.data.milestoneSystem` |
 | `game_capture_view` | `game.view.v1` | `width?`, `height?`, `includeEntities?`, `view?`（`player`/`topdown`/`orbit`）, `entityId?`, `center?`, `cameraHeight?`, `yaw?`, `fov?`, `distance?`, `pitch?` | JPEG 图片 + 可见实体屏幕坐标与经纬度；一次调用一个机位 | `GameCamera.CaptureScreenshot` |
-| `game_analyze_area` | `game.analyze.v1` | `planetId?`, `entityId?`, `radius?`, `center?`, `all?` | 范围聚合：建筑/配方计数、装机产能、耗电、物流设施、电网 | `PlanetFactory` + `PowerSystem` |
+| ~~`game_analyze_area`~~ | ~~`game.analyze.v1`~~ | 已并入 `space_region`（`op=list` + `op=production` + `op=power`） | 范围聚合：建筑/配方计数、装机产能、耗电、物流设施、电网 | `PlanetFactory` + `PowerSystem` |
 
 > **截图（M4a 起支持）**：`game_capture_view` 复用 `GameCamera.CaptureScreenshot`——
 > 它把 `cullingMask` 设成 `gameLayerMask`，UGUI 不进画面，所以不需要"隐藏界面"开关；

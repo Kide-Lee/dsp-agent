@@ -193,7 +193,7 @@ namespace IcarusII.Game.Spatial
             return count;
         }
 
-        /// <summary>当前发电性能（每 tick 的千瓦折算），与 game_get_power 同口径。</summary>
+        /// <summary>当前发电性能（每 tick 的千瓦折算），与 space_region op=power 同口径。</summary>
         public static (double SwarmKw, double LayerKw) GenKw(DysonSphere sphere)
         {
             if (sphere == null) return (0, 0);

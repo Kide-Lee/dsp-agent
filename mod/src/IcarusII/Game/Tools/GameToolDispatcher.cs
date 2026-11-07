@@ -99,18 +99,13 @@ namespace IcarusII.Game.Tools
             _log = log;
 
             Register(new OverviewTool());
-            Register(new PlayerTool());
             Register(new PlanetTool());
-            Register(new PowerTool());
             Register(new ResearchTool());
-            Register(new ProductionTool());
             Register(new ExportPrototypesTool());
             Register(new ExportTextTool());
             Register(new EntityTool());
-            Register(new EntitiesTool());
             Register(new ProgressTool());
             Register(new CaptureViewTool());
-            Register(new AnalyzeAreaTool());
             Register(new RenderLayoutTool());
             Register(new CopyBlueprintTool());
             Register(new TraceLineTool());

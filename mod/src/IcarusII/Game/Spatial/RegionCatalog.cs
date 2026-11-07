@@ -13,6 +13,14 @@ namespace IcarusII.Game.Spatial
         public readonly string Kind;
         public readonly int Id;
         public readonly string Name;
+        /// <summary>装配类建筑的配方 id；其它类型为 0。</summary>
+        public readonly int RecipeId;
+        /// <summary>建筑类别（assembler/belt/station…），来自 EntityToolUtil.Category。</summary>
+        public readonly string Category;
+        /// <summary>建筑朝向（度）；非建筑为 0。</summary>
+        public readonly double Yaw;
+        /// <summary>装配机速度倍率（10000 = 1 倍）；非装配类为 0。</summary>
+        public readonly int Speed;
         public readonly int PlanetId;
         public readonly Vector3 Local;
         /// <summary>天体/单位用世界坐标；行星表面成员为 false。</summary>
@@ -20,7 +28,7 @@ namespace IcarusII.Game.Spatial
         public readonly VectorLF3 World;
 
         private RegionMember(string kind, int id, string name, int planetId,
-            Vector3 local, bool worldFrame, VectorLF3 world)
+            Vector3 local, bool worldFrame, VectorLF3 world, int recipeId, string category, double yaw, int speed)
         {
             Kind = kind;
             Id = id;
@@ -29,13 +37,19 @@ namespace IcarusII.Game.Spatial
             Local = local;
             WorldFrame = worldFrame;
             World = world;
+            RecipeId = recipeId;
+            Category = category;
+            Yaw = yaw;
+            Speed = speed;
         }
 
-        public static RegionMember OnPlanet(string kind, int id, string name, int planetId, Vector3 local) =>
-            new RegionMember(kind, id, name, planetId, local, false, VectorLF3.zero);
+        public static RegionMember OnPlanet(string kind, int id, string name, int planetId, Vector3 local,
+            int recipeId = 0, string category = null, double yaw = 0, int speed = 0) =>
+            new RegionMember(kind, id, name, planetId, local, false, VectorLF3.zero,
+                recipeId, category, yaw, speed);
 
         public static RegionMember InWorld(string kind, int id, string name, int planetId, VectorLF3 world) =>
-            new RegionMember(kind, id, name, planetId, Vector3.zero, true, world);
+            new RegionMember(kind, id, name, planetId, Vector3.zero, true, world, 0, null, 0, 0);
     }
 
     /// <summary>
@@ -171,7 +185,9 @@ namespace IcarusII.Game.Spatial
                 if (entity.id != id || entity.protoId <= 0) continue;
                 if (!AcceptLocal(planet, shape, entity.pos)) continue;
                 result.Add(RegionMember.OnPlanet("building", id,
-                    EntityToolUtil.ProtoName(entity.protoId), planet.id, entity.pos));
+                    EntityToolUtil.ProtoName(entity.protoId), planet.id, entity.pos,
+                    RecipeOf(factory, entity), EntityToolUtil.Category(entity),
+                    entity.rot.eulerAngles.y, SpeedOf(factory, entity)));
             }
         }
 
@@ -221,6 +237,28 @@ namespace IcarusII.Game.Spatial
             }
         }
 
+        /// <summary>装配机速度倍率（10000 = 1 倍）；非装配类返回 0。</summary>
+        private static int SpeedOf(PlanetFactory factory, EntityData entity)
+        {
+            if (entity.assemblerId <= 0) return 0;
+            var system = factory != null ? factory.factorySystem : null;
+            if (system?.assemblerPool == null) return 0;
+            if (entity.assemblerId >= system.assemblerCursor ||
+                entity.assemblerId >= system.assemblerPool.Length) return 0;
+            return system.assemblerPool[entity.assemblerId].speed;
+        }
+
+        /// <summary>装配类建筑当前选的配方；其它建筑返回 0。</summary>
+        private static int RecipeOf(PlanetFactory factory, EntityData entity)
+        {
+            if (entity.assemblerId <= 0) return 0;
+            var system = factory != null ? factory.factorySystem : null;
+            if (system?.assemblerPool == null) return 0;
+            if (entity.assemblerId >= system.assemblerCursor ||
+                entity.assemblerId >= system.assemblerPool.Length) return 0;
+            return system.assemblerPool[entity.assemblerId].recipeId;
+        }
+
         private static bool AcceptLocal(PlanetData planet, RegionShape shape, Vector3 local)
         {
             if (shape == null) return true;
@@ -247,7 +285,9 @@ namespace IcarusII.Game.Spatial
                 if (entity.id != id || entity.protoId <= 0) continue;
                 if (RegionResolver.NetworkOf(factory, id) != target.NetworkId) continue;
                 result.Add(RegionMember.OnPlanet("building", id,
-                    EntityToolUtil.ProtoName(entity.protoId), planet.id, entity.pos));
+                    EntityToolUtil.ProtoName(entity.protoId), planet.id, entity.pos,
+                    RecipeOf(factory, entity), EntityToolUtil.Category(entity),
+                    entity.rot.eulerAngles.y, SpeedOf(factory, entity)));
             }
         }
 
@@ -262,7 +302,9 @@ namespace IcarusII.Game.Spatial
             {
                 var entity = factory.entityPool[id];
                 result.Add(RegionMember.OnPlanet("building", id,
-                    EntityToolUtil.ProtoName(entity.protoId), planet.id, entity.pos));
+                    EntityToolUtil.ProtoName(entity.protoId), planet.id, entity.pos,
+                    RecipeOf(factory, entity), EntityToolUtil.Category(entity),
+                    entity.rot.eulerAngles.y, SpeedOf(factory, entity)));
             }
         }
 

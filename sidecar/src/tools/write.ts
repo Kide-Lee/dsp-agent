@@ -211,7 +211,7 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         'itemId 可以是物品 id 或名称；count 默认 1，一次最多 500。',
       promptGuidelines: [
         '只在玩家明确要求“丢掉/扔了”某个物品时使用。',
-        '调用前先用 game_get_player 确认背包里有该物品和数量；不要丢掉关键材料。',
+        '调用前先用 space_motion op=storage type=player 确认背包里有该物品和数量；不要丢掉关键材料。',
         '丢弃后不进入撤销栈，必须明确告诉玩家“需要手动拾回”。',
         '如果玩家拒绝确认，不要再次调用。',
       ],
@@ -252,7 +252,7 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         '一次修改多台生产建筑的配方（最多 20 台），只弹一次确认、只压一层撤销。写操作，风险 2：' +
         '执行前玩家必须确认。每台都会先退回机器内原料/产物再切换；任何一台预检失败则整批不执行。',
       promptGuidelines: [
-        '玩家要求“这几台/这一排都改成同一个配方”时使用；先用 game_get_entities 拿到 id。',
+        '玩家要求“这几台/这一排都改成同一个配方”时使用；先用 space_region op=list 拿到 id。',
         '一次最多 20 台；超过时分批，不要一次塞太多。',
         '返回 changed/skipped/items；如果某台不匹配，整批会失败并说明原因。',
       ],
@@ -404,7 +404,7 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         '抵达附近后标记由游戏清除；跨行星时先用原生 navigation.indicatorAstroId 指向其中一个目标行星（游戏一次只支持一个导航朝向），' +
         '落到该行星后自动改用定位标记。写操作，风险 1：执行前玩家必须确认。',
       promptGuidelines: [
-        '玩家说“给这些建筑/星球/矿脉都做个方位指示”时使用；先用 game_get_entities/game_get_planet 确认目标。',
+        '玩家说“给这些建筑/星球/矿脉都做个方位指示”时使用；先用 space_region op=list / game_get_planet 确认目标。',
         'kind=planet 时用 planetId（缺省当前星球）；kind=building 时用 buildingId，可选 planetId；kind=vein 时用 veinId，可选 planetId。',
         '本星球建筑/矿脉可同时显示多个定位标记；跨行星原生导航一次只指一个目标行星，不要声称所有跨行星目标都同时可见。',
         '标记在抵达附近后消失、卡片按钮恢复为未定位，这是正常行为。',

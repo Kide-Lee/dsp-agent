@@ -30,18 +30,14 @@ DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）�
 | 工具 | 内容 |
 | --- | --- |
 | `game_get_overview` | 存档、游戏时间、所在星球/星系、玩家经纬度 |
-| `game_get_player` | 机甲能量/护盾、背包物品 |
 | `game_get_planet` | 行星矿脉汇总、建筑计数 |
-| `game_get_power` | 电网需求/供给/容量/储能/满足率（kW、kWh） |
 | `game_get_research` | 当前研究、进度、队列、已解锁数量 |
-| `game_get_production` | 按物品聚合的产量/消耗/库存（/min），缺料排序 |
 
 ## AI 能看什么
 
 | 工具 | 内容 |
 | --- | --- |
 | `game_get_entity` | 单个建筑：原型、配方、功率、分拣器/传送带/仓储/物流塔、星系/行星/经纬度；`stale` 标记 id 已被回收 |
-| `game_get_entities` | 建筑分页列表，可按原型 / 名称 / 配方过滤 |
 | `game_get_progress` | 派生阶段（前期/行星内物流/星际物流/戴森球）+ 判定信号、里程碑、教程、研究队列 |
 | `game_capture_view` | 截取当前画面（不含 UI，JPEG），并附可见建筑屏幕坐标与经纬度；`view=topdown` 可临时切俯视，`view=orbit` 可绕目标点换角度（一次一个机位，换角度就多次调用）；默认画编号框并返回 legend |
 | `game_render_layout` | 把区域建筑排布画成字符网格，判断布局/走线 |
@@ -338,10 +334,10 @@ sidecar 自己的运行期配置（供应商、模型、蓝图目录、Wiki 端�
 
 ```text
 !tools
-!tool game_get_power {}
-!tool game_get_entities {"limit": 5}
+!tool space_region {"op":"power"}
+!tool space_region {"op":"list","type":"planet","limit":5}
 !tool kb_search {"query": "量子芯片"}
-!tool run_script {"code": "return dsp.call(\"game_get_power\", {})"}
+!tool run_script {"code": "return dsp.call(\"space_region\", {op: \"power\"})"}
 ```
 
 - 需要 `DebugToolConsole=true`，且 sidecar 以 `--debug-tools` 启动。

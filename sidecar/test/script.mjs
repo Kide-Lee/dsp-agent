@@ -29,7 +29,7 @@ function makeHost({ approve = true } = {}) {
     host: {
       has: (capability) => capability === 'script.write.v1',
       tools: () => [
-        { name: 'game_get_power' },
+        { name: 'space_region' },
         { name: 'game_get_entities' },
         { name: 'game_place_marker' },
         { name: 'game_set_recipe' },
@@ -68,7 +68,7 @@ const tool = createScriptTool(host);
   const out = await run(
     tool,
     `
-    const a = JSON.parse(dsp.call('game_get_power', {}));
+    const a = JSON.parse(dsp.call('space_region', {}));
     const b = JSON.parse(dsp.call('game_get_entities', { limit: 2 }));
     console.log('saw', a.data.name, b.data.name);
     return { names: [a.data.name, b.data.name], total: 2 };
@@ -77,7 +77,7 @@ const tool = createScriptTool(host);
   const payload = JSON.parse(out.text);
   check('返回 ok', payload.ok === true);
   check('值正确', payload.value?.total === 2 && payload.value?.names?.length === 2, out.text.slice(0, 200));
-  check('console.log 被收集', payload.logs?.some((line) => line.includes('saw game_get_power game_get_entities')));
+  check('console.log 被收集', payload.logs?.some((line) => line.includes('saw space_region game_get_entities')));
   check('调用次数统计', payload.calls === 2);
   check('纯读脚本不弹写确认', confirms.length === 0);
   check('宿主收到两次调用', calls.length === 2);
@@ -153,7 +153,7 @@ console.log('\n── 3. 白名单、写确认与预算 ──');
 {
   const out = await run(
     tool,
-    `dsp.call('game_get_power', {}); dsp.call('game_get_power', {});`,
+    `dsp.call('space_region', {}); dsp.call('space_region', {});`,
     { maxCalls: 1 },
   );
   check('调用预算生效', out.text.includes('调用次数超过上限 1'), out.text.slice(0, 160));
@@ -183,7 +183,7 @@ console.log('\n── 4. 中断与错误 ──');
 {
   const out = await run(
     tool,
-    `try { dsp.call('game_get_power', {}); } catch (e) {} return { done: true };`,
+    `try { dsp.call('space_region', {}); } catch (e) {} return { done: true };`,
   );
   check('吞掉挂起会明确报错', out.text.includes('try/catch'), out.text.slice(0, 200));
   check('错误码是 script_error', out.text.includes('[script_error]'));
