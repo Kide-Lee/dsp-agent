@@ -191,6 +191,10 @@ namespace IcarusII.Game.Spatial
             var enemy = sector.enemyPool[id];
             if (enemy.id != id || enemy.protoId <= 0)
                 throw new SpatialException($"太空黑雾建筑 #{id} 已失效");
+            // dynamic 是"会移动的单位"；建筑是静态的那一侧，选错会把单位当成建筑
+            if (enemy.dynamic)
+                throw new SpatialException(
+                    $"#{id} 是会移动的黑雾单位，请用 space_motion type=df_space_unit");
 
             target.Star = star;
             target.StarId = star != null ? star.id : 0;
@@ -213,6 +217,9 @@ namespace IcarusII.Game.Spatial
             var enemy = factory.enemyPool[id];
             if (enemy.id != id || enemy.protoId <= 0)
                 throw new SpatialException($"地面黑雾建筑 #{id} 已失效");
+            if (enemy.dynamic)
+                throw new SpatialException(
+                    $"#{id} 是会移动的黑雾单位，请用 space_motion type=df_ground_unit");
 
             target.Planet = planet;
             target.PlanetId = planet.id;
@@ -309,7 +316,8 @@ namespace IcarusII.Game.Spatial
             for (int id = 1; id < sector.enemyCursor && id < sector.enemyPool.Length; id++)
             {
                 var enemy = sector.enemyPool[id];
-                if (enemy.id != id || enemy.protoId <= 0 || !enemy.isSpace) continue;
+                // 建筑是静态的；dynamic 的那一侧属于动点
+                if (enemy.id != id || enemy.protoId <= 0 || !enemy.isSpace || enemy.dynamic) continue;
                 if (star != null && enemy.astroId != star.id) continue;
                 var dx = enemy.pos.x - origin.x;
                 var dy = enemy.pos.y - origin.y;
