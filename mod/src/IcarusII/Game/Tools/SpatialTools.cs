@@ -230,15 +230,17 @@ namespace IcarusII.Game.Tools
                 case SpatialTypes.Planet:
                 case SpatialTypes.PowerGrid:
                 case SpatialTypes.Factory:
-                case SpatialTypes.WorldBox:
                 case SpatialTypes.PlanetPatch:
                 {
+                    // 这三个类型的成员都在同一颗行星上
                     var members = RegionCatalog.Members(target, "building", out _, out _);
                     var ids = new List<int>(members.Count);
                     foreach (var member in members) ids.Add(member.Id);
                     items = StatAggregator.Storage(target.Planet.factory, ids);
                     break;
                 }
+                case SpatialTypes.WorldBox:
+                    return WorldBoxStorage(data, request, target);
                 case SpatialTypes.Star:
                 case SpatialTypes.DysonSphere:
                     return DysonStorage(data, request, target);
@@ -336,6 +338,10 @@ namespace IcarusII.Game.Tools
 
             if (target.Type == SpatialTypes.Blueprint)
                 return BlueprintFlow(data, request, target);
+
+            // 世界区域横跨多颗行星，生产桶也是按行星切的，必须分组累加
+            if (target.Type == SpatialTypes.WorldBox)
+                return WorldBoxFlow(data, request, target);
 
             var planet = target.Planet;
             if (planet?.factory == null) throw new SpatialException("该区域的行星工厂尚未加载");
@@ -441,6 +447,8 @@ namespace IcarusII.Game.Tools
                 }
                 case SpatialTypes.Blueprint:
                     return BlueprintPower(data, request, target);
+                case SpatialTypes.WorldBox:
+                    return WorldBoxPower(data, request, target);
                 default:
                 {
                     if (target.Type == SpatialTypes.StarSystem)
@@ -863,6 +871,152 @@ namespace IcarusII.Game.Tools
                     return TryStarMemo(target.Star);
                 default:
                     return null;
+            }
+        }
+
+        /// <summary>
+        /// 世界区域的成员可能横跨多颗行星，必须按 planetId 分组再各自求和，
+        /// 不能拿单颗行星的工厂去查别人的建筑 id。
+        /// </summary>
+        private static GameToolJobResult WorldBoxStorage(JsonValue data, SpatialRequest request,
+            RegionTarget target)
+        {
+            var members = RegionCatalog.Members(target, "building", out var partial, out var note);
+            var byPlanet = GroupByPlanet(members);
+
+            var totals = new Dictionary<int, ItemAmount>();
+            foreach (var pair in byPlanet)
+            {
+                var planet = GameMain.data.galaxy.PlanetById(pair.Key);
+                if (planet?.factory == null) continue;
+                foreach (var entry in StatAggregator.Storage(planet.factory, pair.Value))
+                {
+                    if (!totals.TryGetValue(entry.ItemId, out var agg))
+                    {
+                        agg = new ItemAmount { ItemId = entry.ItemId, Name = entry.Name };
+                        totals[entry.ItemId] = agg;
+                    }
+                    agg.Amount += entry.Amount;
+                    agg.Stored += entry.Stored;
+                }
+            }
+
+            var items = new List<ItemAmount>(totals.Values);
+            items.Sort((a, b) => b.Amount.CompareTo(a.Amount));
+            data.Set("items", ItemArray(items, request));
+            data.Set("total", items.Count);
+            data.Set("planetCount", byPlanet.Count);
+            WriteStatMeta(data, request, windowNative: false);
+            if (note != null) data.Set("note", note);
+            return Result(data, $"世界区域：{byPlanet.Count} 颗行星，{items.Count} 种物品", partial);
+        }
+
+        /// <summary>世界区域按行星分组算流量：生产桶是行星级的，跨行星只能逐颗取再合并。</summary>
+        private static GameToolJobResult WorldBoxFlow(JsonValue data, SpatialRequest request,
+            RegionTarget target)
+        {
+            var members = RegionCatalog.Members(target, "building", out var partial, out var note);
+            var byPlanet = GroupByPlanet(members);
+            var isProduction = request.Method == SpatialMethod.Production;
+            var isConsumption = request.Method == SpatialMethod.Consumption;
+
+            if (request.Basis == StatBasis.Installed && !isProduction && !isConsumption)
+                throw new SpatialException(
+                    $"{SpatialTypes.NameOf(request.Method)} 只支持 basis=actual；理论值只对 production/consumption 有意义");
+
+            var totals = new Dictionary<int, ItemAmount>();
+            foreach (var pair in byPlanet)
+            {
+                var planet = GameMain.data.galaxy.PlanetById(pair.Key);
+                if (planet?.factory == null) continue;
+                var chunk = request.Basis == StatBasis.Installed
+                    ? StatAggregator.InstalledDelta(planet.factory, pair.Value, request.Window, request.Unit,
+                        produce: isProduction)
+                    : StatAggregator.ProductionDelta(planet, pair.Value, request.Window, request.Unit);
+                MergeInto(totals, chunk);
+            }
+
+            var items = new List<ItemAmount>(totals.Values);
+            items.Sort((a, b) => b.Amount.CompareTo(a.Amount));
+            data.Set("items", ItemArray(items, request));
+            data.Set("total", items.Count);
+            data.Set("planetCount", byPlanet.Count);
+            WriteStatMeta(data, request, windowNative: true);
+            if (note != null) data.Set("note", note);
+
+            var truncated = request.Offset + Math.Min(request.Limit, items.Count) < items.Count;
+            return Result(data, $"世界区域：{byPlanet.Count} 颗行星，{items.Count} 种物品", partial, truncated,
+                truncated ? request.Offset + request.Limit : -1);
+        }
+
+        private static GameToolJobResult WorldBoxPower(JsonValue data, SpatialRequest request,
+            RegionTarget target)
+        {
+            var members = RegionCatalog.Members(target, "building", out var partial, out var note);
+            var byPlanet = GroupByPlanet(members);
+
+            long required = 0;
+            long served = 0;
+            long capacity = 0;
+            long stored = 0;
+            var consumers = 0;
+            var generators = 0;
+            foreach (var pair in byPlanet)
+            {
+                var planet = GameMain.data.galaxy.PlanetById(pair.Key);
+                if (planet?.factory == null) continue;
+                var chunk = StatAggregator.Power(planet.factory, pair.Value);
+                required += (long)(chunk["demandKw"].AsDouble(0) * 1000.0 / 60.0);
+                served += (long)(chunk["servedKw"].AsDouble(0) * 1000.0 / 60.0);
+                capacity += (long)(chunk["capacityKw"].AsDouble(0) * 1000.0 / 60.0);
+                stored += (long)(chunk["storedKwh"].AsDouble(0) * 3.6e6);
+                consumers += chunk["consumers"].AsInt(0);
+                generators += chunk["generators"].AsInt(0);
+            }
+
+            var obj = JsonValue.NewObject();
+            obj.Set("demandKw", GameToolFormat.Round(GameToolFormat.Kw(required), 2));
+            obj.Set("servedKw", GameToolFormat.Round(GameToolFormat.Kw(served), 2));
+            obj.Set("capacityKw", GameToolFormat.Round(GameToolFormat.Kw(capacity), 2));
+            obj.Set("storedKwh", GameToolFormat.Round(GameToolFormat.Kwh(stored), 2));
+            obj.Set("satisfactionPct", required > 0
+                ? GameToolFormat.Round(served * 100.0 / required, 1) : 100);
+            obj.Set("consumers", consumers);
+            obj.Set("generators", generators);
+            obj.Set("planetCount", byPlanet.Count);
+            data.Set("power", obj);
+            WriteStatMeta(data, request, windowNative: false);
+            if (note != null) data.Set("note", note);
+            return Result(data, $"世界区域：{byPlanet.Count} 颗行星的电力合计", partial);
+        }
+
+        private static Dictionary<int, List<int>> GroupByPlanet(List<RegionMember> members)
+        {
+            var byPlanet = new Dictionary<int, List<int>>();
+            foreach (var member in members)
+            {
+                if (member.PlanetId <= 0) continue;
+                if (!byPlanet.TryGetValue(member.PlanetId, out var list))
+                {
+                    list = new List<int>();
+                    byPlanet[member.PlanetId] = list;
+                }
+                list.Add(member.Id);
+            }
+            return byPlanet;
+        }
+
+        private static void MergeInto(Dictionary<int, ItemAmount> totals, List<ItemAmount> chunk)
+        {
+            foreach (var entry in chunk)
+            {
+                if (!totals.TryGetValue(entry.ItemId, out var agg))
+                {
+                    agg = new ItemAmount { ItemId = entry.ItemId, Name = entry.Name };
+                    totals[entry.ItemId] = agg;
+                }
+                agg.Amount += entry.Amount;
+                agg.Stored += entry.Stored;
             }
         }
 
