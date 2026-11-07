@@ -1217,7 +1217,7 @@ namespace IcarusII.Game.Tools
                 if (entity.stationId > 0)
                     count += AppendStationUnits(factory, entity.stationId, array);
                 if (entity.siloId > 0)
-                    count += AppendSiloRockets(target.Star, entity.siloId, array);
+                    count += AppendSiloRockets(target.Planet, target.Star, array);
                 if (entity.battleBaseId > 0)
                     count += AppendBattleBaseUnits(factory, entity.battleBaseId, array);
                 if (entity.constructionModuleId > 0)
@@ -1284,16 +1284,23 @@ namespace IcarusII.Game.Tools
             return 0;
         }
 
-        private static int AppendSiloRockets(StarData star, int siloId, JsonValue array)
+        /// <summary>
+        /// 发射井名下的火箭。
+        ///
+        /// DysonRocket 没有记录发射井，只带 planetId，所以只能按"从这颗行星发射"归属；
+        /// 同一行星有多个发射井时无法区分，这一点在返回里标注。
+        /// </summary>
+        private static int AppendSiloRockets(PlanetData planet, StarData star, JsonValue array)
         {
-            var sphere = GameMain.data.dysonSpheres != null && star != null
-                ? DysonSpheres.Get(star) : null;
-            if (sphere?.rocketPool == null) return 0;
+            var sphere = star != null ? DysonSpheres.Get(star) : null;
+            if (sphere?.rocketPool == null || planet == null) return 0;
+
             var count = 0;
             for (int id = 1; id < sphere.rocketCursor && id < sphere.rocketPool.Length; id++)
             {
                 var rocket = sphere.rocketPool[id];
                 if (rocket.id != id) continue;
+                if (rocket.planetId != planet.id) continue;
                 array.Add(OwnedMotion("dyson_rocket", id, 0, "小型运载火箭"));
                 count++;
             }
