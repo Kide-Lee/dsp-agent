@@ -4680,6 +4680,14 @@
             "type": "string",
             "description": "统计时按物品名或 id 过滤"
           },
+          "kind": {
+            "type": "string",
+            "description": "list 时按成员类别过滤"
+          },
+          "filter": {
+            "type": "string",
+            "description": "list 时按成员名字或 id 过滤"
+          },
           "frame": {
             "anyOf": [
               {
@@ -4917,7 +4925,15 @@
           },
           "itemFilter": {
             "type": "string",
-            "description": "list 时按成员类别过滤；统计时按物品名或 id 过滤"
+            "description": "统计时按物品名或 id 过滤"
+          },
+          "kind": {
+            "type": "string",
+            "description": "list 时按成员类别过滤：building / vein / vegetation / planet / star / df_space_unit 等"
+          },
+          "filter": {
+            "type": "string",
+            "description": "list 时按成员名字或 id 过滤"
           },
           "depth": {
             "type": "integer",

@@ -556,7 +556,11 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         basis: Type.Optional(Type.Union([
           Type.Literal('actual'), Type.Literal('installed'),
         ], { description: 'actual=实际统计（默认），installed=按配方与建筑数算的理论值' })),
-        itemFilter: Type.Optional(Type.String({ description: 'list 时按成员类别过滤；统计时按物品名或 id 过滤' })),
+        itemFilter: Type.Optional(Type.String({ description: '统计时按物品名或 id 过滤' })),
+        kind: Type.Optional(Type.String({
+          description: 'list 时按成员类别过滤：building / vein / vegetation / planet / star / df_space_unit 等',
+        })),
+        filter: Type.Optional(Type.String({ description: 'list 时按成员名字或 id 过滤' })),
         depth: Type.Optional(Type.Integer({ minimum: 1, maximum: 4, description: 'parent 的层数，默认 1' })),
         radius: Type.Optional(Type.Number({ description: '几何区域半径（米），默认 200' })),
         frame: Type.Optional(Type.Union([
@@ -621,6 +625,8 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
           Type.Literal('actual'), Type.Literal('installed'),
         ], { description: 'actual=实际统计（默认），installed=按配方算的理论值' })),
         itemFilter: Type.Optional(Type.String({ description: '统计时按物品名或 id 过滤' })),
+        kind: Type.Optional(Type.String({ description: 'list 时按成员类别过滤' })),
+        filter: Type.Optional(Type.String({ description: 'list 时按成员名字或 id 过滤' })),
         frame: Type.Optional(Type.Union([
           Type.Literal('auto'), Type.Literal('planet'), Type.Literal('world'),
         ], { description: 'location 的坐标系，默认 auto' })),

@@ -216,7 +216,9 @@ namespace IcarusII.Game.Tools
             if (target.Type == SpatialTypes.Blueprint)
                 return BlueprintBuildings(data, request, target);
 
-            var members = RegionCatalog.Members(target, args_kind(request), out var partial, out var note);
+            var members = RegionCatalog.Members(target, request.MemberKind, out var partial, out var note);
+            if (request.MemberFilter != null)
+                members = FilterByName(members, request.MemberFilter);
             var array = JsonValue.NewArray();
             var returned = 0;
             for (int i = request.Offset; i < members.Count && returned < request.Limit; i++, returned++)
@@ -251,7 +253,22 @@ namespace IcarusII.Game.Tools
             return Result(data, display, partial, truncated, nextOffset);
         }
 
-        private static string args_kind(SpatialRequest request) => request.ItemFilter;
+        /// <summary>按名字或 id 过滤成员；空串不参与匹配。</summary>
+        private static List<RegionMember> FilterByName(List<RegionMember> members, string filter)
+        {
+            var result = new List<RegionMember>(members.Count);
+            foreach (var member in members)
+            {
+                if (member.Name != null
+                    && member.Name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    result.Add(member);
+                    continue;
+                }
+                if (member.Id.ToString(CultureInfo.InvariantCulture) == filter) result.Add(member);
+            }
+            return result;
+        }
 
         private static GameToolJobResult Storage(JsonValue data, SpatialRequest request, RegionTarget target)
         {

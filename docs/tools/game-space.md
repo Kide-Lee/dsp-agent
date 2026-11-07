@@ -33,7 +33,9 @@
 | `window` | `string \| string \| string \| string \| string \| string` | 否 | — | 统计时间窗，默认 10m |
 | `unit` | `string \| string \| string` | 否 | — | 输出单位，默认 perMin |
 | `basis` | `string \| string` | 否 | — | actual=实际统计（默认），installed=按配方与建筑数算的理论值 |
-| `itemFilter` | `string` | 否 | — | list 时按成员类别过滤；统计时按物品名或 id 过滤 |
+| `itemFilter` | `string` | 否 | — | 统计时按物品名或 id 过滤 |
+| `kind` | `string` | 否 | — | list 时按成员类别过滤：building / vein / vegetation / planet / star / df_space_unit 等 |
+| `filter` | `string` | 否 | — | list 时按成员名字或 id 过滤 |
 | `depth` | `integer` | 否 | minimum=1，maximum=4 | parent 的层数，默认 1 |
 | `radius` | `number` | 否 | — | 几何区域半径（米），默认 200 |
 | `frame` | `string \| string \| string` | 否 | — | location 的坐标系，默认 auto |
@@ -77,6 +79,8 @@
 | `unit` | `string \| string \| string` | 否 | — | 输出单位，默认 perMin |
 | `basis` | `string \| string` | 否 | — | actual=实际统计（默认），installed=按配方算的理论值 |
 | `itemFilter` | `string` | 否 | — | 统计时按物品名或 id 过滤 |
+| `kind` | `string` | 否 | — | list 时按成员类别过滤 |
+| `filter` | `string` | 否 | — | list 时按成员名字或 id 过滤 |
 | `frame` | `string \| string \| string` | 否 | — | location 的坐标系，默认 auto |
 | `precision` | `integer` | 否 | minimum=0，maximum=6 | 经纬度小数位，默认 3 |
 | `offset` | `integer` | 否 | — | 分页偏移，默认 0 |

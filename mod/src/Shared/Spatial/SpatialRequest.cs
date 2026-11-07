@@ -53,6 +53,10 @@ namespace IcarusII.Common.Spatial
         public StatUnit Unit = StatUnit.PerMinute;
         public StatBasis Basis = StatBasis.Actual;
         public string ItemFilter;
+        /// <summary>list 的成员类别过滤（方法行声明的是 filter / kind 两个参数）。</summary>
+        public string MemberKind;
+        /// <summary>list 的名字/关键字过滤。</summary>
+        public string MemberFilter;
         public int Limit = DefaultLimit;
         public int Offset;
         public int Depth = DefaultDepth;
@@ -98,6 +102,8 @@ namespace IcarusII.Common.Spatial
             request.Unit = ParseUnit(args["unit"].AsString(null));
             request.Basis = ParseBasis(args["basis"].AsString(null));
             request.ItemFilter = Trimmed(args["itemFilter"].AsString(null));
+            request.MemberKind = Trimmed(args["kind"].AsString(null));
+            request.MemberFilter = Trimmed(args["filter"].AsString(null));
 
             request.Limit = ClampInt(args["limit"].AsInt(DefaultLimit), 1, MaxLimit);
             request.Offset = Math.Max(0, args["offset"].AsInt(0));
