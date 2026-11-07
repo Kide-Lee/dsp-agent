@@ -76,9 +76,6 @@ namespace IcarusII.Game.Spatial
                 case SpatialTypes.DfBase:
                     AddBaseMembers(result, target.Planet, target.SeedEntityId);
                     break;
-                case SpatialTypes.DysonSphere:
-                    AddDysonMembers(result, target);
-                    break;
                 case SpatialTypes.WorldBox:
                     AddWorldBoxMembers(result, target.Shape, out partial, out note);
                     break;
