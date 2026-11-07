@@ -281,14 +281,34 @@ namespace IcarusII.Game.Spatial
             var world = HiveUPosition(hive);
             result.Add(RegionMember.InWorld("df_hive", star.id, "巢穴核心", 0, world));
             if (sector.enemyPool == null) return;
+
+            // 巢穴自带 starData，用它判断归属；enemy.astroId 与 planet/star 的 id
+            // 不在同一个编号域，直接比会漏掉所有单位。
+            var hiveStarIndex = hive.starData != null ? hive.starData.index : -1;
             for (int id = 1; id < sector.enemyCursor && id < sector.enemyPool.Length; id++)
             {
                 var enemy = sector.enemyPool[id];
                 if (enemy.id != id || enemy.protoId <= 0 || !enemy.isSpace) continue;
-                if (enemy.astroId != star.id) continue;
+                if (!BelongsToStar(enemy, hiveStarIndex)) continue;
                 result.Add(RegionMember.InWorld("df_space_unit", id,
                     EntityToolUtil.ProtoName(enemy.protoId), 0, enemy.pos));
             }
+        }
+
+        /// <summary>
+        /// 单位是否属于某个恒星：先按 astroId 反查天体，再比恒星下标。
+        /// astroId 是独立编号，不能直接和 star.id 比。
+        /// </summary>
+        public static bool BelongsToStar(EnemyData enemy, int starIndex)
+        {
+            if (starIndex < 0) return false;
+            var galaxy = GameMain.data != null ? GameMain.data.galaxy : null;
+            if (galaxy == null) return false;
+            var astro = enemy.astroId > 0 ? galaxy.PlanetByAstroId(enemy.astroId) : null;
+            if (astro?.star != null) return astro.star.index == starIndex;
+            // 巢穴本体等非行星天体：回退到 originAstroId
+            var origin = enemy.originAstroId > 0 ? galaxy.PlanetByAstroId(enemy.originAstroId) : null;
+            return origin?.star != null && origin.star.index == starIndex;
         }
 
         private static void AddBaseMembers(List<RegionMember> result, PlanetData planet, int baseEntityId)

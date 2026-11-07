@@ -1331,7 +1331,8 @@ namespace IcarusII.Game.Tools
                 {
                     var enemy = sector.enemyPool[id];
                     if (enemy.id != id || enemy.protoId <= 0 || !enemy.isSpace || !enemy.dynamic) continue;
-                    if (enemy.astroId != target.StarId) continue;
+                    if (target.Star != null
+                        && !RegionCatalog.BelongsToStar(enemy, target.Star.index)) continue;
                     array.Add(OwnedMotion("df_space_unit", id, 0, EntityToolUtil.ProtoName(enemy.protoId)));
                     count++;
                 }

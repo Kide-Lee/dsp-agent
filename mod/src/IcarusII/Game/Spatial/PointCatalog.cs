@@ -318,7 +318,7 @@ namespace IcarusII.Game.Spatial
                 var enemy = sector.enemyPool[id];
                 // 建筑是静态的；dynamic 的那一侧属于动点
                 if (enemy.id != id || enemy.protoId <= 0 || !enemy.isSpace || enemy.dynamic) continue;
-                if (star != null && enemy.astroId != star.id) continue;
+                if (star != null && !RegionCatalog.BelongsToStar(enemy, star.index)) continue;
                 var dx = enemy.pos.x - origin.x;
                 var dy = enemy.pos.y - origin.y;
                 var dz = enemy.pos.z - origin.z;
