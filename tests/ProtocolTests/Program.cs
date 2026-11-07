@@ -71,6 +71,9 @@ namespace IcarusII.Tests
             Section("空间变量");
             SpatialTests.Run();
 
+            Section("空间支持矩阵与 xlsx 一致");
+            SpatialMatrixTests.Run();
+
             Console.WriteLine();
             if (_failures == 0)
             {

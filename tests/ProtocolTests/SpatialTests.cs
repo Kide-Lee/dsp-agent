@@ -26,10 +26,12 @@ namespace IcarusII.Tests
 
         private static void SupportMatrixTests()
         {
-            // 区域页：11 列在 list 上全填
+            // 区域 list：只有戴森球留空（它的成员由"恒星"列枚举）
             foreach (var type in SpatialTypes.RegionTypes)
             {
-                Program.Check($"区域 list 支持 {type}", SpatialTypes.Supports(SpatialMethod.List, type));
+                var expected = type != SpatialTypes.DysonSphere;
+                Program.Check($"区域 list {(expected ? "支持" : "不支持")} {type}",
+                    SpatialTypes.Supports(SpatialMethod.List, type) == expected);
             }
 
             // 蓝图能读建筑清单与理论流量，但没有位置、不能导航

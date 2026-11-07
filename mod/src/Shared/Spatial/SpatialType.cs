@@ -164,8 +164,9 @@ namespace IcarusII.Common.Spatial
         {
             switch (method)
             {
-                // 区域页 11 列全填
+                // 戴森球的成员由"恒星"列枚举（list=戴森云与戴森壳），自己不再重复列
                 case SpatialMethod.List:
+                    return IsRegion(type) && type != DysonSphere;
                 case SpatialMethod.Output:
                 case SpatialMethod.Production:
                 case SpatialMethod.Consumption:
