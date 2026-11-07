@@ -43,8 +43,11 @@ namespace IcarusII.Game.Spatial
             var cellPoints = 0;
             if (sphere == null || sphere.layersIdBased == null) return (0, 0, 0, 0, 0);
 
-            for (int i = 1; i < sphere.layerCount && i < sphere.layersIdBased.Length; i++)
+            // layersIdBased 按层 id 索引，层可以被删除，id 不保证连续。
+            // 用 LayerExist 判断这一层是否真的存在，而不是拿 layerCount 当上界。
+            for (int i = 1; i < sphere.layersIdBased.Length; i++)
             {
+                if (!sphere.LayerExist(i)) continue;
                 var layer = sphere.layersIdBased[i];
                 if (layer == null) continue;
                 if (layer.nodePool != null)
