@@ -17,6 +17,10 @@ namespace IcarusII.Game.Spatial
         {
             public int PlanetId;
             public int EntityCursor;
+            /// <summary>抽查若干实体的 protoId：拆除后再建会让 cursor 不变但内容变。</summary>
+            public int[] SlotFingerprint;
+            /// <summary>连接表的引用；换档后数组实例会换，用它兜住"同一个 cursor 但内容变了"。</summary>
+            public int[] ConnPool;
             public Dictionary<int, List<int>> BySeed;
         }
 
@@ -59,11 +63,45 @@ namespace IcarusII.Game.Spatial
             return false;
         }
 
+        /// <summary>
+        /// 抽查指纹：在 [1, cursor) 上均匀取若干个实体的 protoId。
+        /// 拆除后立刻重建时 entityCursor 可能不变，只比 cursor 会拿到过期的连通分量。
+        /// </summary>
+        private static int[] Fingerprint(PlanetFactory factory, int cursor)
+        {
+            const int samples = 16;
+            var result = new int[samples];
+            if (factory.entityPool == null || cursor <= 1) return result;
+            var pool = factory.entityPool;
+            var upper = Math.Min(cursor, pool.Length);
+            for (int i = 0; i < samples; i++)
+            {
+                var id = 1 + (int)((long)(upper - 1) * i / samples);
+                if (id <= 0 || id >= upper) continue;
+                result[i] = pool[id].protoId;
+            }
+            return result;
+        }
+
+        private static bool FingerprintMatches(PlanetFactory factory, int[] expected)
+        {
+            if (expected is null) return false;
+            var actual = Fingerprint(factory, Math.Min(factory.entityCursor, factory.entityPool.Length));
+            if (actual.Length != expected.Length) return false;
+            for (int i = 0; i < actual.Length; i++)
+                if (actual[i] != expected[i]) return false;
+            return true;
+        }
+
         /// <summary>并查集：每个非空实体先自成一类，再按连接关系合并。</summary>
         private static Dictionary<int, List<int>> Build(PlanetFactory factory)
         {
             var cursor = factory.entityCursor;
-            if (_cache != null && _cache.PlanetId == factory.planet.id && _cache.EntityCursor == cursor)
+            if (_cache != null
+                && _cache.PlanetId == factory.planet.id
+                && _cache.EntityCursor == cursor
+                && ReferenceEquals(_cache.ConnPool, factory.entityConnPool)
+                && FingerprintMatches(factory, _cache.SlotFingerprint))
                 return _cache.BySeed;
 
             var upper = Math.Min(cursor, factory.entityPool.Length);
@@ -102,6 +140,8 @@ namespace IcarusII.Game.Spatial
             {
                 PlanetId = factory.planet.id,
                 EntityCursor = cursor,
+                SlotFingerprint = Fingerprint(factory, cursor),
+                ConnPool = factory.entityConnPool,
                 BySeed = bySeed,
             };
             return bySeed;
@@ -174,7 +214,5 @@ namespace IcarusII.Game.Spatial
             if (rootA < rootB) parent[rootB] = rootA;
             else parent[a] = rootB;
         }
-
-        public static void Invalidate() => _cache = null;
     }
 }
