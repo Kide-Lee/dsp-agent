@@ -343,16 +343,22 @@ namespace IcarusII.Game.Spatial
                 }
             }
 
-            // 建筑只在已加载行星上可得；其余行星无法枚举，标 partial 由调用方如实报告。
-            var planets = 0;
+            // 建筑只在已加载行星上可得：没有工厂的行星即使落在盒子里也枚举不到它的建筑。
+            var scanned = 0;
+            var unscanned = 0;
             foreach (var star in data.galaxy.stars)
             {
                 if (star?.planets == null) continue;
                 foreach (var planet in star.planets)
                 {
-                    if (planet == null || planet.factory == null) continue;
-                    planets++;
-                    if (!loaded.Contains(planet.id)) continue;
+                    if (planet == null) continue;
+                    if (planet.factory == null)
+                    {
+                        // 未加载：只有落在盒子里的才算潜在遗漏
+                        if (shape.ContainsBox(PlanetFrame.ToVec3d(planet.uPosition))) unscanned++;
+                        continue;
+                    }
+                    scanned++;
                     var factory = planet.factory;
                     var upper = Math.Min(factory.entityCursor, factory.entityPool.Length);
                     for (int id = 1; id < upper; id++)
@@ -367,10 +373,15 @@ namespace IcarusII.Game.Spatial
                 }
             }
 
-            if (planets > loaded.Count)
+            if (unscanned > 0)
             {
                 partial = true;
-                note = $"只扫描了 {loaded.Count} 颗已加载行星，另有 {planets - loaded.Count} 颗未加载";
+                note = $"另有 {unscanned} 颗行星落在该区域内但工厂未加载，它们的建筑没有计入";
+            }
+            else if (scanned == 0)
+            {
+                partial = true;
+                note = "没有已加载的行星，只能报告天体";
             }
         }
     }
