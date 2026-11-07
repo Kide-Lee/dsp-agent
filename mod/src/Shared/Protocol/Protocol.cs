@@ -304,6 +304,13 @@ namespace IcarusII.Common.Protocol
         public const string ToolUiSnapshot = "ui_snapshot";
         public const string ToolUiClick = "ui_click";
 
+        /// <summary>空间变量查询（P0）：区域 / 定点 / 动点三类主语的只读查询。</summary>
+        public const string ToolSpaceRegion = "space_region";
+        public const string ToolSpacePoint = "space_point";
+        public const string ToolSpaceMotion = "space_motion";
+        /// <summary>mod 支持空间变量查询（可选能力，旧端不声明也照常工作）。</summary>
+        public const string CapabilitySpatial = "space.read.v1";
+
         /// <summary>
         /// sidecar 本地「写文件」工具。它们不改变游戏状态，所以不需要 mod 令牌，
         /// 但权限档位同样要求确认（只读必问、受限/接管对 risk 1 自动放行）。

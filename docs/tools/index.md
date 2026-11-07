@@ -7,7 +7,7 @@
 
 ## 工具清单
 
-共 57 个模型可见工具。
+共 60 个模型可见工具。
 
 | 工具 | label | 能力位 | 风险 | 超时 | 一句话 |
 | --- | --- | --- | --- | --- | --- |
@@ -33,6 +33,9 @@
 | [`game_analyze_area`](game-progress.md#game_analyze_area) | 产线分析 | `game.analyze.v1` | 只读 | 15000ms | 按空间范围聚合产线：各类建筑数量、各配方的机器数与装机产能、耗电、传送带/分拣器/物流塔数量、涉及电网的供需。 |
 | [`game_capture_view`](game-progress.md#game_capture_view) | 截图 | `game.view.v1` | 只读 | 15000ms | 截取当前游戏画面（不含 UI），以 JPEG 返回图片本身，并附带可见建筑的屏幕坐标。 |
 | [`game_get_progress`](game-progress.md#game_get_progress) | 进度阶段 | `game.progress.v1` | 只读 | 6000ms | 读取玩家进度：派生阶段（电磁/炼油/钛/星际物流/翘曲/戴森球…）及判定依据、已解锁科技数、里程碑、教程、当前研究与队列。 |
+| [`space_motion`](game-space.md#space_motion) | 动点查询 | `space.read.v1` | 只读 | — | 按动点读位置与状态：玩家 / 建设无人机 / 配送运输机 / 物流运输机 / 星际物流运输船 / 小型运载火箭 / 战斗无人机 / 战舰 / 太空黑雾单位 / 地面黑雾单位 /… |
+| [`space_point`](game-space.md#space_point) | 定点查询 | `space.read.v1` | 只读 | — | 按定点聚合：下辖动点、存量、输入/输出/生产/消耗、电力、归属、行星坐标、备忘录。 |
+| [`space_region`](game-space.md#space_region) | 区域查询 | `space.read.v1` | 只读 | — | 按区域聚合：成员列表、存量、输入/输出/生产/消耗速度、电力、上级、位置、静态信息、备忘录。 |
 | [`game_drop_item`](game-write-basic.md#game_drop_item) | 丢弃物品 | `game.drop.v1` | risk 2 | 8000ms | 把背包里的物品丢到当前行星地面。 |
 | [`game_open_panel`](game-write-basic.md#game_open_panel) | 打开面板 | `game.write.v1` | risk 1 | 8000ms | 打开游戏内面板：inventory（背包）、tech（科技树）、starmap（星图）、marker（标记）、mecha（机甲）、replicator（复制器）、statist… |
 | [`game_place_marker`](game-write-basic.md#game_place_marker) | 放置标记 | `game.write.v1` | risk 1 | 8000ms | 在玩家当前所在的行星上放置一个定位标记，效果与行星视图右键相同。 |
@@ -76,6 +79,7 @@
 | [game-read.md](game-read.md) | 只读 · 存档与产线概览 | 6 |
 | [game-entity.md](game-entity.md) | 只读 · 建筑、星球与拓扑 | 7 |
 | [game-progress.md](game-progress.md) | 只读 · 进度、截图与区域分析 | 3 |
+| [game-space.md](game-space.md) | 只读 · 空间变量（区域 / 定点 / 动点） | 3 |
 | [game-write-basic.md](game-write-basic.md) | 写操作 · 标记、面板、研究与丢弃 | 5 |
 | [game-write-build.md](game-write-build.md) | 写操作 · 配方、投料与仓储 | 9 |
 | [game-assist.md](game-assist.md) | 辅助 · 方位指示、目标与待办 | 8 |
@@ -98,6 +102,7 @@ mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告�
 | `game.entity.v1` | 7 | `game_get_entity`、`game_get_entities`、`game_render_layout` |
 | `game.progress.v1` | 1 | `game_get_progress` |
 | `game.view.v1` | 1 | `game_capture_view` |
+| `space.read.v1` | 3 | `space_region`、`space_point`、`space_motion` |
 | `game.analyze.v1` | 1 | `game_analyze_area` |
 | `game.todo.v1` | 4 | `game_todo_templates`、`game_todo_list`、`game_todo_add` |
 | `mod.bridge.v1` | 4 | `mods_api_list`、`mods_adapter_create`、`mods_adapter_delete` |

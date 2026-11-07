@@ -4389,6 +4389,593 @@
       "notes": null
     },
     {
+      "name": "space_motion",
+      "label": "动点查询",
+      "description": "按动点读位置与状态：玩家 / 建设无人机 / 配送运输机 / 物流运输机 / 星际物流运输船 / 小型运载火箭 / 战斗无人机 / 战舰 / 太空黑雾单位 / 地面黑雾单位 / 垃圾块。位置带 gameTick，跨回合比较前要确认是同一 tick 的快照。",
+      "promptGuidelines": [
+        "玩家问“那架无人机/那艘船在哪、在干什么、还剩多少货”时使用。",
+        "动点会移动：本工具只给当前快照，没有追踪；需要新位置就再调一次，不要拿旧值推算。",
+        "op=storage 只对玩家与运输类动点有效；op=parent 对垃圾块返回无归属。",
+        "op=navigation 不接受：动点无法用 tether 追踪。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "list"
+              },
+              {
+                "type": "string",
+                "const": "storage"
+              },
+              {
+                "type": "string",
+                "const": "parent"
+              },
+              {
+                "type": "string",
+                "const": "location"
+              },
+              {
+                "type": "string",
+                "const": "information"
+              }
+            ],
+            "description": "list=玩家下辖动点 storage=携带物品 parent=归属 location=位置 information=状态"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "auto"
+              },
+              {
+                "type": "string",
+                "const": "player"
+              },
+              {
+                "type": "string",
+                "const": "construction_drone"
+              },
+              {
+                "type": "string",
+                "const": "delivery_courier"
+              },
+              {
+                "type": "string",
+                "const": "station_drone"
+              },
+              {
+                "type": "string",
+                "const": "station_ship"
+              },
+              {
+                "type": "string",
+                "const": "dyson_rocket"
+              },
+              {
+                "type": "string",
+                "const": "combat_drone"
+              },
+              {
+                "type": "string",
+                "const": "combat_fleet"
+              },
+              {
+                "type": "string",
+                "const": "df_space_unit"
+              },
+              {
+                "type": "string",
+                "const": "df_ground_unit"
+              },
+              {
+                "type": "string",
+                "const": "trash"
+              }
+            ],
+            "description": "动点类型；auto 时默认 player"
+          },
+          "target": {
+            "type": "string",
+            "description": "id：craftId / enemyId / trashId / rocketId / stationGid:shipIndex；省略时取最近的一个"
+          },
+          "precision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6,
+            "description": "经纬度小数位，默认 3"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "分页偏移，默认 0"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回条数上限，默认 25"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "space.read.v1",
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "game-space.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      },
+      "notes": null
+    },
+    {
+      "name": "space_point",
+      "label": "定点查询",
+      "description": "按定点聚合：下辖动点、存量、输入/输出/生产/消耗、电力、归属、行星坐标、备忘录。定点类型：建筑 / 矿脉 / 植被 / 太空黑雾建筑 / 地面黑雾建筑 / 世界坐标 / 行星坐标。",
+      "promptGuidelines": [
+        "玩家指着某栋建筑/某个矿脉问“它属于谁/在哪/多少电/进出多少”时使用。",
+        "省略 target 时先看玩家瞄准的对象，再退到最近的同类；找不到会明确报错，不会静默换目标。",
+        "矿脉的 output 是按开采机数量算出的理论值（basis=installed），矿脉自身没有实际统计。",
+        "op=navigation 不接受：导航是写操作，请改用 game_tether_add。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "list"
+              },
+              {
+                "type": "string",
+                "const": "storage"
+              },
+              {
+                "type": "string",
+                "const": "input"
+              },
+              {
+                "type": "string",
+                "const": "output"
+              },
+              {
+                "type": "string",
+                "const": "production"
+              },
+              {
+                "type": "string",
+                "const": "consumption"
+              },
+              {
+                "type": "string",
+                "const": "power"
+              },
+              {
+                "type": "string",
+                "const": "parent"
+              },
+              {
+                "type": "string",
+                "const": "location"
+              },
+              {
+                "type": "string",
+                "const": "note"
+              }
+            ],
+            "description": "list=下辖动点 storage=存量 input/output=物流进出 production/consumption=生产消耗 power=电力 parent=归属 location=坐标 note=全息信标备忘录"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "auto"
+              },
+              {
+                "type": "string",
+                "const": "building"
+              },
+              {
+                "type": "string",
+                "const": "vein"
+              },
+              {
+                "type": "string",
+                "const": "vegetation"
+              },
+              {
+                "type": "string",
+                "const": "df_space_building"
+              },
+              {
+                "type": "string",
+                "const": "df_ground_building"
+              },
+              {
+                "type": "string",
+                "const": "world_position"
+              },
+              {
+                "type": "string",
+                "const": "planet_position"
+              }
+            ],
+            "description": "定点类型；auto 时默认 building"
+          },
+          "target": {
+            "type": "string",
+            "description": "id：entityId / veinId / vegeId / enemyId；省略时按玩家瞄准或最近解析"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "1m"
+              },
+              {
+                "type": "string",
+                "const": "10m"
+              },
+              {
+                "type": "string",
+                "const": "1h"
+              },
+              {
+                "type": "string",
+                "const": "10h"
+              },
+              {
+                "type": "string",
+                "const": "100h"
+              },
+              {
+                "type": "string",
+                "const": "all"
+              }
+            ],
+            "description": "统计时间窗，默认 10m"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "perMin"
+              },
+              {
+                "type": "string",
+                "const": "perHour"
+              },
+              {
+                "type": "string",
+                "const": "total"
+              }
+            ],
+            "description": "输出单位，默认 perMin"
+          },
+          "basis": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "actual"
+              },
+              {
+                "type": "string",
+                "const": "installed"
+              }
+            ],
+            "description": "actual=实际统计（默认），installed=按配方算的理论值"
+          },
+          "itemFilter": {
+            "type": "string",
+            "description": "统计时按物品名或 id 过滤"
+          },
+          "frame": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "auto"
+              },
+              {
+                "type": "string",
+                "const": "planet"
+              },
+              {
+                "type": "string",
+                "const": "world"
+              }
+            ],
+            "description": "location 的坐标系，默认 auto"
+          },
+          "precision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6,
+            "description": "经纬度小数位，默认 3"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "分页偏移，默认 0"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回条数上限，默认 25"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "space.read.v1",
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "game-space.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      },
+      "notes": null
+    },
+    {
+      "name": "space_region",
+      "label": "区域查询",
+      "description": "按区域聚合：成员列表、存量、输入/输出/生产/消耗速度、电力、上级、位置、静态信息、备忘录。区域类型：恒星系 / 恒星 / 行星 / 电网 / 工厂 / 太空黑雾巢穴 / 地面黑雾基地 / 戴森球 / 世界区域 / 行星区域 / 蓝图。op 与 dsp-agent 表的方法行同名，省略 target 时按玩家所在位置解析。",
+      "promptGuidelines": [
+        "玩家问“某个区域里有什么/产出多少/耗多少电/在哪”时使用；不要自己拿经纬度去拼半径。",
+        "op=storage 是存量，op=input/output 是物流进出，op=production/consumption 是生产消耗，两者不可相加。",
+        "stat.windowNative=false 表示该对象没有分档统计，window 不生效，不要拿它当十分钟均值。",
+        "op=navigation 不接受：导航是写操作，请改用 game_tether_add。"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "list"
+              },
+              {
+                "type": "string",
+                "const": "storage"
+              },
+              {
+                "type": "string",
+                "const": "input"
+              },
+              {
+                "type": "string",
+                "const": "output"
+              },
+              {
+                "type": "string",
+                "const": "production"
+              },
+              {
+                "type": "string",
+                "const": "consumption"
+              },
+              {
+                "type": "string",
+                "const": "power"
+              },
+              {
+                "type": "string",
+                "const": "parent"
+              },
+              {
+                "type": "string",
+                "const": "location"
+              },
+              {
+                "type": "string",
+                "const": "information"
+              },
+              {
+                "type": "string",
+                "const": "note"
+              }
+            ],
+            "description": "list=成员 storage=存量 input/output=物流进出 production/consumption=生产消耗 power=电力 parent=上级 location=位置 information=静态信息 note=备忘录"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "auto"
+              },
+              {
+                "type": "string",
+                "const": "star_system"
+              },
+              {
+                "type": "string",
+                "const": "star"
+              },
+              {
+                "type": "string",
+                "const": "planet"
+              },
+              {
+                "type": "string",
+                "const": "power_grid"
+              },
+              {
+                "type": "string",
+                "const": "factory"
+              },
+              {
+                "type": "string",
+                "const": "df_hive"
+              },
+              {
+                "type": "string",
+                "const": "df_base"
+              },
+              {
+                "type": "string",
+                "const": "dyson_sphere"
+              },
+              {
+                "type": "string",
+                "const": "world_box"
+              },
+              {
+                "type": "string",
+                "const": "planet_patch"
+              },
+              {
+                "type": "string",
+                "const": "blueprint"
+              }
+            ],
+            "description": "区域类型；auto 时按玩家所在位置推断（在行星上=planet，否则=star_system）"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {}
+              }
+            ],
+            "description": "对象实例：字符串给 id（planetId / starId / networkId:seedEntityId / 蓝图路径）；world_box 与 planet_patch 可传对象带 min/max 或 latMin/latMax/lonStart/lonSpan"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "1m"
+              },
+              {
+                "type": "string",
+                "const": "10m"
+              },
+              {
+                "type": "string",
+                "const": "1h"
+              },
+              {
+                "type": "string",
+                "const": "10h"
+              },
+              {
+                "type": "string",
+                "const": "100h"
+              },
+              {
+                "type": "string",
+                "const": "all"
+              }
+            ],
+            "description": "统计时间窗，默认 10m"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "perMin"
+              },
+              {
+                "type": "string",
+                "const": "perHour"
+              },
+              {
+                "type": "string",
+                "const": "total"
+              }
+            ],
+            "description": "输出单位，默认 perMin"
+          },
+          "basis": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "actual"
+              },
+              {
+                "type": "string",
+                "const": "installed"
+              }
+            ],
+            "description": "actual=实际统计（默认），installed=按配方与建筑数算的理论值"
+          },
+          "itemFilter": {
+            "type": "string",
+            "description": "list 时按成员类别过滤；统计时按物品名或 id 过滤"
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "parent 的层数，默认 1"
+          },
+          "radius": {
+            "type": "number",
+            "description": "几何区域半径（米），默认 200"
+          },
+          "frame": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "auto"
+              },
+              {
+                "type": "string",
+                "const": "planet"
+              },
+              {
+                "type": "string",
+                "const": "world"
+              }
+            ],
+            "description": "location 的坐标系，默认 auto"
+          },
+          "precision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6,
+            "description": "经纬度小数位，默认 3"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "分页偏移，默认 0"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回条数上限，默认 25"
+          }
+        }
+      },
+      "executionMode": "sequential",
+      "source": "game",
+      "capability": "space.read.v1",
+      "risk": 0,
+      "timeoutMs": null,
+      "group": "game-space.md",
+      "cs": {
+        "timeoutMs": null,
+        "topFields": [],
+        "allFields": []
+      },
+      "notes": null
+    },
+    {
       "name": "ui_click",
       "label": "点击界面控件",
       "description": "按 ui_snapshot 给出的路径派发一次合成点击（PointerClick）。写操作：执行前玩家必须确认；语义未知、不可撤销，点击后请用 ui_snapshot 复核。",

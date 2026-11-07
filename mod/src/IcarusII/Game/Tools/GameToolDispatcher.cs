@@ -147,6 +147,9 @@ namespace IcarusII.Game.Tools
             Register(new ModsAdapterDeleteTool());
             Register(new UiSnapshotTool());
             Register(new UiClickTool());
+            Register(new SpaceRegionTool());
+            Register(new SpacePointTool());
+            Register(new SpaceMotionTool());
         }
 
         /// <summary>
@@ -303,6 +306,15 @@ namespace IcarusII.Game.Tools
                 try
                 {
                     result = call.Job.Finish();
+                }
+                catch (ArgumentErrorException ex)
+                {
+                    // 分帧任务在 Finish 阶段才见到参数错误；按 invalid_args 报，
+                    // 模型才知道是参数写错而不是插件出 bug。
+                    _log?.LogWarning($"[tool] {call.Name} 参数错误：{ex.Message}");
+                    SafeDone(onDone, Error(call.CallId, call.Name,
+                        Protocol.CodeInvalidArgs, ex.Message));
+                    continue;
                 }
                 catch (Exception ex)
                 {

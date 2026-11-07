@@ -250,6 +250,7 @@ namespace IcarusII.Core
             IcarusII.Common.Protocol.Protocol.CapabilityScriptWrite,
             IcarusII.Common.Protocol.Protocol.CapabilityRichTextV2,
             IcarusII.Common.Protocol.Protocol.CapabilityUiTree,
+            IcarusII.Common.Protocol.Protocol.CapabilitySpatial,
         };
 
         /// <summary>当前能力集合；没有启用的 mod 时不声明 mod.bridge.v1。</summary>

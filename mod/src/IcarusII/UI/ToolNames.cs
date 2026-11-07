@@ -54,6 +54,9 @@ namespace IcarusII.UI
                 case "game_trace_line": return Strings.Get("tool.name.game_trace_line");
                 case "game_get_planets": return Strings.Get("tool.name.game_get_planets");
                 case "game_get_logistics": return Strings.Get("tool.name.game_get_logistics");
+                case "space_region": return Strings.Get("tool.name.space_region");
+                case "space_point": return Strings.Get("tool.name.space_point");
+                case "space_motion": return Strings.Get("tool.name.space_motion");
                 // sidecar 本地工具（tool_activity 卡片用）
                 case "kb_search": return Strings.Get("tool.name.kb_search");
                 case "kb_get": return Strings.Get("tool.name.kb_get");

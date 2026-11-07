@@ -17,6 +17,7 @@ import { GameToolHost } from '../dist/tools/host.js';
 import {
   CAPABILITY_MOD_BRIDGE,
   CAPABILITY_UI_TREE,
+  CAPABILITY_SPATIAL,
   createGameTools,
   toolNamesForCapabilities,
 } from '../dist/tools/registry.js';
@@ -424,7 +425,52 @@ async function run() {
     check('args 透传', frame?.payload?.args === '{"rate":20}');
   }
 
-  console.log('── 8. ask_user 工具目录 ──');
+  console.log('── 8. 空间工具目录（space.read.v1）──');
+  {
+    const names = toolNamesForCapabilities([CAPABILITY_SPATIAL]);
+    check('声明 space.read.v1 时广告 space_region', names.includes('space_region'));
+    check('声明 space.read.v1 时广告 space_point', names.includes('space_point'));
+    check('声明 space.read.v1 时广告 space_motion', names.includes('space_motion'));
+    const without = toolNamesForCapabilities([]);
+    check('未声明能力时不广告空间工具', !without.includes('space_region'));
+
+    // 三个工具都必须声明为只读：risk 默认 0，且不在写工具表里。
+    check('space_region 不是写工具', !isWriteToolName('space_region'));
+    check('space_point 不是写工具', !isWriteToolName('space_point'));
+    check('space_motion 不是写工具', !isWriteToolName('space_motion'));
+
+    const spatialHost = new GameToolHost();
+    spatialHost.setCapabilities([CAPABILITY_SPATIAL]);
+    const tools = createGameTools(spatialHost);
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    for (const name of ['space_region', 'space_point', 'space_motion']) {
+      const tool = byName.get(name);
+      check(`${name} 已定义`, Boolean(tool));
+      check(`${name} 参数是 object`, tool?.parameters?.type === 'object');
+      check(`${name} 必填 op`, Array.isArray(tool?.parameters?.required)
+        && tool.parameters.required.includes('op'));
+      check(`${name} 是顺序执行`, tool?.executionMode === 'sequential');
+    }
+
+    // op 与 dsp-agent 表的方法行同名；区域 11 个、定点 10 个、动点 5 个。
+    const regionOps = byName.get('space_region')?.parameters?.properties?.op?.anyOf ?? [];
+    const pointOps = byName.get('space_point')?.parameters?.properties?.op?.anyOf ?? [];
+    const motionOps = byName.get('space_motion')?.parameters?.properties?.op?.anyOf ?? [];
+    check('区域 op 数', regionOps.length === 11, String(regionOps.length));
+    check('定点 op 数', pointOps.length === 10, String(pointOps.length));
+    check('动点 op 数', motionOps.length === 5, String(motionOps.length));
+    check('区域 op 含 list', regionOps.some((item) => item.const === 'list'));
+    check('区域 op 不含 navigation', !regionOps.some((item) => item.const === 'navigation'));
+    check('动点 op 含 information', motionOps.some((item) => item.const === 'information'));
+
+    // 区域类型清单与 mod 的 Shared/Spatial/SpatialType.cs 一一对应。
+    const regionTypes = byName.get('space_region')?.parameters?.properties?.type?.anyOf ?? [];
+    check('区域类型数（含 auto）', regionTypes.length === 12, String(regionTypes.length));
+    const motionTypes = byName.get('space_motion')?.parameters?.properties?.type?.anyOf ?? [];
+    check('动点类型数（含 auto）', motionTypes.length === 12, String(motionTypes.length));
+  }
+
+  console.log('── 8b. ask_user 工具目录 ──');
   {
     const names = toolNamesForCapabilities(['ui.ask.v1']);
     check('声明 ui.ask.v1 时广告 ask_user', names.includes(UI_ASK_TOOL_NAME));

@@ -1,0 +1,282 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using IcarusII.Common.Json;
+using IcarusII.Common.Spatial;
+using IcarusII.Game.Tools;
+using UnityEngine;
+
+namespace IcarusII.Game.Spatial
+{
+    /// <summary>一个物品在一组建筑上的量。</summary>
+    internal sealed class ItemAmount
+    {
+        public int ItemId;
+        public string Name;
+        public double Amount;
+        public long Stored;
+        public int Buildings;
+    }
+
+    /// <summary>
+    /// 把一组建筑聚合成 xlsx 要求的那些数。
+    ///
+    /// input/output 走物流口径（TrafficStatistics 的 planet 级进出），
+    /// production/consumption 走生产口径（ProductionStatistics 的工厂级桶），
+    /// 两者不可相加；storage 是当前存量。
+    /// </summary>
+    internal static class StatAggregator
+    {
+        /// <summary>当前存量：把每个建筑的存储网格累加。</summary>
+        public static List<ItemAmount> Storage(PlanetFactory factory, IReadOnlyCollection<int> entityIds)
+        {
+            var map = new Dictionary<int, ItemAmount>();
+            if (factory == null || factory.entityPool == null) return new List<ItemAmount>();
+
+            foreach (var id in entityIds)
+            {
+                if (id <= 0 || id >= factory.entityCursor || id >= factory.entityPool.Length) continue;
+                var entity = factory.entityPool[id];
+                if (entity.storageId <= 0) continue;
+                var storage = GetStorage(factory, entity.storageId);
+                if (storage == null) continue;
+                AccumulateStorage(storage, map);
+            }
+            return Sorted(map);
+        }
+
+        public static List<ItemAmount> Storage(StorageComponent storage)
+        {
+            var map = new Dictionary<int, ItemAmount>();
+            AccumulateStorage(storage, map);
+            return Sorted(map);
+        }
+
+        private static void AccumulateStorage(StorageComponent storage, Dictionary<int, ItemAmount> map)
+        {
+            var grids = storage.grids;
+            if (grids == null) return;
+            for (int i = 0; i < grids.Length; i++)
+            {
+                var grid = grids[i];
+                if (grid.itemId <= 0 || grid.count <= 0) continue;
+                if (!map.TryGetValue(grid.itemId, out var entry))
+                {
+                    entry = new ItemAmount
+                    {
+                        ItemId = grid.itemId,
+                        Name = GameToolFormat.ItemName(grid.itemId),
+                    };
+                    map[grid.itemId] = entry;
+                }
+                entry.Amount += grid.count;
+                entry.Stored += grid.count;
+                entry.Buildings++;
+            }
+        }
+
+        /// <summary>
+        /// 生产/消耗速度：读游戏自己的分档桶（ProductionStatistics），
+        /// 按 window 取对应累计值再折算 unit。
+        /// </summary>
+        public static List<ItemAmount> ProductionDelta(PlanetData planet,
+            IReadOnlyCollection<int> entityIds, StatWindow window, StatUnit unit)
+        {
+            var result = new Dictionary<int, ItemAmount>();
+            var factory = planet != null ? planet.factory : null;
+            if (factory == null) return new List<ItemAmount>();
+
+            var stats = GameMain.data != null ? GameMain.data.statistics : null;
+            var production = stats != null ? stats.production : null;
+            var factoryIndex = planet.factoryIndex;
+            if (production?.factoryStatPool == null || factoryIndex < 0 ||
+                factoryIndex >= production.factoryStatPool.Length)
+                return new List<ItemAmount>();
+
+            var factoryStat = production.factoryStatPool[factoryIndex];
+            if (factoryStat?.productIndices == null || factoryStat.productPool == null)
+                return new List<ItemAmount>();
+
+            // 只统计选中建筑：装配机按各自配方归属，未选中建筑不计。
+            var produced = new Dictionary<int, double>();
+            var consumed = new Dictionary<int, double>();
+            CollectRecipeFlow(factory, entityIds, produced, consumed, 1.0, out _);
+
+            var level = Math.Min((int)window, ProductionStatistics.STAT_LEVEL_COUNT);
+            var producedLevel = level + 1;
+            var consumedLevel = ProductionStatistics.STAT_LEVEL_COUNT + producedLevel;
+
+            foreach (var pair in produced)
+            {
+                var itemId = pair.Key;
+                if (itemId <= 0 || itemId >= factoryStat.productIndices.Length) continue;
+                var productIndex = factoryStat.productIndices[itemId];
+                if (productIndex <= 0 || productIndex >= factoryStat.productPool.Length) continue;
+                var stat = factoryStat.productPool[productIndex];
+                if (stat?.total == null || stat.total.Length <= consumedLevel) continue;
+
+                var producedTotal = stat.total[producedLevel];
+                var consumedTotal = stat.total[consumedLevel];
+                if (producedTotal == 0 && consumedTotal == 0) continue;
+
+                var entry = new ItemAmount
+                {
+                    ItemId = itemId,
+                    Name = GameToolFormat.ItemName(itemId),
+                    Amount = SpatialRequest.ConvertUnit(producedTotal, window, unit),
+                    Stored = stat.storageCount,
+                };
+                result[itemId] = entry;
+            }
+
+            return Sorted(result);
+        }
+
+        /// <summary>
+        /// 按配方与建筑数算出的理论值（basis=installed）。
+        /// 只覆盖装配机类建筑，不含采矿与物流——这由调用方在结果里如实标注。
+        /// </summary>
+        public static List<ItemAmount> InstalledDelta(PlanetFactory factory,
+            IReadOnlyCollection<int> entityIds, StatWindow window, StatUnit unit, bool produce)
+        {
+            var produced = new Dictionary<int, double>();
+            var consumed = new Dictionary<int, double>();
+            CollectRecipeFlow(factory, entityIds, produced, consumed, 1.0, out _);
+            var source = produce ? produced : consumed;
+
+            var result = new Dictionary<int, ItemAmount>();
+            foreach (var pair in source)
+            {
+                var entry = new ItemAmount
+                {
+                    ItemId = pair.Key,
+                    Name = GameToolFormat.ItemName(pair.Key),
+                    Amount = SpatialRequest.ConvertUnit(pair.Value, window, unit),
+                };
+                result[pair.Key] = entry;
+            }
+            return Sorted(result);
+        }
+
+        /// <summary>装配机按配方折算的每分钟产出/消耗；同时回填建筑数。</summary>
+        private static void CollectRecipeFlow(PlanetFactory factory, IReadOnlyCollection<int> entityIds,
+            Dictionary<int, double> produced, Dictionary<int, double> consumed, double scale,
+            out int assemblerCount)
+        {
+            assemblerCount = 0;
+            var system = factory != null ? factory.factorySystem : null;
+            if (system == null || system.assemblerPool == null || LDB.recipes == null) return;
+
+            foreach (var id in entityIds)
+            {
+                if (id <= 0 || id >= factory.entityCursor || id >= factory.entityPool.Length) continue;
+                var entity = factory.entityPool[id];
+                if (entity.assemblerId <= 0) continue;
+                if (entity.assemblerId >= system.assemblerPool.Length) continue;
+
+                var assembler = system.assemblerPool[entity.assemblerId];
+                if (assembler.recipeId <= 0) continue;
+                var recipe = LDB.recipes.Select(assembler.recipeId);
+                if (recipe == null || recipe.TimeSpend <= 0) continue;
+
+                assemblerCount++;
+                var craftsPerMin = 60.0 / (recipe.TimeSpend / 60.0) * (assembler.speed / 10000.0) * scale;
+                AddAmounts(produced, recipe.Results, recipe.ResultCounts, craftsPerMin);
+                AddAmounts(consumed, recipe.Items, recipe.ItemCounts, craftsPerMin);
+            }
+        }
+
+        private static void AddAmounts(Dictionary<int, double> target, int[] ids, int[] counts, double craftsPerMin)
+        {
+            if (ids == null || counts == null) return;
+            var length = Math.Min(ids.Length, counts.Length);
+            for (int i = 0; i < length; i++)
+            {
+                var itemId = ids[i];
+                if (itemId <= 0 || counts[i] <= 0) continue;
+                target.TryGetValue(itemId, out var current);
+                target[itemId] = current + counts[i] * craftsPerMin;
+            }
+        }
+
+        /// <summary>电力：把选中建筑的 consumer/gen/acc 累加，与 game_get_power 同口径。</summary>
+        public static JsonValue Power(PlanetFactory factory, IReadOnlyCollection<int> entityIds)
+        {
+            var obj = JsonValue.NewObject();
+            long required = 0;
+            long served = 0;
+            long capacity = 0;
+            long stored = 0;
+            var consumers = 0;
+            var generators = 0;
+
+            if (factory == null || factory.powerSystem == null)
+            {
+                obj.Set("factoryLoaded", false);
+                return obj;
+            }
+
+            var system = factory.powerSystem;
+            foreach (var id in entityIds)
+            {
+                if (id <= 0 || id >= factory.entityCursor || id >= factory.entityPool.Length) continue;
+                var entity = factory.entityPool[id];
+
+                if (entity.powerConId > 0 && system.consumerPool != null &&
+                    entity.powerConId < system.consumerPool.Length)
+                {
+                    var consumer = system.consumerPool[entity.powerConId];
+                    required += Math.Max(0, consumer.requiredEnergy);
+                    // 单栋建筑没有"已供能"字段：供电满足度是电网级的，
+                    // 这里用工作能耗作为实际取用，缺口由 satisfactionPct 表达。
+                    served += Math.Max(0, consumer.workEnergyPerTick);
+                    consumers++;
+                }
+                if (entity.powerGenId > 0 && system.genPool != null &&
+                    entity.powerGenId < system.genPool.Length)
+                {
+                    var gen = system.genPool[entity.powerGenId];
+                    capacity += Math.Max(0, gen.genEnergyPerTick);
+                    generators++;
+                }
+                if (entity.powerAccId > 0 && system.accPool != null &&
+                    entity.powerAccId < system.accPool.Length)
+                {
+                    var acc = system.accPool[entity.powerAccId];
+                    stored += Math.Max(0, acc.curEnergy);
+                }
+            }
+
+            obj.Set("factoryLoaded", true);
+            obj.Set("demandKw", GameToolFormat.Round(GameToolFormat.Kw(required), 2));
+            obj.Set("servedKw", GameToolFormat.Round(GameToolFormat.Kw(served), 2));
+            obj.Set("capacityKw", GameToolFormat.Round(GameToolFormat.Kw(capacity), 2));
+            obj.Set("storedKwh", GameToolFormat.Round(GameToolFormat.Kwh(stored), 2));
+            obj.Set("satisfactionPct", required > 0
+                ? GameToolFormat.Round(served * 100.0 / required, 1) : 100);
+            obj.Set("consumers", consumers);
+            obj.Set("generators", generators);
+            return obj;
+        }
+
+        public static StorageComponent GetStorage(PlanetFactory factory, int storageId)
+        {
+            var storage = factory != null ? factory.factoryStorage : null;
+            if (storage?.storagePool == null) return null;
+            if (storageId <= 0 || storageId >= storage.storageCursor ||
+                storageId >= storage.storagePool.Length) return null;
+            return storage.storagePool[storageId];
+        }
+
+        private static List<ItemAmount> Sorted(Dictionary<int, ItemAmount> map)
+        {
+            var list = new List<ItemAmount>(map.Values);
+            list.Sort((a, b) =>
+            {
+                var byAmount = b.Amount.CompareTo(a.Amount);
+                return byAmount != 0 ? byAmount : string.CompareOrdinal(a.Name, b.Name);
+            });
+            return list;
+        }
+    }
+}

@@ -38,6 +38,8 @@ export const CAPABILITY_GAME_ANALYZE = 'game.analyze.v1';
 export const CAPABILITY_MOD_BRIDGE = 'mod.bridge.v1';
 /** uGUI 控件树（P3）：快照与合成点击。 */
 export const CAPABILITY_UI_TREE = 'ui.tree.v1';
+/** 空间变量查询（P0）：区域 / 定点 / 动点。 */
+export const CAPABILITY_SPATIAL = 'space.read.v1';
 
 /** 桥工具名；测试用来断言能力门禁。 */
 export const BRIDGE_TOOL_NAMES = [
@@ -62,6 +64,7 @@ export const GAME_TOOL_NAMES = [
 export const ENTITY_TOOL_NAMES = ['game_get_entity', 'game_get_entities'] as const;
 export const PROGRESS_TOOL_NAMES = ['game_get_progress'] as const;
 export const VIEW_TOOL_NAMES = ['game_capture_view'] as const;
+export const SPATIAL_TOOL_NAMES = ['space_region', 'space_point', 'space_motion'] as const;
 
 /** 工具名 → 所需能力。新增工具必须在这里登记，否则不会被广告。 */
 const TOOL_CAPABILITY: Record<string, string> = {
@@ -109,6 +112,9 @@ const TOOL_CAPABILITY: Record<string, string> = {
   ui_snapshot: CAPABILITY_UI_TREE,
   ui_click: CAPABILITY_UI_TREE,
   game_undo_last_write: CAPABILITY_GAME_WRITE,
+  space_region: CAPABILITY_SPATIAL,
+  space_point: CAPABILITY_SPATIAL,
+  space_motion: CAPABILITY_SPATIAL,
 };
 
 const MAX_RESULT_CHARS = 9000;
@@ -487,6 +493,188 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         maxNodes: Type.Optional(Type.Integer({ minimum: 2, maximum: 300, description: '最大节点数，默认 200' })),
       }),
       timeoutMs: 15000,
+    }),
+    gameTool(host, {
+      name: 'space_region',
+      label: '区域查询',
+      description:
+        '按区域聚合：成员列表、存量、输入/输出/生产/消耗速度、电力、上级、位置、静态信息、备忘录。' +
+        '区域类型：恒星系 / 恒星 / 行星 / 电网 / 工厂 / 太空黑雾巢穴 / 地面黑雾基地 / 戴森球 / 世界区域 / 行星区域 / 蓝图。' +
+        'op 与 dsp-agent 表的方法行同名，省略 target 时按玩家所在位置解析。',
+      promptGuidelines: [
+        '玩家问“某个区域里有什么/产出多少/耗多少电/在哪”时使用；不要自己拿经纬度去拼半径。',
+        'op=storage 是存量，op=input/output 是物流进出，op=production/consumption 是生产消耗，两者不可相加。',
+        'stat.windowNative=false 表示该对象没有分档统计，window 不生效，不要拿它当十分钟均值。',
+        'op=navigation 不接受：导航是写操作，请改用 game_tether_add。',
+      ],
+      parameters: Type.Object({
+        op: Type.Union([
+          Type.Literal('list'),
+          Type.Literal('storage'),
+          Type.Literal('input'),
+          Type.Literal('output'),
+          Type.Literal('production'),
+          Type.Literal('consumption'),
+          Type.Literal('power'),
+          Type.Literal('parent'),
+          Type.Literal('location'),
+          Type.Literal('information'),
+          Type.Literal('note'),
+        ], {
+          description:
+            'list=成员 storage=存量 input/output=物流进出 production/consumption=生产消耗 ' +
+            'power=电力 parent=上级 location=位置 information=静态信息 note=备忘录',
+        }),
+        type: Type.Optional(Type.Union([
+          Type.Literal('auto'),
+          Type.Literal('star_system'),
+          Type.Literal('star'),
+          Type.Literal('planet'),
+          Type.Literal('power_grid'),
+          Type.Literal('factory'),
+          Type.Literal('df_hive'),
+          Type.Literal('df_base'),
+          Type.Literal('dyson_sphere'),
+          Type.Literal('world_box'),
+          Type.Literal('planet_patch'),
+          Type.Literal('blueprint'),
+        ], {
+          description: '区域类型；auto 时按玩家所在位置推断（在行星上=planet，否则=star_system）',
+        })),
+        target: Type.Optional(Type.Union([Type.String(), Type.Object({})], {
+          description:
+            '对象实例：字符串给 id（planetId / starId / networkId:seedEntityId / 蓝图路径）；' +
+            'world_box 与 planet_patch 可传对象带 min/max 或 latMin/latMax/lonStart/lonSpan',
+        })),
+        window: Type.Optional(Type.Union([
+          Type.Literal('1m'), Type.Literal('10m'), Type.Literal('1h'),
+          Type.Literal('10h'), Type.Literal('100h'), Type.Literal('all'),
+        ], { description: '统计时间窗，默认 10m' })),
+        unit: Type.Optional(Type.Union([
+          Type.Literal('perMin'), Type.Literal('perHour'), Type.Literal('total'),
+        ], { description: '输出单位，默认 perMin' })),
+        basis: Type.Optional(Type.Union([
+          Type.Literal('actual'), Type.Literal('installed'),
+        ], { description: 'actual=实际统计（默认），installed=按配方与建筑数算的理论值' })),
+        itemFilter: Type.Optional(Type.String({ description: 'list 时按成员类别过滤；统计时按物品名或 id 过滤' })),
+        depth: Type.Optional(Type.Integer({ minimum: 1, maximum: 4, description: 'parent 的层数，默认 1' })),
+        radius: Type.Optional(Type.Number({ description: '几何区域半径（米），默认 200' })),
+        frame: Type.Optional(Type.Union([
+          Type.Literal('auto'), Type.Literal('planet'), Type.Literal('world'),
+        ], { description: 'location 的坐标系，默认 auto' })),
+        precision: Type.Optional(Type.Integer({ minimum: 0, maximum: 6, description: '经纬度小数位，默认 3' })),
+        offset: offsetArg,
+        limit: limitArg,
+      }),
+      timeoutMs: 15000,
+    }),
+    gameTool(host, {
+      name: 'space_point',
+      label: '定点查询',
+      description:
+        '按定点聚合：下辖动点、存量、输入/输出/生产/消耗、电力、归属、行星坐标、备忘录。' +
+        '定点类型：建筑 / 矿脉 / 植被 / 太空黑雾建筑 / 地面黑雾建筑 / 世界坐标 / 行星坐标。',
+      promptGuidelines: [
+        '玩家指着某栋建筑/某个矿脉问“它属于谁/在哪/多少电/进出多少”时使用。',
+        '省略 target 时先看玩家瞄准的对象，再退到最近的同类；找不到会明确报错，不会静默换目标。',
+        '矿脉的 output 是按开采机数量算出的理论值（basis=installed），矿脉自身没有实际统计。',
+        'op=navigation 不接受：导航是写操作，请改用 game_tether_add。',
+      ],
+      parameters: Type.Object({
+        op: Type.Union([
+          Type.Literal('list'),
+          Type.Literal('storage'),
+          Type.Literal('input'),
+          Type.Literal('output'),
+          Type.Literal('production'),
+          Type.Literal('consumption'),
+          Type.Literal('power'),
+          Type.Literal('parent'),
+          Type.Literal('location'),
+          Type.Literal('note'),
+        ], {
+          description:
+            'list=下辖动点 storage=存量 input/output=物流进出 production/consumption=生产消耗 ' +
+            'power=电力 parent=归属 location=坐标 note=全息信标备忘录',
+        }),
+        type: Type.Optional(Type.Union([
+          Type.Literal('auto'),
+          Type.Literal('building'),
+          Type.Literal('vein'),
+          Type.Literal('vegetation'),
+          Type.Literal('df_space_building'),
+          Type.Literal('df_ground_building'),
+          Type.Literal('world_position'),
+          Type.Literal('planet_position'),
+        ], { description: '定点类型；auto 时默认 building' })),
+        target: Type.Optional(Type.String({
+          description: 'id：entityId / veinId / vegeId / enemyId；省略时按玩家瞄准或最近解析',
+        })),
+        window: Type.Optional(Type.Union([
+          Type.Literal('1m'), Type.Literal('10m'), Type.Literal('1h'),
+          Type.Literal('10h'), Type.Literal('100h'), Type.Literal('all'),
+        ], { description: '统计时间窗，默认 10m' })),
+        unit: Type.Optional(Type.Union([
+          Type.Literal('perMin'), Type.Literal('perHour'), Type.Literal('total'),
+        ], { description: '输出单位，默认 perMin' })),
+        basis: Type.Optional(Type.Union([
+          Type.Literal('actual'), Type.Literal('installed'),
+        ], { description: 'actual=实际统计（默认），installed=按配方算的理论值' })),
+        itemFilter: Type.Optional(Type.String({ description: '统计时按物品名或 id 过滤' })),
+        frame: Type.Optional(Type.Union([
+          Type.Literal('auto'), Type.Literal('planet'), Type.Literal('world'),
+        ], { description: 'location 的坐标系，默认 auto' })),
+        precision: Type.Optional(Type.Integer({ minimum: 0, maximum: 6, description: '经纬度小数位，默认 3' })),
+        offset: offsetArg,
+        limit: limitArg,
+      }),
+      timeoutMs: 12000,
+    }),
+    gameTool(host, {
+      name: 'space_motion',
+      label: '动点查询',
+      description:
+        '按动点读位置与状态：玩家 / 建设无人机 / 配送运输机 / 物流运输机 / 星际物流运输船 / ' +
+        '小型运载火箭 / 战斗无人机 / 战舰 / 太空黑雾单位 / 地面黑雾单位 / 垃圾块。' +
+        '位置带 gameTick，跨回合比较前要确认是同一 tick 的快照。',
+      promptGuidelines: [
+        '玩家问“那架无人机/那艘船在哪、在干什么、还剩多少货”时使用。',
+        '动点会移动：本工具只给当前快照，没有追踪；需要新位置就再调一次，不要拿旧值推算。',
+        'op=storage 只对玩家与运输类动点有效；op=parent 对垃圾块返回无归属。',
+        'op=navigation 不接受：动点无法用 tether 追踪。',
+      ],
+      parameters: Type.Object({
+        op: Type.Union([
+          Type.Literal('list'),
+          Type.Literal('storage'),
+          Type.Literal('parent'),
+          Type.Literal('location'),
+          Type.Literal('information'),
+        ], {
+          description: 'list=玩家下辖动点 storage=携带物品 parent=归属 location=位置 information=状态',
+        }),
+        type: Type.Optional(Type.Union([
+          Type.Literal('auto'),
+          Type.Literal('player'),
+          Type.Literal('construction_drone'),
+          Type.Literal('delivery_courier'),
+          Type.Literal('station_drone'),
+          Type.Literal('station_ship'),
+          Type.Literal('dyson_rocket'),
+          Type.Literal('combat_drone'),
+          Type.Literal('combat_fleet'),
+          Type.Literal('df_space_unit'),
+          Type.Literal('df_ground_unit'),
+          Type.Literal('trash'),
+        ], { description: '动点类型；auto 时默认 player' })),
+        target: Type.Optional(Type.String({
+          description: 'id：craftId / enemyId / trashId / rocketId / stationGid:shipIndex；省略时取最近的一个',
+        })),
+        precision: Type.Optional(Type.Integer({ minimum: 0, maximum: 6, description: '经纬度小数位，默认 3' })),
+        offset: offsetArg,
+        limit: limitArg,
+      }),
+      timeoutMs: 12000,
     }),
     gameTool(host, {
       name: 'game_get_logistics',

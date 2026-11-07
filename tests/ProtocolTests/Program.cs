@@ -68,6 +68,9 @@ namespace IcarusII.Tests
             Section("顾问提示文案");
             AdvisorTextTests.Run();
 
+            Section("空间变量");
+            SpatialTests.Run();
+
             Console.WriteLine();
             if (_failures == 0)
             {

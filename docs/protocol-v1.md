@@ -105,6 +105,8 @@
   设置 → 工具 → mod 里逐插件控制，不需要改配置文件。
 - `ui.tree.v1`：mod 支持 uGUI 控件树快照与合成点击（`ui_snapshot` / `ui_click`，P3）。
   只枚举 uGUI 的 `Selectable`，不读像素、不做 OS 输入；`ui_click` 是 risk 2 写操作。
+- `space.read.v1`：mod 支持空间变量查询（`space_region` / `space_point` / `space_motion`，P0）。
+  三个工具全部只读，`risk=0`；不支持的 `op` 与类型组合返回 `invalid_args`，并在错误里列出该类型支持的方法。
 
 ### 4.2 `ready` — sidecar → mod
 
@@ -1747,6 +1749,38 @@ sidecar 本地工具**（`kb_*`、`wiki_*`、`blueprint_*`、`run_script`，它�
 | `game_get_logistics` | 跨行星物流塔供给/需求汇总 |
 | `game_trace_line` | 沿传送带/分拣器追踪产线拓扑；节点用星系/行星/经纬度 |
 | `game_get_entities` | 行星内建筑分页列表；可按 `protoId` / `protoName` / `recipeId` / 区域过滤；每行带 location |
+
+**`space.read.v1`（P0）**
+
+三个工具按“主语”分工，`op` 是动词，取值与方法行一一对应：
+
+| 协议/模型名 | 说明 |
+| --- | --- |
+| `space_region` | 区域查询：恒星系 / 恒星 / 行星 / 电网 / 工厂 / 太空黑雾巢穴 / 地面黑雾基地 / 戴森球 / 世界区域 / 行星区域 / 蓝图 |
+| `space_point` | 定点查询：建筑 / 矿脉 / 植被 / 太空黑雾建筑 / 地面黑雾建筑 / 世界坐标 / 行星坐标 |
+| `space_motion` | 动点查询：玩家 / 建设无人机 / 配送运输机 / 物流运输机 / 星际物流运输船 / 小型运载火箭 / 战斗无人机 / 战舰 / 太空黑雾单位 / 地面黑雾单位 / 垃圾块 |
+
+公共参数：
+
+| 参数 | 取值 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `target` | 字符串或对象 | `auto` | 字符串是 id（`planetId` / `starId` / `networkId:seedEntityId` / `entityId` / `veinId` / `vegeId` / `enemyId` / `trashId` / `stationGid:shipIndex`）；对象可带 `type` 与几何字段 |
+| `type` | 见上表 | 按玩家上下文推断 | 省略时：在行星上是 `planet`，否则 `star_system`；定点默认 `building`；动点默认 `player` |
+| `window` | `1m` / `10m` / `1h` / `10h` / `100h` / `all` | `10m` | 统计时间窗；只有 `input` / `output` / `production` / `consumption` 接受 |
+| `unit` | `perMin` / `perHour` / `total` | `perMin` | 输出单位；`power` 固定 kW |
+| `basis` | `actual` / `installed` | `actual` | `installed` 只在 `production` / `consumption` 上有效（按配方与建筑数算） |
+| `itemFilter` | 字符串 | 空 | 精确匹配物品名或 id；`list` 用它过滤成员类别 |
+| `limit` / `offset` | 1..200 / ≥0 | 50 / 0 | 分页 |
+| `depth` | 1..4 | 1 | `parent` 向上层数 |
+| `radius` | 1..2000 | 200 | 几何区域的半径（米） |
+| `frame` / `precision` | `auto` / `planet` / `world`；0..6 | `auto` / 3 | `location` 的坐标系与小数位 |
+
+结果统一带 `available` / `partial` / `truncated` / `display`；
+统计类额外带 `stat = { window, unit, basis, windowNative }`。
+`windowNative=false` 表示该对象没有分档统计（戴森球、黑雾物质、存量），`window` 不生效。
+
+`input` / `output` 是物流进出（`TrafficStatistics`）口径，
+`production` / `consumption` 是生产消耗（`ProductionStatistics`）口径，同一物品可能同时出现在两边，两者不可相加。
 
 **`game.analyze.v1`（M4c）**
 

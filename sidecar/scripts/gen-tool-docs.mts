@@ -46,6 +46,7 @@ const CAPABILITIES = [
   'game.todo.write.v1',
   'mod.bridge.v1',
   'ui.tree.v1',
+  'space.read.v1',
 ] as const;
 
 /** 文档分组：每个文件覆盖一组能力位（或本地工具）。 */
@@ -82,6 +83,16 @@ const GROUPS: DocGroup[] = [
       '回答“我现在到哪一步”“画面上是什么”“这片产线多大”。' +
       '截图会以图片内容块返回，其余是文本。',
     capabilities: ['game.progress.v1', 'game.view.v1', 'game.analyze.v1'],
+  },
+  {
+    file: 'game-space.md',
+    title: '只读 · 空间变量（区域 / 定点 / 动点）',
+    intro:
+      '三种主语各一个工具，`op` 与 `docs/dsp-agent.xlsx` 的方法行同名：' +
+      '区域问“这片范围里有什么、产出多少”，定点问“这栋建筑/这个矿脉是谁的、在哪”，' +
+      '动点问“那架无人机现在在哪、在干什么”。' +
+      '不支持的类型与方法组合会直接报错并列出可用方法，不会返回空结果。',
+    capabilities: ['space.read.v1'],
   },
   {
     file: 'game-write-basic.md',
@@ -228,7 +239,9 @@ function capabilityMap(): Map<string, string> {
   const map = new Map<string, string>();
   for (const capability of CAPABILITIES) {
     for (const name of toolNamesForCapabilities([capability])) {
-      if ((name.startsWith('game_') || name.startsWith('mods_') || name.startsWith('ui_')) && !map.has(name)) map.set(name, capability);
+      const known = name.startsWith('game_') || name.startsWith('mods_')
+        || name.startsWith('ui_') || name.startsWith('space_');
+      if (known && !map.has(name)) map.set(name, capability);
     }
   }
   return map;
