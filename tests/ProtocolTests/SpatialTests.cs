@@ -20,6 +20,7 @@ namespace IcarusII.Tests
             UnitConversionTests();
             GeometryTests();
             MethodNameTests();
+            NavigationRoutingTests();
         }
 
         // ------------------------------------------------------------ 支持矩阵
@@ -233,6 +234,42 @@ namespace IcarusII.Tests
             var sphere = new RegionShape { SphereCenter = Vec3d.Zero, SphereRadius = 10 };
             Program.Check("球内", sphere.ContainsSphere(new Vec3d(0, 0, 9)));
             Program.Check("球外", !sphere.ContainsSphere(new Vec3d(0, 0, 11)));
+        }
+
+        /// <summary>
+        /// 方位指示按 kind/type 分流到区域还是定点，动点必须被挡住。
+        /// 这段判定在 TetherAddTool.AddFromSpace 里，无法离线跑，
+        /// 但它依赖的归类规则可以在这里钉住。
+        /// </summary>
+        private static void NavigationRoutingTests()
+        {
+            // 三个 kind 字符串与类型归类要对得上
+            Program.Check("player 归为动点", SpatialTypes.IsMotion(SpatialTypes.Player));
+            Program.Check("building 归为定点", SpatialTypes.IsPoint(SpatialTypes.Building));
+            Program.Check("planet 归为区域", SpatialTypes.IsRegion(SpatialTypes.Planet));
+
+            // 动点里没有能被 tether 表达的类型；区域/定点里也没有会被误判成动点的
+            foreach (var type in SpatialTypes.MotionTypes)
+            {
+                Program.Check($"动点 {type} 不该被当成定点",
+                    !SpatialTypes.IsPoint(type));
+            }
+
+            // navigation 在矩阵里是"支持"的，但它在只读工具里只负责报错引路，
+            // 所以这里断言的是"三类主语都声明支持"，而不是真的有执行路径。
+            Program.Check("区域声明支持 navigation",
+                SpatialTypes.Supports(SpatialMethod.Navigation, SpatialTypes.Planet));
+            Program.Check("定点声明支持 navigation",
+                SpatialTypes.Supports(SpatialMethod.Navigation, SpatialTypes.Vein));
+            Program.Check("动点声明支持 navigation",
+                SpatialTypes.Supports(SpatialMethod.Navigation, SpatialTypes.Player));
+
+            // 解析 space 时用 Location 借住，不能命中统计类分支
+            var request = SpatialRequest.Parse(
+                JsonValue.Parse("{\"type\":\"building\",\"target\":\"42\"}"),
+                SpatialMethod.Location);
+            Program.Check("借用解析不落到统计类", !request.IsStatMethod);
+            Program.Eq("借用解析仍能读 target", "42", request.TargetId);
         }
 
         // ------------------------------------------------------------ 方法名
