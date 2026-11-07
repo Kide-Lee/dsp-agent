@@ -1307,19 +1307,42 @@ namespace IcarusII.Game.Tools
             return count;
         }
 
+        /// <summary>
+        /// 战斗基地名下的单位。
+        ///
+        /// UnitComponent 没有归属字段，归属写在它对应 craft 的 owner 上，
+        /// 所以要经 craftId 反查。之前不看 owner，任何基地都返回全行星单位。
+        /// </summary>
         private static int AppendBattleBaseUnits(PlanetFactory factory, int battleBaseId, JsonValue array)
         {
             var system = factory.combatGroundSystem;
-            if (system?.units?.buffer == null) return 0;
+            if (system?.units?.buffer == null || factory.craftPool == null) return 0;
+            var baseEntityId = BattleBaseEntityId(factory, battleBaseId);
+            if (baseEntityId <= 0) return 0;
+
             var count = 0;
             for (int id = 1; id < system.units.cursor && id < system.units.buffer.Length; id++)
             {
                 var unit = system.units.buffer[id];
                 if (unit.id != id) continue;
+                if (unit.craftId <= 0 || unit.craftId >= factory.craftCursor ||
+                    unit.craftId >= factory.craftPool.Length) continue;
+                if (factory.craftPool[unit.craftId].owner != baseEntityId) continue;
                 array.Add(OwnedMotion("combat_drone", id, 0, "战斗无人机"));
                 count++;
             }
             return count;
+        }
+
+        /// <summary>战斗基地组件下标 → 建筑实体 id。</summary>
+        private static int BattleBaseEntityId(PlanetFactory factory, int battleBaseId)
+        {
+            var pool = factory.entityPool;
+            if (pool == null) return 0;
+            var upper = Math.Min(factory.entityCursor, pool.Length);
+            for (int id = 1; id < upper; id++)
+                if (pool[id].battleBaseId == battleBaseId) return id;
+            return 0;
         }
 
         private static int AppendConstructionDrones(PlanetFactory factory, int entityId, JsonValue array)
