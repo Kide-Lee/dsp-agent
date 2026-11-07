@@ -501,14 +501,27 @@ namespace IcarusII.Game.Spatial
                 throw new SpatialException($"垃圾块 #{id} 已失效");
 
             target.TrashId = id;
-            target.World = trash.uPos;
             target.Velocity = PlanetFrame.ToVec3d(trash.uVel);
-            target.Planet = trash.nearPlanetId > 0
-                ? GameMain.data.galaxy.PlanetById(trash.nearPlanetId) : null;
+            target.Planet = trash.landPlanetId > 0
+                ? GameMain.data.galaxy.PlanetById(trash.landPlanetId)
+                : (trash.nearPlanetId > 0
+                    ? GameMain.data.galaxy.PlanetById(trash.nearPlanetId) : null);
             target.PlanetId = target.Planet != null ? target.Planet.id : 0;
             target.Star = trash.nearStarId > 0 ? GameMain.data.galaxy.StarById(trash.nearStarId) : null;
             target.StarId = target.Star != null ? target.Star.id : 0;
-            target.OnPlanet = false;
+
+            // 已落地的垃圾块用 lPos（行星局部坐标），飞行中的用 uPos。
+            // 只取 uPos 会让"落在这颗星球上"也变成宇宙坐标，读不出经纬度。
+            if (trash.landPlanetId > 0 && target.Planet != null)
+            {
+                target.OnPlanet = true;
+                target.World = PlanetFrame.LocalToWorld(target.Planet, trash.lPos);
+            }
+            else
+            {
+                target.OnPlanet = false;
+                target.World = trash.uPos;
+            }
             target.Name = "垃圾块";
         }
 
