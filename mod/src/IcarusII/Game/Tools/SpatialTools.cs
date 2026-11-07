@@ -1688,10 +1688,17 @@ namespace IcarusII.Game.Tools
             data.Set("items", ItemArray(items, request));
             data.Set("total", items.Count);
             WriteStatMeta(data, request, windowNative: false);
+            if (items.Count == 0 && target.Type != SpatialTypes.Player
+                && target.Type != SpatialTypes.Trash)
+                data.Set("hint", "该动点的携带信息不在 craft 池里：建设无人机搬的是建造任务，配送机的货在配送器上。");
             return Result(data, $"{target.Describe()}：{items.Count} 种物品");
         }
 
-        /// <summary>运输中的 craft 携带的物品来自它正在搬运的那一件货。</summary>
+        /// <summary>
+        /// 运输中的 craft 携带的物品来自它正在搬运的那一件货。
+        /// 只有物流无人机能这样取：建设无人机搬的是建造任务，配送机的货在 DispenserComponent 里，
+        /// 它们的携带信息不在这里，返回空并由调用方如实标注。
+        /// </summary>
         private static List<ItemAmount> CraftStorage(MotionTarget target)
         {
             var result = new List<ItemAmount>();
