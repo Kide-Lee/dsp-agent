@@ -148,6 +148,24 @@ namespace IcarusII.Tests
             }
             Program.Check("不支持时列出可用方法",
                 message.Contains("storage") && message.Contains("location"));
+
+            // 每个 xlsx 声明过的参数都必须真的落到 request 上，
+            // 否则会出现"schema 里有、实现忽略"的静默丢失。
+            var all = SpatialRequest.Parse(JsonValue.Parse(
+                "{\"target\":\"7\",\"limit\":5,\"offset\":2,\"filter\":\"铁\",\"kind\":\"building\"," +
+                "\"itemFilter\":\"铁块\",\"window\":\"1h\",\"unit\":\"perHour\",\"basis\":\"installed\"," +
+                "\"depth\":3,\"frame\":\"world\",\"precision\":5,\"radius\":80}"),
+                SpatialMethod.List);
+            Program.Eq("target 落地", "7", all.TargetId);
+            Program.Eq("limit 落地", 5, all.Limit);
+            Program.Eq("offset 落地", 2, all.Offset);
+            Program.Eq("filter 落地", "铁", all.MemberFilter);
+            Program.Eq("kind 落地", "building", all.MemberKind);
+            Program.Eq("itemFilter 落地", "铁块", all.ItemFilter);
+            Program.Eq("depth 落地", 3, all.Depth);
+            Program.Eq("frame 落地", "world", all.Frame);
+            Program.Eq("precision 落地", 5, all.Precision);
+            Program.Eq("radius 落地", 80.0, all.Radius);
         }
 
         // ------------------------------------------------------------ 单位折算
