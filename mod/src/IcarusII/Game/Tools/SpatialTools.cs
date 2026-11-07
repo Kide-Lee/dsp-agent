@@ -138,7 +138,6 @@ namespace IcarusII.Game.Tools
             if (request.Type is null) request.Type = RegionResolver.InferType();
             request.RequireSupported();
             var target = RegionResolver.Resolve(request);
-            request.RequireSupported();
 
             var data = JsonValue.NewObject();
             data.Set("type", target.Type);
@@ -933,7 +932,6 @@ namespace IcarusII.Game.Tools
             if (request.Type is null) request.Type = PointCatalog.InferType();
             request.RequireSupported();
             var target = PointCatalog.Resolve(request);
-            request.RequireSupported();
 
             var data = JsonValue.NewObject();
             data.Set("type", target.Type);
@@ -1420,7 +1418,6 @@ namespace IcarusII.Game.Tools
             if (request.Type is null) request.Type = SpatialTypes.Player;
             request.RequireSupported();
             var target = MotionCatalog.Resolve(request);
-            request.RequireSupported();
 
             var data = JsonValue.NewObject();
             data.Set("type", target.Type);
