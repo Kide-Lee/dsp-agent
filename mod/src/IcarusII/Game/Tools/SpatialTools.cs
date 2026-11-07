@@ -1379,13 +1379,19 @@ namespace IcarusII.Game.Tools
                 return count;
             }
 
-            var factory = target.Planet.factory;
+            var factory = target.Planet != null ? target.Planet.factory : null;
             if (factory?.enemyPool == null) return 0;
-            for (int id = 1; id < factory.enemyCursor && id < factory.enemyPool.Length; id++)
+
+            // 地面黑雾建筑要按它所属的基地收敛：否则任一建筑都会返回全行星的单位。
+            var baseId = target.Type == SpatialTypes.DfGroundBuilding
+                ? BaseIdOf(target) : 0;
+            var upper = Math.Min(factory.enemyCursor, factory.enemyPool.Length);
+            for (int id = 1; id < upper; id++)
             {
                 var enemy = factory.enemyPool[id];
                 if (enemy.id != id || enemy.protoId <= 0 || !enemy.dynamic) continue;
                 if (enemy.dfGBaseId <= 0) continue;
+                if (baseId > 0 && enemy.dfGBaseId != baseId) continue;
                 array.Add(OwnedMotion("df_ground_unit", id, 0, EntityToolUtil.ProtoName(enemy.protoId)));
                 count++;
             }
