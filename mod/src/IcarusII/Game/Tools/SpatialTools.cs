@@ -70,8 +70,28 @@ namespace IcarusII.Game.Tools
             };
         }
 
+        /// <summary>按 itemFilter 过滤物品；空过滤返回原集合。</summary>
+        protected static List<ItemAmount> ApplyItemFilter(List<ItemAmount> items, SpatialRequest request)
+        {
+            if (string.IsNullOrEmpty(request.ItemFilter)) return items;
+            var result = new List<ItemAmount>(items.Count);
+            foreach (var item in items)
+            {
+                if (item.Name != null
+                    && item.Name.IndexOf(request.ItemFilter, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    result.Add(item);
+                    continue;
+                }
+                if (item.ItemId.ToString(CultureInfo.InvariantCulture) == request.ItemFilter)
+                    result.Add(item);
+            }
+            return result;
+        }
+
         protected static JsonValue ItemArray(List<ItemAmount> items, SpatialRequest request)
         {
+            items = ApplyItemFilter(items, request);
             var array = JsonValue.NewArray();
             var total = items.Count;
             var returned = 0;
@@ -302,11 +322,12 @@ namespace IcarusII.Game.Tools
                     throw new SpatialException($"类型 {target.Type} 没有存量");
             }
 
-            data.Set("items", ItemArray(items, request));
-            data.Set("total", items.Count);
+            var filtered = ApplyItemFilter(items, request);
+            data.Set("items", ItemArray(filtered, request));
+            data.Set("total", filtered.Count);
             WriteStatMeta(data, request, windowNative: false);
-            var display = $"{target.Describe()}：{items.Count} 种物品";
-            var truncated = request.Offset + Math.Min(request.Limit, items.Count) < items.Count;
+            var display = $"{target.Describe()}：{filtered.Count} 种物品";
+            var truncated = request.Offset + Math.Min(request.Limit, filtered.Count) < filtered.Count;
             return Result(data, display, false, truncated,
                 truncated ? request.Offset + request.Limit : -1);
         }
@@ -416,14 +437,15 @@ namespace IcarusII.Game.Tools
                     produce: IsProducing(request));
             }
 
-            data.Set("items", ItemArray(items, request));
-            data.Set("total", items.Count);
+            var filtered = ApplyItemFilter(items, request);
+            data.Set("items", ItemArray(filtered, request));
+            data.Set("total", filtered.Count);
             WriteStatMeta(data, request, windowNative: true);
             if (note != null) data.Set("note", note);
 
-            var display = $"{target.Describe()}：{items.Count} 种物品"
+            var display = $"{target.Describe()}：{filtered.Count} 种物品"
                 + $"（{WindowLabel(request)}{RateUnitLabel(request)}）";
-            var truncated = request.Offset + Math.Min(request.Limit, items.Count) < items.Count;
+            var truncated = request.Offset + Math.Min(request.Limit, filtered.Count) < filtered.Count;
             return Result(data, display, partial, truncated,
                 truncated ? request.Offset + request.Limit : -1);
         }
@@ -902,14 +924,15 @@ namespace IcarusII.Game.Tools
                 });
             items.Sort((a, b) => b.Amount.CompareTo(a.Amount));
 
-            data.Set("items", ItemArray(items, request));
-            data.Set("total", items.Count);
+            var filtered = ApplyItemFilter(items, request);
+            data.Set("items", ItemArray(filtered, request));
+            data.Set("total", filtered.Count);
             data.Set("basis", "installed");
             data.Set("recipeBuildings", recipeBuildings);
             WriteStatMeta(data, request, windowNative: false);
             data.Set("hint", "蓝图是静态文件，只能给理论值；不考虑供电、堵料与物流延迟。");
-            var truncated = request.Offset + Math.Min(request.Limit, items.Count) < items.Count;
-            return Result(data, $"蓝图理论流量：{items.Count} 种物品（{recipeBuildings} 台有配方）",
+            var truncated = request.Offset + Math.Min(request.Limit, filtered.Count) < filtered.Count;
+            return Result(data, $"蓝图理论流量：{filtered.Count} 种物品（{recipeBuildings} 台有配方）",
                 false, truncated, truncated ? request.Offset + request.Limit : -1);
         }
 
@@ -963,12 +986,13 @@ namespace IcarusII.Game.Tools
 
             var items = new List<ItemAmount>(totals.Values);
             items.Sort((a, b) => b.Amount.CompareTo(a.Amount));
-            data.Set("items", ItemArray(items, request));
-            data.Set("total", items.Count);
+            var filtered = ApplyItemFilter(items, request);
+            data.Set("items", ItemArray(filtered, request));
+            data.Set("total", filtered.Count);
             data.Set("planetCount", byPlanet.Count);
             WriteStatMeta(data, request, windowNative: false);
             if (note != null) data.Set("note", note);
-            return Result(data, $"世界区域：{byPlanet.Count} 颗行星，{items.Count} 种物品", partial);
+            return Result(data, $"世界区域：{byPlanet.Count} 颗行星，{filtered.Count} 种物品", partial);
         }
 
         /// <summary>世界区域按行星分组算流量：生产桶是行星级的，跨行星只能逐颗取再合并。</summary>
@@ -994,14 +1018,15 @@ namespace IcarusII.Game.Tools
 
             var items = new List<ItemAmount>(totals.Values);
             items.Sort((a, b) => b.Amount.CompareTo(a.Amount));
-            data.Set("items", ItemArray(items, request));
-            data.Set("total", items.Count);
+            var filtered = ApplyItemFilter(items, request);
+            data.Set("items", ItemArray(filtered, request));
+            data.Set("total", filtered.Count);
             data.Set("planetCount", byPlanet.Count);
             WriteStatMeta(data, request, windowNative: true);
             if (note != null) data.Set("note", note);
 
-            var truncated = request.Offset + Math.Min(request.Limit, items.Count) < items.Count;
-            return Result(data, $"世界区域：{byPlanet.Count} 颗行星，{items.Count} 种物品", partial, truncated,
+            var truncated = request.Offset + Math.Min(request.Limit, filtered.Count) < filtered.Count;
+            return Result(data, $"世界区域：{byPlanet.Count} 颗行星，{filtered.Count} 种物品", partial, truncated,
                 truncated ? request.Offset + request.Limit : -1);
         }
 
@@ -1400,10 +1425,11 @@ namespace IcarusII.Game.Tools
                     throw new SpatialException($"类型 {target.Type} 没有存量");
             }
 
-            data.Set("items", ItemArray(items, request));
-            data.Set("total", items.Count);
+            var filtered = ApplyItemFilter(items, request);
+            data.Set("items", ItemArray(filtered, request));
+            data.Set("total", filtered.Count);
             WriteStatMeta(data, request, windowNative: false);
-            return Result(data, $"{target.Describe()}：{items.Count} 种物品");
+            return Result(data, $"{target.Describe()}：{filtered.Count} 种物品");
         }
 
         private static int TargetStorageId(PointTarget target)
@@ -1469,11 +1495,12 @@ namespace IcarusII.Game.Tools
                     produce: IsProducing(request));
             }
 
-            data.Set("items", ItemArray(items, request));
-            data.Set("total", items.Count);
+            var filtered = ApplyItemFilter(items, request);
+            data.Set("items", ItemArray(filtered, request));
+            data.Set("total", filtered.Count);
             WriteStatMeta(data, request, windowNative: true);
-            var display = $"{target.Describe()}：{items.Count} 种物品";
-            var truncated = request.Offset + Math.Min(request.Limit, items.Count) < items.Count;
+            var display = $"{target.Describe()}：{filtered.Count} 种物品";
+            var truncated = request.Offset + Math.Min(request.Limit, filtered.Count) < filtered.Count;
             return Result(data, display, false, truncated,
                 truncated ? request.Offset + request.Limit : -1);
         }
@@ -1739,13 +1766,14 @@ namespace IcarusII.Game.Tools
                 items = CraftStorage(target);
             }
 
-            data.Set("items", ItemArray(items, request));
-            data.Set("total", items.Count);
+            var filtered = ApplyItemFilter(items, request);
+            data.Set("items", ItemArray(filtered, request));
+            data.Set("total", filtered.Count);
             WriteStatMeta(data, request, windowNative: false);
             if (items.Count == 0 && target.Type != SpatialTypes.Player
                 && target.Type != SpatialTypes.Trash)
                 data.Set("hint", "该动点的携带信息不在 craft 池里：建设无人机搬的是建造任务，配送机的货在配送器上。");
-            return Result(data, $"{target.Describe()}：{items.Count} 种物品");
+            return Result(data, $"{target.Describe()}：{filtered.Count} 种物品");
         }
 
         /// <summary>
