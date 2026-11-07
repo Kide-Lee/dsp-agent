@@ -79,8 +79,15 @@ namespace IcarusII.Game.Spatial
         /// 生产/消耗速度：读游戏自己的分档桶（ProductionStatistics），
         /// 按 window 取对应累计值再折算 unit。
         /// </summary>
+        /// <summary>
+        /// 生产/消耗的实际统计。
+        ///
+        /// 游戏的桶按物品存，产出与消耗是同一个 stat 的两段 total；
+        /// produce 决定取哪一段，不能两段一起算——那会把"生产了多少"和"消耗了多少"
+        /// 混成一个数，回答不出来。
+        /// </summary>
         public static List<ItemAmount> ProductionDelta(PlanetData planet,
-            IReadOnlyCollection<int> entityIds, StatWindow window, StatUnit unit)
+            IReadOnlyCollection<int> entityIds, StatWindow window, StatUnit unit, bool produce)
         {
             var result = new Dictionary<int, ItemAmount>();
             var factory = planet != null ? planet.factory : null;
@@ -97,36 +104,35 @@ namespace IcarusII.Game.Spatial
             if (factoryStat?.productIndices == null || factoryStat.productPool == null)
                 return new List<ItemAmount>();
 
-            // 只统计选中建筑：装配机按各自配方归属，未选中建筑不计。
-            var produced = new Dictionary<int, double>();
-            var consumed = new Dictionary<int, double>();
-            CollectRecipeFlow(factory, entityIds, produced, consumed, 1.0, out _);
+            // 选中建筑决定"哪些物品属于这个区域"；数值来自工厂桶，
+            // 因为游戏的桶不按建筑切分，无法只取子集的真实产量。
+            var selected = new Dictionary<int, double>();
+            var other = new Dictionary<int, double>();
+            CollectRecipeFlow(factory, entityIds, selected, other, 1.0, out _);
 
             var level = Math.Min((int)window, ProductionStatistics.STAT_LEVEL_COUNT);
             var producedLevel = level + 1;
             var consumedLevel = ProductionStatistics.STAT_LEVEL_COUNT + producedLevel;
 
-            foreach (var pair in produced)
+            // 产出与消耗都要覆盖：纯消耗品（燃料、弹药）只出现在消耗侧。
+            foreach (var itemId in Union(selected, other))
             {
-                var itemId = pair.Key;
                 if (itemId <= 0 || itemId >= factoryStat.productIndices.Length) continue;
                 var productIndex = factoryStat.productIndices[itemId];
                 if (productIndex <= 0 || productIndex >= factoryStat.productPool.Length) continue;
                 var stat = factoryStat.productPool[productIndex];
                 if (stat?.total == null || stat.total.Length <= consumedLevel) continue;
 
-                var producedTotal = stat.total[producedLevel];
-                var consumedTotal = stat.total[consumedLevel];
-                if (producedTotal == 0 && consumedTotal == 0) continue;
+                var amount = produce ? stat.total[producedLevel] : stat.total[consumedLevel];
+                if (amount == 0) continue;
 
-                var entry = new ItemAmount
+                result[itemId] = new ItemAmount
                 {
                     ItemId = itemId,
                     Name = GameToolFormat.ItemName(itemId),
-                    Amount = SpatialRequest.ConvertUnit(producedTotal, window, unit),
+                    Amount = SpatialRequest.ConvertUnit(amount, window, unit),
                     Stored = stat.storageCount,
                 };
-                result[itemId] = entry;
             }
 
             return Sorted(result);
@@ -184,6 +190,14 @@ namespace IcarusII.Game.Spatial
                 AddAmounts(produced, recipe.Results, recipe.ResultCounts, craftsPerMin);
                 AddAmounts(consumed, recipe.Items, recipe.ItemCounts, craftsPerMin);
             }
+        }
+
+        private static List<int> Union(Dictionary<int, double> a, Dictionary<int, double> b)
+        {
+            var ids = new List<int>(a.Keys);
+            foreach (var key in b.Keys)
+                if (!a.ContainsKey(key)) ids.Add(key);
+            return ids;
         }
 
         private static void AddAmounts(Dictionary<int, double> target, int[] ids, int[] counts, double craftsPerMin)

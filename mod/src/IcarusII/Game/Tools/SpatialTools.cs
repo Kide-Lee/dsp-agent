@@ -89,6 +89,13 @@ namespace IcarusII.Game.Tools
             return array;
         }
 
+        /// <summary>
+        /// 取生产桶的哪一段：consumption 取消耗侧，其余取产出侧。
+        /// input/output 在游戏里没有独立的方向统计，只能落到产出侧并在结果里说明。
+        /// </summary>
+        protected static bool IsProducing(SpatialRequest request) =>
+            request.Method != SpatialMethod.Consumption;
+
         protected static string RateUnitLabel(SpatialRequest request)
         {
             switch (request.Unit)
@@ -360,14 +367,16 @@ namespace IcarusII.Game.Tools
                 if (!isProduction && !isConsumption)
                     throw new SpatialException(
                         $"{SpatialTypes.NameOf(request.Method)} 只支持 basis=actual；理论值只对 production/consumption 有意义");
+                // 到这里的只有 production / consumption：production 取产出侧，consumption 取消耗侧
                 items = StatAggregator.InstalledDelta(planet.factory, ids, request.Window, request.Unit,
-                    produce: isProduction);
+                    produce: IsProducing(request));
             }
             else
             {
                 // input/output 与 production/consumption 都取工厂的生产桶：
                 // 游戏的物流统计是行星级、且不区分方向，无法按建筑子集切分。
-                items = StatAggregator.ProductionDelta(planet, ids, request.Window, request.Unit);
+                items = StatAggregator.ProductionDelta(planet, ids, request.Window, request.Unit,
+                    produce: IsProducing(request));
             }
 
             data.Set("items", ItemArray(items, request));
@@ -931,8 +940,9 @@ namespace IcarusII.Game.Tools
                 if (planet?.factory == null) continue;
                 var chunk = request.Basis == StatBasis.Installed
                     ? StatAggregator.InstalledDelta(planet.factory, pair.Value, request.Window, request.Unit,
-                        produce: isProduction)
-                    : StatAggregator.ProductionDelta(planet, pair.Value, request.Window, request.Unit);
+                        produce: IsProducing(request))
+                    : StatAggregator.ProductionDelta(planet, pair.Value, request.Window, request.Unit,
+                        produce: IsProducing(request));
                 MergeInto(totals, chunk);
             }
 
@@ -1408,11 +1418,13 @@ namespace IcarusII.Game.Tools
                 if (!isProduction && !isConsumption)
                     throw new SpatialException(
                         $"{SpatialTypes.NameOf(request.Method)} 只支持 basis=actual");
-                items = StatAggregator.InstalledDelta(planet.factory, ids, request.Window, request.Unit, isProduction);
+                items = StatAggregator.InstalledDelta(planet.factory, ids, request.Window, request.Unit,
+                    produce: IsProducing(request));
             }
             else
             {
-                items = StatAggregator.ProductionDelta(planet, ids, request.Window, request.Unit);
+                items = StatAggregator.ProductionDelta(planet, ids, request.Window, request.Unit,
+                    produce: IsProducing(request));
             }
 
             data.Set("items", ItemArray(items, request));
