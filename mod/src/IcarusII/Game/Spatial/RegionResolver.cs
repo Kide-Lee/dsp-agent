@@ -92,14 +92,22 @@ namespace IcarusII.Game.Spatial
                     target.PlanetId = target.Planet != null ? target.Planet.id : 0;
                     break;
                 case SpatialTypes.DfBase:
-                    target.SeedEntityId = ParseId(request.TargetId);
-                    target.Planet = target.SeedEntityId > 0
-                        ? FindPlanetByEnemy(target.SeedEntityId)
+                {
+                    var enemyId = ParseId(request.TargetId);
+                    target.Planet = enemyId > 0
+                        ? FindPlanetByEnemy(enemyId)
                         : (GameMain.data != null ? GameMain.data.localPlanet : null);
                     target.PlanetId = target.Planet != null ? target.Planet.id : 0;
                     target.Star = target.Planet != null ? target.Planet.star : null;
                     target.StarId = target.Star != null ? target.Star.id : 0;
+
+                    // 调用方给的是敌人 id；区域内部用基地组件 id 归组，
+                    // 两个编号域不同，必须先换算，否则成员永远为空。
+                    target.SeedEntityId = enemyId > 0
+                        ? BaseIdOfEnemy(target.Planet, enemyId)
+                        : NearestBaseId(target.Planet);
                     break;
+                }
                 case SpatialTypes.DysonSphere:
                     target.Star = ResolveStar(request.TargetId);
                     target.StarId = target.Star != null ? target.Star.id : 0;
@@ -264,6 +272,43 @@ namespace IcarusII.Game.Spatial
             var local = GameMain.data.localPlanet;
             if (local == null) throw new SpatialException("当前没有载入行星");
             return local;
+        }
+
+        /// <summary>敌人实体 → 它所属的基地组件 id；不是基地成员时返回 0。</summary>
+        private static int BaseIdOfEnemy(PlanetData planet, int enemyId)
+        {
+            var factory = planet != null ? planet.factory : null;
+            if (factory?.enemyPool == null) return 0;
+            if (enemyId <= 0 || enemyId >= factory.enemyCursor || enemyId >= factory.enemyPool.Length) return 0;
+            var enemy = factory.enemyPool[enemyId];
+            return enemy.id == enemyId ? enemy.dfGBaseId : 0;
+        }
+
+        /// <summary>行星上离玩家最近的基地组件 id；没有基地时返回 0。</summary>
+        private static int NearestBaseId(PlanetData planet)
+        {
+            var factory = planet != null ? planet.factory : null;
+            if (factory?.enemyPool == null) return 0;
+            var player = GameMain.mainPlayer;
+            if (player == null) return 0;
+            var origin = player.transform.position;
+
+            var best = 0;
+            var bestSqr = double.MaxValue;
+            var upper = Math.Min(factory.enemyCursor, factory.enemyPool.Length);
+            for (int id = 1; id < upper; id++)
+            {
+                var enemy = factory.enemyPool[id];
+                if (enemy.id != id || enemy.protoId <= 0 || enemy.dfGBaseId <= 0) continue;
+                var local = PlanetFrame.WorldToLocal(planet, enemy.pos);
+                var dx = local.x - origin.x;
+                var dz = local.z - origin.z;
+                var sqr = dx * dx + dz * dz;
+                if (sqr >= bestSqr) continue;
+                bestSqr = sqr;
+                best = enemy.dfGBaseId;
+            }
+            return best;
         }
 
         /// <summary>

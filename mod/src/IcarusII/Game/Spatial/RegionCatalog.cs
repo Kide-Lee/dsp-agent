@@ -320,6 +320,7 @@ namespace IcarusII.Game.Spatial
             {
                 var enemy = factory.enemyPool[id];
                 if (enemy.id != id || enemy.protoId <= 0) continue;
+                if (enemy.dynamic) continue;    // 会动的单位属于动点，不是基地建筑
                 if (enemy.dfGBaseId != baseEntityId) continue;
                 var local = PlanetFrame.WorldToLocal(planet, enemy.pos);
                 result.Add(RegionMember.OnPlanet("df_ground_building", id,
