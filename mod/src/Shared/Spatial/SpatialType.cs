@@ -171,8 +171,8 @@ namespace IcarusII.Common.Spatial
                 case SpatialMethod.Consumption:
                 case SpatialMethod.Power:
                 case SpatialMethod.Parent:
-                    return IsRegion(type) || type == Blueprint;
-                // 蓝图不是运行对象：没有存量、没有位置、不能导航
+                    return IsRegion(type);
+                // 蓝图不是运行对象：没有位置、不能导航；storage 是其建筑清单
                 case SpatialMethod.Storage:
                 case SpatialMethod.Location:
                 case SpatialMethod.Navigation:

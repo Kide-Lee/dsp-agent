@@ -32,10 +32,17 @@ namespace IcarusII.Tests
                 Program.Check($"区域 list 支持 {type}", SpatialTypes.Supports(SpatialMethod.List, type));
             }
 
-            // 蓝图不是运行对象：没有存量、位置、导航
-            Program.Check("蓝图不支持 storage", !SpatialTypes.Supports(SpatialMethod.Storage, SpatialTypes.Blueprint));
-            Program.Check("蓝图不支持 location", !SpatialTypes.Supports(SpatialMethod.Location, SpatialTypes.Blueprint));
-            Program.Check("蓝图支持 information", SpatialTypes.Supports(SpatialMethod.Information, SpatialTypes.Blueprint));
+            // 蓝图能读建筑清单与理论流量，但没有位置、不能导航
+            Program.Check("蓝图支持 list",
+                SpatialTypes.Supports(SpatialMethod.List, SpatialTypes.Blueprint));
+            Program.Check("蓝图不支持 location",
+                !SpatialTypes.Supports(SpatialMethod.Location, SpatialTypes.Blueprint));
+            Program.Check("蓝图不支持 navigation",
+                !SpatialTypes.Supports(SpatialMethod.Navigation, SpatialTypes.Blueprint));
+            Program.Check("蓝图支持 information",
+                SpatialTypes.Supports(SpatialMethod.Information, SpatialTypes.Blueprint));
+            Program.Check("蓝图支持 note",
+                SpatialTypes.Supports(SpatialMethod.Note, SpatialTypes.Blueprint));
 
             // 恒星与戴森球没有物流输入（只有太阳帆/火箭这种专属流入）
             Program.Check("恒星不支持 input", !SpatialTypes.Supports(SpatialMethod.Input, SpatialTypes.Star));

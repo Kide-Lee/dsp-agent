@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using IcarusII.Common.Json;
 using IcarusII.Common.Spatial;
 using IcarusII.Game.Spatial;
@@ -180,7 +181,7 @@ namespace IcarusII.Game.Tools
         private static GameToolJobResult ListMembers(JsonValue data, SpatialRequest request, RegionTarget target)
         {
             if (target.Type == SpatialTypes.Blueprint)
-                throw new SpatialException("蓝图成员列表需要蓝图解析能力，暂未实现");
+                return BlueprintBuildings(data, request, target);
 
             var members = RegionCatalog.Members(target, args_kind(request), out var partial, out var note);
             var array = JsonValue.NewArray();
@@ -335,7 +336,7 @@ namespace IcarusII.Game.Tools
                 return DfFlow(data, request, target);
 
             if (target.Type == SpatialTypes.Blueprint)
-                throw new SpatialException("蓝图的流量只能是理论值，需蓝图解析能力，暂未实现");
+                return BlueprintFlow(data, request, target);
 
             var planet = target.Planet;
             if (planet?.factory == null) throw new SpatialException("该区域的行星工厂尚未加载");
@@ -439,6 +440,8 @@ namespace IcarusII.Game.Tools
                     WriteStatMeta(data, request, windowNative: false);
                     return Result(data, "黑雾能量");
                 }
+                case SpatialTypes.Blueprint:
+                    return BlueprintPower(data, request, target);
                 default:
                 {
                     if (target.Type == SpatialTypes.StarSystem)
@@ -489,6 +492,8 @@ namespace IcarusII.Game.Tools
 
         private static GameToolJobResult Parent(JsonValue data, SpatialRequest request, RegionTarget target)
         {
+            if (target.Type == SpatialTypes.Blueprint) return BlueprintParent(data, target);
+
             var chain = JsonValue.NewArray();
             var current = target;
             for (int depth = 0; depth < request.Depth; depth++)
@@ -512,6 +517,45 @@ namespace IcarusII.Game.Tools
             }
             data.Set("parents", chain);
             return Result(data, $"{target.Describe()} 的上级：{chain.Count} 层");
+        }
+
+        private static GameToolJobResult BlueprintParent(JsonValue data, RegionTarget target)
+        {
+            var full = BlueprintCatalog.ResolvePath(target.BlueprintPath);
+            var root = GameConfig.blueprintFolder ?? string.Empty;
+            var dir = Path.GetDirectoryName(full) ?? string.Empty;
+            var relative = dir;
+            if (!string.IsNullOrEmpty(root) && dir.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                relative = dir.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar);
+
+            var chain = JsonValue.NewArray();
+            var obj = JsonValue.NewObject();
+            obj.Set("type", "directory");
+            obj.Set("path", relative.Length == 0 ? "." : relative);
+            obj.Set("absolute", dir);
+            chain.Add(obj);
+            data.Set("parents", chain);
+            return Result(data, $"蓝图父目录：{(relative.Length == 0 ? "蓝图根" : relative)}");
+        }
+
+        private static GameToolJobResult BlueprintPower(JsonValue data, SpatialRequest request,
+            RegionTarget target)
+        {
+            var blueprint = BlueprintCatalog.Load(target.BlueprintPath);
+            var power = BlueprintCatalog.PowerEstimate(blueprint);
+            data.Set("power", power);
+            WriteStatMeta(data, request, windowNative: false);
+            data.Set("hint", "蓝图是静态文件，只给理论值；不考虑供电满足度与电网拓扑。");
+            return Result(data, "蓝图理论电力");
+        }
+
+        private static GameToolJobResult BlueprintNote(JsonValue data, RegionTarget target)
+        {
+            var blueprint = BlueprintCatalog.Load(target.BlueprintPath);
+            data.Set("note", blueprint.desc ?? string.Empty);
+            data.Set("shortDesc", blueprint.shortDesc ?? string.Empty);
+            return Result(data, string.IsNullOrEmpty(blueprint.desc) ? "蓝图没有介绍" : "蓝图介绍 1 条");
         }
 
         private static RegionTarget ParentOf(RegionTarget target)
@@ -713,6 +757,12 @@ namespace IcarusII.Game.Tools
                     info.Set("maxLayerCount", DysonSphere.kMaxLayerCount);
                     break;
                 }
+                case SpatialTypes.Blueprint:
+                {
+                    var blueprint = BlueprintCatalog.Load(target.BlueprintPath);
+                    info = BlueprintCatalog.Header(blueprint);
+                    break;
+                }
                 default:
                     throw new SpatialException($"类型 {target.Type} 没有 information");
             }
@@ -722,6 +772,8 @@ namespace IcarusII.Game.Tools
 
         private static GameToolJobResult Note(JsonValue data, SpatialRequest request, RegionTarget target)
         {
+            if (target.Type == SpatialTypes.Blueprint) return BlueprintNote(data, target);
+
             var text = MemoText(target);
             data.Set("note", text ?? string.Empty);
             return Result(data, string.IsNullOrEmpty(text) ? "暂无备忘录" : "备忘录 1 条");
@@ -732,6 +784,66 @@ namespace IcarusII.Game.Tools
             throw new SpatialException(
                 $"导航是写操作，请用 game_tether_add（kind=planet/building/vein）或 game_trace_line；"
                 + $"本次 target 为 {target.Describe()}");
+        }
+
+        // ------------------------------------------------------------ 蓝图
+
+        private static GameToolJobResult BlueprintBuildings(JsonValue data, SpatialRequest request,
+            RegionTarget target)
+        {
+            var blueprint = BlueprintCatalog.Load(target.BlueprintPath);
+            var buildings = BlueprintCatalog.Buildings(blueprint);
+
+            var array = JsonValue.NewArray();
+            var returned = 0;
+            for (int i = request.Offset; i < buildings.Count && returned < request.Limit; i++, returned++)
+            {
+                var (itemId, name, count) = buildings[i];
+                var obj = JsonValue.NewObject();
+                obj.Set("id", itemId);
+                obj.Set("name", name);
+                obj.Set("iconTag", GameToolFormat.ItemIconTag(itemId));
+                obj.Set("count", count);
+                array.Add(obj);
+            }
+            data.Set("buildings", array);
+            data.Set("total", buildings.Count);
+            if (buildings.Count > 0) data.Set("blueprint", BlueprintCatalog.Header(blueprint));
+
+            var truncated = request.Offset + returned < buildings.Count;
+            return Result(data,
+                $"蓝图：{blueprint.buildings?.Length ?? 0} 座建筑，{buildings.Count} 种",
+                false, truncated, truncated ? request.Offset + returned : -1);
+        }
+
+        private static GameToolJobResult BlueprintFlow(JsonValue data, SpatialRequest request,
+            RegionTarget target)
+        {
+            // 蓝图只有理论值；basis=actual 没有数据源，直接按 installed 算并如实标注。
+            var blueprint = BlueprintCatalog.Load(target.BlueprintPath);
+            var produce = request.Method == SpatialMethod.Output
+                || request.Method == SpatialMethod.Production;
+            BlueprintCatalog.TheoreticalFlow(blueprint, produce, out var amounts, out var recipeBuildings);
+
+            var items = new List<ItemAmount>();
+            foreach (var pair in amounts)
+                items.Add(new ItemAmount
+                {
+                    ItemId = pair.Key,
+                    Name = GameToolFormat.ItemName(pair.Key),
+                    Amount = SpatialRequest.ConvertUnit(pair.Value, request.Window, request.Unit),
+                });
+            items.Sort((a, b) => b.Amount.CompareTo(a.Amount));
+
+            data.Set("items", ItemArray(items, request));
+            data.Set("total", items.Count);
+            data.Set("basis", "installed");
+            data.Set("recipeBuildings", recipeBuildings);
+            WriteStatMeta(data, request, windowNative: false);
+            data.Set("hint", "蓝图是静态文件，只能给理论值；不考虑供电、堵料与物流延迟。");
+            var truncated = request.Offset + Math.Min(request.Limit, items.Count) < items.Count;
+            return Result(data, $"蓝图理论流量：{items.Count} 种物品（{recipeBuildings} 台有配方）",
+                false, truncated, truncated ? request.Offset + request.Limit : -1);
         }
 
         // ------------------------------------------------------------ 备忘录
