@@ -490,10 +490,18 @@ namespace IcarusII.Game.Tools
             }
         }
 
-        private static GameToolJobResult AggregateStarPower(JsonValue data, SpatialRequest request, RegionTarget target)
+        /// <summary>
+        /// 恒星系电力：逐行星把全网累加。
+        /// 字段与 <see cref="StatAggregator.Power"/> 保持一致，
+        /// 否则同一次对话里"看行星"和"看星系"会给出不同的键，模型难以比较。
+        /// </summary>
+        private static GameToolJobResult AggregateStarPower(JsonValue data, SpatialRequest request,
+            RegionTarget target)
         {
             long required = 0;
             long served = 0;
+            long capacity = 0;
+            long stored = 0;
             var planets = 0;
             if (target.Star?.planets != null)
             {
@@ -504,14 +512,20 @@ namespace IcarusII.Game.Tools
                     planets++;
                     for (int i = 1; i < system.netCursor && i < system.netPool.Length; i++)
                     {
-                        required += Math.Max(0, system.netPool[i].energyRequired);
-                        served += Math.Max(0, system.netPool[i].energyServed);
+                        var net = system.netPool[i];
+                        required += Math.Max(0, net.energyRequired);
+                        served += Math.Max(0, net.energyServed);
+                        capacity += Math.Max(0, net.energyCapacity);
+                        stored += Math.Max(0, net.energyStored);
                     }
                 }
             }
             var obj = JsonValue.NewObject();
+            obj.Set("factoryLoaded", planets > 0);
             obj.Set("demandKw", GameToolFormat.Round(GameToolFormat.Kw(required), 2));
             obj.Set("servedKw", GameToolFormat.Round(GameToolFormat.Kw(served), 2));
+            obj.Set("capacityKw", GameToolFormat.Round(GameToolFormat.Kw(capacity), 2));
+            obj.Set("storedKwh", GameToolFormat.Round(GameToolFormat.Kwh(stored), 2));
             obj.Set("satisfactionPct", required > 0
                 ? GameToolFormat.Round(served * 100.0 / required, 1) : 100);
             obj.Set("planets", planets);
