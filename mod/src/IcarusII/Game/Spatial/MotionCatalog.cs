@@ -128,8 +128,9 @@ namespace IcarusII.Game.Spatial
             target.World = player.uPosition;
             var v = player.uVelocity;
             target.Velocity = new Vec3d(v.x, v.y, v.z);
+            // Fly / Sail 才是离开行星；Walk 与 Drift 都还在行星上（TetherTools 用同一分界）。
             target.OnPlanet = player.planetData != null && player.planetData.factory != null
-                && player.movementState == EMovementState.Walk;
+                && player.movementState < EMovementState.Fly;
             target.Name = "玩家";
         }
 
