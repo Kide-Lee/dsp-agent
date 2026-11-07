@@ -120,9 +120,23 @@ namespace IcarusII.Game.Tools
         }
 
         /// <summary>统计类结果的通用头：把 window/unit/basis 如实回显，避免模型误解数字。</summary>
+        /// <summary>
+        /// 统计类结果的通用头：把 window/unit/basis 如实回显，避免模型误解数字。
+        ///
+        /// 存量（storage）与时间窗无关，不写 window / windowNative，
+        /// 否则模型会以为"存量是十分钟内的量"。
+        /// </summary>
         protected static void WriteStatMeta(JsonValue data, SpatialRequest request, bool windowNative)
         {
             var meta = JsonValue.NewObject();
+            if (request.Method == SpatialMethod.Storage)
+            {
+                meta.Set("kind", "stock");
+                meta.Set("unit", "count");
+                data.Set("stat", meta);
+                return;
+            }
+
             meta.Set("window", WindowLabel(request));
             meta.Set("unit", request.Unit == StatUnit.PerHour ? "perHour"
                 : request.Unit == StatUnit.Total ? "total" : "perMin");
