@@ -726,7 +726,9 @@ namespace IcarusII.Game.Tools
         private static GameToolJobResult AddFromSpace(JsonValue space)
         {
             var kindText = (space["kind"].AsString(null) ?? string.Empty).Trim().ToLowerInvariant();
-            var request = SpatialRequest.Parse(space, SpatialMethod.Navigation);
+            // 用 Location 而不是 Navigation：这里只是借用 Parse 解析 type/target，
+            // 传 Navigation 会让统计类判定（IsStatMethod）拿到不相干的语义。
+            var request = SpatialRequest.Parse(space, SpatialMethod.Location);
 
             if (kindText == "motion" || SpatialTypes.IsMotion(request.Type ?? string.Empty))
                 throw Fail("动点会移动，方位指示是静态箭头，无法指向它；"
