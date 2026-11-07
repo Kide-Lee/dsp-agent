@@ -103,7 +103,15 @@ namespace IcarusII.Game.Tools
                 obj.Set("name", item.Name);
                 obj.Set("iconTag", GameToolFormat.ItemIconTag(item.ItemId));
                 obj.Set("amount", GameToolFormat.Round(item.Amount, 2));
-                if (item.Stored > 0) obj.Set("stored", item.Stored);
+                if (item.HasNet) obj.Set("net", GameToolFormat.Round(item.Net, 2));
+                if (item.Stored > 0)
+                {
+                    obj.Set("stored", item.Stored);
+                    // 净消耗为正时，这些库存还能撑多久
+                    if (item.HasNet && item.Net < 0)
+                        obj.Set("minutesOfStock",
+                            GameToolFormat.Round(item.Stored / -item.Net, 1));
+                }
                 array.Add(obj);
             }
             return array;
@@ -442,6 +450,14 @@ namespace IcarusII.Game.Tools
             data.Set("total", filtered.Count);
             WriteStatMeta(data, request, windowNative: true);
             if (note != null) data.Set("note", note);
+
+            // 桶为空不等于没有产线：明确回一个标记，避免模型据此下结论。
+            var statsEmpty = request.Basis == StatBasis.Actual
+                && StatAggregator.StatsEmpty(planet);
+            data.Set("statsEmpty", statsEmpty);
+            if (statsEmpty)
+                data.Set("hint", "产线统计暂无数据（刚读档或游戏暂停时常见），这不等于没有产线；"
+                    + "可传 basis=installed 看装机产能。");
 
             var display = $"{target.Describe()}：{filtered.Count} 种物品"
                 + $"（{WindowLabel(request)}{RateUnitLabel(request)}）";

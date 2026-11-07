@@ -16,6 +16,9 @@ namespace IcarusII.Game.Spatial
         public double Amount;
         public long Stored;
         public int Buildings;
+        /// <summary>产出减消耗；只有同时取了两侧才有意义，单侧查询保持 0。</summary>
+        public double Net;
+        public bool HasNet;
     }
 
     /// <summary>
@@ -80,6 +83,25 @@ namespace IcarusII.Game.Spatial
         /// 按 window 取对应累计值再折算 unit。
         /// </summary>
         /// <summary>
+        /// 统计桶是否为空。
+        ///
+        /// 刚读档或游戏暂停时，桶里的累计值可能全是 0；这不等于"没有产线"。
+        /// 调用方需要据此提示模型改用装机口径，而不是让模型答"你没在生产"。
+        /// </summary>
+        public static bool StatsEmpty(PlanetData planet)
+        {
+            var factory = planet != null ? planet.factory : null;
+            if (factory == null) return true;
+            var stats = GameMain.data != null ? GameMain.data.statistics : null;
+            var production = stats != null ? stats.production : null;
+            var index = planet.factoryIndex;
+            if (production?.factoryStatPool == null || index < 0 ||
+                index >= production.factoryStatPool.Length) return true;
+            var stat = production.factoryStatPool[index];
+            return stat?.productPool == null;
+        }
+
+        /// <summary>
         /// 生产/消耗的实际统计。
         ///
         /// 游戏的桶按物品存，产出与消耗是同一个 stat 的两段 total；
@@ -123,15 +145,20 @@ namespace IcarusII.Game.Spatial
                 var stat = factoryStat.productPool[productIndex];
                 if (stat?.total == null || stat.total.Length <= consumedLevel) continue;
 
-                var amount = produce ? stat.total[producedLevel] : stat.total[consumedLevel];
-                if (amount == 0) continue;
+                var raw = produce ? stat.total[producedLevel] : stat.total[consumedLevel];
+                if (raw == 0) continue;
 
+                var oppositeRaw = produce ? stat.total[consumedLevel] : stat.total[producedLevel];
+                var amount = SpatialRequest.ConvertUnit(raw, window, unit);
+                var otherAmount = SpatialRequest.ConvertUnit(oppositeRaw, window, unit);
                 result[itemId] = new ItemAmount
                 {
                     ItemId = itemId,
                     Name = GameToolFormat.ItemName(itemId),
-                    Amount = SpatialRequest.ConvertUnit(amount, window, unit),
+                    Amount = amount,
                     Stored = stat.storageCount,
+                    Net = produce ? amount - otherAmount : otherAmount - amount,
+                    HasNet = true,
                 };
             }
 
@@ -232,6 +259,7 @@ namespace IcarusII.Game.Spatial
             long served = 0;
             long capacity = 0;
             long stored = 0;
+            long accumulated = 0;
             var consumers = 0;
             var generators = 0;
 
@@ -269,6 +297,7 @@ namespace IcarusII.Game.Spatial
                 {
                     var acc = system.accPool[entity.powerAccId];
                     stored += Math.Max(0, acc.curEnergy);
+                    accumulated += acc.curPower;
                 }
             }
 
@@ -296,11 +325,36 @@ namespace IcarusII.Game.Spatial
             obj.Set("servedKw", GameToolFormat.Round(GameToolFormat.Kw(served), 2));
             obj.Set("capacityKw", GameToolFormat.Round(GameToolFormat.Kw(capacity), 2));
             obj.Set("storedKwh", GameToolFormat.Round(GameToolFormat.Kwh(stored), 2));
+            obj.Set("accumulatorKw", GameToolFormat.Round(GameToolFormat.Kw(accumulated), 2));
             obj.Set("satisfactionPct", required > 0
                 ? GameToolFormat.Round(served * 100.0 / required, 1) : 100);
             obj.Set("consumers", consumers);
             obj.Set("generators", generators);
+            obj.Set("nets", NetworkRows(system, networks));
             return obj;
+        }
+
+        /// <summary>按电网给明细：区域横跨多片电网时，光看合计判断不出缺在哪一片。</summary>
+        private static JsonValue NetworkRows(PowerSystem system, HashSet<int> networkIds)
+        {
+            var rows = JsonValue.NewArray();
+            if (system?.netPool == null || networkIds == null) return rows;
+            foreach (var networkId in networkIds)
+            {
+                if (networkId <= 0 || networkId >= system.netCursor ||
+                    networkId >= system.netPool.Length) continue;
+                var net = system.netPool[networkId];
+                var row = JsonValue.NewObject();
+                row.Set("id", net.id);
+                row.Set("demandKw", GameToolFormat.Round(GameToolFormat.Kw(net.energyRequired), 2));
+                row.Set("servedKw", GameToolFormat.Round(GameToolFormat.Kw(net.energyServed), 2));
+                row.Set("capacityKw", GameToolFormat.Round(GameToolFormat.Kw(net.energyCapacity), 2));
+                row.Set("storedKwh", GameToolFormat.Round(GameToolFormat.Kwh(net.energyStored), 2));
+                row.Set("satisfactionPct", net.energyRequired > 0
+                    ? GameToolFormat.Round(net.energyServed * 100.0 / net.energyRequired, 1) : 100);
+                rows.Add(row);
+            }
+            return rows;
         }
 
         public static StorageComponent GetStorage(PlanetFactory factory, int storageId)
