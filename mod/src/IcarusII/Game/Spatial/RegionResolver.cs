@@ -266,18 +266,21 @@ namespace IcarusII.Game.Spatial
             return local;
         }
 
+        /// <summary>
+        /// 按敌人 id 找出它所在的星球。
+        /// 之前这里没有用到 enemyId，只要某颗星球有敌人就返回它，
+        /// 导致任何 id 都指向同一颗星球。
+        /// </summary>
         private static PlanetData FindPlanetByEnemy(int enemyId)
         {
             var data = GameMain.data;
-            if (data == null || data.factories == null) return null;
+            if (data == null || data.factories == null || enemyId <= 0) return null;
             for (int i = 0; i < data.factoryCount && i < data.factories.Length; i++)
             {
                 var factory = data.factories[i];
                 if (factory == null || factory.enemyPool == null) continue;
-                for (int id = 1; id < factory.enemyCursor && id < factory.enemyPool.Length; id++)
-                {
-                    if (factory.enemyPool[id].id == id) return factory.planet;
-                }
+                if (enemyId >= factory.enemyCursor || enemyId >= factory.enemyPool.Length) continue;
+                if (factory.enemyPool[enemyId].id == enemyId) return factory.planet;
             }
             return null;
         }
