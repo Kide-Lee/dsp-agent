@@ -819,7 +819,21 @@ namespace IcarusII.Game.Tools
                     var planet = target.Planet;
                     if (planet == null) throw new SpatialException("找不到行星");
                     info.Set("orbitRadius", GameToolFormat.Round(planet.orbitRadius, 2));
+                    // 所环绕天体：卫星绕行星，其余绕恒星
+                    if (planet.orbitAroundPlanet != null)
+                    {
+                        info.Set("orbitAround", "planet");
+                        info.Set("orbitAroundId", planet.orbitAroundPlanet.id);
+                        info.Set("orbitAroundName", PlanetFrame.PlanetName(planet.orbitAroundPlanet));
+                    }
+                    else if (planet.star != null)
+                    {
+                        info.Set("orbitAround", "star");
+                        info.Set("orbitAroundId", planet.star.id);
+                        info.Set("orbitAroundName", PlanetFrame.StarName(planet.star));
+                    }
                     info.Set("orbitalPeriod", GameToolFormat.Round(planet.orbitalPeriod, 2));
+                    info.Set("rotationPeriod", GameToolFormat.Round(planet.rotationPeriod, 2));
                     info.Set("orbitInclination", GameToolFormat.Round(planet.orbitInclination, 3));
                     info.Set("orbitLongitude", GameToolFormat.Round(planet.orbitLongitude, 3));
                     info.Set("obliquity", GameToolFormat.Round(planet.obliquity, 3));
@@ -841,9 +855,7 @@ namespace IcarusII.Game.Tools
                 {
                     var sphere = DysonSpheres.Get(target.StarId);
                     if (sphere == null) throw new SpatialException("该恒星系还没有戴森球");
-                    info.Set("layerCount", sphere.layerCount);
-                    info.Set("grossRadius", GameToolFormat.Round(sphere.grossRadius, 1));
-                    info.Set("maxLayerCount", DysonSphere.kMaxLayerCount);
+                    info = DysonSpheres.Information(sphere);
                     break;
                 }
                 case SpatialTypes.Blueprint:
