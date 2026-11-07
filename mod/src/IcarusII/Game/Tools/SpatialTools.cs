@@ -96,6 +96,19 @@ namespace IcarusII.Game.Tools
         protected static bool IsProducing(SpatialRequest request) =>
             request.Method != SpatialMethod.Consumption;
 
+        /// <summary>
+        /// 只有生产/消耗有装机口径；物流进出没有"理论物流"，
+        /// 传 basis=installed 会明确报错，而不是静默降级成实际值。
+        /// </summary>
+        protected static void RequireInstalledCapable(SpatialRequest request)
+        {
+            if (request.Basis != StatBasis.Installed) return;
+            if (request.Method == SpatialMethod.Production || request.Method == SpatialMethod.Consumption)
+                return;
+            throw new SpatialException(
+                $"{SpatialTypes.NameOf(request.Method)} 只支持 basis=actual；理论值只对 production/consumption 有意义");
+        }
+
         protected static string RateUnitLabel(SpatialRequest request)
         {
             switch (request.Unit)
@@ -370,18 +383,11 @@ namespace IcarusII.Game.Tools
             var ids = new List<int>(members.Count);
             foreach (var member in members) ids.Add(member.Id);
 
-            var isProduction = request.Method == SpatialMethod.Production;
-            var isConsumption = request.Method == SpatialMethod.Consumption;
-            var basis = request.Basis;
+            RequireInstalledCapable(request);
 
             List<ItemAmount> items;
-            if (basis == StatBasis.Installed)
+            if (request.Basis == StatBasis.Installed)
             {
-                // input/output 没有"理论物流"，只有生产/消耗有装机口径
-                if (!isProduction && !isConsumption)
-                    throw new SpatialException(
-                        $"{SpatialTypes.NameOf(request.Method)} 只支持 basis=actual；理论值只对 production/consumption 有意义");
-                // 到这里的只有 production / consumption：production 取产出侧，consumption 取消耗侧
                 items = StatAggregator.InstalledDelta(planet.factory, ids, request.Window, request.Unit,
                     produce: IsProducing(request));
             }
@@ -954,12 +960,7 @@ namespace IcarusII.Game.Tools
         {
             var members = RegionCatalog.Members(target, "building", out var partial, out var note);
             var byPlanet = GroupByPlanet(members);
-            var isProduction = request.Method == SpatialMethod.Production;
-            var isConsumption = request.Method == SpatialMethod.Consumption;
-
-            if (request.Basis == StatBasis.Installed && !isProduction && !isConsumption)
-                throw new SpatialException(
-                    $"{SpatialTypes.NameOf(request.Method)} 只支持 basis=actual；理论值只对 production/consumption 有意义");
+            RequireInstalledCapable(request);
 
             var totals = new Dictionary<int, ItemAmount>();
             foreach (var pair in byPlanet)
@@ -1441,11 +1442,7 @@ namespace IcarusII.Game.Tools
             List<ItemAmount> items;
             if (request.Basis == StatBasis.Installed)
             {
-                var isProduction = request.Method == SpatialMethod.Production;
-                var isConsumption = request.Method == SpatialMethod.Consumption;
-                if (!isProduction && !isConsumption)
-                    throw new SpatialException(
-                        $"{SpatialTypes.NameOf(request.Method)} 只支持 basis=actual");
+                RequireInstalledCapable(request);
                 items = StatAggregator.InstalledDelta(planet.factory, ids, request.Window, request.Unit,
                     produce: IsProducing(request));
             }
