@@ -1238,17 +1238,27 @@ namespace IcarusII.Game.Tools
             throw new SpatialException($"类型 {target.Type} 没有下辖动点");
         }
 
+        /// <summary>
+        /// 站点名下的无人机与运输船。
+        ///
+        /// stationId 是建筑上的 StationComponent 下标，station.entityId 是建筑实体 id，
+        /// 两者不同；必须先把 stationId 换成实体 id 再比，
+        /// 否则任何站点都匹配不上（之前这里还多了一句等价于 stationId 的自比较）。
+        /// </summary>
         private static int AppendStationUnits(PlanetFactory factory, int stationId, JsonValue array)
         {
             var transport = GameMain.data.galacticTransport;
             if (transport?.stationPool == null) return 0;
+            var entityId = StationEntityId(factory, stationId);
+            if (entityId <= 0) return 0;
+
             var count = 0;
             for (int i = 1; i < transport.stationCursor && i < transport.stationPool.Length; i++)
             {
                 var station = transport.stationPool[i];
-                if (station == null || station.entityId != stationId - 1 + 1) continue;
+                if (station == null) continue;
                 if (station.planetId != factory.planet.id) continue;
-                if (station.entityId != StationEntityId(factory, stationId)) continue;
+                if (station.entityId != entityId) continue;
 
                 for (int d = 0; d < station.workDroneCount && station.workDroneDatas != null; d++)
                 {
