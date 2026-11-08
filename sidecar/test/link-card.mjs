@@ -54,7 +54,7 @@ const v = extractLinkCard('game_tether_add', vein);
 check('矿脉卡提取', v !== null && v.kind === 'vein' && v.veinId === 415);
 check('矿脉卡缺 id 不产卡',
   extractLinkCard('game_tether_add', { details: { data: { kind: 'vein', planetId: 1, name: 'x' } } }) === null);
-check('其他工具不产卡', extractLinkCard('game_get_planet', planet) === null);
+check('其他工具不产卡', extractLinkCard('game_get_planets', planet) === null);
 check('失败结果不产卡', extractLinkCard('game_tether_add', building, true) === null);
 check('缺 kind 不产卡', extractLinkCard('game_tether_add', { details: { data: { name: 'x' } } }) === null);
 check('建筑缺 id 不产卡',

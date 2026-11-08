@@ -297,7 +297,6 @@ namespace IcarusII.I18n
 
             // 工具名 → 聊天窗短名（ToolNames）
             ["tool.name.game_get_overview"] = "存档概览",
-            ["tool.name.game_get_planet"] = "行星状态",
             ["tool.name.game_get_research"] = "研究状态",
             ["tool.name.game_get_entity"] = "建筑详情",
             ["tool.name.game_get_progress"] = "进度阶段",

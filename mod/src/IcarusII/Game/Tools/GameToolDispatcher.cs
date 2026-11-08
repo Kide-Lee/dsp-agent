@@ -99,7 +99,6 @@ namespace IcarusII.Game.Tools
             _log = log;
 
             Register(new OverviewTool());
-            Register(new PlanetTool());
             Register(new ResearchTool());
             Register(new ExportPrototypesTool());
             Register(new ExportTextTool());

@@ -89,7 +89,7 @@ function testToolGating() {
   check('没有能力时只有 kb/wiki/blueprint/脚本', none.every((n) => n.startsWith('kb_') || n.startsWith('wiki_') || n.startsWith('blueprint_') || n === 'run_script'));
 
   const read = toolNamesForCapabilities(['game.read.v1']);
-  check('game.read.v1 ⇒ 3 个旧工具', read.filter((n) => n.startsWith('game_')).length === 3);
+  check('game.read.v1 ⇒ 2 个旧工具', read.filter((n) => n.startsWith('game_')).length === 2);
   check('game.read.v1 不含 entity 工具', !read.includes('game_get_entity'));
 
   const entity = toolNamesForCapabilities(['game.entity.v1']);
@@ -142,7 +142,7 @@ function testToolGating() {
     'game.view.v1',
     'game.analyze.v1',
   ]);
-  check('全能力 ⇒ 11 个 game 工具', all.filter((n) => n.startsWith('game_')).length === 11);
+  check('全能力 ⇒ 10 个 game 工具', all.filter((n) => n.startsWith('game_')).length === 10);
   check('全能力仍带 kb_*', all.some((n) => n.startsWith('kb_')));
   check('全能力仍带 run_script', all.includes('run_script'));
   check('全能力包含布局图', all.includes('game_render_layout'));

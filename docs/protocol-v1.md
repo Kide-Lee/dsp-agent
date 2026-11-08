@@ -183,13 +183,13 @@
 ```jsonc
 // mod → sidecar
 { "v":1, "id":"d-1", "type":"tool_debug",
-  "payload": { "name": "game_get_planet", "args": { "planetId": 1 } } }
+  "payload": { "name": "game_get_research", "args": {} } }
 
 // sidecar → mod
 { "v":1, "id":"s-9", "type":"tool_debug_result", "replyTo":"d-1",
   "payload": {
     "ok": true,
-    "tool": "game_get_planet",
+    "tool": "game_get_research",
     "source": "game",                 // game | local | unknown
     "durationMs": 42,
     "content": "……模型可见的格式化文本……",
@@ -1735,8 +1735,11 @@ sidecar 本地工具**（`kb_*`、`wiki_*`、`blueprint_*`、`run_script`，它�
 | 协议/模型名 | 说明 |
 | --- | --- |
 | `game_get_overview` | 存档、时间、当前星球/星系、玩家经纬度 |
-| `game_get_planet` | 行星矿脉汇总、可选矿脉群/逐矿脉节点（分页 + 经纬度）、建筑计数 |
 
+> 行星矿脉与建筑计数也已并入 `space.read.v1`：`space_region op=storage type=planet` 含矿脉矿物，
+> `space_region op=list type=planet_patch kind=vein`（可用 `target` 指定远程行星、`whole=true` 取整星）
+> 给逐矿脉节点（含储量、`groupIndex` 与经纬度），`op=list type=planet` 给建筑原型与类别。
+>
 > 机甲能量/护盾与背包已并入 `space.read.v1`（`space_motion op=information` 与 `op=storage`）；
 > 电网供需与按物品聚合的产量/消耗同样已并入：
 > 用 `space_region op=power` 与 `space_region op=production|consumption`
@@ -2185,7 +2188,7 @@ manifest 格式：
   "v": 1, "id": "s-31", "type": "tool_call",
   "payload": {
     "callId": "call_7",
-    "name": "game_get_planet",
+    "name": "game_get_research",
     "args": { "planetId": 3 },
     "risk": 0,
     "timeoutMs": 8000,
@@ -2221,7 +2224,7 @@ manifest 格式：
     "image": null,
     "error": null,
     "meta": {
-      "tool": "game_get_planet",
+      "tool": "game_get_research",
       "gameTick": 123456,
       "saveKey": "3f2a91c4d8e05b17",
       "tickAtStart": 123450,

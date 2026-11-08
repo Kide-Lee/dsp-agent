@@ -1,5 +1,19 @@
 # 更新日志
 
+## 1.2.384
+
+行星查询并入空间工具，工具总数降到 54 个。
+
+- 删除 `game_get_planet`。行星属性、矿脉储量、矿脉群、逐矿脉节点、建筑原型计数
+  现在都由 `space_region` 提供：
+  - `op=information type=planet`：轨道、环绕天体、自转、倾角
+  - `op=storage type=planet`：建筑库存 + 矿脉矿物（矿物单独标 `veinAmount`，
+    不与库存混成一个数）
+  - `op=list type=planet`：建筑原型、类别与朝向
+  - `op=list type=planet_patch kind=vein`：逐矿脉节点，带储量、矿群编号与经纬度；
+    可用 `target` 指定远程行星，`whole=true` 取整颗行星
+- 矿脉读取改用 `runtimeVeinPool`，未加载的行星（只扫描过）也能查矿脉。
+
 ## 1.2.383
 
 修复戴森球查不到的问题（1.2.381 没修对）。

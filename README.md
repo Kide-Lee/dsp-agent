@@ -30,7 +30,6 @@ DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）�
 | 工具 | 内容 |
 | --- | --- |
 | `game_get_overview` | 存档、游戏时间、所在星球/星系、玩家经纬度 |
-| `game_get_planet` | 行星矿脉汇总、建筑计数 |
 | `game_get_research` | 当前研究、进度、队列、已解锁数量 |
 
 ## AI 能看什么

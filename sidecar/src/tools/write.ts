@@ -404,7 +404,7 @@ export function createWriteTools(host: GameToolHost): ToolDefinition[] {
         '抵达附近后标记由游戏清除；跨行星时先用原生 navigation.indicatorAstroId 指向其中一个目标行星（游戏一次只支持一个导航朝向），' +
         '落到该行星后自动改用定位标记。写操作，风险 1：执行前玩家必须确认。',
       promptGuidelines: [
-        '玩家说“给这些建筑/星球/矿脉都做个方位指示”时使用；先用 space_region op=list / game_get_planet 确认目标。',
+        '玩家说“给这些建筑/星球/矿脉都做个方位指示”时使用；先用 space_region op=list 确认目标。',
         'kind=planet 时用 planetId（缺省当前星球）；kind=building 时用 buildingId，可选 planetId；kind=vein 时用 veinId，可选 planetId。',
         '本星球建筑/矿脉可同时显示多个定位标记；跨行星原生导航一次只指一个目标行星，不要声称所有跨行星目标都同时可见。',
         '标记在抵达附近后消失、卡片按钮恢复为未定位，这是正常行为。',

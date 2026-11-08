@@ -139,7 +139,7 @@ async function run() {
     const ready = socket.frames.find((f) => f.type === 'ready');
     check('收到 ready', !!ready);
     const tools = ready?.payload?.tools ?? [];
-    check('三个只读 + 四个 kb + 两个 wiki + 五个蓝图 + 脚本', tools.length === 15, JSON.stringify(tools));
+    check('两个只读 + 四个 kb + 两个 wiki + 五个蓝图 + 脚本', tools.length === 14, JSON.stringify(tools));
     check('包含 kb_search / kb_get / kb_recipe_tree / kb_plan', ['kb_search', 'kb_get', 'kb_recipe_tree', 'kb_plan'].every((name) => tools.includes(name)));
     const catalog = ready?.payload?.toolCatalog ?? [];
     check('ready.toolCatalog 由 agent 提供', catalog.length === 1 && catalog[0].label === '存档概览', JSON.stringify(catalog));
@@ -149,12 +149,8 @@ async function run() {
       host.setCapabilities(['game.read.v1', 'game.entity.v1', 'game.drop.v1', 'game.build.v1', 'game.storage.v1', 'game.tether.v1']);
       const tools = createGameTools(host);
       const entity = tools.find((tool) => tool.name === 'game_get_entity');
-      const planet = tools.find((tool) => tool.name === 'game_get_planet');
       check('game_get_entity 暴露 fields', !!entity?.parameters?.properties?.fields);
       check('game_get_entity 暴露 entityIds', !!entity?.parameters?.properties?.entityIds);
-      check('game_get_planet 暴露 veins', !!planet?.parameters?.properties?.veins);
-      check('game_get_planet 暴露 veinOffset/veinLimit',
-        !!planet?.parameters?.properties?.veinOffset && !!planet?.parameters?.properties?.veinLimit);
       const drop = tools.find((tool) => tool.name === 'game_drop_item');
       check('game_drop_item 受 game.drop.v1 注册', !!drop);
       check('game_drop_item 参数含 itemId/count',

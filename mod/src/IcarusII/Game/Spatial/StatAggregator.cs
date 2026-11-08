@@ -21,6 +21,9 @@ namespace IcarusII.Game.Spatial
         public bool HasNet;
         /// <summary>另一侧的绝对值，用于同时回答"产了多少、耗了多少"。</summary>
         public double Counterpart;
+        /// <summary>其中属于矿脉（地里还有多少）的部分；库存与矿物混在一起时必须能分开。</summary>
+        public double VeinAmount;
+        public bool HasVein;
     }
 
     /// <summary>

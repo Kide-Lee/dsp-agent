@@ -38,7 +38,6 @@ namespace IcarusII.UI
             switch (name)
             {
                 case "game_get_overview": return Strings.Get("tool.name.game_get_overview");
-                case "game_get_planet": return Strings.Get("tool.name.game_get_planet");
                 case "game_get_research": return Strings.Get("tool.name.game_get_research");
                 case "game_get_entity": return Strings.Get("tool.name.game_get_entity");
                 case "game_get_progress": return Strings.Get("tool.name.game_get_progress");

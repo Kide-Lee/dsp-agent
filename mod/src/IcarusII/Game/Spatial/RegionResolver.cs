@@ -202,15 +202,27 @@ namespace IcarusII.Game.Spatial
 
         private static void BuildPlanetPatch(SpatialRequest request, RegionTarget target)
         {
-            var planet = GameMain.data != null ? GameMain.data.localPlanet : null;
+            // target 给了行星 id 就查那颗星（远程行星的矿脉也能读）；
+            // 没给才回落到玩家所在行星。
+            var planet = ResolvePlanet(request.TargetId);
             target.Planet = planet;
             target.PlanetId = planet != null ? planet.id : 0;
             target.Star = planet != null ? planet.star : null;
             target.StarId = target.Star != null ? target.Star.id : 0;
-            if (planet == null) throw new SpatialException("当前不在行星上，无法构造行星区域");
+            if (planet == null) throw new SpatialException("找不到行星");
 
             var spec = request.TargetSpec;
             var shape = new RegionShape { PlanetRadius = planet.realRadius };
+            // whole=true 直接覆盖整颗行星，省得让调用方手写四个边界
+            if (spec != null && spec["whole"].AsBool(false))
+            {
+                shape.LatMin = -90;
+                shape.LatMax = 90;
+                shape.LonStart = -180;
+                shape.LonSpan = 360;
+                target.Shape = shape;
+                return;
+            }
             if (spec != null && spec["latMin"] != null && !spec["latMin"].IsNull)
             {
                 shape.LatMin = spec["latMin"].AsDouble(-90);

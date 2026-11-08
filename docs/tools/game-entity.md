@@ -216,7 +216,7 @@
 
 - 玩家问“某个原料从哪来/哪颗星在供应/为什么跨星运不过来”时使用。
 - supply/demand 来自物流塔槽位的远程供应/需求设置；具体航线与在途量用 game_get_entity 看站点详情。
-- 先在这里定位物品与星球，再用 space_region / game_get_planet 下钻。
+- 先在这里定位物品与星球，再用 space_region 下钻。
 
 #### 参数
 

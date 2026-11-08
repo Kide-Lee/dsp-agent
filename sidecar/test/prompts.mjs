@@ -167,7 +167,7 @@ console.log('\n── 能力段落（按注册表生成） ──');
 {
   const tools = [
     fakeTool('game_get_overview'),
-    fakeTool('game_get_planet'),
+    fakeTool('game_get_planets'),
     fakeTool('game_place_marker'), // risk 1
     fakeTool('game_set_recipe'), // risk 2
     fakeTool('game_copy_blueprint'), // risk 1（在 WRITE_TOOL_NAMES 里）
@@ -182,7 +182,7 @@ console.log('\n── 能力段落（按注册表生成） ──');
   check('空工具集返回 null', renderCapabilitySection([]) === null);
   check('段落非空', typeof section === 'string' && section.length > 0);
   check('标注总数', section.includes(`共 ${tools.length} 个`), section.split('\n')[0]);
-  check('只读组含概览', /游戏只读（2 个）：game_get_overview、game_get_planet/.test(section));
+  check('只读组含概览', /游戏只读（2 个）：game_get_overview、game_get_planets/.test(section));
   check('低风险写组含标记与复制蓝图', /低风险写[^\n]*game_place_marker、game_copy_blueprint/.test(section));
   check('存档写组含改配方', /改存档写[^\n]*game_set_recipe/.test(section));
   check('知识库/Wiki/蓝图/脚本/交互各自成组', ['知识库（只读', 'Wiki（只读', '蓝图（读/写', '脚本（默认只读', '交互（向玩家提问'].every((s) => section.includes(s)));

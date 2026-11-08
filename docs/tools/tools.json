@@ -1238,7 +1238,7 @@
       "promptGuidelines": [
         "玩家问“某个原料从哪来/哪颗星在供应/为什么跨星运不过来”时使用。",
         "supply/demand 来自物流塔槽位的远程供应/需求设置；具体航线与在途量用 game_get_entity 看站点详情。",
-        "先在这里定位物品与星球，再用 space_region / game_get_planet 下钻。"
+        "先在这里定位物品与星球，再用 space_region 下钻。"
       ],
       "parameters": {
         "type": "object",
@@ -1436,148 +1436,6 @@
         "display": [
           "string",
           "一行摘要：`行星名 · 游戏时间`"
-        ]
-      }
-    },
-    {
-      "name": "game_get_planet",
-      "label": "行星状态",
-      "description": "读取指定行星（省略则为当前行星）的类型、半径、矿脉按资源汇总、建筑按原型计数。veins=groups 返回按位置聚合的矿脉群（已扫描的远程行星也可）；veins=nodes 分页返回逐矿脉节点（仅工厂已加载的行星）。远程行星未加载工厂时明确标注 factoryLoaded=false。",
-      "promptGuidelines": [
-        "玩家询问某个星球有什么矿、矿在哪、建了多少建筑时使用。",
-        "需要矿脉位置时用 veins=\"groups\"；需要单个矿脉的精确经纬度时用 veins=\"nodes\" 并配合 veinOffset/veinLimit。",
-        "矿脉群/节点可能很多，不要一次拉全量。"
-      ],
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "planetId": {
-            "type": "integer",
-            "description": "行星 id；省略时使用当前所在行星"
-          },
-          "veins": {
-            "type": "string",
-            "description": "summary（默认，按资源汇总）/ groups（矿脉群+位置）/ nodes（逐矿脉+位置，需工厂已加载）/ all"
-          },
-          "veinOffset": {
-            "type": "integer",
-            "description": "逐矿脉分页起点，默认 0"
-          },
-          "veinLimit": {
-            "type": "integer",
-            "description": "逐矿脉每页数量，默认 50，最大 200"
-          },
-          "offset": {
-            "type": "integer",
-            "description": "分页偏移，默认 0"
-          },
-          "limit": {
-            "type": "integer",
-            "description": "返回条数上限，默认 25"
-          }
-        }
-      },
-      "executionMode": "sequential",
-      "source": "game",
-      "capability": "game.read.v1",
-      "risk": 0,
-      "timeoutMs": 12000,
-      "group": "game-read.md",
-      "cs": {
-        "timeoutMs": 12000,
-        "topFields": [
-          "planetId",
-          "name",
-          "type",
-          "radius",
-          "factoryLoaded",
-          "veins",
-          "buildings",
-          "display",
-          "veinGroupsAvailable",
-          "veinGroupsReason",
-          "veinGroupCount",
-          "veinGroups",
-          "veinNodesAvailable",
-          "veinNodesReason",
-          "veinNodes"
-        ],
-        "allFields": [
-          "productId",
-          "iconTag",
-          "amount",
-          "count",
-          "id",
-          "items",
-          "total",
-          "offset",
-          "limit",
-          "truncated",
-          "nextOffset",
-          "groupIndex",
-          "minerCount"
-        ]
-      },
-      "notes": {
-        "planetId": [
-          "integer",
-          "同参数 `planetId`；省略时是当前行星 id"
-        ],
-        "name": [
-          "string",
-          "行星显示名"
-        ],
-        "type": [
-          "string",
-          "行星类型（枚举名）"
-        ],
-        "radius": [
-          "number",
-          "行星半径（米）"
-        ],
-        "factoryLoaded": [
-          "boolean",
-          "该行星的工厂是否已加载；false 时矿脉/建筑统计不完整"
-        ],
-        "veins": [
-          "object",
-          "按资源汇总的矿脉：资源名 → 数量/储量"
-        ],
-        "buildings": [
-          "object",
-          "按原型计数的建筑：原型名 → 数量"
-        ],
-        "veinGroupsAvailable": [
-          "boolean",
-          "`veins=groups` 时是否返回了矿脉群"
-        ],
-        "veinGroupsReason": [
-          "string",
-          "不可用原因：`vein_groups_not_ready`（尚未扫描）/ `planet_not_scanned`（未观察）"
-        ],
-        "veinGroupCount": [
-          "integer",
-          "矿脉群数量（仅 veins=groups）"
-        ],
-        "veinGroups": [
-          "array",
-          "矿脉群：`groupIndex` / 资源 / 位置 / 节点数（仅 veins=groups）"
-        ],
-        "veinNodesAvailable": [
-          "boolean",
-          "`veins=nodes` 时是否返回了逐矿脉节点"
-        ],
-        "veinNodesReason": [
-          "string",
-          "不可用原因：`factory_not_loaded` / `vein_pool_empty`"
-        ],
-        "veinNodes": [
-          "array",
-          "逐矿脉节点：`id` / 资源 / 位置（仅 veins=nodes；分页用 veinOffset/veinLimit）"
-        ],
-        "display": [
-          "string",
-          "一行摘要"
         ]
       }
     },
@@ -2683,7 +2541,7 @@
       "label": "方位指示",
       "description": "建立机甲到行星/建筑/矿脉的方位指示，可同时建立多个（最多 20 个）。本星球的建筑/矿脉各放一个原生定位标记（与行星视图右键相同的光柱），抵达附近后标记由游戏清除；跨行星时先用原生 navigation.indicatorAstroId 指向其中一个目标行星（游戏一次只支持一个导航朝向），落到该行星后自动改用定位标记。写操作，风险 1：执行前玩家必须确认。",
       "promptGuidelines": [
-        "玩家说“给这些建筑/星球/矿脉都做个方位指示”时使用；先用 space_region op=list / game_get_planet 确认目标。",
+        "玩家说“给这些建筑/星球/矿脉都做个方位指示”时使用；先用 space_region op=list 确认目标。",
         "kind=planet 时用 planetId（缺省当前星球）；kind=building 时用 buildingId，可选 planetId；kind=vein 时用 veinId，可选 planetId。",
         "本星球建筑/矿脉可同时显示多个定位标记；跨行星原生导航一次只指一个目标行星，不要声称所有跨行星目标都同时可见。",
         "标记在抵达附近后消失、卡片按钮恢复为未定位，这是正常行为。",
@@ -4481,7 +4339,7 @@
                 "properties": {}
               }
             ],
-            "description": "对象实例：字符串给 id（planetId / starId / networkId:seedEntityId / 蓝图路径）；world_box 与 planet_patch 可传对象带 min/max 或 latMin/latMax/lonStart/lonSpan"
+            "description": "对象实例：字符串给 id（planetId / starId / networkId:seedEntityId / 蓝图路径）；world_box 传对象带 min/max；planet_patch 传对象带 latMin/latMax/lonStart/lonSpan，或 whole=true 表示整颗行星。planet_patch 可用 target 指定远程行星 id。"
           },
           "window": {
             "anyOf": [

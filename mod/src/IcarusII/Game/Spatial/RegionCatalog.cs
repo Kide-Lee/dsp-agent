@@ -21,6 +21,10 @@ namespace IcarusII.Game.Spatial
         public readonly double Yaw;
         /// <summary>装配机速度倍率（10000 = 1 倍）；非装配类为 0。</summary>
         public readonly int Speed;
+        /// <summary>矿脉储量；非矿脉为 0。脚本按矿群聚合时要用。</summary>
+        public readonly long Amount;
+        /// <summary>矿脉 GroupIndex；非矿脉为 0。</summary>
+        public readonly int GroupIndex;
         public readonly int PlanetId;
         public readonly Vector3 Local;
         /// <summary>天体/单位用世界坐标；行星表面成员为 false。</summary>
@@ -28,7 +32,7 @@ namespace IcarusII.Game.Spatial
         public readonly VectorLF3 World;
 
         private RegionMember(string kind, int id, string name, int planetId,
-            Vector3 local, bool worldFrame, VectorLF3 world, int recipeId, string category, double yaw, int speed)
+            Vector3 local, bool worldFrame, VectorLF3 world, int recipeId, string category, double yaw, int speed, long amount, int groupIndex)
         {
             Kind = kind;
             Id = id;
@@ -41,15 +45,18 @@ namespace IcarusII.Game.Spatial
             Category = category;
             Yaw = yaw;
             Speed = speed;
+            Amount = amount;
+            GroupIndex = groupIndex;
         }
 
         public static RegionMember OnPlanet(string kind, int id, string name, int planetId, Vector3 local,
-            int recipeId = 0, string category = null, double yaw = 0, int speed = 0) =>
+            int recipeId = 0, string category = null, double yaw = 0, int speed = 0,
+            long amount = 0, int groupIndex = 0) =>
             new RegionMember(kind, id, name, planetId, local, false, VectorLF3.zero,
-                recipeId, category, yaw, speed);
+                recipeId, category, yaw, speed, amount, groupIndex);
 
         public static RegionMember InWorld(string kind, int id, string name, int planetId, VectorLF3 world) =>
-            new RegionMember(kind, id, name, planetId, Vector3.zero, true, world, 0, null, 0, 0);
+            new RegionMember(kind, id, name, planetId, Vector3.zero, true, world, 0, null, 0, 0, 0, 0);
     }
 
     /// <summary>
@@ -198,18 +205,27 @@ namespace IcarusII.Game.Spatial
             }
         }
 
+        /// <summary>
+        /// 矿脉成员。
+        ///
+        /// 用 PlanetData.runtimeVeinPool 而不是 factory.veinPool：
+        /// 前者对**未加载**的行星也可读（已扫描即可），后者只有建了工厂才有。
+        /// 用 factory 会让太空里看别处的矿脉永远返回空。
+        /// </summary>
         private static void AddVeinMembers(List<RegionMember> result, PlanetData planet, RegionShape shape)
         {
-            var factory = planet.factory;
-            if (factory == null || factory.veinPool == null) return;
-            var upper = Math.Min(factory.veinCursor, factory.veinPool.Length);
+            if (planet == null) return;
+            var pool = planet.runtimeVeinPool;
+            if (pool == null || pool.Length == 0) return;
+            var upper = Math.Min(planet.runtimeVeinCursor, pool.Length);
             for (int id = 1; id < upper; id++)
             {
-                var vein = factory.veinPool[id];
+                var vein = pool[id];
                 if (vein.id != id) continue;
                 if (!AcceptLocal(planet, shape, vein.pos)) continue;
                 result.Add(RegionMember.OnPlanet("vein", id,
-                    GameToolFormat.VeinName(vein.type), planet.id, vein.pos));
+                    GameToolFormat.VeinName(vein.type), planet.id, vein.pos,
+                    amount: vein.amount, groupIndex: vein.groupIndex));
             }
         }
 

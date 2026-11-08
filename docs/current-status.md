@@ -31,7 +31,7 @@
 | M4j `blueprint_generate` | 已完成并通过实机验收 |
 | M4 写操作（确认/令牌/标记/面板/研究/撤销） | 已完成并通过实机验收 |
 | M5 前置：沙盒门禁基础设施 | 已完成（`save.bind.sandbox` + 双重拒绝 + UI 提醒 + 离线测试）；沙盒工具未实现 |
-| M5 前置：读侧优化 | 已实现（`game_get_entity` 的 `fields`/`entityIds`；`game_get_planet` 的矿脉群/逐矿脉节点）；离线构建/测试通过，待实机冒烟 |
+| M5 前置：读侧优化 | 已实现（`game_get_entity` 的 `fields`/`entityIds`；矿脉群与逐矿脉节点已迁到 `space_region`）；离线构建/测试通过，待实机冒烟 |
 | M5 前置：丢弃工具 | 已实现 `game_drop_item`（`game.drop.v1`，risk 2，落地可拾回、不进入撤销栈）；已修复 system prompt 仍称“只能读”导致模型拒调；代理实测会调用并进入确认页，待实机确认 |
 | M5 前置：生产配方写工具 | 已实现 `game_set_recipe` / `game_set_assembler_batch`（`game.build.v1`，risk 2，批量一次确认/一层撤销，先退料）；离线测试通过，待实机 |
 | M5 受控写脚本 | `run_script` 默认只读；脚本含字面量写工具时先弹一次脚本级确认，mod 发脚本租约（token+脚本哈希+写工具名+最多 10000 次），结束立即释放；动态拼写写工具名拒绝；离线测试通过，待实机 |

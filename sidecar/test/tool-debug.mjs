@@ -132,7 +132,7 @@ console.log('── 1. tool_debug 载荷解析 ──');
   const parsed = parseToolDebugPayload({ name: ' game_get_research ', args: { planetId: 1 } });
   check('name trim', parsed?.name === 'game_get_research', parsed?.name);
   check('args 保留', parsed?.args?.planetId === 1);
-  check('args 缺省为 {}', parseToolDebugPayload({ name: 'game_get_planet' })?.args?.constructor === Object);
+  check('args 缺省为 {}', parseToolDebugPayload({ name: 'game_get_planets' })?.args?.constructor === Object);
   check('args 数组拒绝', parseToolDebugPayload({ name: 'x', args: [] }) === null);
   check('空 name 拒绝', parseToolDebugPayload({ name: '   ' }) === null);
   check('非对象拒绝', parseToolDebugPayload(null) === null);

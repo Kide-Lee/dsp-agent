@@ -53,7 +53,6 @@ export const BRIDGE_TOOL_NAMES = [
 
 export const GAME_TOOL_NAMES = [
   'game_get_overview',
-  'game_get_planet',
   'game_get_research',
 ] as const;
 
@@ -65,7 +64,6 @@ export const SPATIAL_TOOL_NAMES = ['space_region', 'space_point', 'space_motion'
 /** 工具名 → 所需能力。新增工具必须在这里登记，否则不会被广告。 */
 const TOOL_CAPABILITY: Record<string, string> = {
   game_get_overview: CAPABILITY_GAME_READ,
-  game_get_planet: CAPABILITY_GAME_READ,
   game_get_research: CAPABILITY_GAME_READ,
   game_get_entity: CAPABILITY_GAME_ENTITY,
   game_get_progress: CAPABILITY_GAME_PROGRESS,
@@ -219,32 +217,6 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       ],
       parameters: Type.Object({}),
       timeoutMs: 5000,
-    }),
-    gameTool(host, {
-      name: 'game_get_planet',
-      label: '行星状态',
-      description:
-        '读取指定行星（省略则为当前行星）的类型、半径、矿脉按资源汇总、建筑按原型计数。' +
-        'veins=groups 返回按位置聚合的矿脉群（已扫描的远程行星也可）；veins=nodes 分页返回逐矿脉节点' +
-        '（仅工厂已加载的行星）。远程行星未加载工厂时明确标注 factoryLoaded=false。',
-      promptGuidelines: [
-        '玩家询问某个星球有什么矿、矿在哪、建了多少建筑时使用。',
-        '需要矿脉位置时用 veins="groups"；需要单个矿脉的精确经纬度时用 veins="nodes" 并配合 veinOffset/veinLimit。',
-        '矿脉群/节点可能很多，不要一次拉全量。',
-      ],
-      parameters: Type.Object({
-        planetId: planetArg,
-        veins: Type.Optional(
-          Type.String({
-            description: 'summary（默认，按资源汇总）/ groups（矿脉群+位置）/ nodes（逐矿脉+位置，需工厂已加载）/ all',
-          }),
-        ),
-        veinOffset: Type.Optional(Type.Integer({ description: '逐矿脉分页起点，默认 0' })),
-        veinLimit: Type.Optional(Type.Integer({ description: '逐矿脉每页数量，默认 50，最大 200' })),
-        offset: offsetArg,
-        limit: limitArg,
-      }),
-      timeoutMs: 12000,
     }),
     gameTool(host, {
       name: 'game_get_research',
@@ -466,7 +438,8 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         target: Type.Optional(Type.Union([Type.String(), Type.Object({})], {
           description:
             '对象实例：字符串给 id（planetId / starId / networkId:seedEntityId / 蓝图路径）；' +
-            'world_box 与 planet_patch 可传对象带 min/max 或 latMin/latMax/lonStart/lonSpan',
+            'world_box 传对象带 min/max；planet_patch 传对象带 latMin/latMax/lonStart/lonSpan，' +
+            '或 whole=true 表示整颗行星。planet_patch 可用 target 指定远程行星 id。',
         })),
         window: Type.Optional(Type.Union([
           Type.Literal('1m'), Type.Literal('10m'), Type.Literal('1h'),
@@ -613,7 +586,7 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
       promptGuidelines: [
         '玩家问“某个原料从哪来/哪颗星在供应/为什么跨星运不过来”时使用。',
         'supply/demand 来自物流塔槽位的远程供应/需求设置；具体航线与在途量用 game_get_entity 看站点详情。',
-        '先在这里定位物品与星球，再用 space_region / game_get_planet 下钻。',
+        '先在这里定位物品与星球，再用 space_region 下钻。',
       ],
       parameters: Type.Object({
         itemFilter: Type.Optional(Type.String({ description: '物品名或 id，例如“钛块”' })),

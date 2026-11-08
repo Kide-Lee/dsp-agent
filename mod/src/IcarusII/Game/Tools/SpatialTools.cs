@@ -113,6 +113,7 @@ namespace IcarusII.Game.Tools
                     obj.Set(producing ? "consumedPerMin" : "producedPerMin",
                         GameToolFormat.Round(item.Counterpart, 2));
                 }
+                if (item.HasVein) obj.Set("veinAmount", GameToolFormat.Round(item.VeinAmount, 2));
                 if (item.Stored > 0)
                 {
                     obj.Set("stored", item.Stored);
@@ -266,6 +267,11 @@ namespace IcarusII.Game.Tools
                 obj.Set("id", member.Id);
                 obj.Set("name", member.Name);
                 if (member.PlanetId > 0) obj.Set("planetId", member.PlanetId);
+                if (member.Amount > 0)
+                {
+                    obj.Set("amount", member.Amount);
+                    if (member.GroupIndex > 0) obj.Set("groupIndex", member.GroupIndex);
+                }
                 if (member.Category != null)
                 {
                     obj.Set("category", member.Category);
@@ -347,11 +353,22 @@ namespace IcarusII.Game.Tools
                     break;
                 }
                 case SpatialTypes.Planet:
-                case SpatialTypes.PowerGrid:
-                case SpatialTypes.Factory:
                 case SpatialTypes.PlanetPatch:
                 {
-                    // 这三个类型的成员都在同一颗行星上
+                    // 行星类区域 = 建筑存储 + 矿脉矿物（表里明确要求含矿脉）
+                    var members = RegionCatalog.Members(target, "building", out _, out _);
+                    var ids = new List<int>(members.Count);
+                    foreach (var member in members) ids.Add(member.Id);
+                    var factory = target.Planet.factory;
+                    items = StatAggregator.Storage(factory, ids);
+                    if (request.MemberKind is null || request.MemberKind == "vein")
+                        MergeVeinAmounts(items, factory, target.Shape);
+                    break;
+                }
+                case SpatialTypes.PowerGrid:
+                case SpatialTypes.Factory:
+                {
+                    // 电网/工厂由建筑连通性定义，矿脉不隶属于它们
                     var members = RegionCatalog.Members(target, "building", out _, out _);
                     var ids = new List<int>(members.Count);
                     foreach (var member in members) ids.Add(member.Id);
@@ -1066,6 +1083,60 @@ namespace IcarusII.Game.Tools
                 default:
                     return null;
             }
+        }
+
+        /// <summary>
+        /// 把矿脉里的矿物并进存量。
+        ///
+        /// 矿脉不产生库存网格，是"地里还有多少"，所以单独累进 Amount，
+        /// 不与建筑存储混成一个 stored。
+        /// </summary>
+        private static void MergeVeinAmounts(List<ItemAmount> items, PlanetFactory factory, RegionShape shape)
+        {
+            if (factory?.veinPool == null) return;
+            var totals = new Dictionary<int, double>();
+            var upper = Math.Min(factory.veinCursor, factory.veinPool.Length);
+            for (int id = 1; id < upper; id++)
+            {
+                var vein = factory.veinPool[id];
+                if (vein.id != id || vein.amount <= 0) continue;
+                if (shape != null)
+                {
+                    var (lat, lon) = GeoMath.ToLatLon(new Vec3d(vein.pos.x, vein.pos.y, vein.pos.z));
+                    if (!shape.ContainsPatch(lat, lon)) continue;
+                }
+                var productId = vein.productId > 0 ? vein.productId : VeinProductId(vein.type);
+                if (productId <= 0) continue;
+                totals.TryGetValue(productId, out var current);
+                totals[productId] = current + vein.amount;
+            }
+
+            foreach (var pair in totals)
+            {
+                var existing = items.Find(i => i.ItemId == pair.Key);
+                if (existing != null)
+                {
+                    existing.Amount += pair.Value;
+                    existing.VeinAmount += pair.Value;
+                    existing.HasVein = true;
+                    continue;
+                }
+                items.Add(new ItemAmount
+                {
+                    ItemId = pair.Key,
+                    Name = GameToolFormat.ItemName(pair.Key),
+                    Amount = pair.Value,
+                    VeinAmount = pair.Value,
+                    HasVein = true,
+                });
+            }
+        }
+
+        /// <summary>矿脉类型对应的矿物 id；LDB 未加载时返回 0。</summary>
+        private static int VeinProductId(EVeinType type)
+        {
+            var proto = LDB.veins != null ? LDB.veins.Select((int)type) : null;
+            return proto != null ? proto.MiningItem : 0;
         }
 
         /// <summary>

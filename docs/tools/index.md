@@ -7,7 +7,7 @@
 
 ## 工具清单
 
-共 55 个模型可见工具。
+共 54 个模型可见工具。
 
 | 工具 | label | 能力位 | 风险 | 超时 | 一句话 |
 | --- | --- | --- | --- | --- | --- |
@@ -18,7 +18,6 @@
 | [`ui_click`](index.md#ui_click) | 点击界面控件 | `ui.tree.v1` | risk 2 | 8000ms | 按 ui_snapshot 给出的路径派发一次合成点击（PointerClick）。 |
 | [`ui_snapshot`](index.md#ui_snapshot) | 界面控件 | `ui.tree.v1` | 只读 | — | 列出当前可见的 uGUI 可交互控件：层级路径、类型、显示文字、是否可用、Toggle/InputField 的值。 |
 | [`game_get_overview`](game-read.md#game_get_overview) | 存档概览 | `game.read.v1` | 只读 | 5000ms | 读取当前存档概览：存档名、游戏时刻、当前行星/星系、玩家经纬度、是否暂停。 |
-| [`game_get_planet`](game-read.md#game_get_planet) | 行星状态 | `game.read.v1` | 只读 | 12000ms | 读取指定行星（省略则为当前行星）的类型、半径、矿脉按资源汇总、建筑按原型计数。 |
 | [`game_get_research`](game-read.md#game_get_research) | 研究状态 | `game.read.v1` | 只读 | 5000ms | 读取当前研究科技、进度、队列、研究速度与已解锁科技数量。 |
 | [`game_copy_blueprint`](game-entity.md#game_copy_blueprint) | 存为蓝图 | `game.entity.v1` | risk 1 | 20000ms | 把指定的一批建筑（entityIds）存成游戏蓝图文件，复用游戏自己的复制逻辑，产物与游戏内复制同源。 |
 | [`game_get_entity`](game-entity.md#game_get_entity) | 建筑详情 | `game.entity.v1` | 只读 | 6000ms | 按 entityId 读取单个建筑（或用 entityIds 批量读取）的实际情况，尽量对齐游戏面板：原型、配方、输入/输出槽（数量/需求/增产）、功率与供电满足率、工作状态（… |
@@ -71,7 +70,7 @@
 
 | 文件 | 内容 | 数量 |
 | --- | --- | --- |
-| [game-read.md](game-read.md) | 只读 · 存档与产线概览 | 3 |
+| [game-read.md](game-read.md) | 只读 · 存档与产线概览 | 2 |
 | [game-entity.md](game-entity.md) | 只读 · 建筑、星球与拓扑 | 6 |
 | [game-progress.md](game-progress.md) | 只读 · 进度、截图与区域分析 | 2 |
 | [game-space.md](game-space.md) | 只读 · 空间变量（区域 / 定点 / 动点） | 3 |
@@ -93,7 +92,7 @@ mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告�
 
 | 能力位 | 工具数 | 代表工具 |
 | --- | --- | --- |
-| `game.read.v1` | 3 | `game_get_overview`、`game_get_planet`、`game_get_research` |
+| `game.read.v1` | 2 | `game_get_overview`、`game_get_research` |
 | `game.entity.v1` | 6 | `game_get_entity`、`game_render_layout`、`game_get_planets` |
 | `game.progress.v1` | 1 | `game_get_progress` |
 | `game.view.v1` | 1 | `game_capture_view` |

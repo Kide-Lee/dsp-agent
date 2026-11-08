@@ -1609,7 +1609,7 @@ session.subscribe(ev => bridge.toMod(ev));   // text_delta / tool_execution_* / 
 
 | # | 能力 | 草案工具 | risk | 沙盒门禁 | 撤销语义 | 协议/能力 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 矿脉位置/储量 | 扩 `game_get_planet`（`veins` / `veinOffset` / `veinLimit`） | 0 | 任意 | 只读 | 扩 `game.read.v1` 参数（向后兼容） | **已实现（2026-10-24）** |
+| 1 | 矿脉位置/储量 | 扩 `game_get_planet`（`veins` / `veinOffset` / `veinLimit`） | 0 | 任意 | 只读 | 扩 `game.read.v1` 参数（向后兼容） | **已实现（2026-10-24）**；该工具已并入 `space_region`（`op=list kind=vein` 与 `op=storage`） |
 | 2 | 仪表盘编辑 | `game_dashboard_get` / `game_dashboard_apply`（批量） | 2 | 任意 | 按批次记录 diff，可回滚 | 新 `game.dashboard.v1` | 需先定义语义 |
 | 3 | 实体链接 | 无新工具；扩展 `GameRichText` + `ChatWindow` 分发 | 0 | 任意 | 只读 | 扩 `ui.richtext.v2` 的 `dsp://entity/...` | **已实现 planet/building/vein 点击聚焦（2026-10-25）** |
 | 4 | 实体连接（tether） | `game_tether_add` / `game_tether_list` / `game_tether_clear` | 1 | 任意 | 瞬态，可清除 | 新 `game.tether.v1` | **已实现多目标（≤20；本星球多建筑多线，跨行星原生导航一次一个，落地后切换，2026-10-24）；link 卡片持久化/统计/备忘录已接** |

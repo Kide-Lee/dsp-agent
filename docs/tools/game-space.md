@@ -29,7 +29,7 @@
 | --- | --- | --- | --- | --- |
 | `op` | `string \| string \| string \| string \| string \| string \| string \| string \| string \| string \| string` | 是 | — | list=成员 storage=存量 input/output=物流进出 production/consumption=生产消耗 power=电力 parent=上级 location=位置 information=静态信息 note=备忘录 |
 | `type` | `string \| string \| string \| string \| string \| string \| string \| string \| string \| string \| string \| string` | 否 | — | 区域类型；auto 时按玩家所在位置推断（在行星上=planet，否则=star_system） |
-| `target` | `string \| object` | 否 | — | 对象实例：字符串给 id（planetId / starId / networkId:seedEntityId / 蓝图路径）；world_box 与 planet_patch 可传对象带 min/max 或 latMin/latMax/lonStart/lonSpan |
+| `target` | `string \| object` | 否 | — | 对象实例：字符串给 id（planetId / starId / networkId:seedEntityId / 蓝图路径）；world_box 传对象带 min/max；planet_patch 传对象带 latMin/latMax/lonStart/lonSpan，或 whole=true 表示整颗行星。planet_patch 可用 target 指定远程行星 id。 |
 | `window` | `string \| string \| string \| string \| string \| string` | 否 | — | 统计时间窗，默认 10m |
 | `unit` | `string \| string \| string` | 否 | — | 输出单位，默认 perMin |
 | `basis` | `string \| string` | 否 | — | actual=实际统计（默认），installed=按配方与建筑数算的理论值 |
