@@ -2,7 +2,7 @@
 
 tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”面板，不是 mod 自己的清单；game_todo_write 把轮内待办整表写入原生面板的第一组。
 
-共 8 个工具。提示词如何进入模型上下文见 [prompt-shape.md](prompt-shape.md)。
+共 7 个工具。提示词如何进入模型上下文见 [prompt-shape.md](prompt-shape.md)。
 
 ---
 
@@ -66,53 +66,6 @@ tether 在屏幕上给玩家指方向；todo 写的是游戏原生“目标”�
 | `goalPanelOff` | `boolean` | 目标面板确实没有显示；true 时提醒玩家打开 |
 | `todo` | `boolean` | 该行是轮内待办（group 固定为第一组） |
 | `display` | `string` | 一行摘要 |
-
-> 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
-
----
-
-### `game_tether_add`
-
-**label** 方位指示 · **能力位** `game.tether.v1` · **风险** 1（低风险写，可逆） · **超时** 8000 ms
-
-#### 模型可见 · 工具描述（tools 数组）
-
-```text
-建立机甲到行星/建筑/矿脉的方位指示，可同时建立多个（最多 20 个）。本星球的建筑/矿脉各放一个原生定位标记（与行星视图右键相同的光柱），抵达附近后标记由游戏清除；跨行星时先用原生 navigation.indicatorAstroId 指向其中一个目标行星（游戏一次只支持一个导航朝向），落到该行星后自动改用定位标记。写操作，风险 1：执行前玩家必须确认。
-```
-
-#### 模型可见 · 使用规则（system prompt）
-
-- 玩家说“给这些建筑/星球/矿脉都做个方位指示”时使用；先用 space_region op=list 确认目标。
-- kind=planet 时用 planetId（缺省当前星球）；kind=building 时用 buildingId，可选 planetId；kind=vein 时用 veinId，可选 planetId。
-- 本星球建筑/矿脉可同时显示多个定位标记；跨行星原生导航一次只指一个目标行星，不要声称所有跨行星目标都同时可见。
-- 标记在抵达附近后消失、卡片按钮恢复为未定位，这是正常行为。
-- space_* 的 op=navigation 会报错并把调用引到这里：把它的 target 原样放进 space 参数即可，不要自己换算成 planetId/buildingId。
-- 动点（玩家/无人机/运输船/战舰等）会移动，方位指示是静态箭头，会直接拒绝；需要位置请调 space_motion op=location。
-
-#### 参数
-
-| 参数 | 类型 | 必填 | 约束 | 说明 |
-| --- | --- | --- | --- | --- |
-| `kind` | `string` | 否 | enum: planet / building / vein | planet / building / vein；用 space 时可省略 |
-| `planetId` | `integer` | 否 | — | 行星 id，缺省当前星球 |
-| `buildingId` | `integer` | 否 | — | kind=building 时必填 |
-| `veinId` | `integer` | 否 | — | kind=vein 时必填 |
-| `space` | `object` | 否 | — | 用空间变量直接建方位指示：把 space_region / space_point 的 kind+type+target 原样放进来。区域会折到它的落点行星或首座建筑，定点会折到建筑/矿脉/行星。 |
-
-#### 返回
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `kind` | `string` | 指示类型：`planet` / `vein` / `building` |
-| `planetId` | `integer` | 目标所在行星 id |
-| `veinId` | `integer` | 矿脉 id（仅 kind=vein） |
-| `buildingId` | `integer` | 建筑 id（仅 kind=building） |
-| `name` | `string` | 目标名称（显示用） |
-| `subtitle` | `string` | 副标题 |
-| `description` | `string` | 描述文本 |
-| `iconLabel` | `string` | 图标短码或 `#id` |
-| `display` | `string` | 一行确认摘要 |
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 

@@ -7,7 +7,7 @@
 
 ## 工具清单
 
-共 54 个模型可见工具。
+共 53 个模型可见工具。
 
 | 工具 | label | 能力位 | 风险 | 超时 | 一句话 |
 | --- | --- | --- | --- | --- | --- |
@@ -44,7 +44,6 @@
 | [`game_storage_set_limit`](game-write-build.md#game_storage_set_limit) | 存储上限 | `game.storage.v1` | risk 2 | 8000ms | 设置一台存储建筑的容量上限（允许使用的格数）。 |
 | [`game_storage_withdraw`](game-write-build.md#game_storage_withdraw) | 从存储取出 | `game.storage.v1` | risk 2 | 8000ms | 把一台存储建筑里的物品取到背包。 |
 | [`game_take_output`](game-write-build.md#game_take_output) | 取成品 | `game.build.v1` | risk 2 | 8000ms | 把一台生产建筑当前已产出的成品取到背包，保留配方。 |
-| [`game_tether_add`](game-assist.md#game_tether_add) | 方位指示 | `game.tether.v1` | risk 1 | 8000ms | 建立机甲到行星/建筑/矿脉的方位指示，可同时建立多个（最多 20 个）。 |
 | [`game_tether_clear`](game-assist.md#game_tether_clear) | 清除方位 | `game.tether.v1` | risk 1 | 8000ms | 清除本 mod 建立的所有方位指示（导航朝向和定位标记）。 |
 | [`game_tether_list`](game-assist.md#game_tether_list) | 方位列表 | `game.tether.v1` | 只读 | 5000ms | 列出当前方位指示（行星/建筑/矿脉及名称）。 |
 | [`game_todo_add`](game-assist.md#game_todo_add) | 新增游戏目标 | `game.todo.v1` | risk 2 | 8000ms | 在原生左侧“游戏目标”面板新增目标。 |
@@ -76,7 +75,7 @@
 | [game-space.md](game-space.md) | 只读 · 空间变量（区域 / 定点 / 动点） | 3 |
 | [game-write-basic.md](game-write-basic.md) | 写操作 · 标记、面板、研究与丢弃 | 5 |
 | [game-write-build.md](game-write-build.md) | 写操作 · 配方、投料与仓储 | 9 |
-| [game-assist.md](game-assist.md) | 辅助 · 方位指示、目标与待办 | 8 |
+| [game-assist.md](game-assist.md) | 辅助 · 方位指示、目标与待办 | 7 |
 | [kb.md](kb.md) | 知识库（sidecar 本地） | 4 |
 | [wiki.md](wiki.md) | Wiki（sidecar 本地，联网） | 2 |
 | [blueprint.md](blueprint.md) | 蓝图（本地文件 + 社区站点） | 5 |
@@ -104,7 +103,7 @@ mod 在 `hello.capabilities` 里声明了哪一组，sidecar 才注册并广告�
 | `game.drop.v1` | 1 | `game_drop_item` |
 | `game.build.v1` | 4 | `game_set_recipe`、`game_set_assembler_batch`、`game_feed_input` |
 | `game.storage.v1` | 5 | `game_storage_set_filter`、`game_storage_set_limit`、`game_storage_move` |
-| `game.tether.v1` | 3 | `game_tether_add`、`game_tether_clear`、`game_tether_list` |
+| `game.tether.v1` | 2 | `game_tether_clear`、`game_tether_list` |
 | `game.todo.write.v1` | 1 | `game_todo_write` |
 | 本地（始终注册） | 13 | `ask_user`、`run_script`、`kb_search` |
 

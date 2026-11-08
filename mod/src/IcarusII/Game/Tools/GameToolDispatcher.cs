@@ -122,7 +122,6 @@ namespace IcarusII.Game.Tools
             Register(new StorageDepositTool());
             Register(new StorageWithdrawTool());
             Register(new FeedInputTool());
-            Register(new TetherAddTool());
             Register(new TetherClearTool());
             Register(new TetherListTool());
             Register(new GameTodoTemplatesTool());

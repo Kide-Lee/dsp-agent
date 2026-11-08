@@ -79,7 +79,6 @@ namespace IcarusII.UI
                 case "game_storage_deposit": return Strings.Get("tool.name.game_storage_deposit");
                 case "game_storage_withdraw": return Strings.Get("tool.name.game_storage_withdraw");
                 case "game_feed_input": return Strings.Get("tool.name.game_feed_input");
-                case "game_tether_add": return Strings.Get("tool.name.game_tether_add");
                 case "game_tether_clear": return Strings.Get("tool.name.game_tether_clear");
                 case "game_tether_list": return Strings.Get("tool.name.game_tether_list");
                 case "game_take_output": return Strings.Get("tool.name.game_take_output");

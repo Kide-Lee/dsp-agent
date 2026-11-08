@@ -84,7 +84,6 @@ const GLOBAL_WRITE_TOOLS = new Set([
   'game_open_panel',
   'game_set_research',
   'game_drop_item',
-  'game_tether_add',
   'game_tether_clear',
   'game_todo_add',
   'game_todo_remove',

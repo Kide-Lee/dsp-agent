@@ -685,7 +685,6 @@ namespace IcarusII.Tests
             Eq("game_storage_withdraw 工具名", "game_storage_withdraw", Protocol.ToolStorageWithdraw);
             Eq("game_feed_input 工具名", "game_feed_input", Protocol.ToolFeedInput);
             Eq("game.tether.v1 能力串", "game.tether.v1", Protocol.CapabilityGameTether);
-            Eq("game_tether_add 工具名", "game_tether_add", Protocol.ToolTetherAdd);
             Eq("game_tether_clear 工具名", "game_tether_clear", Protocol.ToolTetherClear);
             Eq("game_tether_list 工具名", "game_tether_list", Protocol.ToolTetherList);
             Eq("game_take_output 工具名", "game_take_output", Protocol.ToolTakeOutput);

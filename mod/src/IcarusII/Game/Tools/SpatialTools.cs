@@ -147,6 +147,78 @@ namespace IcarusII.Game.Tools
                 $"{SpatialTypes.NameOf(request.Method)} 只支持 basis=actual；理论值只对 production/consumption 有意义");
         }
 
+        /// <summary>
+        /// 导航结果的统一外壳。
+        ///
+        /// 方位指示是瞬态运行时状态（Player.navigation + WarningSystem 定位标记），
+        /// 不写存档，所以它按只读工具执行：不弹确认、也不占撤销栈。
+        /// </summary>
+        protected static GameToolJobResult NavResult(JsonValue data, string targetDesc, string error)
+        {
+            var obj = JsonValue.NewObject();
+            obj.Set("target", targetDesc);
+            if (error != null)
+            {
+                obj.Set("attached", false);
+                obj.Set("reason", error);
+                data.Set("navigation", obj);
+                return Result(data, $"未能建立导航：{error}");
+            }
+            obj.Set("attached", true);
+            data.Set("navigation", obj);
+            return Result(data, $"已建立机甲到 {targetDesc} 的方位指示");
+        }
+
+        protected static GameToolJobResult NavToPlanet(JsonValue data, PlanetData planet)
+        {
+            if (planet == null) return NavResult(data, "行星", "找不到行星");
+            if (!GameTether.AddPlanet(planet, out var error))
+                return NavResult(data, PlanetFrame.PlanetName(planet), error);
+            var obj = JsonValue.NewObject();
+            obj.Set("target", PlanetFrame.PlanetName(planet));
+            obj.Set("name", PlanetFrame.PlanetName(planet));
+            obj.Set("attached", true);
+            obj.Set("kind", "planet");
+            obj.Set("planetId", planet.id);
+            data.Set("navigation", obj);
+            return Result(data, $"已建立机甲到行星「{PlanetFrame.PlanetName(planet)}」的方位指示");
+        }
+
+        protected static GameToolJobResult NavToBuilding(JsonValue data, PlanetData planet, int entityId)
+        {
+            if (planet?.factory == null)
+                return NavResult(data, "建筑 #" + entityId, "该行星的工厂尚未加载");
+            if (!GameTether.AddBuilding(planet.factory, planet, entityId, out var error))
+                return NavResult(data, "建筑 #" + entityId, error);
+            var obj = JsonValue.NewObject();
+            obj.Set("target", "建筑 #" + entityId);
+            obj.Set("name", EntityToolUtil.ProtoName(
+                planet.factory.entityPool[entityId].protoId));
+            obj.Set("attached", true);
+            obj.Set("kind", "building");
+            obj.Set("planetId", planet.id);
+            obj.Set("entityId", entityId);
+            data.Set("navigation", obj);
+            return Result(data, $"已建立机甲到建筑 #{entityId} 的方位指示");
+        }
+
+        protected static GameToolJobResult NavToVein(JsonValue data, PlanetData planet, int veinId)
+        {
+            if (planet?.factory == null)
+                return NavResult(data, $"矿脉 #{veinId}", "该行星的工厂尚未加载");
+            if (!GameTether.AddVein(planet, veinId, out var error))
+                return NavResult(data, $"矿脉 #{veinId}", error);
+            var obj = JsonValue.NewObject();
+            obj.Set("target", $"矿脉 #{veinId}");
+            obj.Set("name", GameToolFormat.VeinName(planet.factory.veinPool[veinId].type));
+            obj.Set("attached", true);
+            obj.Set("kind", "vein");
+            obj.Set("planetId", planet.id);
+            obj.Set("veinId", veinId);
+            data.Set("navigation", obj);
+            return Result(data, $"已建立机甲到矿脉 #{veinId} 的方位指示");
+        }
+
         protected static string RateUnitLabel(SpatialRequest request)
         {
             switch (request.Unit)
@@ -243,7 +315,7 @@ namespace IcarusII.Game.Tools
                 case SpatialMethod.Note:
                     return Note(data, request, target);
                 case SpatialMethod.Navigation:
-                    return NavigationUnsupported(data, request, target);
+                    return Navigation(data, request, target);
                 default:
                     throw new SpatialException($"{SpatialTypes.NameOf(request.Method)} 尚未实现");
             }
@@ -994,13 +1066,45 @@ namespace IcarusII.Game.Tools
         /// 导航不接受在只读工具里执行：它会写玩家的导航状态，必须走确认链路。
         /// 这里只把调用引到能承接它的写工具，并说明怎么传。
         /// </summary>
-        private static GameToolJobResult NavigationUnsupported(JsonValue data, SpatialRequest request,
+        /// <summary>
+        /// 区域导航：折到"行星 + 一点"，因为方位指示只认这个形状。
+        /// 向量可以表达的一切（盒、球、地图块）都先求落点再指。
+        /// </summary>
+        private static GameToolJobResult Navigation(JsonValue data, SpatialRequest request,
             RegionTarget target)
         {
-            throw new SpatialException(
-                "导航是写操作，请改用 game_tether_add：把本次的 kind/type/target 原样放进 space 参数，"
-                + $"例如 space={{\"kind\":\"region\",\"type\":\"{target.Type}\",\"target\":\"...\"}}；"
-                + $"本次目标是 {target.Describe()}");
+            switch (target.Type)
+            {
+                case SpatialTypes.Planet:
+                case SpatialTypes.DfBase:
+                case SpatialTypes.DfHive:
+                case SpatialTypes.PlanetPatch:
+                    return NavToPlanet(data, target.Planet);
+
+                case SpatialTypes.StarSystem:
+                case SpatialTypes.Star:
+                case SpatialTypes.DysonSphere:
+                {
+                    // 恒星级目标最终落在它的一颗行星上：游戏原生导航也只能指到天体
+                    var star = target.Star;
+                    var planet = star != null && star.planets != null && star.planets.Length > 0
+                        ? star.planets[0] : null;
+                    if (planet == null) return NavResult(data, target.Describe(), "该恒星系没有行星，无法建立方位指示");
+                    return NavToPlanet(data, planet);
+                }
+
+                case SpatialTypes.PowerGrid:
+                case SpatialTypes.Factory:
+                {
+                    var members = RegionCatalog.Members(target, "building", out _, out _);
+                    if (members.Count == 0) return NavResult(data, target.Describe(), "该区域没有建筑");
+                    return NavToBuilding(data, target.Planet, members[0].Id);
+                }
+
+                default:
+                    return NavResult(data, target.Describe(),
+                        $"{target.Type} 没有可指向的落点，先用 op=location 取坐标");
+            }
         }
 
         // ------------------------------------------------------------ 蓝图
@@ -1381,7 +1485,7 @@ namespace IcarusII.Game.Tools
                 case SpatialMethod.Note:
                     return Note(data, request, target);
                 case SpatialMethod.Navigation:
-                    return NavigationUnsupported(data, request, target);
+                    return Navigation(data, request, target);
                 default:
                     throw new SpatialException($"{SpatialTypes.NameOf(request.Method)} 尚未实现");
             }
@@ -1864,12 +1968,22 @@ namespace IcarusII.Game.Tools
             return factory.ReadMarkerWord(entity.markerId);
         }
 
-        private static GameToolJobResult NavigationUnsupported(JsonValue data, SpatialRequest request,
+        /// <summary>
+        /// 定点导航。建筑与矿脉能落在"行星 + 一点"上，复用原生定位标记；
+        /// 植被、黑雾建筑与纯坐标没有对应的原生标记，退到所在行星。
+        /// </summary>
+        private static GameToolJobResult Navigation(JsonValue data, SpatialRequest request,
             PointTarget target)
         {
-            throw new SpatialException(
-                "导航是写操作，请改用 game_tether_add：把本次的 kind/type/target 原样放进 space 参数；"
-                + $"本次目标是 {target.Describe()}");
+            switch (target.Type)
+            {
+                case SpatialTypes.Building:
+                    return NavToBuilding(data, target.Planet, target.EntityId);
+                case SpatialTypes.Vein:
+                    return NavToVein(data, target.Planet, target.VeinId);
+                default:
+                    return NavToPlanet(data, target.Planet);
+            }
         }
     }
 
@@ -1905,9 +2019,7 @@ namespace IcarusII.Game.Tools
                 case SpatialMethod.Information:
                     return Information(data, request, target);
                 case SpatialMethod.Navigation:
-                    throw new SpatialException(
-                        "动点会移动，方位指示是静态箭头，无法指向它；"
-                        + "需要位置请重新调用 space_motion op=location");
+                    return Navigation(data, request, target);
                 default:
                     throw new SpatialException(
                         $"类型 {request.Type} 不支持 {SpatialTypes.NameOf(request.Method)}");
@@ -1949,6 +2061,36 @@ namespace IcarusII.Game.Tools
             data.Set("owned", array);
             data.Set("total", count);
             return Result(data, $"玩家名下 {count} 个动点");
+        }
+
+        /// <summary>
+        /// 动点导航。
+        ///
+        /// 方位指示只能指向"行星 + 一点"，是静态的，而动点会移动；
+        /// 所以这里指到它**当前所处的天体**：在行星上指该行星，
+        /// 在宇宙中飞行则指它关联的恒星系。指向哪颗星要在结果里写清楚，
+        /// 不要让模型以为箭头会跟着飞行器走。
+        /// </summary>
+        private static GameToolJobResult Navigation(JsonValue data, SpatialRequest request,
+            MotionTarget target)
+        {
+            if (target.OnPlanet && target.Planet != null)
+                return NavToPlanet(data, target.Planet);
+
+            var galaxy = GameMain.data != null ? GameMain.data.galaxy : null;
+            if (target.Star != null)
+            {
+                var planet = target.Star.planets != null && target.Star.planets.Length > 0
+                    ? target.Star.planets[0] : null;
+                if (planet != null) return NavToPlanet(data, planet);
+            }
+            if (galaxy != null && target.PlanetId > 0)
+            {
+                var planet = galaxy.PlanetById(target.PlanetId);
+                if (planet != null) return NavToPlanet(data, planet);
+            }
+            return NavResult(data, target.Describe(),
+                "动点在宇宙中飞行，没有可指向的行星；先用 op=location 取坐标");
         }
 
         private static JsonValue OwnedMotion(string kind, int id, string name)

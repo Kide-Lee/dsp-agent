@@ -287,18 +287,6 @@ function describeConfirmation(
         body: `存储：#${fmt(args['buildingId'])}\n物品：#${fmt(args['itemId'])}，数量：${fmt(args['count'])}\n` +
           '背包满时只取能放下的部分，剩余留在存储。',
       };
-    case 'game_tether_add':
-      return {
-        title: '建立方位指示？',
-        body: args['kind'] === 'planet'
-          ? `目标：行星 #${fmt(args['planetId'] ?? '当前')}\n` +
-            '会设置机甲导航朝向；可同时建多个，但游戏一次只显示一个跨行星导航朝向。'
-          : args['kind'] === 'vein'
-            ? `目标：矿脉 #${fmt(args['veinId'])}（行星 #${fmt(args['planetId'] ?? '当前')}）\n` +
-              '本星球会自绘机甲→矿脉线；跨行星先指向目标行星，落地后切换。'
-            : `目标：建筑 #${fmt(args['buildingId'])}（行星 #${fmt(args['planetId'] ?? '当前')}）\n` +
-              '本星球会自绘机甲→建筑线；跨行星先指向目标行星，落地后切换。',
-      };
     case 'game_tether_clear':
       return {
         title: '清除方位指示？',

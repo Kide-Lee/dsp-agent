@@ -1,7 +1,7 @@
 /**
  * 实体链接卡片的提取与历史挂接。
  *
- * 卡片在 mod 侧由 `game_tether_add` 自动生成；sidecar 这里只负责：
+ * 卡片在 mod 侧由导航调用自动生成；sidecar 这里只负责：
  *  - 从工具结果提取稳定目标字段，供持久化/历史回放；
  *  - 按「用户提问原文」把卡片挂回最终 assistant 消息。
  */
@@ -32,24 +32,36 @@ function num(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-/** 从 `game_tether_add` 的 ToolResult 提取卡片；失败/非该工具返回 null。 */
+/**
+ * 从导航结果的 ToolResult 提取卡片；失败或不是导航调用返回 null。
+ *
+ * 导航由三个空间工具的 op=navigation 产生，结果形如
+ * `{ navigation: { attached, kind, planetId, entityId / veinId } }`。
+ */
 export function extractLinkCard(
   toolName: string,
   result: unknown,
   isError = false,
 ): LinkCardPayload | null {
-  if (isError || toolName !== 'game_tether_add') return null;
+  if (isError) return null;
+  const isSpatial = toolName === 'space_region' || toolName === 'space_point'
+    || toolName === 'space_motion';
+  if (!isSpatial) return null;
   const envelope = asRecord(result);
   if (!envelope) return null;
   const details = asRecord(envelope['details']) ?? envelope;
   const nested = asRecord(details['data']);
-  const data = typeof details['ok'] === 'boolean' && nested ? nested : details;
+  const outer = typeof details['ok'] === 'boolean' && nested ? nested : details;
+  const data = asRecord(outer['navigation']);
+  if (!data || data['attached'] !== true) return null;
 
   const kind = str(data['kind']);
   if (kind !== 'planet' && kind !== 'building' && kind !== 'vein') return null;
   const planetId = num(data['planetId']);
-  const buildingId = num(data['buildingId']);
-  const name = str(data['name']);
+  // 空间工具把建筑 id 叫 entityId；卡片沿用 buildingId 这个游戏侧名字
+  const buildingId = num(data['buildingId']) ?? num(data['entityId']);
+  // 空间工具把可读描述放在 target；没有它就没法做出有意义的卡片标题
+  const name = str(data['name']) ?? str(data['target']);
   if (!planetId || planetId <= 0 || !name) return null;
   if (kind === 'building' && (!buildingId || buildingId <= 0)) return null;
   const veinId = num(data['veinId']);
@@ -58,7 +70,7 @@ export function extractLinkCard(
   const card: LinkCardPayload = { kind, planetId, name };
   if (kind === 'building' && buildingId) card.buildingId = buildingId;
   if (kind === 'vein' && veinId) card.veinId = veinId;
-  const subtitle = str(data['subtitle']);
+  const subtitle = str(data['subtitle']) ?? '方位指示';
   if (subtitle) card.subtitle = subtitle;
   const description = str(data['description']);
   if (description) card.description = description;

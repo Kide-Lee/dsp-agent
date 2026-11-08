@@ -119,10 +119,9 @@ function testToolGating() {
   check('game.write.v1 不含改配方工具', !writeOnly.includes('game_set_recipe'));
 
   const tether = toolNamesForCapabilities(['game.tether.v1']);
-  check('game.tether.v1 ⇒ 添加方位', tether.includes('game_tether_add'));
   check('game.tether.v1 ⇒ 清除方位', tether.includes('game_tether_clear'));
   check('game.tether.v1 ⇒ 方位列表', tether.includes('game_tether_list'));
-  check('game.write.v1 不含方位工具', !writeOnly.includes('game_tether_add'));
+  check('game.write.v1 不含方位工具', !writeOnly.includes('game_tether_clear'));
 
   const storage = toolNamesForCapabilities(['game.storage.v1']);
   check('game.storage.v1 ⇒ 存储过滤器', storage.includes('game_storage_set_filter'));

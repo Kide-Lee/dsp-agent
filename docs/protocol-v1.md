@@ -74,9 +74,11 @@
   mod 发放短期脚本租约（token + 脚本哈希 + 写工具名 + 最多 10000 次），脚本结束立即释放。
 - `game.storage.v1`：mod 支持存储建筑写操作：`game_storage_set_filter`、`game_storage_set_limit`、
   `game_storage_move`（存储间转移）、`game_storage_deposit`（背包→存储）、`game_storage_withdraw`（存储→背包）。
-- `game.tether.v1`：mod 支持方位指示：`game_tether_add` / `game_tether_list` / `game_tether_clear`。
-  `game_tether_add` 的 `space` 参数接受 `space_region` / `space_point` 的 `kind`+`type`+`target`，
-  把区域折到落点行星或首座建筑、把定点折到建筑/矿脉/行星；动点会被拒绝。
+- `game.tether.v1`：mod 支持方位指示：`game_tether_list` / `game_tether_clear`。
+  **建立方位指示改由 `space.read.v1` 的 `op=navigation` 提供**：它是瞬态运行时状态
+  （`Player.navigation` + `WarningSystem` 定位标记），不写存档，因此按只读工具执行，
+  不需要确认、不占撤销栈。区域折到落点行星或首座建筑，定点折到建筑/矿脉/行星，
+  动点折到它当前所在的天体。
   可同时建立多个（最多 20 个）：本星球每个建筑一条 `LineGizmo`；跨行星用原生
   `navigation.indicatorAstroId` 指向其中一个目标行星（游戏一次只支持一个朝向），落地后该行星上的建筑切换为自绘线。
 - `game.todo.v1`：mod 支持原生 GoalProto 目标注入与读取：`game_todo_templates` /
@@ -882,7 +884,7 @@ mod                                   sidecar
 
 ### A.9.1 `link_card` — 实体链接卡片（sidecar → mod）
 
-`game_tether_add` 成功后，sidecar 在本轮收尾时按目标逐条发 `link_card`。mod 用它回放/重建
+`op=navigation` 成功后，sidecar 在本轮收尾时按目标逐条发 `link_card`。mod 用它回放/重建
 建筑卡、星球卡或矿脉卡；实时 tether 事件也会先自动建卡，mod 只在同一回合内按目标 key 去重。
 
 ```jsonc
@@ -1800,9 +1802,9 @@ sidecar 本地工具**（`kb_*`、`wiki_*`、`blueprint_*`、`run_script`，它�
 `production` / `consumption` 是生产消耗（`ProductionStatistics`）口径，同一物品可能同时出现在两边，两者不可相加。
 
 `op=navigation` 不在只读工具里执行：它会写玩家的导航状态，必须走确认链路。
-调用会返回 `invalid_args` 并把调用引到 `game_tether_add`，把 `kind` / `type` / `target`
-原样放进它的 `space` 参数即可（区域折到落点行星或首座建筑，定点折到建筑/矿脉/行星）。
-动点会移动，无法用静态箭头表示，会直接拒绝。
+它在只读工具里执行：方位指示是瞬态运行时状态，不写存档，所以不弹确认、不占撤销栈。
+区域折到落点行星或首座建筑，定点折到建筑/矿脉/行星。
+动点会移动，箭头不会跟着它走：导航指到它当前所在的天体，实时位置仍用 `op=location`。
 
 > 范围聚合已并入 `space.read.v1`：`space_region op=list` 给成员（含类别、配方、朝向、经纬度），
 > 配合 `op=production` / `op=power` 可覆盖原来的装机产能与耗电聚合，
@@ -1985,7 +1987,6 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 | `game_storage_deposit` | 2 | `buildingId`, `itemId`, `count` | 背包→存储；满时退剩余；可撤销 |
 | `game_storage_withdraw` | 2 | `buildingId`, `itemId`, `count` | 存储→背包；背包满时留剩余；可撤销 |
 | `game_feed_input` | 2 | `buildingId`, `itemId`, `count`（≤500） | 背包原料直接进生产建筑输入缓冲；不经过分拣器/传送带；可撤销 |
-| `game_tether_add` | 1 | `kind?`（planet/building/vein）, `planetId?`, `buildingId?`, `veinId?`, `space?` | 建立机甲到行星/建筑/矿脉的方位指示；本星球用原生定位标记，跨行星先用导航线。`space` 可直接接 `space_*` 的 `kind`/`type`/`target` |
 | `game_tether_clear` | 1 | 无 | 清除本 mod 建立的所有方位指示 |
 | `game_tether_list` | 0 | 无 | 列出当前方位指示 |
 | `game_todo_templates` | 0 | 无 | 列出原生 GoalProto 模板与判断器 |
@@ -2005,7 +2006,7 @@ sidecar 侧把上述结果转成可读文本交给模型，例如：
 - risk 1/2 的工具都会先走 A.12；拒绝确认时 mod 不执行、无任何副作用。
 - 视角聚焦不再作为 AI 工具提供：建筑/星球/矿脉卡片由玩家点击聚焦（`GameLinkFocus`），AI 不替玩家移动镜头。
 - 写操作只保留一层撤销；`game_set_assembler_batch` 整批算一层。换档/断线清空撤销栈。
-- `game_drop_item`、`game_take_output`、`game_tether_add/clear` 不进入撤销栈：
+- `game_drop_item`、`game_take_output`、`game_tether_clear` 不进入撤销栈：
   它们会把栈顶标记为“不可撤销”，随后 `game_undo_last_write` 返回明确错误，不会去撤销更早的无关操作。
 - `game_undo_last_write` 也走 A.12 确认；只撤销 mod 记录的一步。
 

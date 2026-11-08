@@ -337,7 +337,6 @@ namespace IcarusII.I18n
             ["tool.name.game_storage_deposit"] = "存入存储",
             ["tool.name.game_storage_withdraw"] = "从存储取出",
             ["tool.name.game_feed_input"] = "投料",
-            ["tool.name.game_tether_add"] = "方位指示",
             ["tool.name.game_tether_clear"] = "清除方位",
             ["tool.name.game_tether_list"] = "方位列表",
             ["tool.name.game_take_output"] = "取成品",

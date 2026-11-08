@@ -42,7 +42,7 @@
 | M5 link 卡片 | 运行期接 `cards-group` 三模板；整卡聚焦、`定位/已定位` 双向连线；多行 ContentSizeFitter；建筑统计/星球备忘录与图标已接 |
 | M5 游戏目标 | D3 改为 B：注入原生 GoalProto/GoalSystem，复用左侧 UIGoalPanel；`game_todo_templates/list/add/remove`，触发器复用原生 GoalDeterminator；定义存 Global TodoModule JSON。2026-10-27 修正即时显示：Level=Off、插队首、补跑 `DetermineOnPatch/OnLoad`；2026-11-01 起“自由探索”下也展开面板、只显示 AI 目标（`[Goals] ShowAiGoalsInFreeExplore`，默认 true），关闭该开关才回到 `goalPanelOff=true`；同日补沙盒存档支持：有 AI 目标时绕过沙盒门禁并补 `GoalLogic.Init`（`[Goals] ShowAiGoalsInSandbox`，默认 true），否则沙盒存档连目标系统都不会初始化；同日加轮内待办 `game_todo_write`（risk 0，只读权限）：整表替换原生面板固定第一组“AI 待办”，空数组清空，玩家可跳过单项；一轮结束时 sidecar 自动清空该组；2026-11-03 修复“删掉/完成后每次重开又弹出”：原生 `GoalSystem.Import` 会丢掉读档时还没有 Proto 的 GoalData，AI 目标的完成/跳过状态改为随定义一起写进 Global TodoModule（`stage`/`manualIgnore`），每帧把原生状态回写存档，读档只注入未收起的目标 |
 | M5 矿脉卡片 | 复用建筑卡模板：矿脉图标/#id、标题、储量+经纬度、星系/行星、定位；支持 `dsp://entity/vein/<planet>/<vein>` 与历史持久化 |
-| M5 方位指示（tether） | 已实现 `game_tether_add/list/clear`，最多 20 个目标；本星球多建筑多线，跨行星原生导航一次一个、落地后切换；换档/断线清理；离线测试通过，待实机 |
+| M5 方位指示（tether） | 建立改由 `space_*` 的 `op=navigation` 提供（瞬态只读），`game_tether_list/clear` 仍保留；最多 20 个目标；换档/断线清理；离线测试通过，待实机 |
 | Game Menu 聊天入口 | 右下角 Game Menu 的截图键正上方新增聊天入口按钮（`button-agent.prefab` 随 UI bundle 分发）；Game Menu 是 `DSPGame.unity` 里的场景对象，运行期按 `UIGameMenu.buttonS` 锚定并绑定打开聊天窗；离线构建通过，待实机验收 |
 | 首次配置引导 | 取消聊天输入框的密钥录入态；`missing_key` / `invalid_key` / `unreachable` 时在聊天窗提示点击右上角设置按钮，由设置页「模型」页提交 Key。未配置时发送提问会被拦截并再次指向设置页，不再把输入当成 Key |
 | 输入工具条修复 | 图标 / 复选框 / 文字颜色改为按点击工具条前的光标/选区插入：工具栏按钮带 Unity `Button`，点击会让 InputField 失焦并把内部 caret 清 0；现在运行期记住最后聚焦时的选区并在插入前恢复 |

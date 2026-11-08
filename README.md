@@ -88,7 +88,6 @@ DeepSeek API Key（密钥只写不读，只保存在本机 sidecar 配置里）�
 | `game_storage_deposit` | 把背包物品存入存储；满时退剩余 |
 | `game_storage_withdraw` | 从存储取出物品到背包；背包满时留剩余 |
 | `game_feed_input` | 把背包原料直接投进生产建筑（绕过分拣器/传送带） |
-| `game_tether_add` | 建立机甲到行星/建筑/矿脉的方位指示 |
 | `game_tether_clear` | 清除本 mod 建立的方位指示 |
 | `game_tether_list` | 列出当前方位指示 |
 | `game_take_output` | 取出一台生产建筑的成品，保留配方（不进入撤销栈） |

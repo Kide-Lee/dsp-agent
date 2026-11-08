@@ -2537,129 +2537,6 @@
       }
     },
     {
-      "name": "game_tether_add",
-      "label": "方位指示",
-      "description": "建立机甲到行星/建筑/矿脉的方位指示，可同时建立多个（最多 20 个）。本星球的建筑/矿脉各放一个原生定位标记（与行星视图右键相同的光柱），抵达附近后标记由游戏清除；跨行星时先用原生 navigation.indicatorAstroId 指向其中一个目标行星（游戏一次只支持一个导航朝向），落到该行星后自动改用定位标记。写操作，风险 1：执行前玩家必须确认。",
-      "promptGuidelines": [
-        "玩家说“给这些建筑/星球/矿脉都做个方位指示”时使用；先用 space_region op=list 确认目标。",
-        "kind=planet 时用 planetId（缺省当前星球）；kind=building 时用 buildingId，可选 planetId；kind=vein 时用 veinId，可选 planetId。",
-        "本星球建筑/矿脉可同时显示多个定位标记；跨行星原生导航一次只指一个目标行星，不要声称所有跨行星目标都同时可见。",
-        "标记在抵达附近后消失、卡片按钮恢复为未定位，这是正常行为。",
-        "space_* 的 op=navigation 会报错并把调用引到这里：把它的 target 原样放进 space 参数即可，不要自己换算成 planetId/buildingId。",
-        "动点（玩家/无人机/运输船/战舰等）会移动，方位指示是静态箭头，会直接拒绝；需要位置请调 space_motion op=location。"
-      ],
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "planet",
-              "building",
-              "vein"
-            ],
-            "description": "planet / building / vein；用 space 时可省略"
-          },
-          "planetId": {
-            "type": "integer",
-            "description": "行星 id，缺省当前星球"
-          },
-          "buildingId": {
-            "type": "integer",
-            "description": "kind=building 时必填"
-          },
-          "veinId": {
-            "type": "integer",
-            "description": "kind=vein 时必填"
-          },
-          "space": {
-            "type": "object",
-            "properties": {
-              "kind": {
-                "type": "string",
-                "description": "region / point / motion"
-              },
-              "type": {
-                "type": "string",
-                "description": "空间变量类型，同 space_region / space_point 的 type"
-              },
-              "target": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "object",
-                    "properties": {}
-                  }
-                ],
-                "description": "与 space_* 的 target 相同"
-              }
-            },
-            "description": "用空间变量直接建方位指示：把 space_region / space_point 的 kind+type+target 原样放进来。区域会折到它的落点行星或首座建筑，定点会折到建筑/矿脉/行星。"
-          }
-        }
-      },
-      "executionMode": "sequential",
-      "source": "game",
-      "capability": "game.tether.v1",
-      "risk": 1,
-      "timeoutMs": 8000,
-      "group": "game-assist.md",
-      "cs": {
-        "timeoutMs": null,
-        "topFields": [
-          "kind",
-          "planetId",
-          "name",
-          "subtitle",
-          "description",
-          "iconLabel",
-          "buildingId",
-          "veinId"
-        ],
-        "allFields": []
-      },
-      "notes": {
-        "kind": [
-          "string",
-          "指示类型：`planet` / `vein` / `building`"
-        ],
-        "planetId": [
-          "integer",
-          "目标所在行星 id"
-        ],
-        "veinId": [
-          "integer",
-          "矿脉 id（仅 kind=vein）"
-        ],
-        "buildingId": [
-          "integer",
-          "建筑 id（仅 kind=building）"
-        ],
-        "name": [
-          "string",
-          "目标名称（显示用）"
-        ],
-        "subtitle": [
-          "string",
-          "副标题"
-        ],
-        "description": [
-          "string",
-          "描述文本"
-        ],
-        "iconLabel": [
-          "string",
-          "图标短码或 `#id`"
-        ],
-        "display": [
-          "string",
-          "一行确认摘要"
-        ]
-      }
-    },
-    {
       "name": "game_tether_clear",
       "label": "清除方位",
       "description": "清除本 mod 建立的所有方位指示（导航朝向和定位标记）。写操作，风险 1：执行前玩家必须确认。",
@@ -3715,7 +3592,7 @@
         "玩家问“那架无人机/那艘船在哪、在干什么、还剩多少货”时使用。",
         "动点会移动：本工具只给当前快照，没有追踪；需要新位置就再调一次，不要拿旧值推算。",
         "op=storage 只对玩家与运输类动点有效；op=parent 对垃圾块返回无归属。",
-        "op=navigation 不接受：动点无法用 tether 追踪。"
+        "op=navigation 指到该动点当前所在的天体：在行星上指该行星，在宇宙中飞行指关联恒星系； 箭头不会跟着飞行器走，需要实时位置请用 op=location。"
       ],
       "parameters": {
         "type": "object",
@@ -3907,7 +3784,7 @@
         "玩家指着某栋建筑/某个矿脉问“它属于谁/在哪/多少电/进出多少”时使用。",
         "省略 target 时先看玩家瞄准的对象，再退到最近的同类；找不到会明确报错，不会静默换目标。",
         "矿脉的 output 是按开采机数量算出的理论值（basis=installed），矿脉自身没有实际统计。",
-        "op=navigation 不接受：导航是写操作，请改用 game_tether_add。"
+        "op=navigation 建立机甲方位指示；它是瞬态运行时状态、不写存档，所以同样按只读执行。 区域会折到落点行星或首座建筑，定点折到建筑/矿脉/行星。"
       ],
       "parameters": {
         "type": "object",
@@ -4219,7 +4096,7 @@
         "玩家问“某个区域里有什么/产出多少/耗多少电/在哪”时使用；不要自己拿经纬度去拼半径。",
         "op=storage 是存量，op=input/output 是物流进出，op=production/consumption 是生产消耗，两者不可相加。",
         "stat.windowNative=false 表示该对象没有分档统计，window 不生效，不要拿它当十分钟均值。",
-        "op=navigation 不接受：导航是写操作，请改用 game_tether_add。"
+        "op=navigation 建立机甲方位指示；它是瞬态运行时状态、不写存档，所以同样按只读执行。 区域会折到落点行星或首座建筑，定点折到建筑/矿脉/行星。"
       ],
       "parameters": {
         "type": "object",

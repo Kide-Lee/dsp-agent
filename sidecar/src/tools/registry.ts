@@ -86,7 +86,6 @@ const TOOL_CAPABILITY: Record<string, string> = {
   game_storage_deposit: CAPABILITY_GAME_STORAGE,
   game_storage_withdraw: CAPABILITY_GAME_STORAGE,
   game_feed_input: CAPABILITY_GAME_BUILD,
-  game_tether_add: CAPABILITY_GAME_TETHER,
   game_tether_clear: CAPABILITY_GAME_TETHER,
   game_tether_list: CAPABILITY_GAME_TETHER,
   game_todo_templates: CAPABILITY_GAME_TODO,
@@ -399,7 +398,8 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '玩家问“某个区域里有什么/产出多少/耗多少电/在哪”时使用；不要自己拿经纬度去拼半径。',
         'op=storage 是存量，op=input/output 是物流进出，op=production/consumption 是生产消耗，两者不可相加。',
         'stat.windowNative=false 表示该对象没有分档统计，window 不生效，不要拿它当十分钟均值。',
-        'op=navigation 不接受：导航是写操作，请改用 game_tether_add。',
+        'op=navigation 建立机甲方位指示；它是瞬态运行时状态、不写存档，所以同样按只读执行。'
+        + ' 区域会折到落点行星或首座建筑，定点折到建筑/矿脉/行星。',
       ],
       parameters: Type.Object({
         op: Type.Union([
@@ -477,7 +477,8 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '玩家指着某栋建筑/某个矿脉问“它属于谁/在哪/多少电/进出多少”时使用。',
         '省略 target 时先看玩家瞄准的对象，再退到最近的同类；找不到会明确报错，不会静默换目标。',
         '矿脉的 output 是按开采机数量算出的理论值（basis=installed），矿脉自身没有实际统计。',
-        'op=navigation 不接受：导航是写操作，请改用 game_tether_add。',
+        'op=navigation 建立机甲方位指示；它是瞬态运行时状态、不写存档，所以同样按只读执行。'
+        + ' 区域会折到落点行星或首座建筑，定点折到建筑/矿脉/行星。',
       ],
       parameters: Type.Object({
         op: Type.Union([
@@ -542,7 +543,8 @@ export function createGameTools(host: GameToolHost): ToolDefinition[] {
         '玩家问“那架无人机/那艘船在哪、在干什么、还剩多少货”时使用。',
         '动点会移动：本工具只给当前快照，没有追踪；需要新位置就再调一次，不要拿旧值推算。',
         'op=storage 只对玩家与运输类动点有效；op=parent 对垃圾块返回无归属。',
-        'op=navigation 不接受：动点无法用 tether 追踪。',
+        'op=navigation 指到该动点当前所在的天体：在行星上指该行星，在宇宙中飞行指关联恒星系；'
+        + ' 箭头不会跟着飞行器走，需要实时位置请用 op=location。',
       ],
       parameters: Type.Object({
         op: Type.Union([

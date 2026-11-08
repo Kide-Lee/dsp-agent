@@ -167,7 +167,6 @@ async function run() {
       check('存入工具存在', !!tools.find((tool) => tool.name === 'game_storage_deposit'));
       check('取出工具存在', !!tools.find((tool) => tool.name === 'game_storage_withdraw'));
       check('投料工具存在', !!tools.find((tool) => tool.name === 'game_feed_input'));
-      check('方位添加工具存在', !!tools.find((tool) => tool.name === 'game_tether_add'));
       check('方位清除工具存在', !!tools.find((tool) => tool.name === 'game_tether_clear'));
       check('方位列表工具存在', !!tools.find((tool) => tool.name === 'game_tether_list'));
       check('拆除工具已按 design §9.1 移除', !tools.find((tool) => tool.name === 'game_dismantle'));

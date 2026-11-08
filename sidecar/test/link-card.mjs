@@ -16,49 +16,61 @@ const check = (name, cond, detail) => {
 };
 const eq = (name, expected, actual) => check(name, expected === actual, `${JSON.stringify(actual)}`);
 
+// 导航结果来自 space_* 的 op=navigation：data.navigation 里带 attached 与落点
 const building = {
   content: [{ type: 'text', text: '{}' }],
   details: {
     ok: true,
     data: {
-      kind: 'building',
-      planetId: 103,
-      buildingId: 6956,
-      name: '制造台Mk.I',
-      subtitle: '南门二A',
-      description: '生产速度: 30.0/min',
-      iconLabel: '#6956',
+      type: 'building',
+      navigation: {
+        attached: true,
+        kind: 'building',
+        planetId: 103,
+        entityId: 6956,
+        name: '制造台Mk.I',
+        target: '建筑 #6956',
+        subtitle: '方位指示',
+      },
     },
   },
 };
 const vein = {
   details: {
     ok: true,
-    data: { kind: 'vein', planetId: 103, veinId: 415, name: '铁矿脉', subtitle: '（储量 1000，1.00°，2.00°）' },
+    data: {
+      type: 'vein',
+      navigation: { attached: true, kind: 'vein', planetId: 103, veinId: 415, name: '铁矿脉' },
+    },
   },
 };
 
 const planet = {
   details: {
     ok: true,
-    data: { kind: 'planet', planetId: 103, name: '文昌六 - 3号星', subtitle: '文昌六星系' },
+    data: {
+      type: 'planet',
+      navigation: { attached: true, kind: 'planet', planetId: 103, name: '文昌六 - 3号星' },
+    },
   },
 };
 
-const b = extractLinkCard('game_tether_add', building);
+const b = extractLinkCard('space_point', building);
 check('建筑卡提取', b !== null && b.kind === 'building' && b.buildingId === 6956);
 eq('建筑名原样', '制造台Mk.I', b?.name);
-const p = extractLinkCard('game_tether_add', planet);
+const p = extractLinkCard('space_region', planet);
 check('星球卡提取', p !== null && p.kind === 'planet' && p.planetId === 103);
-const v = extractLinkCard('game_tether_add', vein);
+const v = extractLinkCard('space_point', vein);
 check('矿脉卡提取', v !== null && v.kind === 'vein' && v.veinId === 415);
 check('矿脉卡缺 id 不产卡',
-  extractLinkCard('game_tether_add', { details: { data: { kind: 'vein', planetId: 1, name: 'x' } } }) === null);
+  extractLinkCard('space_point', { details: { data: { navigation: { attached: true, kind: 'vein', planetId: 1, name: 'x' } } } }) === null);
 check('其他工具不产卡', extractLinkCard('game_get_planets', planet) === null);
-check('失败结果不产卡', extractLinkCard('game_tether_add', building, true) === null);
-check('缺 kind 不产卡', extractLinkCard('game_tether_add', { details: { data: { name: 'x' } } }) === null);
+check('失败结果不产卡', extractLinkCard('space_point', building, true) === null);
+check('缺 navigation 不产卡', extractLinkCard('space_point', { details: { data: { name: 'x' } } }) === null);
+check('attached=false 不产卡',
+  extractLinkCard('space_point', { details: { data: { navigation: { attached: false, kind: 'planet', planetId: 1, name: 'x' } } } }) === null);
 check('建筑缺 id 不产卡',
-  extractLinkCard('game_tether_add', { details: { data: { kind: 'building', planetId: 1, name: 'x' } } }) === null);
+  extractLinkCard('space_point', { details: { data: { navigation: { attached: true, kind: 'building', planetId: 1, name: 'x' } } } }) === null);
 
 const payload = buildLinkCardPayload(b);
 eq('协议 kind', 'building', payload.kind);

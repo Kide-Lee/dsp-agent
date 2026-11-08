@@ -280,7 +280,6 @@ namespace IcarusII.Common.Protocol
         public const string ToolStorageDeposit = "game_storage_deposit";
         public const string ToolStorageWithdraw = "game_storage_withdraw";
         public const string ToolFeedInput = "game_feed_input";
-        public const string ToolTetherAdd = "game_tether_add";
         public const string ToolTetherClear = "game_tether_clear";
         public const string ToolTetherList = "game_tether_list";
         public const string ToolTodoTemplates = "game_todo_templates";
@@ -375,7 +374,6 @@ namespace IcarusII.Common.Protocol
             ToolStorageDeposit,
             ToolStorageWithdraw,
             ToolFeedInput,
-            ToolTetherAdd,
             ToolTetherClear,
             ToolTodoAdd,
             ToolTodoRemove,
