@@ -69,11 +69,10 @@ namespace IcarusII.Game.Spatial
             switch (target.Type)
             {
                 case SpatialTypes.StarSystem:
-                    AddAstroMembers(result, target, includeHive: true);
+                    AddAstroMembers(result, target, includeSelf: true, includeHive: true, includeDyson: true);
                     break;
                 case SpatialTypes.Star:
-                    AddAstroMembers(result, target, includeHive: false);
-                    AddDysonMembers(result, target);
+                    AddAstroMembers(result, target, includeSelf: false, includeHive: false, includeDyson: true);
                     break;
                 case SpatialTypes.Planet:
                     AddPlanetMembers(result, target.Planet, null);
@@ -110,11 +109,18 @@ namespace IcarusII.Game.Spatial
 
         // ------------------------------------------------------------ 天体
 
-        private static void AddAstroMembers(List<RegionMember> result, RegionTarget target, bool includeHive)
+        /// <summary>
+        /// 天体成员。
+        ///
+        /// 恒星系：恒星本体 + 行星 + 太空黑雾巢穴 + 戴森球。
+        /// 恒星：只列自己的戴森云与戴森壳，不含恒星本体、行星与巢穴。
+        /// </summary>
+        private static void AddAstroMembers(List<RegionMember> result, RegionTarget target,
+            bool includeSelf, bool includeHive, bool includeDyson)
         {
             var star = target.Star;
             if (star == null) return;
-            if (includeHive)
+            if (includeSelf)
             {
                 result.Add(RegionMember.InWorld("star", star.id, PlanetFrame.StarName(star), 0, star.uPosition));
             }
@@ -127,6 +133,7 @@ namespace IcarusII.Game.Spatial
                         PlanetFrame.PlanetName(planet), planet.id, planet.uPosition));
                 }
             }
+            if (includeDyson) AddDysonMembers(result, target);
             if (!includeHive) return;
 
             var sector = GameMain.data != null ? GameMain.data.spaceSector : null;
@@ -395,7 +402,12 @@ namespace IcarusII.Game.Spatial
             {
                 if (star == null) continue;
                 if (shape.ContainsBox(PlanetFrame.ToVec3d(star.uPosition)))
+                {
                     result.Add(RegionMember.InWorld("star", star.id, PlanetFrame.StarName(star), 0, star.uPosition));
+                    // 戴森球以恒星为中心，恒星在盒内即视为戴森球在盒内
+                    if (DysonSpheres.Get(star.id) != null)
+                        result.Add(RegionMember.InWorld("dyson_sphere", star.id, "戴森球", 0, star.uPosition));
+                }
                 if (star.planets == null) continue;
                 foreach (var planet in star.planets)
                 {

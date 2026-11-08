@@ -264,6 +264,20 @@ namespace IcarusII.Tests
             Program.Check("动点声明支持 navigation",
                 SpatialTypes.Supports(SpatialMethod.Navigation, SpatialTypes.Player));
 
+            // 恒星系与恒星都要能列出戴森球，但它不是独立"区域"的成员类别
+            Program.Check("dyson_sphere 是合法区域类型",
+                SpatialTypes.IsRegion(SpatialTypes.DysonSphere));
+            Program.Check("恒星系与恒星都支持 list",
+                SpatialTypes.Supports(SpatialMethod.List, SpatialTypes.StarSystem)
+                && SpatialTypes.Supports(SpatialMethod.List, SpatialTypes.Star));
+            // 戴森球可以被 storage/power/flow 查询，恒星系同样
+            foreach (var method in new[] { SpatialMethod.Storage, SpatialMethod.Power,
+                SpatialMethod.Production, SpatialMethod.Consumption })
+            {
+                Program.Check($"恒星系支持 {SpatialTypes.NameOf(method)}",
+                    SpatialTypes.Supports(method, SpatialTypes.StarSystem));
+            }
+
             // 解析 space 时用 Location 借住，不能命中统计类分支
             var request = SpatialRequest.Parse(
                 JsonValue.Parse("{\"type\":\"building\",\"target\":\"42\"}"),

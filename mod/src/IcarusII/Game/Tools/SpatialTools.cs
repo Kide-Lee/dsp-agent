@@ -338,8 +338,14 @@ namespace IcarusII.Game.Tools
             switch (target.Type)
             {
                 case SpatialTypes.StarSystem:
+                {
                     AddStorageOfStar(target.Star, items, includePlanets: true);
+                    // 戴森球的太阳帆/节点/框架/壳面不是"物品"，单独给一块，
+                    // 混进 items 会让模型把它们当库存来数。
+                    var sphere = DysonSpheres.Get(target.StarId);
+                    if (sphere != null) data.Set("dyson", DysonStructureJson(sphere));
                     break;
+                }
                 case SpatialTypes.Planet:
                 case SpatialTypes.PowerGrid:
                 case SpatialTypes.Factory:
@@ -404,6 +410,23 @@ namespace IcarusII.Game.Tools
             items.AddRange(totals.Values);
         }
 
+        /// <summary>戴森球的结构量：太阳帆、节点、框架、壳面、结构点、细胞点。</summary>
+        private static JsonValue DysonStructureJson(DysonSphere sphere)
+        {
+            var obj = JsonValue.NewObject();
+            obj.Set("sailCount", DysonSpheres.SailCount(sphere));
+            var (nodes, frames, shells, structurePoints, cellPoints) = DysonSpheres.StructureCounts(sphere);
+            obj.Set("nodeCount", nodes);
+            obj.Set("frameCount", frames);
+            obj.Set("shellCount", shells);
+            obj.Set("structurePoints", structurePoints);
+            obj.Set("cellPoints", cellPoints);
+            var (swarmKw, layerKw) = DysonSpheres.GenKw(sphere);
+            obj.Set("swarmGenKw", GameToolFormat.Round(swarmKw, 2));
+            obj.Set("layerGenKw", GameToolFormat.Round(layerKw, 2));
+            return obj;
+        }
+
         private static GameToolJobResult DysonStorage(JsonValue data, SpatialRequest request, RegionTarget target)
         {
             var sphere = DysonSpheres.Get(target.StarId);
@@ -456,6 +479,14 @@ namespace IcarusII.Game.Tools
             // 世界区域横跨多颗行星，生产桶也是按行星切的，必须分组累加
             if (target.Type == SpatialTypes.WorldBox)
                 return WorldBoxFlow(data, request, target);
+
+            // 恒星系的物品流量按行星取，但戴森球的太阳帆生产/消耗不属于任何行星，
+            // 要单独挂一块，否则"这个星系产了多少太阳帆"永远查不到。
+            if (target.Type == SpatialTypes.StarSystem)
+            {
+                var sphere = DysonSpheres.Get(target.StarId);
+                if (sphere != null) data.Set("dyson", DysonStructureJson(sphere));
+            }
 
             var planet = target.Planet;
             if (planet?.factory == null) throw new SpatialException("该区域的行星工厂尚未加载");
@@ -598,6 +629,15 @@ namespace IcarusII.Game.Tools
             long capacity = 0;
             long stored = 0;
             var planets = 0;
+
+            // 戴森球发电是这个星系供电的一部分：不计入会让"星系发电性能"偏低。
+            double dysonKw = 0;
+            var sphere = DysonSpheres.Get(target.StarId);
+            if (sphere != null)
+            {
+                var (swarmKw, layerKw) = DysonSpheres.GenKw(sphere);
+                dysonKw = swarmKw + layerKw;
+            }
             if (target.Star?.planets != null)
             {
                 foreach (var planet in target.Star.planets)
@@ -623,10 +663,13 @@ namespace IcarusII.Game.Tools
             obj.Set("storedKwh", GameToolFormat.Round(GameToolFormat.Kwh(stored), 2));
             obj.Set("satisfactionPct", required > 0
                 ? GameToolFormat.Round(served * 100.0 / required, 1) : 100);
+            obj.Set("dysonGenKw", GameToolFormat.Round(dysonKw, 2));
             obj.Set("planets", planets);
             data.Set("power", obj);
+            if (sphere != null) data.Set("dyson", DysonStructureJson(sphere));
             WriteStatMeta(data, request, windowNative: false);
-            return Result(data, $"恒星系：{planets} 颗行星的电力合计");
+            return Result(data, $"恒星系：{planets} 颗行星的电力合计"
+                + (dysonKw > 0 ? $" + 戴森球 {GameToolFormat.Round(dysonKw, 1)} kW" : string.Empty));
         }
 
         private static GameToolJobResult Parent(JsonValue data, SpatialRequest request, RegionTarget target)
