@@ -37,7 +37,7 @@
 | `paused` | `boolean` | 游戏是否暂停 |
 | `planet` | `object` | 当前行星：`id` / `name` / `type` / `factoryLoaded` |
 | `star` | `object` | 当前星系：`id` / `name` / `type` |
-| `player` | `object` | 玩家位置 `location`（经纬度）；机甲状态用 game_get_player |
+| `player` | `object` | 玩家位置 `location`（经纬度）；机甲状态用 space_motion op=information |
 | `mode` | `object` | 存档模式：`peace` / `sandbox` / `combat` / `goalLevel` |
 | `display` | `string` | 一行摘要：`行星名 · 游戏时间` |
 

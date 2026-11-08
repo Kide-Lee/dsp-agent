@@ -31,21 +31,11 @@ export const TOOL_FIELD_NOTES: Record<string, Record<string, FieldNote>> = {
     paused: ['boolean', '游戏是否暂停'],
     planet: ['object', '当前行星：`id` / `name` / `type` / `factoryLoaded`'],
     star: ['object', '当前星系：`id` / `name` / `type`'],
-    player: ['object', '玩家位置 `location`（经纬度）；机甲状态用 game_get_player'],
+    player: ['object', '玩家位置 `location`（经纬度）；机甲状态用 space_motion op=information'],
     mode: ['object', '存档模式：`peace` / `sandbox` / `combat` / `goalLevel`'],
     display: ['string', '一行摘要：`行星名 · 游戏时间`'],
   },
 
-  game_get_player: {
-    mecha: [
-      'object',
-      '机甲状态：`coreEnergy` / `coreEnergyCap` / `coreEnergyPct`（核心能量）、' +
-        '`reactorEnergy`（反应堆）、`shieldEnergy` / `shieldCapacity` / `shieldPct`（护盾）',
-    ],
-    inventory: ['array', '背包物品：`id` / `name` / `iconTag` / `count`（按 offset/limit 分页）'],
-    location: ['object', '玩家坐标 `location`（经纬度），由 GameToolFormat.SetLocation 追加'],
-    display: ['string', '一行摘要'],
-  },
 
   game_get_planet: {
     planetId: ['integer', '同参数 `planetId`；省略时是当前行星 id'],
@@ -71,25 +61,6 @@ export const TOOL_FIELD_NOTES: Record<string, Record<string, FieldNote>> = {
     display: ['string', '一行摘要'],
   },
 
-  game_get_power: {
-    planetId: ['integer', '同参数 `planetId`'],
-    planetName: ['string', '行星显示名'],
-    factoryLoaded: ['boolean', '工厂是否已加载；false 时其余字段全为 0'],
-    demandKw: ['number', '电网总需求（kW）'],
-    servedKw: ['number', '实际已供（kW）'],
-    capacityKw: ['number', '发电容量（kW）'],
-    storedKwh: ['number', '储能电量（kWh）'],
-    accumulatorKw: ['number', '蓄电器当前充放电功率（kW，正=充电）'],
-    satisfactionPct: ['number', '满足率（%，0–100）'],
-    nets: ['array', '各电网明细（按电网拆分时的需求/供给/容量）'],
-    demandDisplay: ['string', '需求的可读文本（自动换算 W/kW/MW）'],
-    servedDisplay: ['string', '已供的可读文本'],
-    capacityDisplay: ['string', '容量的可读文本'],
-    generatorCount: ['integer', '发电建筑数'],
-    consumerCount: ['integer', '耗电建筑数'],
-    accumulatorCount: ['integer', '蓄电器数量'],
-    display: ['string', '一行摘要：需求 · 满足率'],
-  },
 
   game_get_research: {
     currentTechId: ['integer', '当前研究科技 id；0 表示没有在研'],
@@ -101,28 +72,6 @@ export const TOOL_FIELD_NOTES: Record<string, Record<string, FieldNote>> = {
     display: ['string', '一行摘要：在研科技与进度'],
   },
 
-  game_get_production: {
-    planetId: ['integer', '同参数 `planetId`'],
-    planetName: ['string', '行星显示名'],
-    statsPending: ['boolean', '产线统计尚未建立（远程行星/刚读档）；true 时 items 为空'],
-    items: [
-      'array',
-      '按物品聚合：`id` / `name` / `iconTag` / 产量 / 消耗 / 库存 / 净产出 / 可撑分钟数',
-    ],
-    total: ['integer', '匹配的物品总数（分页前）'],
-    offset: ['integer', '同参数 `offset`'],
-    limit: ['integer', '同参数 `limit`'],
-    shortageCount: ['integer', '净产出为负的物品数（缺口）'],
-    surplusCount: ['integer', '净产出为正的物品数（盈余）'],
-    truncated: ['boolean', '本页之后还有数据；用 nextOffset 续读'],
-    nextOffset: ['integer', '下一页 offset；-1 表示没有更多'],
-    powerSatisfactionPct: ['number', '该行星电网满足率（%）'],
-    buildingCount: ['integer', '该行星建筑总数'],
-    statsEmpty: ['boolean', '统计桶为空；true 时 items 是按装机产能推算的，不是实际产出'],
-    basis: ['string', '数据口径：`stats`（实际统计）/ `installed`（装机产能）/ `none`'],
-    hint: ['string', '给模型的提示（statsEmpty 时说明不要据此下结论）'],
-    display: ['string', '一行摘要'],
-  },
 
   // ---------------------------------------------------------------- 实体
 
@@ -189,19 +138,6 @@ export const TOOL_FIELD_NOTES: Record<string, Record<string, FieldNote>> = {
     display: ['string', '一行摘要'],
   },
 
-  game_get_entities: {
-    planetId: ['integer', '同参数 `planetId`'],
-    available: ['boolean', '工厂是否已加载'],
-    rows: [
-      'array',
-      '建筑行：`id` / 原型 / 配方 / 星系 / 行星 / 经纬度 / 朝向（按 offset/limit 分页）',
-    ],
-    total: ['integer', '匹配的建筑总数（分页前）'],
-    offset: ['integer', '同参数 `offset`'],
-    limit: ['integer', '同参数 `limit`'],
-    hasMore: ['boolean', '是否还有下一页'],
-    display: ['string', '一行摘要：匹配数与本页条数'],
-  },
 
   game_get_planets: {
     available: ['boolean', '银河数据是否已加载'],
@@ -274,18 +210,6 @@ export const TOOL_FIELD_NOTES: Record<string, Record<string, FieldNote>> = {
     display: ['string', '一行摘要'],
   },
 
-  game_analyze_area: {
-    planetId: ['integer', '同参数 `planetId`'],
-    available: ['boolean', '工厂是否已加载'],
-    area: ['object', '分析范围：中心 `location` / 半径 / 是否整星'],
-    byRecipe: ['array', '按配方聚合：配方 id/名 / 机器数 / 装机产能 / 耗电'],
-    categories: ['object', '按建筑类别计数：类别 → 数量'],
-    totals: ['object', '汇总：建筑数 / 耗电 / 传送带 / 分拣器 / 物流塔'],
-    powerNetworks: ['array', '涉及的电网供需'],
-    entities: ['array', '范围内的建筑 id 列表（可继续用 game_get_entity 下钻）'],
-    assumptions: ['array', '口径假设（装机产能 ≠ 实际产出等）'],
-    display: ['string', '一行摘要'],
-  },
 
   game_render_layout: {
     planetId: ['integer', '同参数 `planetId`'],
@@ -485,6 +409,107 @@ export const TOOL_FIELD_NOTES: Record<string, Record<string, FieldNote>> = {
     count: ['integer', '条目数'],
     counts: ['object', '`pending` / `inProgress` / `completed` / `skipped`'],
     goalPanelOff: ['boolean', '目标面板确实没有显示；true 时提醒玩家打开'],
+    display: ['string', '一行确认摘要'],
+  },
+
+  space_region: {
+    type: ['string', '区域类型（star_system / star / planet / power_grid / factory / df_hive / df_base / dyson_sphere / world_box / planet_patch / blueprint）'],
+    target: ['string', '解析后的对象描述，如「恒星系 天仓五（#3）」'],
+    planetId: ['integer', '行星 id（行星类区域）'],
+    starId: ['integer', '恒星 id（恒星系 / 恒星 / 戴森球 / 巢穴）'],
+    networkId: ['integer', '电网 id（power_grid / factory）'],
+    region: ['object', '几何区域：`frame` + `latMin`/`latMax`/`lonStart`/`lonSpan` 或 `min`/`max`'],
+    members: [
+      'array',
+      'list 的成员行：`kind` / `id` / `name` / `planetId` / `category` / `recipeId` / `recipeName` / ' +
+        '`speedMultiplier` / `recipeSeconds` / `yaw` / `location`（经纬度）或 `world`（世界坐标）',
+    ],
+    items: [
+      'array',
+      '存量或流量行：`id` / `name` / `iconTag` / `amount` / `net` / `stored` / `minutesOfStock` / ' +
+        '`producedPerMin` / `consumedPerMin`（统计类才有）',
+    ],
+    stat: ['object', '统计口径：`window` / `unit` / `basis` / `windowNative`；存量时只有 `kind=stock` + `unit=count`'],
+    statsEmpty: ['boolean', '统计桶为空（刚读档或暂停）；true 不等于没有产线'],
+    hint: ['string', '口径或口径受限的说明'],
+    dyson: [
+      'object',
+      '戴森球结构量：`sailCount` / `nodeCount` / `frameCount` / `shellCount` / `structurePoints` / ' +
+        '`cellPoints` / `swarmGenKw` / `layerGenKw`。恒星系、恒星与戴森球区域会带这一块',
+    ],
+    matter: ['object', '黑雾物质：`matterProduction` / `matterConsumption` / `statWindowNative` / `statPeriod`；基地另有 `matterGenPerMin` / `energyUsePerMin`'],
+    structure: ['object', '巢穴结构计数：`cores` / `nodes` / `connectors` / `replicators` / `gammas` / `turrets` / `units` / `relays` / `tinders`'],
+    power: [
+      'object',
+      '电力：`demandKw` / `servedKw` / `capacityKw` / `storedKwh` / `accumulatorKw` / `satisfactionPct` / ' +
+        '`consumers` / `generators` / `nets`。恒星系另有 `dysonGenKw`、`planets`',
+    ],
+    parents: ['array', '上级链：每层 `type` / `target`（+ `starId` / `planetId`）'],
+    location: ['object', '位置：恒星给 `world`；行星/电网/工厂给 `local` / 经纬度'],
+    information: ['object', '静态信息，随类型不同：恒星给质量/光谱/光度；行星给轨道与自转；戴森球给 `layers` / `orbits`；蓝图给作者/版本/图标'],
+    buildings: ['array', '蓝图内的建筑：`id` / `name` / `iconTag` / `count`'],
+    blueprint: ['object', '蓝图头信息（同 information 的蓝图分支）'],
+    recipeBuildings: ['integer', '蓝图里带配方的建筑台数（理论流量的计算基数）'],
+    planetCount: ['integer', '参与统计的行星数（世界区域 / 恒星系）'],
+    note: ['string', '备忘录正文或范围受限说明'],
+    total: ['integer', '总条数（分页前的数量）'],
+    truncated: ['boolean', '是否还有下一页'],
+    nextOffset: ['integer', '下一页偏移；-1 表示没有更多'],
+    partial: ['boolean', '结果不完整（有行星未加载或只扫了部分区域）'],
+    display: ['string', '一行确认摘要'],
+  },
+
+  space_point: {
+    type: ['string', '定点类型（building / vein / vegetation / df_space_building / df_ground_building / world_position / planet_position）'],
+    target: ['string', '解析后的对象描述'],
+    name: ['string', '对象名（建筑原型名、矿物名等）'],
+    planetId: ['integer', '所在行星 id'],
+    starId: ['integer', '所在恒星 id'],
+    entityId: ['integer', '建筑实体 id'],
+    veinId: ['integer', '矿脉 id'],
+    vegeId: ['integer', '植被 id'],
+    enemyId: ['integer', '黑雾实体 id'],
+    owned: ['array', 'list 的下辖动点：`kind` / `id` / `subId` / `name`'],
+    items: ['array', '存量或流量行，字段同 space_region 的 items'],
+    stat: ['object', '统计口径；存量时只有 `kind=stock` + `unit=count`'],
+    hint: ['string', '口径说明；矿脉输出与理论值会注明 basis=installed'],
+    matter: ['object', '黑雾建筑的物质与能量'],
+    power: ['object', '电力：`demandKw` / `servedKw` / `capacityKw` / `storedKwh` / `accumulatorKw` / `satisfactionPct` / `nets`'],
+    parents: ['array', '归属：`type`（planet / factory / df_base / df_hive / none）+ 相关 id'],
+    planet: ['object', '行星坐标：`planetId` / `planetName` / `latitude` / `longitude` / `altitude`'],
+    world: ['object', '世界坐标：`x` / `y` / `z`（世界坐标类定点）'],
+    note: ['string', '全息信标的备忘录正文'],
+    total: ['integer', '总条数'],
+    truncated: ['boolean', '是否还有下一页'],
+    nextOffset: ['integer', '下一页偏移；-1 表示没有更多'],
+    display: ['string', '一行确认摘要'],
+  },
+
+  space_motion: {
+    type: ['string', '动点类型（player / construction_drone / delivery_courier / station_drone / station_ship / dyson_rocket / combat_drone / combat_fleet / df_space_unit / df_ground_unit / trash）'],
+    target: ['string', '解析后的对象描述'],
+    name: ['string', '对象名'],
+    planetId: ['integer', '关联行星 id（在行星上或所属行星）'],
+    starId: ['integer', '关联恒星 id'],
+    owned: ['array', '玩家名下的动点：`kind` / `id` / `name`'],
+    items: ['array', '携带物品或存量：`id` / `name` / `iconTag` / `amount` / `stored`'],
+    stat: ['object', '存量口径：`kind=stock` + `unit=count`'],
+    hint: ['string', '口径说明；运输类取不到货时会说明货在别处'],
+    parents: ['array', '归属：`type`（player / station / silo / fleet / df_hive / df_base / none）+ 相关 id'],
+    location: [
+      'object',
+      '当前位置快照：`gameTick` / `speed`；在行星上给 `latitude` / `longitude` / `altitude` / `planetId`，' +
+        '在宇宙中给 `position`（x/y/z）',
+    ],
+    information: [
+      'object',
+      '状态：玩家给 `movementState` / `warpState` / `coreEnergy` / `shieldEnergy` / `shieldPct` / `reactorEnergy`；' +
+        '运输类给 `prototype` / `warpState` / `warperCount`；战斗类给 `behavior` / `hpShortage`；' +
+        '黑雾给 `stateFlags`；垃圾块给 `life` / `landPlanetId` / `nearStarId`',
+    ],
+    total: ['integer', '总条数'],
+    truncated: ['boolean', '是否还有下一页'],
+    nextOffset: ['integer', '下一页偏移；-1 表示没有更多'],
     display: ['string', '一行确认摘要'],
   },
 };

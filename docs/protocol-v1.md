@@ -1801,16 +1801,10 @@ sidecar 本地工具**（`kb_*`、`wiki_*`、`blueprint_*`、`run_script`，它�
 原样放进它的 `space` 参数即可（区域折到落点行星或首座建筑，定点折到建筑/矿脉/行星）。
 动点会移动，无法用静态箭头表示，会直接拒绝。
 
-**`game.analyze.v1`（M4c）**
-
 > 范围聚合已并入 `space.read.v1`：`space_region op=list` 给成员（含类别、配方、朝向、经纬度），
 > 配合 `op=production` / `op=power` 可覆盖原来的装机产能与耗电聚合，
 > 且范围用经纬度矩形或世界 AABB 表达，不再有"极点附近按 XZ 平面切分"的偏差。
-
-
-
-| 协议/模型名 | 说明 |
-| --- | --- |
+> 原 `game.analyze.v1` 能力位已随工具删除，不再声明。
 
 **`game.progress.v1`（M4a）**
 

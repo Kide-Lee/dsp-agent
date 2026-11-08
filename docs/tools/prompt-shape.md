@@ -73,17 +73,21 @@ system prompt Guidelines section when this tool is active"——它天生属于 
 …（人格正文，见 §3）
 - 函数列表里没有的能力不要承诺。
 
-本会话注册的工具（以本轮函数列表为唯一权威）：共 28 个
-- 游戏只读（16 个）：game_get_overview、game_get_player、…
+本会话注册的工具（以本轮函数列表为唯一权威）：共 55 个
+- 游戏只读（12 个）：game_get_overview、game_get_entity、game_get_planet、…
+- 空间变量只读（3 个）：space_region、space_point、space_motion
 - 低风险写（不改存档；受限档直接执行，只读档仍会确认）（4 个）：…
 - 改存档写（受限/只读档会先请求确认；接管档直接执行）（8 个）：…
 
 工具使用规则（与工具描述同等效力）：
 - game_get_overview：
   - 玩家询问当前存档、所在星球、游戏时间或“现在什么情况”时使用。
+- space_region：
+  - 玩家问“某个区域里有什么/产出多少/耗多少电/在哪”时使用；不要自己拿经纬度去拼半径。
+  - op=storage 是存量，op=input/output 是物流进出，op=production/consumption 是生产消耗，两者不可相加。
 - game_get_entity：
   - 玩家问某一栋建筑为什么不动、配方是什么、插了什么、有没有电时使用。
-  - 如果返回 stale=true，不要使用这条数据：id 已被回收，重新用 game_get_entities 定位。
+  - 如果返回 stale=true，不要使用这条数据：id 已被回收，重新用 space_region op=list 定位。
 
 当前权限为「受限」：镜头/标记/面板/方位/撤销等低风险写操作直接执行；改变存档状态的写操作（改配方、研究、存储、投料等）仍会请求玩家确认。
 
