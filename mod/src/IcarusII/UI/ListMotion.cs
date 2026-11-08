@@ -12,17 +12,19 @@ namespace IcarusII.UI
     /// </summary>
     public sealed class ListMotion : MonoBehaviour
     {
-        /// <summary>一条要过渡高度、带 LayoutElement 的行。</summary>
+        /// <summary>一条要过渡高度、带 LayoutElement 的行；Fade 非空时透明度同一条缓动。</summary>
         public readonly struct Row
         {
-            public Row(LayoutElement element, float height)
+            public Row(LayoutElement element, float height, CanvasGroup fade = null)
             {
                 Element = element;
                 Height = height;
+                Fade = fade;
             }
 
             public LayoutElement Element { get; }
             public float Height { get; }
+            public CanvasGroup Fade { get; }
         }
 
         /// <summary>一个要从起始 Y 滑到布局当前位置的子项。</summary>
@@ -66,7 +68,7 @@ namespace IcarusII.UI
 
         /// <summary>
         /// 逐行过渡高度：reveal 为 true 从 0 长到 Height，false 从 Height 压到 0。
-        /// 行的遮罩会裁掉文字，容器高度由布局自己跟着算。
+        /// 行的遮罩会裁掉文字，容器高度由布局自己跟着算；带 Fade 的行透明度走同一条缓动。
         /// </summary>
         public void AnimateRows(string key, IReadOnlyList<Row> rows, bool reveal, Action done = null)
         {
@@ -82,6 +84,7 @@ namespace IcarusII.UI
                 if (row.Element == null) continue;
                 row.Element.minHeight = 0f;
                 row.Element.preferredHeight = reveal ? 0f : row.Height;
+                if (row.Fade != null) row.Fade.alpha = reveal ? 0f : 1f;
             }
             Rebuild();
             StartTween(key, RowDuration,
@@ -89,10 +92,11 @@ namespace IcarusII.UI
                 {
                     foreach (var row in rows)
                     {
-                        if (row.Element == null) continue;
-                        row.Element.preferredHeight = reveal
-                            ? Mathf.LerpUnclamped(0f, row.Height, progress)
-                            : Mathf.LerpUnclamped(row.Height, 0f, progress);
+                        if (row.Element != null)
+                            row.Element.preferredHeight = reveal
+                                ? Mathf.LerpUnclamped(0f, row.Height, progress)
+                                : Mathf.LerpUnclamped(row.Height, 0f, progress);
+                        if (row.Fade != null) row.Fade.alpha = reveal ? progress : 1f - progress;
                     }
                     Rebuild();
                 },
@@ -100,9 +104,14 @@ namespace IcarusII.UI
                 {
                     foreach (var row in rows)
                     {
-                        if (row.Element == null) continue;
-                        row.Element.minHeight = row.Height;
-                        row.Element.preferredHeight = row.Height;
+                        if (row.Element != null)
+                        {
+                            // 收起终态必须真的归零：写回原高度会留下一整块空白。
+                            var target = reveal ? row.Height : 0f;
+                            row.Element.minHeight = target;
+                            row.Element.preferredHeight = target;
+                        }
+                        if (row.Fade != null) row.Fade.alpha = reveal ? 1f : 0f;
                     }
                     Rebuild();
                     done?.Invoke();

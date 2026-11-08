@@ -508,6 +508,14 @@ namespace IcarusII.UI
             /// <summary>思考块的标题行：算正文可用高度时要扣掉它和块内边距。</summary>
             public RectTransform Header;
             public bool Expanded;
+            /// <summary>块自身的过渡：折叠时正文高度与透明度一起收放；挂在块根节点上。</summary>
+            public ListMotion Motion;
+            /// <summary>正文的布局行（body-clip，工具块是 body）：折叠动画改它的高度。</summary>
+            public LayoutElement BodyLayout;
+            /// <summary>正文的透明度：高度收放时一起淡出，避免文字溢出裁切框。</summary>
+            public CanvasGroup BodyFade;
+            /// <summary>首次 SetBlock 只摆状态不播动画，避免块刚出现就收一下。</summary>
+            public bool Ready;
 
             /// <summary>工具块用：调用参数摘要（展开时显示）。</summary>
             public string Args;
@@ -685,6 +693,8 @@ namespace IcarusII.UI
 
         /// <summary>左栏会话列表的换位与展开/收起过渡；挂在 chat-index 的 content 上。</summary>
         private ListMotion _indexMotion;
+        /// <summary>输出区消息级的过渡（撤回时整项收起）；挂在 output 的 content 上。</summary>
+        private ListMotion _outputMotion;
         private bool _awaitingResponse;
         /// <summary>AI 正在回答：为 true 时输入框为空就显示「中断」，有内容则显示「发送」（A.15）。</summary>
         private bool _busy;
@@ -1021,6 +1031,7 @@ namespace IcarusII.UI
             _chatIndex = null;
             _chatIndexContent = null;
             _indexMotion = null;
+            _outputMotion = null;
             _conversationTemplate = null;
             _recordTemplate = null;
             _expandMoreTemplate = null;
@@ -1326,6 +1337,7 @@ namespace IcarusII.UI
             _statusText = status;
             _scroll = scroll;
             _content = content;
+            _outputMotion = content.GetComponent<ListMotion>();
             _transcript = transcript;
             _input = input;
             // 聊天窗的 ESC 只是让位/关窗，不是"取消编辑"。
@@ -3566,19 +3578,110 @@ namespace IcarusII.UI
 
             block.RawBody = body ?? string.Empty;
             block.Body.text = FormatRichText(block.RawBody, RichOptions13, RichTextProfile.Plain).Rich;
-            SetBlockBodyVisible(block, expanded && !string.IsNullOrEmpty(block.RawBody));
+            var bodyVisible = expanded && !string.IsNullOrEmpty(block.RawBody);
             ApplyThinkingBodyClip(block);
+            if (!TryAnimateBlockBody(block, bodyVisible))
+            {
+                SetBlockBodyVisible(block, bodyVisible);
+                block.Expanded = expanded;
+                if (bodyVisible) ClearBlockBodyZero(block);
+                else ZeroBlockBody(block);
+            }
+            block.Ready = true;
 
             // 截图只在展开时显示：收起态是一行摘要，塞一张 220px 的图会把聊天串撑乱。
             if (block.ImageRt != null)
                 block.ImageRt.gameObject.SetActive(expanded);
 
-            block.Expanded = expanded;
             block.Chevron.text = ChevronFor(expanded);
             block.Chevron.color = titleColor;
 
             _dirty = true;
             if (rebuild) RebuildLayout();
+        }
+
+        /// <summary>
+        /// 块的正文收放：高度与透明度走同一条缓动，下面的内容跟着上移/下移。
+        /// 思考块的 body-clip 与工具块的 body 都在 prefab 里带 LayoutElement。
+        /// 返回 false 表示这次不走动画（没有正文、没有组件，或正文本来就在目标状态）。
+        /// </summary>
+        private bool TryAnimateBlockBody(Block block, bool visible)
+        {
+            if (block?.Motion == null || block.BodyLayout == null || !block.Ready) return false;
+            // 只在“玩家切换折叠”时过渡：内容更新（新摘要、新正文）不该触发收放。
+            if (block.Expanded == visible) return false;
+            var clip = block.BodyClip;
+
+            // 量高必须先把正文显示出来：隐藏的 Text 量不到高度。
+            if (block.Body != null) block.Body.gameObject.SetActive(true);
+            if (clip != null) clip.gameObject.SetActive(true);
+            ClearBlockBodyZero(block);
+            var height = MeasureBlockBody(block);
+            // 首次展开时排版还没跑过，量不到高度就按 Text 自己的 preferredHeight 兜底。
+            if (height <= 0.5f && block.Body != null) height = block.Body.preferredHeight;
+            // 收起从当前显示高度开始（正文可能被裁切框限高），拿不到才退回全文高度。
+            if (!visible && block.BodyLayout.preferredHeight > 0.5f)
+                height = block.BodyLayout.preferredHeight;
+            if (height <= 0.5f)
+            {
+                SetBlockBodyVisible(block, visible);
+                return false;
+            }
+
+            // 裁切框在过渡期间整个让出高度控制：它每帧会用记下的高度回写 preferredHeight，
+            // 不禁用的话折叠动画每帧都会被它覆盖回原高。
+            if (clip != null) clip.enabled = false;
+            block.Expanded = visible;
+            block.Motion.AnimateRows($"block:{block.Go.GetInstanceID()}",
+                new[] { new ListMotion.Row(block.BodyLayout, height, block.BodyFade) }, visible,
+                () =>
+                {
+                    if (clip != null) clip.enabled = true;
+                    if (visible)
+                    {
+                        ClearBlockBodyZero(block);
+                        SetBlockBodyVisible(block, true);
+                        RebuildLayout();
+                        return;
+                    }
+                    // 收起终态必须把高度归零：正文隐藏后布局行还留着旧高度，
+                    // 折叠块会空出一整块正文的位置。
+                    ZeroBlockBody(block);
+                    SetBlockBodyVisible(block, false);
+                    RebuildLayout();
+                });
+            return true;
+        }
+
+        /// <summary>收起态：正文行高度归零，否则折叠块会空出一整块正文的位置。</summary>
+        private static void ZeroBlockBody(Block block)
+        {
+            if (block?.BodyLayout == null) return;
+            block.BodyLayout.minHeight = 0f;
+            block.BodyLayout.preferredHeight = 0f;
+            if (block.BodyFade != null) block.BodyFade.alpha = 0f;
+        }
+
+        /// <summary>展开态：撤掉收起时写在正文行上的零高与零透明度限制，让布局自己量高。</summary>
+        /// <remarks>
+        /// 高度必须回到 -1（= 不受 LayoutElement 约束），写 0 会让布局永远量成 0；
+        /// 但重置之后要立刻重建一次布局，否则本帧仍按旧高度排版。
+        /// </remarks>
+        private static void ClearBlockBodyZero(Block block)
+        {
+            if (block?.BodyLayout == null) return;
+            block.BodyLayout.minHeight = -1f;
+            block.BodyLayout.preferredHeight = -1f;
+            if (block.BodyFade != null) block.BodyFade.alpha = 1f;
+            LayoutRebuilder.MarkLayoutForRebuild((RectTransform)block.BodyLayout.transform);
+        }
+
+        /// <summary>正文完整显示时的高度：思考块走裁切框（含上限），工具块直接取文本高度。</summary>
+        private static float MeasureBlockBody(Block block)
+        {
+            if (block == null) return 0f;
+            if (block.BodyClip != null) return block.BodyClip.Measure();
+            return block.Body != null ? block.Body.preferredHeight : 0f;
         }
 
         private void ToggleBlock(Block block)
@@ -6366,17 +6469,20 @@ namespace IcarusII.UI
             }
         }
 
-        /// <summary>销毁某一轮在输出区里的所有行/项（索引行由调用方处理）。</summary>
+        /// <summary>
+        /// 销毁某一轮在输出区里的所有行/项（索引行由调用方处理）。
+        /// 先从列表里摘掉，再把节点收起到高度 0，动画结束才销毁，避免整段内容瞬间消失。
+        /// </summary>
         private void RemoveTurnVisuals(int turnId)
         {
-            var destroyed = new HashSet<GameObject>();
+            var removed = new List<GameObject>();
+            var seen = new HashSet<GameObject>();
             for (int i = _lines.Count - 1; i >= 0; i--)
             {
                 var line = _lines[i];
                 if (line.TurnId != turnId) continue;
                 if (line.Block != null) ForgetBlock(line.Block);
-                if (line.Go != null && destroyed.Add(line.Go))
-                    UnityEngine.Object.Destroy(line.Go);
+                if (line.Go != null && seen.Add(line.Go)) removed.Add(line.Go);
                 _lines.RemoveAt(i);
             }
 
@@ -6384,10 +6490,47 @@ namespace IcarusII.UI
             {
                 if (_items[i].TurnId != turnId) continue;
                 var go = _items[i].Go;
-                if (go != null && destroyed.Add(go)) UnityEngine.Object.Destroy(go);
+                if (go != null && seen.Add(go)) removed.Add(go);
                 _items.RemoveAt(i);
                 if (_streamItem > i) _streamItem--;
             }
+            CollapseAndDestroy(removed);
+        }
+
+        /// <summary>
+        /// 把整项收起到零高度并淡出，结束后销毁。撤回一整轮时用，
+        /// 让提问气泡与回答一起收走，而不是瞬间从画面里消失。
+        /// 模板在 prefab 里已带 LayoutElement 与 CanvasGroup；缺组件的项直接销毁。
+        /// </summary>
+        private void CollapseAndDestroy(List<GameObject> items)
+        {
+            if (items == null || items.Count == 0) return;
+
+            var rows = new List<ListMotion.Row>();
+            var straight = new List<GameObject>();
+            foreach (var go in items)
+            {
+                if (go == null) continue;
+                var element = go.GetComponent<LayoutElement>();
+                if (_outputMotion == null || element == null)
+                {
+                    straight.Add(go);
+                    continue;
+                }
+                var height = element.preferredHeight > 0.5f
+                    ? element.preferredHeight
+                    : ((RectTransform)go.transform).rect.height;
+                rows.Add(new ListMotion.Row(element, height, go.GetComponent<CanvasGroup>()));
+            }
+            foreach (var go in straight) UnityEngine.Object.Destroy(go);
+            if (rows.Count == 0) return;
+
+            // 同一帧里有多个项要收，用一条动画一起推进，避免各自计时导致错位。
+            _outputMotion.AnimateRows("withdraw", rows, false, () =>
+            {
+                foreach (var row in rows)
+                    if (row.Element != null) UnityEngine.Object.Destroy(row.Element.gameObject);
+            });
         }
 
         /// <summary>
@@ -6909,8 +7052,23 @@ namespace IcarusII.UI
             block.Body = FindChildText(root.transform, "body-clip/body")
                 ?? FindChildText(root.transform, "body");
             AttachThinkingBodyClip(block);
+            AttachBlockMotion(block);
             AssignIconMapping(block.Body, TryGetPreferredIconMapping());
             return block;
+        }
+
+        /// <summary>
+        /// 绑定块的折叠过渡：思考块用 body-clip、工具块用 body 当动画行，
+        /// 两者都已在 prefab 里带 LayoutElement 与 ListMotion。
+        /// </summary>
+        private static void AttachBlockMotion(Block block)
+        {
+            if (block == null || block.Go == null) return;
+            block.Motion = block.Go.GetComponent<ListMotion>();
+            var clipRt = block.Go.transform.Find("body-clip");
+            var row = clipRt != null ? clipRt : block.Body != null ? block.Body.transform : null;
+            block.BodyLayout = row != null ? row.GetComponent<LayoutElement>() : null;
+            block.BodyFade = row != null ? row.GetComponent<CanvasGroup>() : null;
         }
 
         /// <summary>
@@ -9745,6 +9903,16 @@ namespace IcarusII.UI
             _rect = transform as RectTransform;
         }
 
+        /// <summary>正文当前应有的高度（含只增不减与上限）。折叠动画用它当目标高度。</summary>
+        public float Measure()
+        {
+            if (Body == null) return 0f;
+            var height = Body.preferredHeight;
+            if (GrowOnly && height < _height) height = _height;
+            if (MaxHeight > 0f && height > MaxHeight) height = MaxHeight;
+            return height;
+        }
+
         /// <summary>开始新一段流式思考：清掉上一段钉住的高度，逼下一帧重新测量。</summary>
         public void Restart()
         {
@@ -9774,9 +9942,7 @@ namespace IcarusII.UI
             // 刚显示的块要等这一帧排版才有真实宽度，宽度没稳定前不量高。
             if (width <= 1f) return;
 
-            var height = Body.preferredHeight;
-            if (GrowOnly && height < _height) height = _height;
-            if (MaxHeight > 0f && height > MaxHeight) height = MaxHeight;
+            var height = Measure();
 
             _textLength = Body.text.Length;
             _width = width;
