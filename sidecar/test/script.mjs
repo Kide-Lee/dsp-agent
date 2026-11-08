@@ -82,6 +82,12 @@ const tool = createScriptTool(host);
   check('纯读脚本不弹写确认', confirms.length === 0);
   check('宿主收到两次调用', calls.length === 2);
   check('参数被透传', calls[1].args?.limit === 2 && calls[1].name === 'game_get_entities');
+  // run_script 自己已经有一张汇总卡，内层工具再建卡会把一次脚本铺成一长串工具块。
+  check(
+    '内层调用标记 internal（不建工具块）',
+    calls.every((call) => call.options?.internal === true),
+    JSON.stringify(calls.map((call) => call.options?.internal)),
+  );
 }
 
 // ---------------------------------------------------------------- 2. 顶层 return
@@ -147,6 +153,7 @@ console.log('\n── 3. 白名单、写确认与预算 ──');
   check('确认包含写工具名', approved.confirms[0]?.writeNames?.includes('game_set_recipe'));
   check('写调用携带租约 token', approved.calls[0]?.options?.confirmToken === 'lease-token');
   check('写调用携带脚本哈希', typeof approved.calls[0]?.options?.confirmArgsHash === 'string');
+  check('写调用同样标记 internal', approved.calls[0]?.options?.internal === true);
   check('脚本结束释放租约', approved.releases.includes('lease-token'));
 }
 

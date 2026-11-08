@@ -304,6 +304,9 @@ async function runScript(
           const result = await host.call(name, args, {
             timeoutMs: remaining,
             signal,
+            // 内层调用统一隐藏：run_script 自己的卡片已经汇总了整段脚本，
+            // 再逐个建卡会把一次脚本调用铺成一长串工具块。
+            internal: true,
             ...(lease
               ? {
                   risk: 2,

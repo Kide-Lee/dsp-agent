@@ -825,6 +825,8 @@ mod                                   sidecar
 - 同一次工具调用 `callId` 相同；mod 用它在 `start` 建卡、`end` 原地更新。
 - mod 必须容忍：只收到 `end`（补建卡）、`name` 未知（显示原名）、字段缺失。
 - 只对**模型可见**的本地工具发送；知识库导出等 internal 调用不发。
+- `run_script` 内层经 `tool_call` 执行的工具一律带 `internal=true`，mod 不为它们建工具卡：
+  脚本自身的卡片已经汇总了整段执行，逐次建卡会把一次脚本调用铺成一长串工具块。
 
 ### A.9 `blueprint_card` — 蓝图卡片（sidecar → mod）
 
