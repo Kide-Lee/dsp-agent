@@ -7,19 +7,36 @@ namespace IcarusII.Game.Spatial
 {
     /// <summary>
     /// 戴森球的访问入口。
-    /// GameData.dysonSpheres 按恒星 id 索引，未建球的槽位为 null。
+    ///
+    /// GameData.dysonSpheres 按 **star.index** 索引，不是 star.id：游戏侧
+    /// CreateDysonSphere(starData.index) 与 dysonSpheres[i].starData.index 都是这么用的。
+    /// 两者在星区里通常不相等，按 id 查会命中别的槽位、或越界拿到 null，
+    /// 表现就是"明明有球却报没有戴森球"。
     /// </summary>
     internal static class DysonSpheres
     {
-        public static DysonSphere Get(int starId)
+        /// <summary>按恒星 index 取球；未建球的槽位为 null。</summary>
+        public static DysonSphere GetByIndex(int starIndex)
         {
             var data = GameMain.data;
             if (data == null || data.dysonSpheres == null) return null;
-            if (starId <= 0 || starId >= data.dysonSpheres.Length) return null;
-            return data.dysonSpheres[starId];
+            if (starIndex < 0 || starIndex >= data.dysonSpheres.Length) return null;
+            return data.dysonSpheres[starIndex];
         }
 
-        public static DysonSphere Get(StarData star) => star != null ? Get(star.id) : null;
+        public static DysonSphere Get(StarData star) =>
+            star != null ? GetByIndex(star.index) : null;
+
+        /// <summary>
+        /// 按 starId 取球。调用方手上只有 id 时用这个，内部先换成 index 再查，
+        /// 不要直接拿 id 当数组下标。
+        /// </summary>
+        public static DysonSphere GetByStarId(int starId)
+        {
+            var galaxy = GameMain.data != null ? GameMain.data.galaxy : null;
+            var star = galaxy != null && starId > 0 ? galaxy.StarById(starId) : null;
+            return star != null ? GetByIndex(star.index) : null;
+        }
 
         /// <summary>太阳帆总数：所有轨道的帆池占用之和。</summary>
         public static int SailCount(DysonSphere sphere)

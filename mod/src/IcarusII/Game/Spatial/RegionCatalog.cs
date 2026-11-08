@@ -161,7 +161,7 @@ namespace IcarusII.Game.Spatial
 
         private static void AddDysonMembers(List<RegionMember> result, RegionTarget target)
         {
-            var sphere = DysonSpheres.Get(target.StarId);
+            var sphere = DysonSpheres.GetByStarId(target.StarId);
             if (sphere == null) return;
             result.Add(RegionMember.InWorld("dyson_sphere", target.StarId,
                 "戴森球", 0, target.Star != null ? target.Star.uPosition : VectorLF3.zero));
@@ -405,7 +405,7 @@ namespace IcarusII.Game.Spatial
                 {
                     result.Add(RegionMember.InWorld("star", star.id, PlanetFrame.StarName(star), 0, star.uPosition));
                     // 戴森球以恒星为中心，恒星在盒内即视为戴森球在盒内
-                    if (DysonSpheres.Get(star.id) != null)
+                    if (DysonSpheres.GetByStarId(star.id) != null)
                         result.Add(RegionMember.InWorld("dyson_sphere", star.id, "戴森球", 0, star.uPosition));
                 }
                 if (star.planets == null) continue;

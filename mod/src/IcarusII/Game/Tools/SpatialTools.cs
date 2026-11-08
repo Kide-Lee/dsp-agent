@@ -342,7 +342,7 @@ namespace IcarusII.Game.Tools
                     AddStorageOfStar(target.Star, items, includePlanets: true);
                     // 戴森球的太阳帆/节点/框架/壳面不是"物品"，单独给一块，
                     // 混进 items 会让模型把它们当库存来数。
-                    var sphere = DysonSpheres.Get(target.StarId);
+                    var sphere = DysonSpheres.GetByStarId(target.StarId);
                     if (sphere != null) data.Set("dyson", DysonStructureJson(sphere));
                     break;
                 }
@@ -429,7 +429,7 @@ namespace IcarusII.Game.Tools
 
         private static GameToolJobResult DysonStorage(JsonValue data, SpatialRequest request, RegionTarget target)
         {
-            var sphere = DysonSpheres.Get(target.StarId);
+            var sphere = DysonSpheres.GetByStarId(target.StarId);
             if (sphere == null) throw new SpatialException("该恒星系还没有戴森球");
             var swarm = DysonSpheres.SailCount(sphere);
             var (nodes, frames, shells, structurePoints, cellPoints) = DysonSpheres.StructureCounts(sphere);
@@ -484,7 +484,7 @@ namespace IcarusII.Game.Tools
             // 要单独挂一块，否则"这个星系产了多少太阳帆"永远查不到。
             if (target.Type == SpatialTypes.StarSystem)
             {
-                var sphere = DysonSpheres.Get(target.StarId);
+                var sphere = DysonSpheres.GetByStarId(target.StarId);
                 if (sphere != null) data.Set("dyson", DysonStructureJson(sphere));
             }
 
@@ -533,7 +533,7 @@ namespace IcarusII.Game.Tools
 
         private static GameToolJobResult DysonFlow(JsonValue data, SpatialRequest request, RegionTarget target)
         {
-            var sphere = DysonSpheres.Get(target.StarId);
+            var sphere = DysonSpheres.GetByStarId(target.StarId);
             if (sphere == null) throw new SpatialException("该恒星系还没有戴森球");
 
             var obj = JsonValue.NewObject();
@@ -575,7 +575,7 @@ namespace IcarusII.Game.Tools
                 case SpatialTypes.Star:
                 case SpatialTypes.DysonSphere:
                 {
-                    var sphere = DysonSpheres.Get(target.StarId);
+                    var sphere = DysonSpheres.GetByStarId(target.StarId);
                     if (sphere == null) throw new SpatialException("该恒星系还没有戴森球");
                     var (swarmKw, layerKw) = DysonSpheres.GenKw(sphere);
                     var obj = JsonValue.NewObject();
@@ -632,7 +632,7 @@ namespace IcarusII.Game.Tools
 
             // 戴森球发电是这个星系供电的一部分：不计入会让"星系发电性能"偏低。
             double dysonKw = 0;
-            var sphere = DysonSpheres.Get(target.StarId);
+            var sphere = DysonSpheres.GetByStarId(target.StarId);
             if (sphere != null)
             {
                 var (swarmKw, layerKw) = DysonSpheres.GenKw(sphere);
@@ -946,7 +946,7 @@ namespace IcarusII.Game.Tools
                 }
                 case SpatialTypes.DysonSphere:
                 {
-                    var sphere = DysonSpheres.Get(target.StarId);
+                    var sphere = DysonSpheres.GetByStarId(target.StarId);
                     if (sphere == null) throw new SpatialException("该恒星系还没有戴森球");
                     info = DysonSpheres.Information(sphere);
                     break;

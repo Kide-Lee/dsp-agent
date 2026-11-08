@@ -140,6 +140,12 @@ export const TOOL_FIELD_NOTES: Record<string, Record<string, FieldNote>> = {
 
 
   game_get_planets: {
+    dysonSpheres: [
+      'array',
+      '银河里所有已建戴森球：`starId` / `starIndex` / `starName` / `layerCount` / `grossRadius` / ' +
+        '`swarmGenKw` / `layerGenKw` / `totalGenKw` / `sailCount` / `nodeCount` / `frameCount` / ' +
+        '`shellCount` / `structurePoints` / `cellPoints`。数组为空表示该存档没有任何戴森球',
+    ],
     available: ['boolean', '银河数据是否已加载'],
     observeLevel: ['integer', '宇宙探索等级；决定未观察星球是否披露矿脉'],
     planetCount: ['integer', '行星总数'],

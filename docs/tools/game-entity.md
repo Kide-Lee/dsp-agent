@@ -119,14 +119,16 @@
 #### 模型可见 · 工具描述（tools 数组）
 
 ```text
-列出银河里所有行星：轨道/类型/半径、是否有工厂与建筑数、电力汇总，以及按宇宙探索等级披露的矿脉。未观察的星球只给基础轨道信息（veinsHidden=true），不泄露矿脉；已建工厂的星球可继续用区域工具分析。
+列出银河里所有行星：轨道/类型/半径、是否有工厂与建筑数、电力汇总，以及按宇宙探索等级披露的矿脉。同时给出 dysonSpheres：银河里所有已建戴森球的所在星系、层数、太阳帆与节点/框架/壳面数量、发电。未观察的星球只给基础轨道信息（veinsHidden=true），不泄露矿脉；已建工厂的星球可继续用区域工具分析。
 ```
 
 #### 模型可见 · 使用规则（system prompt）
 
 - 玩家问“哪个星球有 X 矿/哪颗星在产什么/银河整体情况”时使用。
+- 问“有没有戴森球/戴森球在哪个星系/发了多少电”时也先看这里的 dysonSpheres：数组为空才是真的没有球。
 - observed=false 或 veinsHidden=true 表示玩家还没探索到，不要编造矿脉；如实说明需要提升宇宙探索等级。
 - hasFactory=true 的行星可继续用 space_region（op=list / op=power / op=production）分析。
+- 定位到有球的星系后，用 space_region type=star_system（或 star / dyson_sphere）加 op=storage|power|information 读细节。
 
 #### 参数
 
@@ -138,6 +140,7 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
+| `dysonSpheres` | `array` | 银河里所有已建戴森球：`starId` / `starIndex` / `starName` / `layerCount` / `grossRadius` / `swarmGenKw` / `layerGenKw` / `totalGenKw` / `sailCount` / `nodeCount` / `frameCount` / `shellCount` / `structurePoints` / `cellPoints`。数组为空表示该存档没有任何戴森球 |
 | `available` | `boolean` | 银河数据是否已加载 |
 | `observeLevel` | `integer` | 宇宙探索等级；决定未观察星球是否披露矿脉 |
 | `planetCount` | `integer` | 行星总数 |
@@ -147,7 +150,7 @@
 | `note` | `string` | 给模型的说明：未观察星球只给基础轨道信息 |
 | `display` | `string` | 一行摘要：行星数 · 已观察 · 有工厂 |
 
-嵌套对象内部字段（未逐个展开）：`starId`、`starName`、`type`、`orbitRadiusAu`、`orbitIndex`、`orbitalPeriod`、`rotationPeriod`、`radius`、`theme`、`scanned`、`requiredObserveLevel`、`buildingCount` 等 21 个
+嵌套对象内部字段（未逐个展开）：`type`、`orbitRadiusAu`、`orbitIndex`、`orbitalPeriod`、`rotationPeriod`、`radius`、`theme`、`scanned`、`requiredObserveLevel`、`buildingCount`、`power`、`veins` 等 19 个
 
 > 信封（`ok` / `data` / `error` / `meta` / `image`）与截断规则见 [index.md](index.md#通用返回信封)。
 

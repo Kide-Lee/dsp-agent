@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using IcarusII.Common.Json;
 using IcarusII.Game;
+using IcarusII.Game.Spatial;
 using UnityEngine;
 
 namespace IcarusII.Game.Tools
@@ -116,6 +117,10 @@ namespace IcarusII.Game.Tools
             data.Set("observedCount", observedCount);
             data.Set("factoryCount", factoryCount);
             data.Set("planets", planets);
+            // 戴森球按恒星组织，行星行里放不下；单独给一份汇总，
+            // 让模型"银河里有几个球、在哪几个星系"一次就能查到，
+            // 不必逐星系去试 space_region。
+            data.Set("dysonSpheres", DysonSummary.Build(galaxy));
             data.Set("note", "未观察的星球只返回基础轨道信息；veinsHidden=true 表示受宇宙探索等级限制。");
             data.Set("display", "银河 " + planets.Count + " 颗行星 · 已观察 " + observedCount
                 + " · 有工厂 " + factoryCount);
@@ -196,6 +201,46 @@ namespace IcarusII.Game.Tools
     /// 汇总所有**已加载工厂**的物流塔，按物品给出全银河的供给/需求与具体站点。
     /// 这是跨行星产线分析的入口：先看物品在哪供给，再去对应行星做区域分析。
     /// </summary>
+    internal static class DysonSummary
+    {
+        /// <summary>
+        /// 银河里所有已建的戴森球。dysonSpheres 按 star.index 索引，
+        /// 这里遍历整个数组并用 starData 反查恒星名。
+        /// </summary>
+        public static JsonValue Build(GalaxyData galaxy)
+        {
+            var array = JsonValue.NewArray();
+            var data = GameMain.data;
+            if (data?.dysonSpheres == null) return array;
+
+            for (int i = 0; i < data.dysonSpheres.Length; i++)
+            {
+                var sphere = data.dysonSpheres[i];
+                if (sphere == null || sphere.starData == null) continue;
+                var star = sphere.starData;
+                var row = JsonValue.NewObject();
+                row.Set("starId", star.id);
+                row.Set("starIndex", star.index);
+                row.Set("starName", star.displayName ?? star.name ?? string.Empty);
+                row.Set("layerCount", sphere.layerCount);
+                row.Set("grossRadius", GameToolFormat.Round(sphere.grossRadius, 1));
+                var (swarmKw, layerKw) = DysonSpheres.GenKw(sphere);
+                row.Set("swarmGenKw", GameToolFormat.Round(swarmKw, 2));
+                row.Set("layerGenKw", GameToolFormat.Round(layerKw, 2));
+                row.Set("totalGenKw", GameToolFormat.Round(swarmKw + layerKw, 2));
+                row.Set("sailCount", DysonSpheres.SailCount(sphere));
+                var (nodes, frames, shells, sp, cp) = DysonSpheres.StructureCounts(sphere);
+                row.Set("nodeCount", nodes);
+                row.Set("frameCount", frames);
+                row.Set("shellCount", shells);
+                row.Set("structurePoints", sp);
+                row.Set("cellPoints", cp);
+                array.Add(row);
+            }
+            return array;
+        }
+    }
+
     internal sealed class LogisticsTool : IGameToolHandler
     {
         public string Name => "game_get_logistics";

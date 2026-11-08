@@ -111,7 +111,7 @@ namespace IcarusII.Game.Spatial
                 case SpatialTypes.DysonSphere:
                     target.Star = ResolveStar(request.TargetId);
                     target.StarId = target.Star != null ? target.Star.id : 0;
-                    if (DysonSpheres.Get(target.StarId) == null)
+                    if (DysonSpheres.GetByStarId(target.StarId) == null)
                         throw new SpatialException($"恒星系 {PlanetFrame.StarName(target.Star)} 还没有戴森球");
                     break;
                 case SpatialTypes.WorldBox:
