@@ -3639,8 +3639,12 @@ namespace IcarusII.UI
                     if (clip != null) clip.enabled = true;
                     if (visible)
                     {
-                        ClearBlockBodyZero(block);
                         SetBlockBodyVisible(block, true);
+                        // 先把动画写在正文行上的中间值清掉，再让裁切框按全文高度接管；
+                        // 反过来的话 ClearBlockBodyZero 会把刚量好的高度又改成 -1。
+                        ClearBlockBodyZero(block);
+                        if (clip != null) clip.Remeasure();
+                        else if (block.Body != null) block.BodyLayout.preferredHeight = block.Body.preferredHeight;
                         RebuildLayout();
                         return;
                     }
@@ -9921,6 +9925,26 @@ namespace IcarusII.UI
             _wasActive = false;
         }
 
+        /// <summary>
+        /// 立刻按当前正文重新接管高度，并清掉缓存让下一帧再校一次。
+        /// 折叠动画期间本组件被禁用、高度由动画写；动画结束后若不清缓存，
+        /// LateUpdate 会因“文本长度和宽度都没变”提前 return，高度就停在 0。
+        /// </summary>
+        public void Remeasure()
+        {
+            if (_layout == null) _layout = GetComponent<LayoutElement>();
+            if (_rect == null) _rect = transform as RectTransform;
+            var height = Measure();
+            // 刚被重新启用的正文宽度还没算出来，Measure 会量成 0；此时按文本自身高度走。
+            if (height <= 0.5f && Body != null) height = Body.preferredHeight;
+            _height = height;
+            _textLength = Body != null ? Body.text.Length : -1;
+            _width = _rect != null ? _rect.rect.width : -1f;
+            _maxHeight = MaxHeight;
+            _wasActive = true;
+            if (_layout != null) _layout.preferredHeight = height;
+        }
+
         private void LateUpdate()
         {
             if (Body == null || _rect == null || _layout == null) return;
@@ -9947,7 +9971,8 @@ namespace IcarusII.UI
             _textLength = Body.text.Length;
             _width = width;
             _maxHeight = MaxHeight;
-            if (Mathf.Approximately(_height, height)) return;
+            if (Mathf.Approximately(_height, height) && Mathf.Approximately(_layout.preferredHeight, height))
+                return;
             _height = height;
             _layout.preferredHeight = height;
         }
