@@ -3187,7 +3187,14 @@ namespace IcarusII.UI
                 // 超限之后仍然继续收到 delta：只标记一次，内容不再增长。
                 _thinkingTruncated = true;
             }
-            if (!_thinking.Body.gameObject.activeSelf) SetBlockBodyVisible(_thinking, true);
+            // 收起态留下的零高度与零透明度会跟着复用同一块：不清掉的话新正文既撑不开也不可见。
+            if (!_thinking.Body.gameObject.activeSelf
+                || (_thinking.BodyFade != null && _thinking.BodyFade.alpha < 1f))
+            {
+                SetBlockBodyVisible(_thinking, true);
+                ClearBlockBodyZero(_thinking);
+                RestartThinkingBodyClip(_thinking);
+            }
             _dirty = true;
         }
 
