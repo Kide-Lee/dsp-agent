@@ -2,6 +2,8 @@
 
 > 游戏内 AI 助手。按 **`R`** 打开终端，问机制、产线排布、存档状态；
 > AI 能读取你当前的存档给建议，并在**你确认之后**执行游戏内操作。
+>
+> 源码、更新记录与问题反馈：<https://github.com/Kide-Lee/dsp-agent>
 
 ---
 
@@ -165,6 +167,8 @@ confirmation**, perform in-game actions.
 
 Requires **BepInEx 5.4.17+** (5.4.23.5 also tested) and your own **DeepSeek** (or any OpenAI-compatible) API key.
 The key is stored locally only; all traffic goes to the endpoint you configure.
+
+Source, changelog and issue tracker: <https://github.com/Kide-Lee/dsp-agent>
 
 Questions? Join the QQ group **1091497260**.
 
