@@ -51,6 +51,8 @@ namespace IcarusII.EditorTools
         /// <summary>入口按钮的图标（用户提供）；随 prefab 一起进 bundle，避免引用丢失。</summary>
         private const string AgentButtonIconPath = "Assets/IcarusII/Resources/console.png";
         private const string NewConversationIconPath = "Assets/IcarusII/Resources/new-conversation.png";
+        /// <summary>聊天窗用到的自制图标（Lucide 转成的白色 PNG），随 prefab 一起进 bundle。</summary>
+        private const string ModIconDir = "Assets/IcarusII/Resources/icons/";
         /// <summary>关于页的 QQ 群二维码（用户提供）。</summary>
         private const string QrGroupPath = "Assets/IcarusII/Resources/qq-group.png";
         private const string OutputDir = "Build/IcarusIIBundle";
@@ -192,6 +194,14 @@ namespace IcarusII.EditorTools
                     SettingsPagePrefabPath,
                     AgentButtonIconPath,
                     NewConversationIconPath,
+                    // 左栏「规则 / 技能 / 自动化 / 记忆」与回复 footer 的自制图标。
+                    ModIconDir + "nav-rules.png",
+                    ModIconDir + "nav-skills.png",
+                    ModIconDir + "nav-automation.png",
+                    ModIconDir + "nav-memory.png",
+                    ModIconDir + "nav-new-chat.png",
+                    ModIconDir + "regenerate.png",
+                    ModIconDir + "withdraw.png",
                     QrGroupPath,
                     SpriteDir + "crystal-btn-black.png",
                     SpriteDir + "circle-thin-64.png",
@@ -237,6 +247,13 @@ namespace IcarusII.EditorTools
                     SettingsPageAssetName,
                     "console",
                     "new-conversation",
+                    "nav-rules",
+                    "nav-skills",
+                    "nav-automation",
+                    "nav-memory",
+                    "nav-new-chat",
+                    "regenerate",
+                    "withdraw",
                     "qq-group",
                     "crystal-btn-black",
                     "circle-thin-64",
@@ -374,7 +391,11 @@ namespace IcarusII.EditorTools
             // 以前把它们平铺到 Prefab/ 根下，同一份贴图会出现两份不同 GUID 的副本。
             var iconSnapshotDir = Path.Combine(repoRoot, "mod", "unity", "Resources", "icons");
             Directory.CreateDirectory(iconSnapshotDir);
-            foreach (var icon in new[] { "regenerate", "withdraw" })
+            foreach (var icon in new[]
+                     {
+                         "regenerate", "withdraw",
+                         "nav-rules", "nav-skills", "nav-automation", "nav-memory", "nav-new-chat",
+                     })
             {
                 foreach (var suffix in new[] { ".png", ".png.meta" })
                 {

@@ -5079,7 +5079,7 @@ namespace IcarusII.UI
             var emptyRt = _chatIndex.Find("chat-index-empty") as RectTransform;
             _chatIndexEmpty = emptyRt != null ? emptyRt.GetComponent<Text>() : null;
             _newConversationButton = _chatIndex
-                .Find("chat-index-topbar/new-conversation")?.GetComponent<Button>();
+                .Find("new-chat-entry")?.GetComponent<Button>();
             EnsureConversationTitle();
 
             if (_chatIndexScroll == null || _chatIndexContent == null ||
@@ -5118,7 +5118,7 @@ namespace IcarusII.UI
             }
             else
             {
-                Plugin.Log.LogWarning("[UI] prefab 缺少 chat-index-topbar/new-conversation，新建会话不可用");
+                Plugin.Log.LogWarning("[UI] prefab 缺少 chat-index/new-chat-entry，新建会话不可用");
             }
 
             if (_hostCanvas != null)
