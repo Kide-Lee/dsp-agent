@@ -22,13 +22,12 @@ IcarusII 是《戴森球计划》的 Agent。它包括：
   - 除非是像在列表中添加新项这样的动态内容。
   - 但这种列表中的项也必须在 Prefab 中存在一个模板。
 - 编辑 UI 的工作流应该是：
-  1. 使用 MCP for Unity 工具修改`dsp-game/Assets/IcarusII/ChatWindow.prefab`。
-  2. 如果用户没有开启 MCP，请求用户打开再继续工作。
-  3. 编辑结束后，必须截图查看界面是否满足预期。
-  4. 保存 prefab 并关闭 Unity；`Temp/UnityLockfile` 存在时 `scripts/build-ui-bundle.sh` 会拒绝执行。
-  5. 用 `IcarusIIDumpPrefab.DumpChatWindow` 在构建前后各 dump 一次，对比 `tool-bar` 里 `send-button` / `permission-group` / `thinking-group` / `model-group` 的右锚点（`-20` / `-100` / `-220` / `-340`），确认没有漂移。
-  6. 重打 UI AssetBundle。
-  7. 检查生成的 Prefab 是否与`mod/unity/Prefab/`中的一致。若不一致，寻找原因然后告诉用户。
+  1. 使用 unity_* 工具修改`dsp-game/Assets/IcarusII/ChatWindow.prefab`。
+  2. 编辑结束后，必须截图查看界面是否满足预期。
+  3. 保存 prefab 并关闭 Unity；`Temp/UnityLockfile` 存在时 `scripts/build-ui-bundle.sh` 会拒绝执行。
+  4. 用 `IcarusIIDumpPrefab.DumpChatWindow` 在构建前后各 dump 一次，对比 `tool-bar` 里 `send-button` / `permission-group` / `thinking-group` / `model-group` 的右锚点（`-20` / `-100` / `-220` / `-340`），确认没有漂移。
+  5. 重打 UI AssetBundle。
+  6. 检查生成的 Prefab 是否与`mod/unity/Prefab/`中的一致。若不一致，寻找原因然后告诉用户。
 - prefab 是二进制，`git diff` 只显示 `Bin`，判断布局是否漂移只能靠 dump 对比，不能靠 diff。
 - 一般的 UI 动效，必须复用游戏本就有的组件来实现，比如按钮、图标 tag、tooltip 的显示/隐藏与跟随等。
   - 只有在游戏原生组件确实无法实现预期时，才在 mod 中通过代码生成。
