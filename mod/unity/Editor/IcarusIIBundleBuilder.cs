@@ -1,4 +1,5 @@
 using System.IO;
+using System.Threading;
 using UnityEditor;
 using UnityEngine;
 
@@ -53,6 +54,8 @@ namespace IcarusII.EditorTools
         private const string NewConversationIconPath = "Assets/IcarusII/Resources/new-conversation.png";
         /// <summary>聊天窗用到的自制图标（Lucide 转成的白色 PNG），随 prefab 一起进 bundle。</summary>
         private const string ModIconDir = "Assets/IcarusII/Resources/icons/";
+        /// <summary>聊天窗自己的贴图（不含图标）：左栏顶部的品牌标志。</summary>
+        private const string ModResourceDir = "Assets/IcarusII/Resources/";
         /// <summary>关于页的 QQ 群二维码（用户提供）。</summary>
         private const string QrGroupPath = "Assets/IcarusII/Resources/qq-group.png";
         private const string OutputDir = "Build/IcarusIIBundle";
@@ -109,6 +112,55 @@ namespace IcarusII.EditorTools
         {
             var ok = BuildInternal(out _);
             if (Application.isBatchMode) EditorApplication.Exit(ok ? 0 : 1);
+        }
+
+        /// <summary>
+        /// 编辑器自己的 SynchronizationContext，供打包时临时换回（见 <see cref="BuildBundles"/>）。
+        /// </summary>
+        private static SynchronizationContext unitySynchronizationContext;
+
+        /// <summary>在域加载后的第一个编辑器 update 里捕获，那时没有代码片段在跑。</summary>
+        [InitializeOnLoadMethod]
+        private static void CaptureUnitySynchronizationContext()
+        {
+            EditorApplication.delayCall += () => unitySynchronizationContext ??= SynchronizationContext.Current;
+        }
+
+        /// <summary>
+        /// 打包必须跑在编辑器自己的 SynchronizationContext 下。
+        /// `BuildAssetBundles` 内部的 `EditorCompilation.CompleteActiveBuildWhilePumping`
+        /// 会把 `SynchronizationContext.Current` 强转成 `UnitySynchronizationContext`；
+        /// 从 Locus 代码片段调用时当前上下文是 `Locus.LocusBridge.ExecuteCodeSynchronizationContext`，
+        /// 强转抛 InvalidCastException，资源包返回 null 并伴随一条
+        /// "Error building Player because scripts had compiler errors"（日志里没有任何 CS 错误）。
+        /// </summary>
+        private static AssetBundleManifest BuildBundles(AssetBundleBuild build)
+        {
+            var previous = SynchronizationContext.Current;
+            if (unitySynchronizationContext == null || ReferenceEquals(previous, unitySynchronizationContext))
+            {
+                return BuildBundlesWithUnityContext(build);
+            }
+
+            SynchronizationContext.SetSynchronizationContext(unitySynchronizationContext);
+            try
+            {
+                return BuildBundlesWithUnityContext(build);
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previous);
+            }
+        }
+
+        private static AssetBundleManifest BuildBundlesWithUnityContext(AssetBundleBuild build)
+        {
+            return BuildPipeline.BuildAssetBundles(
+                OutputDir,
+                new[] { build },
+                // LZ4 分块压缩：加载快、体积小，AssetBundle 的常规选择
+                BuildAssetBundleOptions.ChunkBasedCompression,
+                BuildTarget.StandaloneWindows64);
         }
 
         private static bool BuildInternal(out string producedPath)
@@ -203,6 +255,8 @@ namespace IcarusII.EditorTools
                     ModIconDir + "regenerate.png",
                     ModIconDir + "withdraw.png",
                     QrGroupPath,
+                    // 左栏顶部的「空间管理联盟」标志：徽记与字形都取自游戏自带资源。
+                    ModResourceDir + "brand-logo.png",
                     SpriteDir + "crystal-btn-black.png",
                     SpriteDir + "circle-thin-64.png",
                     MaterialDir + "trsl-colored.mat",
@@ -255,6 +309,7 @@ namespace IcarusII.EditorTools
                     "regenerate",
                     "withdraw",
                     "qq-group",
+                    "brand-logo",
                     "crystal-btn-black",
                     "circle-thin-64",
                     "trsl-colored",
@@ -294,12 +349,7 @@ namespace IcarusII.EditorTools
                             $"addressableNames={build.addressableNames.Length}；按名加载会整体错位");
             }
 
-            var manifest = BuildPipeline.BuildAssetBundles(
-                OutputDir,
-                new[] { build },
-                // LZ4 分块压缩：加载快、体积小，AssetBundle 的常规选择
-                BuildAssetBundleOptions.ChunkBasedCompression,
-                BuildTarget.StandaloneWindows64);
+            var manifest = BuildBundles(build);
 
             if (manifest == null)
             {

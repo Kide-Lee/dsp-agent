@@ -23,14 +23,16 @@ namespace IcarusII.EditorTools
         private const string PrefabPath = "Assets/IcarusII/ChatWindow.prefab";
         private const string OutPath = "/home/kidelee/Projects/dsp-agent/.scratch/chatwindow-dump.txt";
 
-        /// <summary>批处理入口（默认 ChatWindow.prefab）。</summary>
+        /// <summary>dump 默认的 ChatWindow.prefab（编辑器和批处理都能用）。</summary>
         public static void DumpChatWindow()
         {
             var text = Dump(PrefabPath);
             File.WriteAllText(OutPath, text);
             Debug.Log(text);
             Debug.Log("[IcarusII] dump 已写入 " + OutPath);
-            EditorApplication.Exit(0);
+            // 从编辑器里调用（unity_execute / 菜单）时不能退出编辑器：
+            // 之前无条件 Exit(0)，在编辑器里调一次就把用户的 Unity 关掉了。
+            if (Application.isBatchMode) EditorApplication.Exit(0);
         }
 
         public static string Dump(string path)
