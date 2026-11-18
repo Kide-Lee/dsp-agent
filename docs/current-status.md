@@ -3,6 +3,9 @@
 > 更新时间：2026-11-06。M4（M4a–M4j + 写操作）已完成并通过实机验收；M5 离线实现完成，待实机验收；设定页功能（M6）已实现，待实机验收。
 > 2026-11-06：发布 1.2.342，包含多会话并行、蓝图 DSL/工厂布局、左栏时间/置顶、回复 footer 重新生成/撤回，以及一轮并行/蓝图/UI 修复；详见 `packaging/thunderstore/CHANGELOG.md`。
 > 本页是当前唯一的状态/计划入口；验收用的临时清单和提示词文档已移除。
+> 2026-11-18：左栏顶部加了「空间管理联盟」标志（`ChatWindow.prefab` 的 `chat-index/brand-logo`），贴图是预渲染 logo 裁边后的 1019x218 PNG，rect 250x53.48 与贴图同比例且 `preserveAspect=true`，不拉伸；UI bundle 还没重打，游戏里仍显示旧版；游戏启动报 `EntryPointNotFoundException: QueryPerformanceFrequency`（`HighStopwatch.QueryFrequency`），与本仓库改动的 mod DLL 无关，待定位。
+> 2026-11-19：上一条的两个问题已定位并修复。`QueryPerformanceFrequency` 是因为 `HighStopwatch.cs` 的 `UNITY_STANDALONE_WIN` 分支在 Linux 编辑器里也成立（活动目标是 StandaloneWindows64），条件已改为 `(UNITY_STANDALONE_WIN && !UNITY_EDITOR) || UNITY_EDITOR_WIN`。`currentFileSystemTime.ticks != 0` 是编辑器运行期间 `dsp-game/Temp/` 被外部删除重建、`FSTimeGet-*` 探测文件消失所致，Temp 完好的会话不再报。UI bundle 已重打（`dsp-game/Build/IcarusIIBundle/icarusii-ui`，8161 KB / 8357324 字节，2026-11-19 00:32）。
+> 2026-11-19：`BuildPipeline.BuildAssetBundles` 打不出 bundle 的根因是同步上下文：从 Locus snippet 调用时 `SynchronizationContext.Current` 是 `Locus.LocusBridge+ExecuteCodeSynchronizationContext`，而 `UnityEditor.Scripting.ScriptCompilation.EditorCompilation.CompleteActiveBuildWhilePumping` 会把它强转成 `UnitySynchronizationContext`，于是抛 `InvalidCastException` 并连带报 `Error building Player because scripts had compiler errors`、返回 null。`IcarusIIBundleBuilder.BuildBundles` 现在在构建前后临时把上下文换回捕获到的 `UnitySynchronizationContext`。同一次修复里 `IcarusIIDumpPrefab.DumpChatWindow` 只在 `Application.isBatchMode` 时才 `EditorApplication.Exit`，从编辑器调用不再关闭编辑器。
 
 ## 1. 已完成
 
