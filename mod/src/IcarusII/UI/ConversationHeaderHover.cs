@@ -1,20 +1,17 @@
 using UnityEngine;
 using UnityEngine.EventSystems;
-using UnityEngine.UI;
 
 namespace IcarusII.UI
 {
     /// <summary>
-    /// 会话标题行：鼠标悬停时给标题加一层淡背景，并把右侧的时间标记换成置顶/删除按钮。
+    /// 会话标题行：鼠标悬停时把右侧的时间标记换成置顶/删除按钮。
     ///
     /// 右侧那块位置是共享的：常态显示“最后回复时间”，悬停显示置顶 + 删除；
     /// 置顶之后常驻显示置顶按钮（时间不再出现），悬停时再补上删除。
-    /// 背景色由 Mod 按当前主题设置。
+    /// 行的背景高亮由 prefab 上的原生 UIButton 过渡承担，这里只负责这块的显隐。
     /// </summary>
     public sealed class ConversationHeaderHover : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
     {
-        public Graphic Background;
-        public Color HoverColor = new Color(0.35f, 0.75f, 1f, 0.10f);
         public GameObject DeleteButton;
         public GameObject PinButton;
         public GameObject TimeLabel;
@@ -63,7 +60,6 @@ namespace IcarusII.UI
 
         private void Apply()
         {
-            if (Background != null) Background.color = _hovered ? HoverColor : Color.clear;
             SetActive(DeleteButton, _hovered);
             SetActive(PinButton, Pinned || _hovered);
             SetActive(TimeLabel, !Pinned && !_hovered && HasTime);

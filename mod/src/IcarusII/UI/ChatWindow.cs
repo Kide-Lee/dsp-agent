@@ -73,10 +73,6 @@ namespace IcarusII.UI
 
         /// <summary>GameMain.gameTick 是 60 tick/秒，游戏时间按它换算。</summary>
         private const long GameTickPerSecond = 60L;
-        /// <summary>删除按钮悬停时的红色（与标题/时间标记的常态色区分开）。</summary>
-        private static readonly Color ConversationDeleteHoverColor = new Color(1f, 0.36f, 0.36f, 1f);
-        /// <summary>置顶按钮悬停时的亮青蓝：比标题色和主题蓝都更亮，一眼能看出被点亮。</summary>
-        private static readonly Color ConversationPinHoverColor = new Color(0.45f, 0.87f, 1f, 1f);
         /// <summary>左栏记录字体跟随右栏滚动位置时的扫描间隔（帧）。</summary>
         private const int IndexTurnScanIntervalFrames = 5;
         /// <summary>标题还没排版完成时用的兜底宽度；等于 prefab 里 title-mask 的实际宽度。</summary>
@@ -273,8 +269,8 @@ namespace IcarusII.UI
             public Image StatusNew;
             public ChevronSpin StatusChevronSpin;
             public LoadingSpin StatusLoadingSpin;
-            public ConversationIconHover DeleteHover;
-            public ConversationIconHover PinHover;
+            public GameObject DeleteIcon;
+            public GameObject PinIcon;
             public ConversationHeaderHover HeaderHover;
             public Text TimeText;
             public GameObject ExpandMore;
@@ -5512,8 +5508,6 @@ namespace IcarusII.UI
 
             var headerHover = header.gameObject.GetComponent<ConversationHeaderHover>();
             if (headerHover == null) headerHover = header.gameObject.AddComponent<ConversationHeaderHover>();
-            headerHover.Background = header.GetComponent<Image>();
-            headerHover.HoverColor = new Color(_accent.r, _accent.g, _accent.b, 0.10f);
             view.HeaderHover = headerHover;
 
             var headerButton = header.GetComponent<Button>();
@@ -5556,14 +5550,7 @@ namespace IcarusII.UI
                 deleteButton.onClick.RemoveAllListeners();
                 deleteButton.onClick.AddListener(() => OnDeleteConversationClicked(info.Id));
             }
-            if (delete != null)
-            {
-                var deleteHover = delete.GetComponent<ConversationIconHover>();
-                if (deleteHover == null) deleteHover = delete.gameObject.AddComponent<ConversationIconHover>();
-                deleteHover.Icon = delete.Find("x")?.GetComponent<Image>();
-                deleteHover.HoverColor = ConversationDeleteHoverColor;
-                view.DeleteHover = deleteHover;
-            }
+            view.DeleteIcon = delete != null ? delete.Find("x")?.gameObject : null;
 
             var pin = header.Find("pin");
             var pinButton = pin != null ? pin.GetComponent<Button>() : null;
@@ -5577,14 +5564,7 @@ namespace IcarusII.UI
                     OnConversationPinClicked(info.Id);
                 });
             }
-            if (pin != null)
-            {
-                var pinHover = pin.GetComponent<ConversationIconHover>();
-                if (pinHover == null) pinHover = pin.gameObject.AddComponent<ConversationIconHover>();
-                pinHover.Icon = pin.Find("pin")?.GetComponent<Image>();
-                pinHover.HoverColor = ConversationPinHoverColor;
-                view.PinHover = pinHover;
-            }
+            view.PinIcon = pin != null ? pin.Find("pin")?.gameObject : null;
 
             var time = header.Find("time");
             view.TimeText = time != null ? time.Find("num")?.GetComponent<Text>() : null;
@@ -5623,12 +5603,24 @@ namespace IcarusII.UI
                 view.Title.color = titleColor;
             }
             ApplyConversationStatus(view);
-            if (view.DeleteHover != null) view.DeleteHover.SetNormal(titleColor);
+            SyncHoverNormal(view.DeleteIcon, titleColor);
             // 时间标记和置顶按钮都与标题同色，只有悬停置顶按钮时变成亮蓝色。
             if (view.TimeText != null) view.TimeText.color = titleColor;
-            if (view.PinHover != null) view.PinHover.SetNormal(titleColor);
+            SyncHoverNormal(view.PinIcon, titleColor);
             RefreshConversationTime(view);
             if (view.Records != null) view.Records.gameObject.SetActive(view.Expanded);
+        }
+
+        /// <summary>
+        /// 删除/置顶图标的悬停过渡由 prefab 上的原生 UIButton 承担；
+        /// 图标的常态色跟随会话状态（选中是强调色，其余是标题色），所以这里只同步 normalColor。
+        /// </summary>
+        private static void SyncHoverNormal(GameObject icon, Color color)
+        {
+            var button = icon != null ? icon.GetComponent<UIButton>() : null;
+            if (button == null || button.transitions == null || button.transitions.Length == 0) return;
+            button.transitions[0].normalColor = color;
+            button.RefreshTransitionsImmediately();
         }
 
         /// <summary>刷新一个会话右侧的时间标记，并让标题行按“置顶 / 有无时间”决定显隐。</summary>
@@ -5851,11 +5843,9 @@ namespace IcarusII.UI
                     // 常态是白色；右栏正对着的那条由 RefreshIndexSelection 单独染蓝。
                     label.color = Color.white;
                 }
-                var hover = row.GetComponent<ChatIndexRowHover>();
-                if (hover == null) hover = row.AddComponent<ChatIndexRowHover>();
-                hover.HoverBackground = row.GetComponent<Graphic>();
                 var captured = record;
-                hover.Clicked += () => OnConversationRecordClicked(view.Id, captured);
+                var rowButton = row.GetComponent<UIButton>();
+                if (rowButton != null) rowButton.onClick += _ => OnConversationRecordClicked(view.Id, captured);
                 view.Rows.Add(row);
                 view.RowRecords.Add(record);
             }

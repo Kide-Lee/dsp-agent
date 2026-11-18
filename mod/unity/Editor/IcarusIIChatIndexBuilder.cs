@@ -228,7 +228,7 @@ namespace IcarusII.EditorTools
             linkText.raycastTarget = false;
 
             // link 故意不加 Button：Button 会截获 pointerEnter，行级 hover 就收不到。
-            // 点击由运行期 ChatIndexRowHover 统一处理；delete 仍使用自己的 Button。
+            // 行级悬停和点击统一由行节点上的原生 UIButton 处理（见 record-row-template）。
 
             var del = NewRect("delete", row);
             del.anchorMin = new Vector2(1f, 0.5f);
@@ -239,7 +239,7 @@ namespace IcarusII.EditorTools
             var delImage = del.gameObject.AddComponent<Image>();
             delImage.color = new Color(1f, 1f, 1f, 0.01f);
             delImage.raycastTarget = true;
-            // delete 也不加 Button：点击由运行期 ChatIndexRowHover 按点击位置判断，
+            // delete 也不加 Button：点击按点击位置交给行上的原生 UIButton，
             // 这样 pointerEnter/Exit 不会被 Selectable 截断。
 
             var delText = NewRect("x", del);
